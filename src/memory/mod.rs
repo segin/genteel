@@ -20,4 +20,10 @@ impl Memory {
             | (self.data[address + 2] as u32) << 8
             | (self.data[address + 3] as u32)
     }
+
+    pub fn read_word(&self, address: u32) -> u16 {
+        let address = address as usize;
+        (self.data[address] as u16) << 8
+            | (self.data[address + 1] as u16)
+    }
 }
