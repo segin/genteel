@@ -1,0 +1,28 @@
+[package]
+name = "genteel-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.genteel]
+path = ".."
+
+[[bin]]
+name = "z80_fuzz"
+path = "fuzz_targets/z80_fuzz.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "z80_random_program"
+path = "fuzz_targets/z80_random_program.rs"
+test = false
+doc = false
+bench = false

@@ -4,7 +4,7 @@
 
 pub mod bus;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Memory {
     // For now, a simple vector for the memory.
     // The Genesis has a 24-bit address bus, so 16MB of address space.
