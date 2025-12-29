@@ -3,6 +3,7 @@ pub mod apu;
 pub mod vdp;
 pub mod memory;
 pub mod io;
+pub mod z80;
 pub mod debugger;
 
 use cpu::Cpu;
