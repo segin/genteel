@@ -53,7 +53,7 @@ impl Emulator {
     pub fn run(&mut self) {
         println!("Emulator running...");
         // This is a very basic loop, will be expanded later
-        for frame_count in 0..10 { // Run for 10 frames as a placeholder
+        for _frame_count in 0..10 { // Run for 10 frames as a placeholder
             self.step_frame();
             // TODO: Render video, play audio, handle input
         }
