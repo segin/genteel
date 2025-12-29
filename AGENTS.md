@@ -1,64 +1,78 @@
-# AI Agent Integration and Development Process (`AGENTS.md`)
+# AGENTS.md
 
-This document outlines the role and capabilities of AI agents in the `genteel` project, as well as the development process to be followed.
+This document provides AI-specific operational context for working on the `genteel` project. For general project information, see [README.md](README.md). For architecture details, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
-## Agent's Role and Purpose
+## Quick Reference
 
-The primary purpose of integrating AI agents with the `genteel` emulator is to enable automated testing, development, and exploration of Sega Mega Drive/Genesis software. By providing a machine-readable API to the emulator, we allow agents to:
+- **Language**: Rust
+- **Build**: `cargo build`
+- **Test**: `cargo test`
+- **Run**: `cargo run`
+- **Check**: `cargo clippy`
+- **Format**: `cargo fmt`
 
--   **Develop the emulator**: Implement the features outlined in the project roadmap.
--   **Play games**: The agent can send controller inputs to play through games, discovering bugs and unexpected behaviors.
--   **Perform targeted testing**: The agent can be instructed to test specific parts of a game, such as a particular level or menu.
--   **Fuzzing**: The agent can generate random inputs to test the robustness of the emulator and the game.
--   **Analyze game states**: The agent can read the emulator's memory to analyze the game's internal state and make decisions based on it.
+## Agent Operating Principles
 
-## Development Process and Agent Operating Principles
+### 1. Keep ARCHITECTURE.md in Sync
 
-To ensure a smooth and transparent development process, the following principles must be followed:
+The `ARCHITECTURE.md` file is the **source of truth** for the project's design. When making architectural changes:
 
-1.  **Keep `ARCHITECTURE.md` in sync**: The `ARCHITECTURE.md` file is the source of truth for the project's design. Any changes to the architecture must be reflected in this document.
-2.  **Commit on Task Completion**: At the end of each successfully completed task, all changes must be committed to the git repository with a clear and descriptive commit message.
-3.  **Push on Commit**: Every `git commit` must be immediately followed by a `git push` to the remote repository.
-4.  **Aggressive Testing**: All new features, especially CPU opcodes, must be accompanied by comprehensive unit and property-based tests (`proptest`). Tests must cover:
-    -   Standard operation.
-    -   Edge cases (e.g., overflow, zero, max/min values).
-    -   Flag updates (C, V, Z, N, X for M68k; C, N, P/V, H, Z, S for Z80).
-    -   A wide range of inputs using property-based testing to ensure robustness.
+1. **Read ARCHITECTURE.md first** before making significant changes
+2. **Update ARCHITECTURE.md** whenever you modify the project's structure or design
+3. **Update the "Date of Last Update" field** when modifying ARCHITECTURE.md
 
-## Project Roadmap
+### 2. Commit and Push on Task Completion
 
-This roadmap outlines the features to be implemented in the `genteel` emulator.
+At the end of each successfully completed task:
 
-### Core Emulator Components
-- [ ] **M68k CPU Core**: Implement the full instruction set of the Motorola 68000 CPU.
-- [ ] **Z80 CPU Core**: Implement the full instruction set of the Zilog Z80 CPU.
-- [ ] **Sega VDP (Video Display Processor)**: Implement the VDP to handle graphics rendering.
-- [ ] **Yamaha YM2612 (FM Synthesizer)**: Implement the YM2612 for audio.
-- [ ] **Texas Instruments SN76489 (PSG)**: Implement the SN76489 for additional audio.
-- [ ] **Memory Bus**: Implement a flexible memory bus that maps all components to the correct address ranges.
-- [ ] **I/O**: Implement support for game controllers.
+1. Commit all changes with a clear, descriptive commit message
+2. Immediately push to the remote repository (`git push`)
 
-### Testing
-- [ ] **Unit Tests**: Add comprehensive unit tests for every component.
-- [ ] **Property-Based Tests**: Use property-based testing (`proptest`) to test for a wide range of inputs.
-- [ ] **Fuzz Testing**: Use fuzz testing (`cargo-fuzz`) to find crashes and vulnerabilities, especially in the CPU decoders.
-- [ ] **Integration Tests**: Create integration tests using existing M68k and Z80 test suites.
+### 3. Aggressive Testing
 
-### Debugging and Instrumentation
-- [ ] **Assembler/Disassembler**: Implement an integrated assembler and disassembler for both M68k and Z80.
-- [ ] **Hex Dumps**: Provide a function to view memory as a hex dump.
-- [ ] **Screenshots**: Implement the ability to take screenshots of the VDP output.
-- [ ] **TAS-like Input Queueing**: Create a system to queue up controller inputs for deterministic runs.
-- [ ] **Debug Interface**: Implement a debug interface for running games (e.g., trapping on an instruction to print debug strings).
-- [ ] **Execution Control**:
-    - [ ] `step_instruction()`: Single-step M68k instructions.
-    - [ ] `step_frame()`: Single-step video frames.
-    - [ ] `run_for_frames(n)`: Run for a specified number of frames.
+All new features, especially CPU opcodes, must be accompanied by comprehensive tests:
 
-### API and Scripting
-- [ ] **Rust API**: Expose all emulator features through a public Rust API.
-- [ ] **Command-Line Interface**: Create a CLI to control the emulator (with no external dependencies).
-- [ ] **Scripting Engine**: Implement a simple, text-based scripting engine for automating tasks (with no external dependencies).
+- **Unit tests**: Standard operation and edge cases
+- **Property-based tests**: Use `proptest` crate for wide input coverage
+- **Flag coverage**: 
+  - M68k: C, V, Z, N, X flags
+  - Z80: C, N, P/V, H, Z, S flags
+
+```bash
+# Run all tests
+cargo test
+
+# Run tests with output
+cargo test -- --nocapture
+
+# Run specific test
+cargo test test_name
+```
+
+## Code Style
+
+- Use `cargo fmt` before committing
+- Use `cargo clippy` to check for common issues
+- Prefer functional patterns where possible
+- Document public APIs with rustdoc comments
+- Keep functions small and focused
+
+## Security Considerations
+
+- Bounds-check all memory accesses (emulator runs untrusted ROM code)
+- Handle invalid/malformed instructions gracefully
+- The debugger interface uses local network sockets - restrict access appropriately
+
+## Agent Capabilities
+
+AI agents working on this project can:
+
+- **Develop the emulator**: Implement features from the roadmap in ARCHITECTURE.md
+- **Play games**: Send controller inputs to test game behavior
+- **Perform targeted testing**: Test specific functionality
+- **Fuzzing**: Generate random inputs to test robustness
+- **Analyze game states**: Read emulator memory to analyze internal state
 
 ---
-*This document is managed by the AI agent and should be kept up-to-date with the latest project plan.*
+
+*This file follows the [AGENTS.md](https://agents.md/) specification.*

@@ -7,8 +7,10 @@ This document outlines the architecture of the `genteel` emulator, providing a c
 - **Project Name**: genteel
 - **Version**: 0.1.0 (pre-alpha)
 - **Description**: An instrumentable Sega Mega Drive/Genesis emulator designed for automated testing by AI language models.
+- **Repository**: (To be added)
 - **Contact**: N/A
 - **License**: (To be determined)
+- **Date of Last Update**: 2025-12-29
 
 ## 1. High-level Architecture
 
@@ -28,91 +30,210 @@ The main interaction flow is as follows:
     - Handles input from the external tool.
 5. The external tool can pause the emulation at any time to inspect the state of the system, provide input, or get the video and audio output.
 
-## 2. Core Components
+## 2. Project Structure
+
+```
+genteel/
+├── src/
+│   ├── main.rs           # Application entry point
+│   ├── lib.rs            # Library exports
+│   ├── cpu/              # M68k CPU implementation
+│   │   └── mod.rs
+│   ├── apu/              # Audio Processing Unit (Z80, YM2612, SN76489)
+│   │   └── mod.rs
+│   ├── vdp/              # Video Display Processor
+│   │   └── mod.rs
+│   ├── memory/           # Memory bus and mapping
+│   │   └── mod.rs
+│   ├── io/               # Input/Output (controllers)
+│   │   └── mod.rs
+│   └── debugger/         # GDB RSP debugging interface
+│       └── mod.rs
+├── docs/                 # Additional documentation
+├── Cargo.toml            # Rust project manifest
+├── README.md             # Project overview for humans
+├── AGENTS.md             # AI agent operational context
+└── ARCHITECTURE.md       # This document
+```
+
+## 3. Core Components
 
 The `genteel` emulator is composed of the following core components, each located in its own module:
 
-- **`cpu`**: Implements the main processor, a Motorola 68000 (M68k). This component is responsible for fetching, decoding, and executing instructions from the game ROM and RAM.
+### 3.1. CPU (`src/cpu/`)
+**Description**: Implements the main processor, a Motorola 68000 (M68k). This component is responsible for fetching, decoding, and executing instructions from the game ROM and RAM.
 
-- **`apu`**: The Audio Processing Unit. This module contains the implementation of the Zilog Z80 sound co-processor, the Yamaha YM2612 FM synthesizer, and the Texas Instruments SN76489 PSG.
+**Technologies**: Rust
 
-- **`vdp`**: The Video Display Processor. This component is responsible for rendering the graphics. It manages video RAM (VRAM), sprites, backgrounds, and generates the video output.
+**Key Interfaces**:
+- Instruction fetch and decode
+- Register access
+- Exception handling
 
-- **`memory`**: This module implements the memory bus and memory mapping. It manages the different types of memory in the system, including ROM, RAM, and VRAM, and handles memory access from the different components.
+### 3.2. APU (`src/apu/`)
+**Description**: The Audio Processing Unit. This module contains the implementation of the Zilog Z80 sound co-processor, the Yamaha YM2612 FM synthesizer, and the Texas Instruments SN76489 PSG.
 
-- **`io`**: This module handles all input and output, including the game controllers.
+**Technologies**: Rust
 
-- **`debugger`**: This module provides the functionality to debug the emulated system. It will implement the GDB Remote Serial Protocol (RSP) to allow external debuggers (like GDB) to connect to the emulator.
+### 3.3. VDP (`src/vdp/`)
+**Description**: The Video Display Processor. This component is responsible for rendering the graphics. It manages video RAM (VRAM), sprites, backgrounds, and generates the video output.
 
-## 3. Data Stores
+**Technologies**: Rust
 
-- **Game ROMs**: The primary data store is the game ROM file, which is loaded into the emulator's memory at the start of the emulation.
-- **Save Games**: The emulator will eventually support saving and loading game states, which will be stored on the host filesystem.
-- **Internal Memory**: The emulator manages several internal memory regions, including:
-    - **Work RAM (WRAM)**: 64KB of general-purpose RAM for the M68k.
-    - **Video RAM (VRAM)**: 64KB of RAM for the VDP to store graphics data.
-    - **Sound RAM**: 8KB of RAM for the Z80.
+### 3.4. Memory (`src/memory/`)
+**Description**: This module implements the memory bus and memory mapping. It manages the different types of memory in the system, including ROM, RAM, and VRAM, and handles memory access from the different components.
 
-## 4. External System Integrations
+**Technologies**: Rust
+
+### 3.5. I/O (`src/io/`)
+**Description**: This module handles all input and output, including the game controllers.
+
+**Technologies**: Rust
+
+### 3.6. Debugger (`src/debugger/`)
+**Description**: This module provides the functionality to debug the emulated system. It will implement the GDB Remote Serial Protocol (RSP) to allow external debuggers (like GDB) to connect to the emulator.
+
+**Technologies**: Rust, GDB RSP
+
+## 4. Data Stores
+
+### 4.1. Game ROMs
+**Type**: File (binary)
+**Purpose**: The primary data store is the game ROM file, which is loaded into the emulator's memory at the start of the emulation.
+
+### 4.2. Internal Memory
+**Type**: In-memory buffers
+**Purpose**: The emulator manages several internal memory regions:
+
+| Memory Type | Size | Purpose |
+|-------------|------|---------|
+| Work RAM (WRAM) | 64KB | General-purpose RAM for M68k |
+| Video RAM (VRAM) | 64KB | Graphics data for VDP |
+| Sound RAM | 8KB | RAM for Z80 co-processor |
+
+### 4.3. Save Games
+**Type**: File (binary)
+**Purpose**: The emulator will eventually support saving and loading game states, which will be stored on the host filesystem.
+
+## 5. External System Integrations
 
 The "instrumentable" nature of `genteel` is achieved through two main interfaces:
 
-- **AI Agent API**: A high-level API for AI agents to control the emulator. See `AGENTS.md` for more details on the planned integration of AI agents. The planned API will include functions to:
-    - `load_rom(rom_data: &[u8])`: Load a game ROM.
-    - `run_frame()`: Execute the emulation for a single frame.
-    - `set_controller_state(port: u8, state: ControllerState)`: Set the state of a game controller.
-    - `read_memory(address: u32) -> u8`: Read a byte from a specific memory address.
-    - `write_memory(address: u32, value: u8)`: Write a byte to a specific memory address.
-    - `get_screen_buffer() -> &[u8]`: Get the current video frame as a raw image buffer.
+### 5.1. AI Agent API
+A high-level API for AI agents to control the emulator. See `AGENTS.md` for more details on agent integration. The planned API will include:
 
-- **Debugger Interface**: A low-level interface for debuggers. This is described in more detail in the "Debugging and Instrumentation" section.
+```rust
+fn load_rom(rom_data: &[u8]);
+fn run_frame();
+fn set_controller_state(port: u8, state: ControllerState);
+fn read_memory(address: u32) -> u8;
+fn write_memory(address: u32, value: u8);
+fn get_screen_buffer() -> &[u8];
+```
 
-To facilitate these integrations, each major component of the emulator will implement the `Debuggable` trait, which provides a standardized way to read and write the component's state.
+### 5.2. Debugger Interface
+A low-level interface for debuggers implementing the GDB Remote Serial Protocol (RSP).
 
-## 5. Deployment and Infrastructure
+To facilitate these integrations, each major component implements the `Debuggable` trait for standardized state access.
 
-`genteel` is a standalone application that can be run on Linux, macOS, and Windows. It will be built and tested using `cargo`.
+## 6. Deployment and Infrastructure
 
-## 6. Security Considerations
+- **Platform**: Linux, macOS, Windows
+- **Build Tool**: `cargo`
+- **CI/CD**: (To be configured)
 
-As an emulator, `genteel` runs code from untrusted sources (game ROMs). Care must be taken to ensure that the emulator is robust against malformed or malicious ROMs. This includes:
-- Bounds checking for all memory accesses.
-- Correct handling of invalid instructions.
+## 7. Security Considerations
 
-The debugger interface will be exposed on a local network socket. Access to this interface should be restricted to trusted users.
+As an emulator, `genteel` runs code from untrusted sources (game ROMs). Care must be taken to ensure robustness:
 
-## 7. Development & Testing Environment
+- **Memory Safety**: Bounds checking for all memory accesses
+- **Instruction Handling**: Correct handling of invalid instructions
+- **Network Security**: The debugger interface on local network sockets should be restricted to trusted users
+
+## 8. Development & Testing Environment
 
 - **Language**: Rust
 - **Build Tool**: `cargo`
-- **Testing**: `cargo test`. We will aim to have a comprehensive test suite, including:
-    - Unit tests for individual components.
-    - Integration tests that run small test ROMs and check the state of the emulator.
-    - Comparison with other emulators to ensure accuracy.
+- **Testing Framework**: `cargo test`
+- **Property Testing**: `proptest` crate
+- **Fuzz Testing**: `cargo-fuzz`
+- **Code Quality**: `cargo clippy`, `cargo fmt`
 
-## 8. Future Considerations & Roadmap
+### Test Coverage Goals:
+- Unit tests for individual components
+- Integration tests with small test ROMs
+- Comparison with other emulators for accuracy verification
 
-The development of `genteel` will follow this general roadmap:
+## 9. Future Considerations & Roadmap
 
-1.  **M68k CPU Core**: Implement a functional M68k CPU core that can execute basic instructions.
-2.  **Memory Bus**: Implement the memory bus and ROM loading.
-3.  **VDP Implementation**: Implement the VDP to get basic graphics output.
-4.  **APU Implementation**: Implement the Z80 and sound chips for audio.
-5.  **Instrumentation API**: Implement the full instrumentation API for external control.
-6.  **Debugger Implementation**: Implement the GDB Remote Serial Protocol in the `debugger` module.
-7.  **Accuracy Improvements**: Continuously improve the accuracy of the emulation by running test suites and comparing with real hardware.
+### Phase 1: M68k CPU Core
+- [ ] Implement full instruction set of the Motorola 68000 CPU
+- [ ] All addressing modes
+- [ ] Exception handling
 
-## 9. Glossary
+### Phase 2: Memory Bus
+- [ ] Implement the memory bus and ROM loading
+- [ ] Full Genesis memory map
+- [ ] Memory-mapped I/O
 
-- **M68k**: Motorola 68000, the main CPU of the Sega Mega Drive/Genesis.
-- **VDP**: Video Display Processor, the custom graphics chip.
-- **Z80**: Zilog Z80, an 8-bit CPU used as a sound co-processor.
-- **YM2612**: A six-voice FM synthesis sound chip.
-- **SN76489**: A programmable sound generator (PSG) chip.
-- **ROM**: Read-Only Memory, where the game's code and data are stored.
-- **GDB RSP**: The GDB Remote Serial Protocol, a protocol for remote debugging.
+### Phase 3: VDP Implementation
+- [ ] Basic VDP register handling
+- [ ] Tile/pattern rendering
+- [ ] Sprite rendering
+- [ ] Background layers (A, B, Window)
 
-## 10. Debugging and Instrumentation
+### Phase 4: APU Implementation
+- [ ] Z80 CPU core
+- [ ] Yamaha YM2612 FM synthesizer
+- [ ] Texas Instruments SN76489 PSG
+
+### Phase 5: Instrumentation API
+- [ ] Rust API for external control
+- [ ] Command-line interface
+- [ ] Simple scripting engine
+
+### Phase 6: I/O and Controllers
+- [ ] 3-button controller support
+- [ ] 6-button controller support
+
+### Phase 7: Debugger Implementation
+- [ ] GDB Remote Serial Protocol support
+- [ ] Breakpoints
+- [ ] Register/memory inspection
+
+### Phase 8: Accuracy Improvements
+- [ ] Run existing test suites
+- [ ] Compare with real hardware
+- [ ] Cycle-accurate timing (stretch goal)
+
+### Testing Roadmap
+- [ ] Unit tests for every component
+- [ ] Property-based tests with `proptest`
+- [ ] Fuzz testing with `cargo-fuzz`
+- [ ] Integration tests with M68k/Z80 test suites
+
+### Debugging & Instrumentation Features
+- [ ] Assembler/Disassembler for M68k and Z80
+- [ ] Memory hex dump viewer
+- [ ] Screenshot capture
+- [ ] TAS-like input queueing
+- [ ] Execution control (`step_instruction()`, `step_frame()`, `run_for_frames(n)`)
+
+## 10. Glossary
+
+| Term | Definition |
+|------|------------|
+| **M68k** | Motorola 68000, the main CPU of the Sega Mega Drive/Genesis |
+| **VDP** | Video Display Processor, the custom graphics chip |
+| **Z80** | Zilog Z80, an 8-bit CPU used as a sound co-processor |
+| **YM2612** | A six-voice FM synthesis sound chip |
+| **SN76489** | A programmable sound generator (PSG) chip |
+| **ROM** | Read-Only Memory, where the game's code and data are stored |
+| **GDB RSP** | The GDB Remote Serial Protocol, a protocol for remote debugging |
+| **VRAM** | Video RAM, memory used by the VDP for graphics |
+| **WRAM** | Work RAM, general-purpose memory for the M68k |
+
+## 11. Debugging and Instrumentation
 
 To allow for deep inspection and control of the emulated system, `genteel` will implement a debugging interface compatible with the GDB Remote Serial Protocol (RSP). This will allow developers to use standard debuggers like GDB to debug the M68k code running inside the emulator.
 
