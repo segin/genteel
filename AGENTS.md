@@ -19,6 +19,11 @@ To ensure a smooth and transparent development process, the following principles
 1.  **Keep `ARCHITECTURE.md` in sync**: The `ARCHITECTURE.md` file is the source of truth for the project's design. Any changes to the architecture must be reflected in this document.
 2.  **Commit on Task Completion**: At the end of each successfully completed task, all changes must be committed to the git repository with a clear and descriptive commit message.
 3.  **Push on Commit**: Every `git commit` must be immediately followed by a `git push` to the remote repository.
+4.  **Aggressive Testing**: All new features, especially CPU opcodes, must be accompanied by comprehensive unit and property-based tests (`proptest`). Tests must cover:
+    -   Standard operation.
+    -   Edge cases (e.g., overflow, zero, max/min values).
+    -   Flag updates (C, V, Z, N, X for M68k; C, N, P/V, H, Z, S for Z80).
+    -   A wide range of inputs using property-based testing to ensure robustness.
 
 ## Project Roadmap
 
