@@ -1,4 +1,8 @@
-// This is a test comment to verify the replace tool.
+//! Memory module for the Genesis emulator
+//!
+//! Provides both simple memory (for testing) and full memory bus with Genesis memory map.
+
+pub mod bus;
 
 #[derive(Debug)]
 pub struct Memory {
