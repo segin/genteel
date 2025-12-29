@@ -13,6 +13,7 @@ libfuzzer-sys = "0.4"
 [dependencies.genteel]
 path = ".."
 
+# Basic random input fuzzer
 [[bin]]
 name = "z80_fuzz"
 path = "fuzz_targets/z80_fuzz.rs"
@@ -20,9 +21,42 @@ test = false
 doc = false
 bench = false
 
+# Structured random program fuzzer
 [[bin]]
 name = "z80_random_program"
 path = "fuzz_targets/z80_random_program.rs"
+test = false
+doc = false
+bench = false
+
+# Smart fuzzer with invariant checking
+[[bin]]
+name = "z80_smart"
+path = "fuzz_targets/z80_smart.rs"
+test = false
+doc = false
+bench = false
+
+# Flag computation fuzzer
+[[bin]]
+name = "z80_flags"
+path = "fuzz_targets/z80_flags.rs"
+test = false
+doc = false
+bench = false
+
+# Prefix interaction fuzzer (DD/FD/CB/ED)
+[[bin]]
+name = "z80_prefix"
+path = "fuzz_targets/z80_prefix.rs"
+test = false
+doc = false
+bench = false
+
+# Memory boundary fuzzer
+[[bin]]
+name = "z80_memory"
+path = "fuzz_targets/z80_memory.rs"
 test = false
 doc = false
 bench = false

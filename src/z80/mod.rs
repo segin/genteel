@@ -1371,4 +1371,23 @@ impl Z80 {
 mod tests;
 
 #[cfg(test)]
+mod tests_load;
+
+#[cfg(test)]
+mod tests_alu;
+
+#[cfg(test)]
+mod tests_cb;
+
+#[cfg(test)]
+mod tests_control;
+
+#[cfg(test)]
+mod tests_ed_ix;
+
+#[cfg(test)]
 mod proptest_tests;
+
+#[cfg(test)]
+mod proptest_expanded;
+
