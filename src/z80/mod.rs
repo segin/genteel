@@ -1386,8 +1386,34 @@ mod tests_control;
 mod tests_ed_ix;
 
 #[cfg(test)]
+mod tests_timing;
+
+#[cfg(test)]
+mod tests_daa;
+
+#[cfg(test)]
+mod tests_block;
+
+#[cfg(test)]
+mod tests_undoc;
+
+#[cfg(test)]
+mod tests_ddcb;
+
+#[cfg(test)]
+mod tests_interrupt;
+
+#[cfg(test)]
+mod tests_halfcarry;
+
+#[cfg(test)]
+mod tests_rrd_rld;
+
+#[cfg(test)]
+mod tests_regression;
+
+#[cfg(test)]
 mod proptest_tests;
 
 #[cfg(test)]
 mod proptest_expanded;
-
