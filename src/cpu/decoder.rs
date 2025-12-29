@@ -1,0 +1,951 @@
+//! M68k Instruction Decoder
+//!
+//! This module decodes M68k opcodes into instruction representations
+//! that can be executed by the CPU.
+
+use std::fmt;
+
+/// Size specifier for M68k instructions
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Size {
+    Byte, // .B - 8 bits
+    Word, // .W - 16 bits
+    Long, // .L - 32 bits
+}
+
+impl Size {
+    /// Decode size from the common 2-bit field (bits 7-6)
+    pub fn from_bits(bits: u8) -> Option<Self> {
+        match bits & 0x03 {
+            0b00 => Some(Size::Byte),
+            0b01 => Some(Size::Word),
+            0b10 => Some(Size::Long),
+            _ => None, // 0b11 is typically invalid or used for address register
+        }
+    }
+
+    /// Decode size from move instruction size field (bits 13-12)
+    pub fn from_move_bits(bits: u8) -> Option<Self> {
+        match bits & 0x03 {
+            0b01 => Some(Size::Byte),
+            0b11 => Some(Size::Word),
+            0b10 => Some(Size::Long),
+            _ => None, // 0b00 is invalid for MOVE
+        }
+    }
+
+    /// Returns the size in bytes
+    pub fn bytes(self) -> u32 {
+        match self {
+            Size::Byte => 1,
+            Size::Word => 2,
+            Size::Long => 4,
+        }
+    }
+}
+
+impl fmt::Display for Size {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Size::Byte => write!(f, ".B"),
+            Size::Word => write!(f, ".W"),
+            Size::Long => write!(f, ".L"),
+        }
+    }
+}
+
+/// M68k Addressing Mode
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AddressingMode {
+    /// Dn - Data Register Direct
+    DataRegister(u8),
+    /// An - Address Register Direct
+    AddressRegister(u8),
+    /// (An) - Address Register Indirect
+    AddressIndirect(u8),
+    /// (An)+ - Address Register Indirect with Postincrement
+    AddressPostIncrement(u8),
+    /// -(An) - Address Register Indirect with Predecrement
+    AddressPreDecrement(u8),
+    /// d16(An) - Address Register Indirect with Displacement
+    AddressDisplacement(u8),
+    /// d8(An,Xn) - Address Register Indirect with Index
+    AddressIndex(u8),
+    /// (xxx).W - Absolute Short
+    AbsoluteShort,
+    /// (xxx).L - Absolute Long
+    AbsoluteLong,
+    /// d16(PC) - Program Counter with Displacement
+    PcDisplacement,
+    /// d8(PC,Xn) - Program Counter with Index
+    PcIndex,
+    /// #<data> - Immediate
+    Immediate,
+}
+
+impl AddressingMode {
+    /// Decode addressing mode from mode (3 bits) and register (3 bits) fields
+    pub fn from_mode_reg(mode: u8, reg: u8) -> Option<Self> {
+        match mode & 0x07 {
+            0b000 => Some(AddressingMode::DataRegister(reg & 0x07)),
+            0b001 => Some(AddressingMode::AddressRegister(reg & 0x07)),
+            0b010 => Some(AddressingMode::AddressIndirect(reg & 0x07)),
+            0b011 => Some(AddressingMode::AddressPostIncrement(reg & 0x07)),
+            0b100 => Some(AddressingMode::AddressPreDecrement(reg & 0x07)),
+            0b101 => Some(AddressingMode::AddressDisplacement(reg & 0x07)),
+            0b110 => Some(AddressingMode::AddressIndex(reg & 0x07)),
+            0b111 => match reg & 0x07 {
+                0b000 => Some(AddressingMode::AbsoluteShort),
+                0b001 => Some(AddressingMode::AbsoluteLong),
+                0b010 => Some(AddressingMode::PcDisplacement),
+                0b011 => Some(AddressingMode::PcIndex),
+                0b100 => Some(AddressingMode::Immediate),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Returns true if this mode is valid as a destination
+    pub fn is_valid_destination(&self) -> bool {
+        !matches!(
+            self,
+            AddressingMode::PcDisplacement
+                | AddressingMode::PcIndex
+                | AddressingMode::Immediate
+        )
+    }
+
+    /// Returns the number of extension words needed for this addressing mode
+    pub fn extension_words(&self, size: Size) -> u32 {
+        match self {
+            AddressingMode::DataRegister(_) | AddressingMode::AddressRegister(_) => 0,
+            AddressingMode::AddressIndirect(_)
+            | AddressingMode::AddressPostIncrement(_)
+            | AddressingMode::AddressPreDecrement(_) => 0,
+            AddressingMode::AddressDisplacement(_) | AddressingMode::PcDisplacement => 1,
+            AddressingMode::AddressIndex(_) | AddressingMode::PcIndex => 1,
+            AddressingMode::AbsoluteShort => 1,
+            AddressingMode::AbsoluteLong => 2,
+            AddressingMode::Immediate => match size {
+                Size::Byte | Size::Word => 1,
+                Size::Long => 2,
+            },
+        }
+    }
+}
+
+impl fmt::Display for AddressingMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AddressingMode::DataRegister(r) => write!(f, "D{}", r),
+            AddressingMode::AddressRegister(r) => write!(f, "A{}", r),
+            AddressingMode::AddressIndirect(r) => write!(f, "(A{})", r),
+            AddressingMode::AddressPostIncrement(r) => write!(f, "(A{})+", r),
+            AddressingMode::AddressPreDecrement(r) => write!(f, "-(A{})", r),
+            AddressingMode::AddressDisplacement(r) => write!(f, "d16(A{})", r),
+            AddressingMode::AddressIndex(r) => write!(f, "d8(A{},Xn)", r),
+            AddressingMode::AbsoluteShort => write!(f, "(xxx).W"),
+            AddressingMode::AbsoluteLong => write!(f, "(xxx).L"),
+            AddressingMode::PcDisplacement => write!(f, "d16(PC)"),
+            AddressingMode::PcIndex => write!(f, "d8(PC,Xn)"),
+            AddressingMode::Immediate => write!(f, "#<data>"),
+        }
+    }
+}
+
+/// Condition codes for Bcc/Scc/DBcc instructions
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Condition {
+    True,        // T  - Always true
+    False,       // F  - Always false
+    High,        // HI - Higher (unsigned)
+    LowOrSame,   // LS - Lower or Same (unsigned)
+    CarryClear,  // CC - Carry Clear (HI for unsigned)
+    CarrySet,    // CS - Carry Set (LO for unsigned)
+    NotEqual,    // NE - Not Equal
+    Equal,       // EQ - Equal
+    OverflowClear, // VC - Overflow Clear
+    OverflowSet,   // VS - Overflow Set
+    Plus,        // PL - Plus (positive)
+    Minus,       // MI - Minus (negative)
+    GreaterOrEqual, // GE - Greater or Equal (signed)
+    LessThan,    // LT - Less Than (signed)
+    GreaterThan, // GT - Greater Than (signed)
+    LessOrEqual, // LE - Less or Equal (signed)
+}
+
+impl Condition {
+    /// Decode condition from 4-bit field
+    pub fn from_bits(bits: u8) -> Self {
+        match bits & 0x0F {
+            0x0 => Condition::True,
+            0x1 => Condition::False,
+            0x2 => Condition::High,
+            0x3 => Condition::LowOrSame,
+            0x4 => Condition::CarryClear,
+            0x5 => Condition::CarrySet,
+            0x6 => Condition::NotEqual,
+            0x7 => Condition::Equal,
+            0x8 => Condition::OverflowClear,
+            0x9 => Condition::OverflowSet,
+            0xA => Condition::Plus,
+            0xB => Condition::Minus,
+            0xC => Condition::GreaterOrEqual,
+            0xD => Condition::LessThan,
+            0xE => Condition::GreaterThan,
+            0xF => Condition::LessOrEqual,
+            _ => unreachable!(),
+        }
+    }
+
+    /// Returns the mnemonic for this condition
+    pub fn mnemonic(&self) -> &'static str {
+        match self {
+            Condition::True => "T",
+            Condition::False => "F",
+            Condition::High => "HI",
+            Condition::LowOrSame => "LS",
+            Condition::CarryClear => "CC",
+            Condition::CarrySet => "CS",
+            Condition::NotEqual => "NE",
+            Condition::Equal => "EQ",
+            Condition::OverflowClear => "VC",
+            Condition::OverflowSet => "VS",
+            Condition::Plus => "PL",
+            Condition::Minus => "MI",
+            Condition::GreaterOrEqual => "GE",
+            Condition::LessThan => "LT",
+            Condition::GreaterThan => "GT",
+            Condition::LessOrEqual => "LE",
+        }
+    }
+}
+
+/// Decoded M68k instruction
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Instruction {
+    // Data Movement
+    Move { size: Size, src: AddressingMode, dst: AddressingMode },
+    MoveA { size: Size, src: AddressingMode, dst_reg: u8 },
+    MoveQ { dst_reg: u8, data: i8 },
+    Lea { src: AddressingMode, dst_reg: u8 },
+    Pea { src: AddressingMode },
+    Clr { size: Size, dst: AddressingMode },
+    Exg { rx: u8, ry: u8, mode: u8 },
+
+    // Arithmetic
+    Add { size: Size, src: AddressingMode, dst: AddressingMode, direction: bool },
+    AddA { size: Size, src: AddressingMode, dst_reg: u8 },
+    AddI { size: Size, dst: AddressingMode },
+    AddQ { size: Size, dst: AddressingMode, data: u8 },
+    Sub { size: Size, src: AddressingMode, dst: AddressingMode, direction: bool },
+    SubA { size: Size, src: AddressingMode, dst_reg: u8 },
+    SubI { size: Size, dst: AddressingMode },
+    SubQ { size: Size, dst: AddressingMode, data: u8 },
+    MulU { src: AddressingMode, dst_reg: u8 },
+    MulS { src: AddressingMode, dst_reg: u8 },
+    DivU { src: AddressingMode, dst_reg: u8 },
+    DivS { src: AddressingMode, dst_reg: u8 },
+    Neg { size: Size, dst: AddressingMode },
+    Ext { size: Size, reg: u8 },
+
+    // Logical
+    And { size: Size, src: AddressingMode, dst: AddressingMode, direction: bool },
+    AndI { size: Size, dst: AddressingMode },
+    Or { size: Size, src: AddressingMode, dst: AddressingMode, direction: bool },
+    OrI { size: Size, dst: AddressingMode },
+    Eor { size: Size, src_reg: u8, dst: AddressingMode },
+    EorI { size: Size, dst: AddressingMode },
+    Not { size: Size, dst: AddressingMode },
+
+    // Shifts and Rotates
+    Lsl { size: Size, dst: AddressingMode, count: ShiftCount },
+    Lsr { size: Size, dst: AddressingMode, count: ShiftCount },
+    Asl { size: Size, dst: AddressingMode, count: ShiftCount },
+    Asr { size: Size, dst: AddressingMode, count: ShiftCount },
+    Rol { size: Size, dst: AddressingMode, count: ShiftCount },
+    Ror { size: Size, dst: AddressingMode, count: ShiftCount },
+    Roxl { size: Size, dst: AddressingMode, count: ShiftCount },
+    Roxr { size: Size, dst: AddressingMode, count: ShiftCount },
+
+    // Bit Manipulation
+    Btst { bit: BitSource, dst: AddressingMode },
+    Bset { bit: BitSource, dst: AddressingMode },
+    Bclr { bit: BitSource, dst: AddressingMode },
+    Bchg { bit: BitSource, dst: AddressingMode },
+
+    // Compare and Test
+    Cmp { size: Size, src: AddressingMode, dst_reg: u8 },
+    CmpA { size: Size, src: AddressingMode, dst_reg: u8 },
+    CmpI { size: Size, dst: AddressingMode },
+    Tst { size: Size, dst: AddressingMode },
+
+    // Branch and Jump
+    Bra { displacement: i16 },
+    Bsr { displacement: i16 },
+    Bcc { condition: Condition, displacement: i16 },
+    DBcc { condition: Condition, reg: u8 },
+    Jmp { dst: AddressingMode },
+    Jsr { dst: AddressingMode },
+    Rts,
+    Rte,
+    Rtr,
+
+    // Misc
+    Nop,
+    Reset,
+    Stop,
+    Trap { vector: u8 },
+    TrapV,
+    Link { reg: u8 },
+    Unlk { reg: u8 },
+    Swap { reg: u8 },
+
+    // Status Register
+    MoveToSr { src: AddressingMode },
+    MoveFromSr { dst: AddressingMode },
+    MoveToCcr { src: AddressingMode },
+    AndiToCcr,
+    AndiToSr,
+    OriToCcr,
+    OriToSr,
+    EoriToCcr,
+    EoriToSr,
+
+    // Illegal/Unimplemented
+    Illegal,
+    Unimplemented { opcode: u16 },
+}
+
+/// Shift count source for shift instructions
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShiftCount {
+    Immediate(u8),  // 1-8 (0 encodes 8)
+    Register(u8),   // Value in Dn
+}
+
+/// Bit source for bit manipulation instructions
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BitSource {
+    Immediate,      // Bit number in extension word
+    Register(u8),   // Bit number in Dn
+}
+
+/// Decode a single M68k instruction from an opcode
+pub fn decode(opcode: u16) -> Instruction {
+    // Extract the top 4 bits to determine instruction group
+    let group = (opcode >> 12) & 0x0F;
+
+    match group {
+        0x0 => decode_group_0(opcode),
+        0x1 => decode_move_byte(opcode),
+        0x2 => decode_move_long(opcode),
+        0x3 => decode_move_word(opcode),
+        0x4 => decode_group_4(opcode),
+        0x5 => decode_group_5(opcode),
+        0x6 => decode_group_6(opcode),
+        0x7 => decode_moveq(opcode),
+        0x8 => decode_group_8(opcode),
+        0x9 => decode_sub(opcode),
+        0xA => Instruction::Unimplemented { opcode }, // A-line traps
+        0xB => decode_group_b(opcode),
+        0xC => decode_group_c(opcode),
+        0xD => decode_add(opcode),
+        0xE => decode_shifts(opcode),
+        0xF => Instruction::Unimplemented { opcode }, // F-line traps
+        _ => unreachable!(),
+    }
+}
+
+// === Group decoders ===
+
+fn decode_group_0(opcode: u16) -> Instruction {
+    // Bit manipulation, MOVEP, and immediate operations
+    let bit8 = (opcode >> 8) & 0x01;
+
+    if opcode & 0x0100 != 0 && opcode & 0x0038 != 0x0008 {
+        // Bit manipulation with register
+        let reg = ((opcode >> 9) & 0x07) as u8;
+        let mode = ((opcode >> 3) & 0x07) as u8;
+        let ea_reg = (opcode & 0x07) as u8;
+
+        if let Some(dst) = AddressingMode::from_mode_reg(mode, ea_reg) {
+            let op = (opcode >> 6) & 0x03;
+            let bit = BitSource::Register(reg);
+            return match op {
+                0b00 => Instruction::Btst { bit, dst },
+                0b01 => Instruction::Bchg { bit, dst },
+                0b10 => Instruction::Bclr { bit, dst },
+                0b11 => Instruction::Bset { bit, dst },
+                _ => unreachable!(),
+            };
+        }
+    }
+
+    // Check for immediate operations
+    if bit8 == 0 {
+        let size_bits = ((opcode >> 6) & 0x03) as u8;
+        let mode = ((opcode >> 3) & 0x07) as u8;
+        let reg = (opcode & 0x07) as u8;
+
+        if let Some(size) = Size::from_bits(size_bits) {
+            if let Some(dst) = AddressingMode::from_mode_reg(mode, reg) {
+                let op = (opcode >> 9) & 0x07;
+                return match op {
+                    0b000 => Instruction::OrI { size, dst },
+                    0b001 => Instruction::AndI { size, dst },
+                    0b010 => Instruction::SubI { size, dst },
+                    0b011 => Instruction::AddI { size, dst },
+                    0b100 => Instruction::Btst { bit: BitSource::Immediate, dst },
+                    0b101 => Instruction::EorI { size, dst },
+                    0b110 => Instruction::CmpI { size, dst },
+                    _ => Instruction::Unimplemented { opcode },
+                };
+            }
+        }
+    }
+
+    Instruction::Unimplemented { opcode }
+}
+
+fn decode_move_byte(opcode: u16) -> Instruction {
+    decode_move(opcode, Size::Byte)
+}
+
+fn decode_move_long(opcode: u16) -> Instruction {
+    decode_move(opcode, Size::Long)
+}
+
+fn decode_move_word(opcode: u16) -> Instruction {
+    decode_move(opcode, Size::Word)
+}
+
+fn decode_move(opcode: u16, size: Size) -> Instruction {
+    // MOVE instruction format:
+    // Bits 15-12: Size (01=byte, 11=word, 10=long)
+    // Bits 11-9: Destination register
+    // Bits 8-6: Destination mode
+    // Bits 5-3: Source mode
+    // Bits 2-0: Source register
+
+    let dst_reg = ((opcode >> 9) & 0x07) as u8;
+    let dst_mode = ((opcode >> 6) & 0x07) as u8;
+    let src_mode = ((opcode >> 3) & 0x07) as u8;
+    let src_reg = (opcode & 0x07) as u8;
+
+    let src = match AddressingMode::from_mode_reg(src_mode, src_reg) {
+        Some(m) => m,
+        None => return Instruction::Unimplemented { opcode },
+    };
+
+    // MOVEA has destination mode 001 (address register)
+    if dst_mode == 0b001 {
+        // MOVEA - size must be word or long
+        if size == Size::Byte {
+            return Instruction::Unimplemented { opcode };
+        }
+        return Instruction::MoveA { size, src, dst_reg };
+    }
+
+    let dst = match AddressingMode::from_mode_reg(dst_mode, dst_reg) {
+        Some(m) => m,
+        None => return Instruction::Unimplemented { opcode },
+    };
+
+    if !dst.is_valid_destination() {
+        return Instruction::Unimplemented { opcode };
+    }
+
+    Instruction::Move { size, src, dst }
+}
+
+fn decode_group_4(opcode: u16) -> Instruction {
+    // Miscellaneous instructions: NEG, CLR, NOT, TST, JSR, JMP, LEA, PEA, EXT, SWAP, etc.
+
+    let bits_11_8 = (opcode >> 8) & 0x0F;
+    let bits_7_6 = (opcode >> 6) & 0x03;
+    let mode = ((opcode >> 3) & 0x07) as u8;
+    let reg = (opcode & 0x07) as u8;
+
+    // Check for specific instructions first
+    match opcode & 0xFFF8 {
+        0x4E70 => return match reg {
+            0 => Instruction::Reset,
+            1 => Instruction::Nop,
+            2 => Instruction::Stop,
+            3 => Instruction::Rte,
+            5 => Instruction::Rts,
+            6 => Instruction::TrapV,
+            7 => Instruction::Rtr,
+            _ => Instruction::Unimplemented { opcode },
+        },
+        0x4E50 => return Instruction::Link { reg },
+        0x4E58 => return Instruction::Unlk { reg },
+        0x4840 => return Instruction::Swap { reg },
+        0x4880 => return Instruction::Ext { size: Size::Word, reg },
+        0x48C0 => return Instruction::Ext { size: Size::Long, reg },
+        _ => {}
+    }
+
+    // TRAP
+    if opcode & 0xFFF0 == 0x4E40 {
+        return Instruction::Trap { vector: (opcode & 0x0F) as u8 };
+    }
+
+    // LEA
+    if opcode & 0xF1C0 == 0x41C0 {
+        let dst_reg = ((opcode >> 9) & 0x07) as u8;
+        if let Some(src) = AddressingMode::from_mode_reg(mode, reg) {
+            return Instruction::Lea { src, dst_reg };
+        }
+    }
+
+    // PEA
+    if opcode & 0xFFC0 == 0x4840 && mode != 0 {
+        if let Some(src) = AddressingMode::from_mode_reg(mode, reg) {
+            return Instruction::Pea { src };
+        }
+    }
+
+    // JMP
+    if opcode & 0xFFC0 == 0x4EC0 {
+        if let Some(dst) = AddressingMode::from_mode_reg(mode, reg) {
+            return Instruction::Jmp { dst };
+        }
+    }
+
+    // JSR
+    if opcode & 0xFFC0 == 0x4E80 {
+        if let Some(dst) = AddressingMode::from_mode_reg(mode, reg) {
+            return Instruction::Jsr { dst };
+        }
+    }
+
+    // CLR, NEG, NOT, TST
+    if let Some(size) = Size::from_bits(bits_7_6 as u8) {
+        if let Some(dst) = AddressingMode::from_mode_reg(mode, reg) {
+            return match bits_11_8 {
+                0x2 => Instruction::Clr { size, dst },
+                0x4 => Instruction::Neg { size, dst },
+                0x6 => Instruction::Not { size, dst },
+                0xA => Instruction::Tst { size, dst },
+                _ => Instruction::Unimplemented { opcode },
+            };
+        }
+    }
+
+    // MOVE from SR
+    if opcode & 0xFFC0 == 0x40C0 {
+        if let Some(dst) = AddressingMode::from_mode_reg(mode, reg) {
+            return Instruction::MoveFromSr { dst };
+        }
+    }
+
+    // MOVE to CCR
+    if opcode & 0xFFC0 == 0x44C0 {
+        if let Some(src) = AddressingMode::from_mode_reg(mode, reg) {
+            return Instruction::MoveToCcr { src };
+        }
+    }
+
+    // MOVE to SR
+    if opcode & 0xFFC0 == 0x46C0 {
+        if let Some(src) = AddressingMode::from_mode_reg(mode, reg) {
+            return Instruction::MoveToSr { src };
+        }
+    }
+
+    Instruction::Unimplemented { opcode }
+}
+
+fn decode_group_5(opcode: u16) -> Instruction {
+    // ADDQ, SUBQ, Scc, DBcc
+
+    let data = ((opcode >> 9) & 0x07) as u8;
+    let data = if data == 0 { 8 } else { data };
+    let size_bits = ((opcode >> 6) & 0x03) as u8;
+    let mode = ((opcode >> 3) & 0x07) as u8;
+    let reg = (opcode & 0x07) as u8;
+
+    // DBcc
+    if size_bits == 0b11 && mode == 0b001 {
+        let condition = Condition::from_bits(((opcode >> 8) & 0x0F) as u8);
+        return Instruction::DBcc { condition, reg };
+    }
+
+    // Scc (size_bits == 0b11, mode != 0b001)
+    if size_bits == 0b11 {
+        // TODO: Implement Scc
+        return Instruction::Unimplemented { opcode };
+    }
+
+    if let Some(size) = Size::from_bits(size_bits) {
+        if let Some(dst) = AddressingMode::from_mode_reg(mode, reg) {
+            let is_sub = (opcode >> 8) & 0x01 != 0;
+            if is_sub {
+                return Instruction::SubQ { size, dst, data };
+            } else {
+                return Instruction::AddQ { size, dst, data };
+            }
+        }
+    }
+
+    Instruction::Unimplemented { opcode }
+}
+
+fn decode_group_6(opcode: u16) -> Instruction {
+    // Bcc, BRA, BSR
+
+    let condition_bits = ((opcode >> 8) & 0x0F) as u8;
+    let displacement_byte = (opcode & 0xFF) as i8;
+
+    // Displacement of 0 means 16-bit displacement follows
+    // Displacement of 0xFF means 32-bit displacement follows (68020+)
+    let displacement = displacement_byte as i16;
+
+    match condition_bits {
+        0x0 => Instruction::Bra { displacement },
+        0x1 => Instruction::Bsr { displacement },
+        _ => {
+            let condition = Condition::from_bits(condition_bits);
+            Instruction::Bcc { condition, displacement }
+        }
+    }
+}
+
+fn decode_moveq(opcode: u16) -> Instruction {
+    // MOVEQ - Move Quick
+    // Format: 0111 DDD 0 DDDDDDDD
+    // D = destination register, D = 8-bit data
+
+    if opcode & 0x0100 != 0 {
+        return Instruction::Unimplemented { opcode };
+    }
+
+    let dst_reg = ((opcode >> 9) & 0x07) as u8;
+    let data = (opcode & 0xFF) as i8;
+
+    Instruction::MoveQ { dst_reg, data }
+}
+
+fn decode_group_8(opcode: u16) -> Instruction {
+    // OR, DIV, SBCD
+
+    let reg = ((opcode >> 9) & 0x07) as u8;
+    let direction = (opcode >> 8) & 0x01 != 0;
+    let size_bits = ((opcode >> 6) & 0x03) as u8;
+    let ea_mode = ((opcode >> 3) & 0x07) as u8;
+    let ea_reg = (opcode & 0x07) as u8;
+
+    // DIVU
+    if size_bits == 0b11 && !direction {
+        if let Some(src) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
+            return Instruction::DivU { src, dst_reg: reg };
+        }
+    }
+
+    // DIVS
+    if size_bits == 0b11 && direction {
+        if let Some(src) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
+            return Instruction::DivS { src, dst_reg: reg };
+        }
+    }
+
+    // OR
+    if let Some(size) = Size::from_bits(size_bits) {
+        if let Some(ea) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
+            let (src, dst) = if direction {
+                (AddressingMode::DataRegister(reg), ea)
+            } else {
+                (ea, AddressingMode::DataRegister(reg))
+            };
+            return Instruction::Or { size, src, dst, direction };
+        }
+    }
+
+    Instruction::Unimplemented { opcode }
+}
+
+fn decode_sub(opcode: u16) -> Instruction {
+    let reg = ((opcode >> 9) & 0x07) as u8;
+    let direction = (opcode >> 8) & 0x01 != 0;
+    let size_bits = ((opcode >> 6) & 0x03) as u8;
+    let ea_mode = ((opcode >> 3) & 0x07) as u8;
+    let ea_reg = (opcode & 0x07) as u8;
+
+    // SUBA
+    if size_bits == 0b11 || (size_bits == 0b11 && direction) {
+        if size_bits == 0b11 {
+            let size = if direction { Size::Long } else { Size::Word };
+            if let Some(src) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
+                return Instruction::SubA { size, src, dst_reg: reg };
+            }
+        }
+    }
+
+    // SUB
+    if let Some(size) = Size::from_bits(size_bits) {
+        if let Some(ea) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
+            let (src, dst) = if direction {
+                (AddressingMode::DataRegister(reg), ea)
+            } else {
+                (ea, AddressingMode::DataRegister(reg))
+            };
+            return Instruction::Sub { size, src, dst, direction };
+        }
+    }
+
+    Instruction::Unimplemented { opcode }
+}
+
+fn decode_group_b(opcode: u16) -> Instruction {
+    // CMP, CMPA, EOR, CMPM
+
+    let reg = ((opcode >> 9) & 0x07) as u8;
+    let opmode = (opcode >> 6) & 0x07;
+    let ea_mode = ((opcode >> 3) & 0x07) as u8;
+    let ea_reg = (opcode & 0x07) as u8;
+
+    // CMPA
+    if opmode == 0b011 || opmode == 0b111 {
+        let size = if opmode == 0b011 { Size::Word } else { Size::Long };
+        if let Some(src) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
+            return Instruction::CmpA { size, src, dst_reg: reg };
+        }
+    }
+
+    // EOR (direction bit set, not CMPA)
+    if opmode & 0x04 != 0 && opmode != 0b111 {
+        let size_bits = (opmode & 0x03) as u8;
+        if let Some(size) = Size::from_bits(size_bits) {
+            if let Some(dst) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
+                return Instruction::Eor { size, src_reg: reg, dst };
+            }
+        }
+    }
+
+    // CMP
+    let size_bits = (opmode & 0x03) as u8;
+    if let Some(size) = Size::from_bits(size_bits) {
+        if let Some(src) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
+            return Instruction::Cmp { size, src, dst_reg: reg };
+        }
+    }
+
+    Instruction::Unimplemented { opcode }
+}
+
+fn decode_group_c(opcode: u16) -> Instruction {
+    // AND, MUL, ABCD, EXG
+
+    let reg = ((opcode >> 9) & 0x07) as u8;
+    let direction = (opcode >> 8) & 0x01 != 0;
+    let size_bits = ((opcode >> 6) & 0x03) as u8;
+    let ea_mode = ((opcode >> 3) & 0x07) as u8;
+    let ea_reg = (opcode & 0x07) as u8;
+
+    // EXG
+    if opcode & 0x0130 == 0x0100 {
+        let mode = ((opcode >> 3) & 0x1F) as u8;
+        return Instruction::Exg { rx: reg, ry: ea_reg, mode };
+    }
+
+    // MULU
+    if size_bits == 0b11 && !direction {
+        if let Some(src) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
+            return Instruction::MulU { src, dst_reg: reg };
+        }
+    }
+
+    // MULS
+    if size_bits == 0b11 && direction {
+        if let Some(src) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
+            return Instruction::MulS { src, dst_reg: reg };
+        }
+    }
+
+    // AND
+    if let Some(size) = Size::from_bits(size_bits) {
+        if let Some(ea) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
+            let (src, dst) = if direction {
+                (AddressingMode::DataRegister(reg), ea)
+            } else {
+                (ea, AddressingMode::DataRegister(reg))
+            };
+            return Instruction::And { size, src, dst, direction };
+        }
+    }
+
+    Instruction::Unimplemented { opcode }
+}
+
+fn decode_add(opcode: u16) -> Instruction {
+    let reg = ((opcode >> 9) & 0x07) as u8;
+    let direction = (opcode >> 8) & 0x01 != 0;
+    let size_bits = ((opcode >> 6) & 0x03) as u8;
+    let ea_mode = ((opcode >> 3) & 0x07) as u8;
+    let ea_reg = (opcode & 0x07) as u8;
+
+    // ADDA
+    if size_bits == 0b11 {
+        let size = if direction { Size::Long } else { Size::Word };
+        if let Some(src) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
+            return Instruction::AddA { size, src, dst_reg: reg };
+        }
+    }
+
+    // ADD
+    if let Some(size) = Size::from_bits(size_bits) {
+        if let Some(ea) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
+            let (src, dst) = if direction {
+                (AddressingMode::DataRegister(reg), ea)
+            } else {
+                (ea, AddressingMode::DataRegister(reg))
+            };
+            return Instruction::Add { size, src, dst, direction };
+        }
+    }
+
+    Instruction::Unimplemented { opcode }
+}
+
+fn decode_shifts(opcode: u16) -> Instruction {
+    // ASL, ASR, LSL, LSR, ROL, ROR, ROXL, ROXR
+
+    let count_or_reg = ((opcode >> 9) & 0x07) as u8;
+    let direction = (opcode >> 8) & 0x01 != 0; // 0 = right, 1 = left
+    let size_bits = ((opcode >> 6) & 0x03) as u8;
+    let ir = (opcode >> 5) & 0x01 != 0; // 0 = immediate, 1 = register
+    let op_type = ((opcode >> 3) & 0x03) as u8;
+    let reg = (opcode & 0x07) as u8;
+
+    // Memory shifts (size = 0b11)
+    if size_bits == 0b11 {
+        let ea_mode = ((opcode >> 3) & 0x07) as u8;
+        let ea_reg = (opcode & 0x07) as u8;
+        if let Some(dst) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
+            let count = ShiftCount::Immediate(1); // Memory shifts are always by 1
+            return match (op_type, direction) {
+                (0b00, false) => Instruction::Asr { size: Size::Word, dst, count },
+                (0b00, true) => Instruction::Asl { size: Size::Word, dst, count },
+                (0b01, false) => Instruction::Lsr { size: Size::Word, dst, count },
+                (0b01, true) => Instruction::Lsl { size: Size::Word, dst, count },
+                (0b10, false) => Instruction::Roxr { size: Size::Word, dst, count },
+                (0b10, true) => Instruction::Roxl { size: Size::Word, dst, count },
+                (0b11, false) => Instruction::Ror { size: Size::Word, dst, count },
+                (0b11, true) => Instruction::Rol { size: Size::Word, dst, count },
+                _ => Instruction::Unimplemented { opcode },
+            };
+        }
+    }
+
+    // Register shifts
+    if let Some(size) = Size::from_bits(size_bits) {
+        let count = if ir {
+            ShiftCount::Register(count_or_reg)
+        } else {
+            let imm = if count_or_reg == 0 { 8 } else { count_or_reg };
+            ShiftCount::Immediate(imm)
+        };
+        let dst = AddressingMode::DataRegister(reg);
+
+        return match (op_type, direction) {
+            (0b00, false) => Instruction::Asr { size, dst, count },
+            (0b00, true) => Instruction::Asl { size, dst, count },
+            (0b01, false) => Instruction::Lsr { size, dst, count },
+            (0b01, true) => Instruction::Lsl { size, dst, count },
+            (0b10, false) => Instruction::Roxr { size, dst, count },
+            (0b10, true) => Instruction::Roxl { size, dst, count },
+            (0b11, false) => Instruction::Ror { size, dst, count },
+            (0b11, true) => Instruction::Rol { size, dst, count },
+            _ => Instruction::Unimplemented { opcode },
+        };
+    }
+
+    Instruction::Unimplemented { opcode }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_decode_nop() {
+        assert_eq!(decode(0x4E71), Instruction::Nop);
+    }
+
+    #[test]
+    fn test_decode_rts() {
+        assert_eq!(decode(0x4E75), Instruction::Rts);
+    }
+
+    #[test]
+    fn test_decode_move_l_d1_d0() {
+        // MOVE.L D1, D0 = 0x2001
+        let instr = decode(0x2001);
+        assert_eq!(
+            instr,
+            Instruction::Move {
+                size: Size::Long,
+                src: AddressingMode::DataRegister(1),
+                dst: AddressingMode::DataRegister(0),
+            }
+        );
+    }
+
+    #[test]
+    fn test_decode_moveq() {
+        // MOVEQ #42, D3
+        let instr = decode(0x762A);
+        assert_eq!(
+            instr,
+            Instruction::MoveQ {
+                dst_reg: 3,
+                data: 42,
+            }
+        );
+    }
+
+    #[test]
+    fn test_decode_bra() {
+        // BRA with 8-bit displacement
+        let instr = decode(0x6010);
+        assert_eq!(instr, Instruction::Bra { displacement: 16 });
+    }
+
+    #[test]
+    fn test_decode_beq() {
+        // BEQ with 8-bit displacement
+        let instr = decode(0x6708);
+        assert_eq!(
+            instr,
+            Instruction::Bcc {
+                condition: Condition::Equal,
+                displacement: 8,
+            }
+        );
+    }
+
+    #[test]
+    fn test_decode_addq() {
+        // ADDQ.L #8, D0
+        let instr = decode(0x5080);
+        assert_eq!(
+            instr,
+            Instruction::AddQ {
+                size: Size::Long,
+                dst: AddressingMode::DataRegister(0),
+                data: 8,
+            }
+        );
+    }
+
+    #[test]
+    fn test_addressing_mode_display() {
+        assert_eq!(format!("{}", AddressingMode::DataRegister(3)), "D3");
+        assert_eq!(format!("{}", AddressingMode::AddressIndirect(5)), "(A5)");
+        assert_eq!(format!("{}", AddressingMode::AddressPostIncrement(2)), "(A2)+");
+        assert_eq!(format!("{}", AddressingMode::AddressPreDecrement(7)), "-(A7)");
+    }
+}
