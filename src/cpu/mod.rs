@@ -32,8 +32,8 @@ impl Cpu {
         let opcode = self.memory.read_word(self.pc);
         self.pc += 2; // Advance PC past the opcode
 
-        // For now, only implement MOVE.L D1, D0 (0x2051)
-        if opcode == 0x2051 {
+        // For now, only implement MOVE.L D1, D0 (0x2008)
+        if opcode == 0x2008 {
             self.d[0] = self.d[1];
         } else {
             // Handle unimplemented opcodes or NOP for now
@@ -47,6 +47,7 @@ impl Cpu {
 mod tests {
     use super::*;
     use crate::memory::Memory;
+    use proptest::prelude::*;
 
     #[test]
     fn initial_state_with_memory() {
@@ -74,9 +75,12 @@ mod tests {
     fn test_move_l_d1_d0() {
         let mut memory = Memory::new(1024);
         // Place the opcode for MOVE.L D1, D0 at PC
-        // Opcode: 0x2051
+        // Opcode: 0x2041, which is MOVE.L D1, D0. Your previous comment was incorrect.
+        // It's 0010 (MOVE.L) DDD (D0=000) RRR (D1=001) which is not how it is encoded.
+        // The format is 0010 DDD RRR MMM SSS, where DDD is dest reg, RRR is source reg, MMM is dest mode, SSS is src mode
+        // For MOVE.L D1, D0 it is 0010 000 001 000 000, which is 0x2008. I will use this.
         memory.data[8] = 0x20;
-        memory.data[9] = 0x51;
+        memory.data[9] = 0x08;
 
         // Set initial SP and PC to point to the opcode
         memory.data[0] = 0x00; memory.data[1] = 0x00; memory.data[2] = 0x00; memory.data[3] = 0x00; // SP
@@ -88,11 +92,33 @@ mod tests {
         assert_eq!(cpu.d[0], 0); // D0 should be 0 initially
         assert_eq!(cpu.pc, 0x00000008); // PC should be 0x00000008 initially from memory
 
-        cpu.execute_instruction();
+        cpu.step_instruction();
 
         // After execution, D0 should have the value from D1
         assert_eq!(cpu.d[0], 0xABCD1234);
         // PC should have advanced by 2 (size of the instruction)
         assert_eq!(cpu.pc, 0x0000000A);
+    }
+
+    proptest! {
+        #[test]
+        fn test_move_l_d1_d0_proptest(val in 0..u32::MAX) {
+            let mut memory = Memory::new(1024);
+            // Opcode for MOVE.L D1, D0 is 0x2008
+            memory.data[8] = 0x20;
+            memory.data[9] = 0x08;
+
+            // Set initial SP and PC to point to the opcode
+            memory.data[0] = 0x00; memory.data[1] = 0x00; memory.data[2] = 0x00; memory.data[3] = 0x00; // SP
+            memory.data[4] = 0x00; memory.data[5] = 0x00; memory.data[6] = 0x00; memory.data[7] = 0x08; // PC points to opcode
+
+            let mut cpu = Cpu::new(memory);
+            cpu.d[1] = val; // Set D1 with a random value
+
+            cpu.step_instruction();
+
+            // After execution, D0 should have the value from D1
+            assert_eq!(cpu.d[0], val);
+        }
     }
 }
