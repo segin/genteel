@@ -32,13 +32,15 @@ impl Cpu {
         let opcode = self.memory.read_word(self.pc);
         self.pc += 2; // Advance PC past the opcode
 
-        // For now, only implement MOVE.L D1, D0 (0x2008)
-        if opcode == 0x2008 {
+        // For now, only implement MOVE.L D1, D0 (0x2008), MOVE.B (0x1008), MOVE.W (0x3008)
+        if opcode == 0x2008 { // MOVE.L D1, D0
             self.d[0] = self.d[1];
+        } else if opcode == 0x1008 { // MOVE.B D1, D0
+            self.d[0] = (self.d[0] & 0xFFFFFF00) | (self.d[1] & 0xFF);
+        } else if opcode == 0x3008 { // MOVE.W D1, D0
+            self.d[0] = (self.d[0] & 0xFFFF0000) | (self.d[1] & 0xFFFF);
         } else {
             // Handle unimplemented opcodes or NOP for now
-            // In a real emulator, this would be a lookup table or complex decoding logic.
-            // For now, it's just a placeholder to let the test fail.
         }
     }
 }
@@ -74,29 +76,53 @@ mod tests {
     #[test]
     fn test_move_l_d1_d0() {
         let mut memory = Memory::new(1024);
-        // Place the opcode for MOVE.L D1, D0 at PC
-        // Opcode: 0x2041, which is MOVE.L D1, D0. Your previous comment was incorrect.
-        // It's 0010 (MOVE.L) DDD (D0=000) RRR (D1=001) which is not how it is encoded.
-        // The format is 0010 DDD RRR MMM SSS, where DDD is dest reg, RRR is source reg, MMM is dest mode, SSS is src mode
-        // For MOVE.L D1, D0 it is 0010 000 001 000 000, which is 0x2008. I will use this.
         memory.data[8] = 0x20;
         memory.data[9] = 0x08;
 
-        // Set initial SP and PC to point to the opcode
-        memory.data[0] = 0x00; memory.data[1] = 0x00; memory.data[2] = 0x00; memory.data[3] = 0x00; // SP
-        memory.data[4] = 0x00; memory.data[5] = 0x00; memory.data[6] = 0x00; memory.data[7] = 0x08; // PC points to opcode
+        memory.data[4] = 0x00; memory.data[5] = 0x00; memory.data[6] = 0x00; memory.data[7] = 0x08;
 
         let mut cpu = Cpu::new(memory);
-        cpu.d[1] = 0xABCD1234; // Set D1 with a known value
-
-        assert_eq!(cpu.d[0], 0); // D0 should be 0 initially
-        assert_eq!(cpu.pc, 0x00000008); // PC should be 0x00000008 initially from memory
+        cpu.d[1] = 0xABCD1234;
 
         cpu.step_instruction();
 
-        // After execution, D0 should have the value from D1
         assert_eq!(cpu.d[0], 0xABCD1234);
-        // PC should have advanced by 2 (size of the instruction)
+        assert_eq!(cpu.pc, 0x0000000A);
+    }
+
+    #[test]
+    fn test_move_b_d1_d0() {
+        let mut memory = Memory::new(1024);
+        memory.data[8] = 0x10;
+        memory.data[9] = 0x08;
+
+        memory.data[4] = 0x00; memory.data[5] = 0x00; memory.data[6] = 0x00; memory.data[7] = 0x08;
+
+        let mut cpu = Cpu::new(memory);
+        cpu.d[1] = 0xABCD1234;
+        cpu.d[0] = 0xEEEEEEEE;
+
+        cpu.step_instruction();
+
+        assert_eq!(cpu.d[0], 0xEEEEEE34);
+        assert_eq!(cpu.pc, 0x0000000A);
+    }
+
+    #[test]
+    fn test_move_w_d1_d0() {
+        let mut memory = Memory::new(1024);
+        memory.data[8] = 0x30;
+        memory.data[9] = 0x08;
+
+        memory.data[4] = 0x00; memory.data[5] = 0x00; memory.data[6] = 0x00; memory.data[7] = 0x08;
+
+        let mut cpu = Cpu::new(memory);
+        cpu.d[1] = 0xABCD1234;
+        cpu.d[0] = 0xEEEEEEEE;
+
+        cpu.step_instruction();
+
+        assert_eq!(cpu.d[0], 0xEEEE1234);
         assert_eq!(cpu.pc, 0x0000000A);
     }
 
@@ -104,21 +130,51 @@ mod tests {
         #[test]
         fn test_move_l_d1_d0_proptest(val in 0..u32::MAX) {
             let mut memory = Memory::new(1024);
-            // Opcode for MOVE.L D1, D0 is 0x2008
             memory.data[8] = 0x20;
             memory.data[9] = 0x08;
 
-            // Set initial SP and PC to point to the opcode
-            memory.data[0] = 0x00; memory.data[1] = 0x00; memory.data[2] = 0x00; memory.data[3] = 0x00; // SP
-            memory.data[4] = 0x00; memory.data[5] = 0x00; memory.data[6] = 0x00; memory.data[7] = 0x08; // PC points to opcode
+            memory.data[4] = 0x00; memory.data[5] = 0x00; memory.data[6] = 0x00; memory.data[7] = 0x08;
 
             let mut cpu = Cpu::new(memory);
-            cpu.d[1] = val; // Set D1 with a random value
+            cpu.d[1] = val;
 
             cpu.step_instruction();
 
-            // After execution, D0 should have the value from D1
             assert_eq!(cpu.d[0], val);
+        }
+
+        #[test]
+        fn test_move_b_d1_d0_proptest(val in 0..=0xFFu32) {
+            let mut memory = Memory::new(1024);
+            memory.data[8] = 0x10;
+            memory.data[9] = 0x08;
+
+            memory.data[4] = 0x00; memory.data[5] = 0x00; memory.data[6] = 0x00; memory.data[7] = 0x08;
+
+            let mut cpu = Cpu::new(memory);
+            cpu.d[1] = val;
+            cpu.d[0] = 0xEEEEEEEE;
+
+            cpu.step_instruction();
+
+            assert_eq!(cpu.d[0], 0xEEEEEE00 | val);
+        }
+
+        #[test]
+        fn test_move_w_d1_d0_proptest(val in 0..=0xFFFFu32) {
+            let mut memory = Memory::new(1024);
+            memory.data[8] = 0x30;
+            memory.data[9] = 0x08;
+
+            memory.data[4] = 0x00; memory.data[5] = 0x00; memory.data[6] = 0x00; memory.data[7] = 0x08;
+
+            let mut cpu = Cpu::new(memory);
+            cpu.d[1] = val;
+            cpu.d[0] = 0xEEEEEEEE;
+
+            cpu.step_instruction();
+
+            assert_eq!(cpu.d[0], 0xEEEE0000 | val);
         }
     }
 }

@@ -59,7 +59,6 @@ impl Memory {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     // TODO: Re-implement this test once the underlying issue with assert_eq! comparing identical strings is resolved.
     /*
