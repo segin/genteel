@@ -28,7 +28,7 @@ impl Cpu {
         cpu
     }
 
-    pub fn execute_instruction(&mut self) {
+    pub fn step_instruction(&mut self) {
         let opcode = self.memory.read_word(self.pc);
         self.pc += 2; // Advance PC past the opcode
 
