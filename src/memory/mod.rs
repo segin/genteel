@@ -28,6 +28,12 @@ impl Memory {
             | (self.data[address + 1] as u16)
     }
 
+    pub fn read_word_le(&self, address: u32) -> u16 {
+        let address = address as usize;
+        (self.data[address + 1] as u16) << 8
+            | (self.data[address] as u16)
+    }
+
     pub fn read_byte(&self, address: u32) -> u8 {
         self.data[address as usize]
     }

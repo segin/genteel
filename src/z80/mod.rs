@@ -51,6 +51,24 @@ impl Z80 {
     }
 
     // Register pair getters/setters
+    pub fn bc(&self) -> u16 {
+        (self.b as u16) << 8 | self.c as u16
+    }
+
+    pub fn set_bc(&mut self, val: u16) {
+        self.b = (val >> 8) as u8;
+        self.c = val as u8;
+    }
+
+    pub fn de(&self) -> u16 {
+        (self.d as u16) << 8 | self.e as u16
+    }
+
+    pub fn set_de(&mut self, val: u16) {
+        self.d = (val >> 8) as u8;
+        self.e = val as u8;
+    }
+
     pub fn hl(&self) -> u16 {
         (self.h as u16) << 8 | self.l as u16
     }
@@ -64,18 +82,60 @@ impl Z80 {
         let opcode = self.memory.data[self.pc as usize];
         self.pc += 1;
         
-        // For now, only implement a few opcodes
-        if opcode == 0x00 { // NOP
-            // NOP does nothing
-        } else if opcode == 0x36 { // LD (HL), n
-            let n = self.memory.data[self.pc as usize];
-            self.pc += 1;
-            let hl = self.hl();
-            self.memory.data[hl as usize] = n;
-        } else if opcode == 0x78 { // LD A, B
-            self.a = self.b;
-        } else {
-            // Unimplemented instruction
+        match opcode {
+            0x00 => {}, // NOP
+            0x01 => { // LD BC, nn (little-endian)
+                let low = self.memory.data[self.pc as usize] as u16;
+                let high = self.memory.data[(self.pc + 1) as usize] as u16;
+                let nn = (high << 8) | low;
+                self.pc += 2;
+                self.set_bc(nn);
+            },
+            0x03 => { // INC BC
+                let val = self.bc().wrapping_add(1);
+                self.set_bc(val);
+            },
+            0x11 => { // LD DE, nn
+                let nn = self.memory.read_word_le(self.pc as u32);
+                self.pc += 2;
+                self.set_de(nn);
+            },
+            0x13 => { // INC DE
+                let val = self.de().wrapping_add(1);
+                self.set_de(val);
+            },
+            0x21 => { // LD HL, nn
+                let nn = self.memory.read_word_le(self.pc as u32);
+                self.pc += 2;
+                self.set_hl(nn);
+            },
+            0x23 => { // INC HL
+                let val = self.hl().wrapping_add(1);
+                self.set_hl(val);
+            },
+            0x31 => { // LD SP, nn
+                let nn = self.memory.read_word_le(self.pc as u32);
+                self.pc += 2;
+                self.sp = nn;
+            },
+            0x33 => { // INC SP
+                self.sp = self.sp.wrapping_add(1);
+            },
+            0x36 => { // LD (HL), n
+                let n = self.memory.data[self.pc as usize];
+                self.pc += 1;
+                let hl = self.hl();
+                self.memory.data[hl as usize] = n;
+            },
+            0x41 => { // LD B, C
+                self.b = self.c;
+            },
+            0x78 => { // LD A, B
+                self.a = self.b;
+            },
+            _ => {
+                // Unimplemented instruction
+            }
         }
     }
 }
@@ -97,6 +157,46 @@ mod tests {
     }
 
     #[test]
+    fn test_ld_bc_nn() {
+        let mut memory = Memory::new(1024);
+        memory.data[0] = 0x01; // LD BC, nn
+        memory.data[1] = 0x34; // Low byte
+        memory.data[2] = 0x12; // High byte (Little Endian)
+
+        let mut z80 = Z80::new(memory);
+        z80.step();
+
+        assert_eq!(z80.bc(), 0x1234);
+        assert_eq!(z80.pc, 3);
+    }
+
+    #[test]
+    fn test_inc_hl() {
+        let mut memory = Memory::new(1024);
+        memory.data[0] = 0x23; // INC HL
+
+        let mut z80 = Z80::new(memory);
+        z80.set_hl(0xFFFF);
+        z80.step();
+
+        assert_eq!(z80.hl(), 0x0000); // Check wrapping
+        assert_eq!(z80.pc, 1);
+    }
+
+    #[test]
+    fn test_ld_b_c() {
+        let mut memory = Memory::new(1024);
+        memory.data[0] = 0x41; // LD B, C
+
+        let mut z80 = Z80::new(memory);
+        z80.c = 0x55;
+        z80.step();
+
+        assert_eq!(z80.b, 0x55);
+        assert_eq!(z80.pc, 1);
+    }
+
+    #[test]
     fn test_ld_hl_n() {
         let mut memory = Memory::new(1024);
         memory.data[0] = 0x36; // LD (HL), n
@@ -113,13 +213,12 @@ mod tests {
 
     #[test]
     fn test_ld_a_b() {
-        let memory = Memory::new(1024);
+        let mut memory = Memory::new(1024);
+        memory.data[0] = 0x78; // LD A, B
+        
         let mut z80 = Z80::new(memory);
         z80.b = 0x42;
         z80.a = 0;
-
-        // Manually place opcode in memory for this test. A bit artificial but works.
-        z80.memory.data[0] = 0x78; // LD A, B
 
         z80.step();
 
