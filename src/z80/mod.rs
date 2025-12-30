@@ -299,6 +299,30 @@ impl Z80 {
         self.set_hl(result as u16);
     }
 
+    fn add_ix(&mut self, value: u16) {
+        let ix = self.ix as u32;
+        let v = value as u32;
+        let result = ix + v;
+        
+        self.set_flag(flags::CARRY, result > 0xFFFF);
+        self.set_flag(flags::HALF_CARRY, ((ix & 0x0FFF) + (v & 0x0FFF)) > 0x0FFF);
+        self.set_flag(flags::ADD_SUB, false);
+        
+        self.ix = result as u16;
+    }
+
+    fn add_iy(&mut self, value: u16) {
+        let iy = self.iy as u32;
+        let v = value as u32;
+        let result = iy + v;
+        
+        self.set_flag(flags::CARRY, result > 0xFFFF);
+        self.set_flag(flags::HALF_CARRY, ((iy & 0x0FFF) + (v & 0x0FFF)) > 0x0FFF);
+        self.set_flag(flags::ADD_SUB, false);
+        
+        self.iy = result as u16;
+    }
+
     // ========== Rotate/Shift operations ==========
 
     fn rlca(&mut self) {
@@ -573,18 +597,34 @@ impl Z80 {
                 1 => { self.rrca(); 4 }
                 2 => { self.rla(); 4 }
                 3 => { self.rra(); 4 }
-                4 => { // DAA
-                    let mut a = self.a as u16;
+                4 => { // DAA - Decimal Adjust Accumulator
+                    // DAA adjusts A to valid BCD based on N, H, C flags
+                    let mut correction: u8 = 0;
+                    let mut carry = self.get_flag(flags::CARRY);
+                    
                     if self.get_flag(flags::ADD_SUB) {
-                        if self.get_flag(flags::HALF_CARRY) { a = a.wrapping_sub(0x06) & 0xFF; }
-                        if self.get_flag(flags::CARRY) { a = a.wrapping_sub(0x60); }
+                        // After subtraction
+                        if self.get_flag(flags::HALF_CARRY) {
+                            correction |= 0x06;
+                        }
+                        if carry {
+                            correction |= 0x60;
+                        }
+                        self.a = self.a.wrapping_sub(correction);
                     } else {
-                        if self.get_flag(flags::HALF_CARRY) || (a & 0x0F) > 9 { a = a.wrapping_add(0x06); }
-                        if self.get_flag(flags::CARRY) || a > 0x9F { a = a.wrapping_add(0x60); }
+                        // After addition
+                        if self.get_flag(flags::HALF_CARRY) || (self.a & 0x0F) > 9 {
+                            correction |= 0x06;
+                        }
+                        if carry || self.a > 0x99 {
+                            correction |= 0x60;
+                            carry = true;
+                        }
+                        self.a = self.a.wrapping_add(correction);
                     }
-                    self.set_flag(flags::HALF_CARRY, false);
-                    if a > 0xFF { self.set_flag(flags::CARRY, true); }
-                    self.a = a as u8;
+                    
+                    self.set_flag(flags::CARRY, carry);
+                    self.set_flag(flags::HALF_CARRY, (correction & 0x06) != 0);
                     self.set_sz_flags(self.a);
                     self.set_parity_flag(self.a);
                     4
@@ -911,10 +951,18 @@ impl Z80 {
                     let rp = self.get_rp(p) as u32;
                     let c = if self.get_flag(flags::CARRY) { 1u32 } else { 0 };
                     let result = hl.wrapping_sub(rp).wrapping_sub(c);
+                    
                     self.set_flag(flags::CARRY, result > 0xFFFF);
                     self.set_flag(flags::ADD_SUB, true);
                     self.set_flag(flags::ZERO, (result & 0xFFFF) == 0);
                     self.set_flag(flags::SIGN, (result & 0x8000) != 0);
+                    // Half borrow: (HL & 0xFFF) - (RP & 0xFFF) - C < 0
+                    let h_check = (hl & 0xFFF).wrapping_sub(rp & 0xFFF).wrapping_sub(c);
+                    self.set_flag(flags::HALF_CARRY, h_check > 0xFFF);
+                    // P/V: Overflow
+                    let overflow = ((hl ^ rp) & (hl ^ result) & 0x8000) != 0;
+                    self.set_flag(flags::PARITY, overflow);
+                    
                     self.set_hl(result as u16);
                     15
                 } else {
@@ -923,10 +971,17 @@ impl Z80 {
                     let rp = self.get_rp(p) as u32;
                     let c = if self.get_flag(flags::CARRY) { 1u32 } else { 0 };
                     let result = hl + rp + c;
+                    
                     self.set_flag(flags::CARRY, result > 0xFFFF);
                     self.set_flag(flags::ADD_SUB, false);
                     self.set_flag(flags::ZERO, (result & 0xFFFF) == 0);
                     self.set_flag(flags::SIGN, (result & 0x8000) != 0);
+                    // Half carry: Carry from bit 11
+                    self.set_flag(flags::HALF_CARRY, ((hl & 0xFFF) + (rp & 0xFFF) + c) > 0xFFF);
+                    // P/V: Overflow
+                    let overflow = (! (hl ^ rp) & (hl ^ result) & 0x8000) != 0;
+                    self.set_flag(flags::PARITY, overflow);
+                    
                     self.set_hl(result as u16);
                     15
                 },
@@ -1116,29 +1171,23 @@ impl Z80 {
         let opcode = self.fetch_byte();
         
         match opcode {
-            0x21 => { // LD IX, nn
-                self.ix = self.fetch_word();
-                14
-            }
-            0x22 => { // LD (nn), IX
+            0x09 => { self.add_ix(self.bc()); 15 }
+            0x19 => { self.add_ix(self.de()); 15 }
+            0x21 => { self.ix = self.fetch_word(); 14 }
+            0x22 => {
                 let addr = self.fetch_word();
                 self.write_word(addr, self.ix);
                 20
             }
-            0x23 => { // INC IX
-                self.ix = self.ix.wrapping_add(1);
-                10
-            }
-            0x2A => { // LD IX, (nn)
+            0x23 => { self.ix = self.ix.wrapping_add(1); 10 }
+            0x29 => { self.add_ix(self.ix); 15 }
+            0x2A => {
                 let addr = self.fetch_word();
                 self.ix = self.read_word(addr);
                 20
             }
-            0x2B => { // DEC IX
-                self.ix = self.ix.wrapping_sub(1);
-                10
-            }
-            0x34 => { // INC (IX+d)
+            0x2B => { self.ix = self.ix.wrapping_sub(1); 10 }
+            0x34 => {
                 let d = self.fetch_byte() as i8;
                 let addr = (self.ix as i16 + d as i16) as u16;
                 let val = self.read_byte(addr);
@@ -1146,7 +1195,7 @@ impl Z80 {
                 self.write_byte(addr, result);
                 23
             }
-            0x35 => { // DEC (IX+d)
+            0x35 => {
                 let d = self.fetch_byte() as i8;
                 let addr = (self.ix as i16 + d as i16) as u16;
                 let val = self.read_byte(addr);
@@ -1154,15 +1203,15 @@ impl Z80 {
                 self.write_byte(addr, result);
                 23
             }
-            0x36 => { // LD (IX+d), n
+            0x36 => {
                 let d = self.fetch_byte() as i8;
                 let n = self.fetch_byte();
                 let addr = (self.ix as i16 + d as i16) as u16;
                 self.write_byte(addr, n);
                 19
             }
+            0x39 => { self.add_ix(self.sp); 15 }
             0x46 | 0x4E | 0x56 | 0x5E | 0x66 | 0x6E | 0x7E => {
-                // LD r, (IX+d)
                 let d = self.fetch_byte() as i8;
                 let addr = (self.ix as i16 + d as i16) as u16;
                 let val = self.read_byte(addr);
@@ -1171,7 +1220,6 @@ impl Z80 {
                 19
             }
             0x70..=0x77 => {
-                // LD (IX+d), r
                 let d = self.fetch_byte() as i8;
                 let addr = (self.ix as i16 + d as i16) as u16;
                 let r = opcode & 0x07;
@@ -1179,28 +1227,72 @@ impl Z80 {
                 self.write_byte(addr, val);
                 19
             }
-            0xE1 => { // POP IX
-                self.ix = self.pop();
-                14
+            0x86 => { 
+                let d = self.fetch_byte() as i8;
+                let addr = (self.ix as i16 + d as i16) as u16;
+                let val = self.read_byte(addr); 
+                self.add_a(val, false); 
+                19 
             }
-            0xE3 => { // EX (SP), IX
+            0x8E => { 
+                let d = self.fetch_byte() as i8;
+                let addr = (self.ix as i16 + d as i16) as u16;
+                let val = self.read_byte(addr); 
+                self.add_a(val, true); 
+                19 
+            }
+            0x96 => { 
+                let d = self.fetch_byte() as i8;
+                let addr = (self.ix as i16 + d as i16) as u16;
+                let val = self.read_byte(addr); 
+                self.sub_a(val, false, true); 
+                19 
+            }
+            0x9E => { 
+                let d = self.fetch_byte() as i8;
+                let addr = (self.ix as i16 + d as i16) as u16;
+                let val = self.read_byte(addr); 
+                self.sub_a(val, true, true); 
+                19 
+            }
+            0xA6 => { 
+                let d = self.fetch_byte() as i8;
+                let addr = (self.ix as i16 + d as i16) as u16;
+                let val = self.read_byte(addr); 
+                self.and_a(val); 
+                19 
+            }
+            0xAE => { 
+                let d = self.fetch_byte() as i8;
+                let addr = (self.ix as i16 + d as i16) as u16;
+                let val = self.read_byte(addr); 
+                self.xor_a(val); 
+                19 
+            }
+            0xB6 => { 
+                let d = self.fetch_byte() as i8;
+                let addr = (self.ix as i16 + d as i16) as u16;
+                let val = self.read_byte(addr); 
+                self.or_a(val); 
+                19 
+            }
+            0xBE => { 
+                let d = self.fetch_byte() as i8;
+                let addr = (self.ix as i16 + d as i16) as u16;
+                let val = self.read_byte(addr); 
+                self.sub_a(val, false, false); 
+                19 
+            }
+            0xE1 => { self.ix = self.pop(); 14 }
+            0xE3 => {
                 let val = self.read_word(self.sp);
                 self.write_word(self.sp, self.ix);
                 self.ix = val;
                 23
             }
-            0xE5 => { // PUSH IX
-                self.push(self.ix);
-                15
-            }
-            0xE9 => { // JP (IX)
-                self.pc = self.ix;
-                8
-            }
-            0xF9 => { // LD SP, IX
-                self.sp = self.ix;
-                10
-            }
+            0xE5 => { self.push(self.ix); 15 }
+            0xE9 => { self.pc = self.ix; 8 }
+            0xF9 => { self.sp = self.ix; 10 }
             0xCB => self.execute_ddcb_prefix(),
             _ => 8, // Treat as NOP
         }
@@ -1212,29 +1304,23 @@ impl Z80 {
         let opcode = self.fetch_byte();
         
         match opcode {
-            0x21 => { // LD IY, nn
-                self.iy = self.fetch_word();
-                14
-            }
-            0x22 => { // LD (nn), IY
+            0x09 => { self.add_iy(self.bc()); 15 }
+            0x19 => { self.add_iy(self.de()); 15 }
+            0x21 => { self.iy = self.fetch_word(); 14 }
+            0x22 => {
                 let addr = self.fetch_word();
                 self.write_word(addr, self.iy);
                 20
             }
-            0x23 => { // INC IY
-                self.iy = self.iy.wrapping_add(1);
-                10
-            }
-            0x2A => { // LD IY, (nn)
+            0x23 => { self.iy = self.iy.wrapping_add(1); 10 }
+            0x29 => { self.add_iy(self.iy); 15 }
+            0x2A => {
                 let addr = self.fetch_word();
                 self.iy = self.read_word(addr);
                 20
             }
-            0x2B => { // DEC IY
-                self.iy = self.iy.wrapping_sub(1);
-                10
-            }
-            0x34 => { // INC (IY+d)
+            0x2B => { self.iy = self.iy.wrapping_sub(1); 10 }
+            0x34 => {
                 let d = self.fetch_byte() as i8;
                 let addr = (self.iy as i16 + d as i16) as u16;
                 let val = self.read_byte(addr);
@@ -1242,7 +1328,7 @@ impl Z80 {
                 self.write_byte(addr, result);
                 23
             }
-            0x35 => { // DEC (IY+d)
+            0x35 => {
                 let d = self.fetch_byte() as i8;
                 let addr = (self.iy as i16 + d as i16) as u16;
                 let val = self.read_byte(addr);
@@ -1250,15 +1336,15 @@ impl Z80 {
                 self.write_byte(addr, result);
                 23
             }
-            0x36 => { // LD (IY+d), n
+            0x36 => {
                 let d = self.fetch_byte() as i8;
                 let n = self.fetch_byte();
                 let addr = (self.iy as i16 + d as i16) as u16;
                 self.write_byte(addr, n);
                 19
             }
+            0x39 => { self.add_iy(self.sp); 15 }
             0x46 | 0x4E | 0x56 | 0x5E | 0x66 | 0x6E | 0x7E => {
-                // LD r, (IY+d)
                 let d = self.fetch_byte() as i8;
                 let addr = (self.iy as i16 + d as i16) as u16;
                 let val = self.read_byte(addr);
@@ -1267,7 +1353,6 @@ impl Z80 {
                 19
             }
             0x70..=0x77 => {
-                // LD (IY+d), r
                 let d = self.fetch_byte() as i8;
                 let addr = (self.iy as i16 + d as i16) as u16;
                 let r = opcode & 0x07;
@@ -1275,28 +1360,72 @@ impl Z80 {
                 self.write_byte(addr, val);
                 19
             }
-            0xE1 => { // POP IY
-                self.iy = self.pop();
-                14
+            0x86 => { 
+                let d = self.fetch_byte() as i8;
+                let addr = (self.iy as i16 + d as i16) as u16;
+                let val = self.read_byte(addr); 
+                self.add_a(val, false); 
+                19 
             }
-            0xE3 => { // EX (SP), IY
+            0x8E => { 
+                let d = self.fetch_byte() as i8;
+                let addr = (self.iy as i16 + d as i16) as u16;
+                let val = self.read_byte(addr); 
+                self.add_a(val, true); 
+                19 
+            }
+            0x96 => { 
+                let d = self.fetch_byte() as i8;
+                let addr = (self.iy as i16 + d as i16) as u16;
+                let val = self.read_byte(addr); 
+                self.sub_a(val, false, true); 
+                19 
+            }
+            0x9E => { 
+                let d = self.fetch_byte() as i8;
+                let addr = (self.iy as i16 + d as i16) as u16;
+                let val = self.read_byte(addr); 
+                self.sub_a(val, true, true); 
+                19 
+            }
+            0xA6 => { 
+                let d = self.fetch_byte() as i8;
+                let addr = (self.iy as i16 + d as i16) as u16;
+                let val = self.read_byte(addr); 
+                self.and_a(val); 
+                19 
+            }
+            0xAE => { 
+                let d = self.fetch_byte() as i8;
+                let addr = (self.iy as i16 + d as i16) as u16;
+                let val = self.read_byte(addr); 
+                self.xor_a(val); 
+                19 
+            }
+            0xB6 => { 
+                let d = self.fetch_byte() as i8;
+                let addr = (self.iy as i16 + d as i16) as u16;
+                let val = self.read_byte(addr); 
+                self.or_a(val); 
+                19 
+            }
+            0xBE => { 
+                let d = self.fetch_byte() as i8;
+                let addr = (self.iy as i16 + d as i16) as u16;
+                let val = self.read_byte(addr); 
+                self.sub_a(val, false, false); 
+                19 
+            }
+            0xE1 => { self.iy = self.pop(); 14 }
+            0xE3 => {
                 let val = self.read_word(self.sp);
                 self.write_word(self.sp, self.iy);
                 self.iy = val;
                 23
             }
-            0xE5 => { // PUSH IY
-                self.push(self.iy);
-                15
-            }
-            0xE9 => { // JP (IY)
-                self.pc = self.iy;
-                8
-            }
-            0xF9 => { // LD SP, IY
-                self.sp = self.iy;
-                10
-            }
+            0xE5 => { self.push(self.iy); 15 }
+            0xE9 => { self.pc = self.iy; 8 }
+            0xF9 => { self.sp = self.iy; 10 }
             0xCB => self.execute_fdcb_prefix(),
             _ => 8, // Treat as NOP
         }

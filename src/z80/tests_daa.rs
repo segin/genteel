@@ -29,46 +29,46 @@ fn z80(program: &[u8]) -> Z80 {
 
 // ============ DAA after ADD with Half-Carry ============
 
-#[test] fn daa_00_add_h() { let mut c = z80(&[0x27]); c.a = 0x00; c.set_flag(flags::HALF_CARRY, true); c.step(); assert_eq!(c.a, 0x06); }
-#[test] fn daa_09_add_h() { let mut c = z80(&[0x27]); c.a = 0x09; c.set_flag(flags::HALF_CARRY, true); c.step(); assert_eq!(c.a, 0x0F); }
-#[test] fn daa_0a_add_h() { let mut c = z80(&[0x27]); c.a = 0x0A; c.set_flag(flags::HALF_CARRY, true); c.step(); assert_eq!(c.a, 0x10); }
-#[test] fn daa_90_add_h() { let mut c = z80(&[0x27]); c.a = 0x90; c.set_flag(flags::HALF_CARRY, true); c.step(); assert_eq!(c.a, 0x96); }
-#[test] fn daa_9a_add_h() { let mut c = z80(&[0x27]); c.a = 0x9A; c.set_flag(flags::HALF_CARRY, true); c.step(); assert_eq!(c.a, 0x00); assert!(c.get_flag(flags::CARRY)); }
+#[test] fn daa_00_add_h() { let mut c = z80(&[0x27]); c.a = 0x00; c.f = 0; c.set_flag(flags::HALF_CARRY, true); c.step(); assert_eq!(c.a, 0x06); }
+#[test] fn daa_09_add_h() { let mut c = z80(&[0x27]); c.a = 0x09; c.f = 0; c.set_flag(flags::HALF_CARRY, true); c.step(); assert_eq!(c.a, 0x0F); }
+#[test] fn daa_0a_add_h() { let mut c = z80(&[0x27]); c.a = 0x0A; c.f = 0; c.set_flag(flags::HALF_CARRY, true); c.step(); assert_eq!(c.a, 0x10); }
+#[test] fn daa_90_add_h() { let mut c = z80(&[0x27]); c.a = 0x90; c.f = 0; c.set_flag(flags::HALF_CARRY, true); c.step(); assert_eq!(c.a, 0x96); }
+#[test] fn daa_9a_add_h() { let mut c = z80(&[0x27]); c.a = 0x9A; c.f = 0; c.set_flag(flags::HALF_CARRY, true); c.step(); assert_eq!(c.a, 0x00); assert!(c.get_flag(flags::CARRY)); }
 
 // ============ DAA after ADD with Carry ============
 
-#[test] fn daa_00_add_c() { let mut c = z80(&[0x27]); c.a = 0x00; c.set_flag(flags::CARRY, true); c.step(); assert_eq!(c.a, 0x60); assert!(c.get_flag(flags::CARRY)); }
-#[test] fn daa_09_add_c() { let mut c = z80(&[0x27]); c.a = 0x09; c.set_flag(flags::CARRY, true); c.step(); assert_eq!(c.a, 0x69); assert!(c.get_flag(flags::CARRY)); }
-#[test] fn daa_0a_add_c() { let mut c = z80(&[0x27]); c.a = 0x0A; c.set_flag(flags::CARRY, true); c.step(); assert_eq!(c.a, 0x70); assert!(c.get_flag(flags::CARRY)); }
-#[test] fn daa_90_add_c() { let mut c = z80(&[0x27]); c.a = 0x90; c.set_flag(flags::CARRY, true); c.step(); assert_eq!(c.a, 0xF0); assert!(c.get_flag(flags::CARRY)); }
+#[test] fn daa_00_add_c() { let mut c = z80(&[0x27]); c.a = 0x00; c.f = 0; c.set_flag(flags::CARRY, true); c.step(); assert_eq!(c.a, 0x60); assert!(c.get_flag(flags::CARRY)); }
+#[test] fn daa_09_add_c() { let mut c = z80(&[0x27]); c.a = 0x09; c.f = 0; c.set_flag(flags::CARRY, true); c.step(); assert_eq!(c.a, 0x69); assert!(c.get_flag(flags::CARRY)); }
+#[test] fn daa_0a_add_c() { let mut c = z80(&[0x27]); c.a = 0x0A; c.f = 0; c.set_flag(flags::CARRY, true); c.step(); assert_eq!(c.a, 0x70); assert!(c.get_flag(flags::CARRY)); }
+#[test] fn daa_90_add_c() { let mut c = z80(&[0x27]); c.a = 0x90; c.f = 0; c.set_flag(flags::CARRY, true); c.step(); assert_eq!(c.a, 0xF0); assert!(c.get_flag(flags::CARRY)); }
 
 // ============ DAA after ADD with H+C ============
 
-#[test] fn daa_00_add_hc() { let mut c = z80(&[0x27]); c.a = 0x00; c.set_flag(flags::HALF_CARRY, true); c.set_flag(flags::CARRY, true); c.step(); assert_eq!(c.a, 0x66); assert!(c.get_flag(flags::CARRY)); }
-#[test] fn daa_99_add_hc() { let mut c = z80(&[0x27]); c.a = 0x99; c.set_flag(flags::HALF_CARRY, true); c.set_flag(flags::CARRY, true); c.step(); assert_eq!(c.a, 0xFF); assert!(c.get_flag(flags::CARRY)); }
+#[test] fn daa_00_add_hc() { let mut c = z80(&[0x27]); c.a = 0x00; c.f = 0; c.set_flag(flags::HALF_CARRY, true); c.set_flag(flags::CARRY, true); c.step(); assert_eq!(c.a, 0x66); assert!(c.get_flag(flags::CARRY)); }
+#[test] fn daa_99_add_hc() { let mut c = z80(&[0x27]); c.a = 0x99; c.f = 0; c.set_flag(flags::HALF_CARRY, true); c.set_flag(flags::CARRY, true); c.step(); assert_eq!(c.a, 0xFF); assert!(c.get_flag(flags::CARRY)); }
 
 // ============ DAA after SUB (N=1) ============
 
-#[test] fn daa_00_sub() { let mut c = z80(&[0x27]); c.a = 0x00; c.set_flag(flags::ADD_SUB, true); c.step(); assert_eq!(c.a, 0x00); }
-#[test] fn daa_09_sub() { let mut c = z80(&[0x27]); c.a = 0x09; c.set_flag(flags::ADD_SUB, true); c.step(); assert_eq!(c.a, 0x09); }
-#[test] fn daa_10_sub() { let mut c = z80(&[0x27]); c.a = 0x10; c.set_flag(flags::ADD_SUB, true); c.step(); assert_eq!(c.a, 0x10); }
-#[test] fn daa_99_sub() { let mut c = z80(&[0x27]); c.a = 0x99; c.set_flag(flags::ADD_SUB, true); c.step(); assert_eq!(c.a, 0x99); }
+#[test] fn daa_00_sub() { let mut c = z80(&[0x27]); c.a = 0x00; c.f = 0; c.set_flag(flags::ADD_SUB, true); c.step(); assert_eq!(c.a, 0x00); }
+#[test] fn daa_09_sub() { let mut c = z80(&[0x27]); c.a = 0x09; c.f = 0; c.set_flag(flags::ADD_SUB, true); c.step(); assert_eq!(c.a, 0x09); }
+#[test] fn daa_10_sub() { let mut c = z80(&[0x27]); c.a = 0x10; c.f = 0; c.set_flag(flags::ADD_SUB, true); c.step(); assert_eq!(c.a, 0x10); }
+#[test] fn daa_99_sub() { let mut c = z80(&[0x27]); c.a = 0x99; c.f = 0; c.set_flag(flags::ADD_SUB, true); c.step(); assert_eq!(c.a, 0x99); }
 
 // ============ DAA after SUB with Half-Carry ============
 
-#[test] fn daa_00_sub_h() { let mut c = z80(&[0x27]); c.a = 0x00; c.set_flag(flags::ADD_SUB, true); c.set_flag(flags::HALF_CARRY, true); c.step(); assert_eq!(c.a, 0xFA); }
-#[test] fn daa_10_sub_h() { let mut c = z80(&[0x27]); c.a = 0x10; c.set_flag(flags::ADD_SUB, true); c.set_flag(flags::HALF_CARRY, true); c.step(); assert_eq!(c.a, 0x0A); }
-#[test] fn daa_ff_sub_h() { let mut c = z80(&[0x27]); c.a = 0xFF; c.set_flag(flags::ADD_SUB, true); c.set_flag(flags::HALF_CARRY, true); c.step(); assert_eq!(c.a, 0x99); assert!(c.get_flag(flags::CARRY)); }
+#[test] fn daa_00_sub_h() { let mut c = z80(&[0x27]); c.a = 0x00; c.f = 0; c.set_flag(flags::ADD_SUB, true); c.set_flag(flags::HALF_CARRY, true); c.step(); assert_eq!(c.a, 0xFA); }
+#[test] fn daa_10_sub_h() { let mut c = z80(&[0x27]); c.a = 0x10; c.f = 0; c.set_flag(flags::ADD_SUB, true); c.set_flag(flags::HALF_CARRY, true); c.step(); assert_eq!(c.a, 0x0A); }
+#[test] fn daa_ff_sub_h() { let mut c = z80(&[0x27]); c.a = 0xFF; c.f = 0; c.set_flag(flags::ADD_SUB, true); c.set_flag(flags::HALF_CARRY, true); c.step(); assert_eq!(c.a, 0xF9); assert!(!c.get_flag(flags::CARRY)); }
 
 // ============ DAA after SUB with Carry ============
 
-#[test] fn daa_00_sub_c() { let mut c = z80(&[0x27]); c.a = 0x00; c.set_flag(flags::ADD_SUB, true); c.set_flag(flags::CARRY, true); c.step(); assert_eq!(c.a, 0xA0); assert!(c.get_flag(flags::CARRY)); }
-#[test] fn daa_60_sub_c() { let mut c = z80(&[0x27]); c.a = 0x60; c.set_flag(flags::ADD_SUB, true); c.set_flag(flags::CARRY, true); c.step(); assert_eq!(c.a, 0x00); assert!(c.get_flag(flags::CARRY)); }
+#[test] fn daa_00_sub_c() { let mut c = z80(&[0x27]); c.a = 0x00; c.f = 0; c.set_flag(flags::ADD_SUB, true); c.set_flag(flags::CARRY, true); c.step(); assert_eq!(c.a, 0xA0); assert!(c.get_flag(flags::CARRY)); }
+#[test] fn daa_60_sub_c() { let mut c = z80(&[0x27]); c.a = 0x60; c.f = 0; c.set_flag(flags::ADD_SUB, true); c.set_flag(flags::CARRY, true); c.step(); assert_eq!(c.a, 0x00); assert!(c.get_flag(flags::CARRY)); }
 
 // ============ DAA after SUB with H+C ============
 
-#[test] fn daa_00_sub_hc() { let mut c = z80(&[0x27]); c.a = 0x00; c.set_flag(flags::ADD_SUB, true); c.set_flag(flags::HALF_CARRY, true); c.set_flag(flags::CARRY, true); c.step(); assert_eq!(c.a, 0x9A); assert!(c.get_flag(flags::CARRY)); }
-#[test] fn daa_66_sub_hc() { let mut c = z80(&[0x27]); c.a = 0x66; c.set_flag(flags::ADD_SUB, true); c.set_flag(flags::HALF_CARRY, true); c.set_flag(flags::CARRY, true); c.step(); assert_eq!(c.a, 0x00); assert!(c.get_flag(flags::CARRY)); }
+#[test] fn daa_00_sub_hc() { let mut c = z80(&[0x27]); c.a = 0x00; c.f = 0; c.set_flag(flags::ADD_SUB, true); c.set_flag(flags::HALF_CARRY, true); c.set_flag(flags::CARRY, true); c.step(); assert_eq!(c.a, 0x9A); assert!(c.get_flag(flags::CARRY)); }
+#[test] fn daa_66_sub_hc() { let mut c = z80(&[0x27]); c.a = 0x66; c.f = 0; c.set_flag(flags::ADD_SUB, true); c.set_flag(flags::HALF_CARRY, true); c.set_flag(flags::CARRY, true); c.step(); assert_eq!(c.a, 0x00); assert!(c.get_flag(flags::CARRY)); }
 
 // ============ DAA flag behavior ============
 

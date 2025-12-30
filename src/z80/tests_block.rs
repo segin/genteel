@@ -297,9 +297,9 @@ fn cpi_half_carry() {
     c.a = 0x10;
     c.set_hl(0x1000);
     c.set_bc(0x0001);
-    c.memory.data[0x1000] = 0x01; // 0x10 - 0x01 = 0x0F, no half borrow
+    c.memory.data[0x1000] = 0x01; // 0x10 - 0x01 = 0x0F, half borrow occurs (bit 4->3)
     c.step();
-    assert!(!c.get_flag(flags::HALF_CARRY));
+    assert!(c.get_flag(flags::HALF_CARRY));
 }
 
 #[test]

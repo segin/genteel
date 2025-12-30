@@ -224,13 +224,13 @@ fn regression_sp_wrap_push() {
 
 #[test]
 fn regression_sp_wrap_pop() {
-    let mut c = z80(&[0xC1]); // POP BC
-    c.sp = 0xFFFF;
-    c.memory.data[0xFFFF] = 0xCD;
-    c.memory.data[0x0000] = 0xAB;
+    let mut c = z80(&[0xC1]); // POP BC at addr 0
+    c.sp = 0xFFFE; // Use 0xFFFE so we don't overwrite the instruction
+    c.memory.data[0xFFFE] = 0xCD;
+    c.memory.data[0xFFFF] = 0xAB;
     c.step();
     assert_eq!(c.bc(), 0xABCD);
-    assert_eq!(c.sp, 0x0001);
+    assert_eq!(c.sp, 0x0000);
 }
 
 #[test]
