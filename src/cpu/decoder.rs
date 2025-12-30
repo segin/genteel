@@ -252,6 +252,9 @@ pub enum Instruction {
     Abcd { src_reg: u8, dst_reg: u8, memory_mode: bool },
     Sbcd { src_reg: u8, dst_reg: u8, memory_mode: bool },
     Nbcd { dst: AddressingMode },
+    Chk { src: AddressingMode, dst_reg: u8 },
+    Tas { dst: AddressingMode },
+    Movem { size: Size, direction: bool, mask: u16, ea: AddressingMode },
 
     // Logical
     And { size: Size, src: AddressingMode, dst: AddressingMode, direction: bool },
@@ -407,6 +410,26 @@ fn decode_group_0(opcode: u16) -> Instruction {
             }
         }
 
+        // CCR/SR Immediate Operations - Special case when mode=7, reg=4 (immediate)
+        // 0000 000 0 00 111 100 = ORI to CCR (003C)
+        // 0000 000 0 01 111 100 = ORI to SR  (007C)
+        // 0000 001 0 00 111 100 = ANDI to CCR (023C)
+        // 0000 001 0 01 111 100 = ANDI to SR  (027C)
+        // 0000 101 0 00 111 100 = EORI to CCR (0A3C)
+        // 0000 101 0 01 111 100 = EORI to SR  (0A7C)
+        if mode == 7 && reg == 4 {
+            let size_bits = ((opcode >> 6) & 0x03) as u8;
+            return match (op, size_bits) {
+                (0b000, 0b00) => Instruction::OriToCcr,
+                (0b000, 0b01) => Instruction::OriToSr,
+                (0b001, 0b00) => Instruction::AndiToCcr,
+                (0b001, 0b01) => Instruction::AndiToSr,
+                (0b101, 0b00) => Instruction::EoriToCcr,
+                (0b101, 0b01) => Instruction::EoriToSr,
+                _ => Instruction::Unimplemented { opcode },
+            };
+        }
+
         // Immediate Instructions (ORI, ANDI, SUBI, ADDI, EORI, CMPI)
         let size_bits = ((opcode >> 6) & 0x03) as u8;
         if let Some(size) = Size::from_bits(size_bits) {
@@ -557,6 +580,33 @@ fn decode_group_4(opcode: u16) -> Instruction {
     if opcode & 0xFFC0 == 0x4E80 {
         if let Some(dst) = AddressingMode::from_mode_reg(mode, reg) {
             return Instruction::Jsr { dst };
+        }
+    }
+
+    // CHK - 0100 rrr 1s0 mmm xxx (s=0 word, s=1 long for 68020+)
+    // 68000: only word size (bits 7-6 = 10)
+    if opcode & 0xF1C0 == 0x4180 {
+        let dst_reg = ((opcode >> 9) & 0x07) as u8;
+        if let Some(src) = AddressingMode::from_mode_reg(mode, reg) {
+            return Instruction::Chk { src, dst_reg };
+        }
+    }
+
+    // TAS - 0100 1010 11 mmm rrr (4AC0)
+    if opcode & 0xFFC0 == 0x4AC0 {
+        if let Some(dst) = AddressingMode::from_mode_reg(mode, reg) {
+            return Instruction::Tas { dst };
+        }
+    }
+
+    // MOVEM - Register to Memory: 0100 1000 1s mmm rrr (s=0 word, s=1 long)
+    //       - Memory to Register: 0100 1100 1s mmm rrr
+    if opcode & 0xFB80 == 0x4880 {
+        let to_memory = (opcode & 0x0400) == 0; // bit 10: 0=to mem, 1=from mem
+        let size = if (opcode & 0x0040) != 0 { Size::Long } else { Size::Word };
+        if let Some(ea) = AddressingMode::from_mode_reg(mode, reg) {
+            // Mask is in extension word, but we'll read it during execution
+            return Instruction::Movem { size, direction: to_memory, mask: 0, ea };
         }
     }
 

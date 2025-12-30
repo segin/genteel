@@ -5,6 +5,8 @@
 
 pub mod decoder;
 pub mod addressing;
+#[cfg(test)]
+mod tests_m68k_extended;
 
 use crate::memory::Memory;
 use decoder::{decode, Instruction, Size, AddressingMode, Condition, ShiftCount, BitSource};
@@ -174,7 +176,31 @@ impl Cpu {
             Instruction::Rte => self.exec_rte(),
             Instruction::Stop => self.exec_stop(),
             Instruction::Reset => 132, // Reset external devices, internal state unaffected.
-            Instruction::TrapV | Instruction::Rtr => 4, // Stub for now
+            Instruction::TrapV => {
+                if self.get_flag(flags::OVERFLOW) {
+                    self.process_exception(7)
+                } else {
+                    4
+                }
+            },
+            Instruction::Rtr => self.exec_rtr(),
+            
+            // === Bounds and Atomic ===
+            Instruction::Chk { src, dst_reg } => self.exec_chk(src, dst_reg),
+            Instruction::Tas { dst } => self.exec_tas(dst),
+            Instruction::Movem { size, direction, mask: _, ea } => self.exec_movem(size, direction, ea),
+            Instruction::Pea { src } => self.exec_pea(src),
+            
+            // === Status Register Operations ===
+            Instruction::MoveToSr { src } => self.exec_move_to_sr(src),
+            Instruction::MoveFromSr { dst } => self.exec_move_from_sr(dst),
+            Instruction::MoveToCcr { src } => self.exec_move_to_ccr(src),
+            Instruction::AndiToCcr => self.exec_andi_to_ccr(),
+            Instruction::AndiToSr => self.exec_andi_to_sr(),
+            Instruction::OriToCcr => self.exec_ori_to_ccr(),
+            Instruction::OriToSr => self.exec_ori_to_sr(),
+            Instruction::EoriToCcr => self.exec_eori_to_ccr(),
+            Instruction::EoriToSr => self.exec_eori_to_sr(),
 
             // === Not yet implemented ===
             Instruction::Illegal => {
@@ -1563,6 +1589,248 @@ impl Cpu {
     
     fn set_sr(&mut self, val: u16) {
         self.sr = val; // Set full SR
+    }
+
+    // === CHK - Check Register Against Bounds ===
+    fn exec_chk(&mut self, src: AddressingMode, dst_reg: u8) -> u32 {
+        let mut cycles = 10u32;
+        let (src_ea, src_cycles) = calculate_ea(src, Size::Word, &self.d, &self.a, &mut self.pc, &self.memory);
+        cycles += src_cycles;
+        
+        let bound = read_ea(src_ea, Size::Word, &self.d, &self.a, &self.memory) as i16;
+        let dn = (self.d[dst_reg as usize] & 0xFFFF) as i16;
+        
+        if dn < 0 {
+            self.set_flag(flags::NEGATIVE, true);
+            return self.process_exception(6); // CHK exception
+        }
+        if dn > bound {
+            self.set_flag(flags::NEGATIVE, false);
+            return self.process_exception(6);
+        }
+        
+        cycles
+    }
+
+    // === TAS - Test and Set (Atomic) ===
+    fn exec_tas(&mut self, dst: AddressingMode) -> u32 {
+        let mut cycles = 4u32;
+        let (dst_ea, dst_cycles) = calculate_ea(dst, Size::Byte, &self.d, &self.a, &mut self.pc, &self.memory);
+        cycles += dst_cycles;
+        
+        let val = read_ea(dst_ea, Size::Byte, &self.d, &self.a, &self.memory) as u8;
+        
+        // Set flags based on original value
+        self.set_flag(flags::NEGATIVE, (val & 0x80) != 0);
+        self.set_flag(flags::ZERO, val == 0);
+        self.set_flag(flags::OVERFLOW, false);
+        self.set_flag(flags::CARRY, false);
+        
+        // Set high bit (atomically on real hardware)
+        let new_val = val | 0x80;
+        write_ea(dst_ea, Size::Byte, new_val as u32, &mut self.d, &mut self.a, &mut self.memory);
+        
+        cycles + 4
+    }
+
+    // === MOVEM - Move Multiple Registers ===
+    fn exec_movem(&mut self, size: Size, to_memory: bool, ea: AddressingMode) -> u32 {
+        let mask = self.memory.read_word(self.pc);
+        self.pc = self.pc.wrapping_add(2);
+        
+        let reg_size: u32 = if size == Size::Word { 2 } else { 4 };
+        let mut cycles = 8u32;
+        
+        // Get base address from EA
+        let (ea_result, ea_cycles) = calculate_ea(ea, size, &self.d, &self.a, &mut self.pc, &self.memory);
+        cycles += ea_cycles;
+        
+        let base_addr = match ea_result {
+            EffectiveAddress::Memory(addr) => addr,
+            _ => return cycles, // Invalid for MOVEM
+        };
+        
+        if to_memory {
+            // Registers to Memory
+            let is_predec = matches!(ea, AddressingMode::AddressPreDecrement(_));
+            let mut addr = base_addr;
+            
+            if is_predec {
+                // Predecrement: Store A7-A0, then D7-D0 (reverse order)
+                for i in (0..16).rev() {
+                    if (mask & (1 << (15 - i))) != 0 {
+                        addr = addr.wrapping_sub(reg_size);
+                        let val = if i < 8 { self.d[i] } else { self.a[i - 8] };
+                        if size == Size::Word {
+                            self.memory.write_word(addr, val as u16);
+                        } else {
+                            self.memory.write_long(addr, val);
+                        }
+                        cycles += if size == Size::Word { 4 } else { 8 };
+                    }
+                }
+                // Update An for predecrement mode
+                if let AddressingMode::AddressPreDecrement(reg) = ea {
+                    self.a[reg as usize] = addr;
+                }
+            } else {
+                // Normal: Store D0-D7, then A0-A7
+                for i in 0..16 {
+                    if (mask & (1 << i)) != 0 {
+                        let val = if i < 8 { self.d[i] } else { self.a[i - 8] };
+                        if size == Size::Word {
+                            self.memory.write_word(addr, val as u16);
+                        } else {
+                            self.memory.write_long(addr, val);
+                        }
+                        addr = addr.wrapping_add(reg_size);
+                        cycles += if size == Size::Word { 4 } else { 8 };
+                    }
+                }
+            }
+        } else {
+            // Memory to Registers
+            let mut addr = base_addr;
+            
+            for i in 0..16 {
+                if (mask & (1 << i)) != 0 {
+                    let val = if size == Size::Word {
+                        self.memory.read_word(addr) as i16 as i32 as u32 // Sign extend
+                    } else {
+                        self.memory.read_long(addr)
+                    };
+                    
+                    if i < 8 {
+                        self.d[i] = val;
+                    } else {
+                        self.a[i - 8] = val;
+                    }
+                    addr = addr.wrapping_add(reg_size);
+                    cycles += if size == Size::Word { 4 } else { 8 };
+                }
+            }
+            
+            // Update An for postincrement mode
+            if let AddressingMode::AddressPostIncrement(reg) = ea {
+                self.a[reg as usize] = addr;
+            }
+        }
+        
+        cycles
+    }
+
+    // === PEA - Push Effective Address ===
+    fn exec_pea(&mut self, src: AddressingMode) -> u32 {
+        let mut cycles = 12u32;
+        let (src_ea, src_cycles) = calculate_ea(src, Size::Long, &self.d, &self.a, &mut self.pc, &self.memory);
+        cycles += src_cycles;
+        
+        let addr = match src_ea {
+            EffectiveAddress::Memory(a) => a,
+            _ => 0, // Should not happen for control addressing modes
+        };
+        
+        self.push_long(addr);
+        cycles
+    }
+
+    // === RTR - Return and Restore CCR ===
+    fn exec_rtr(&mut self) -> u32 {
+        let ccr = self.pop_word();
+        let new_pc = self.pop_long();
+        
+        // Only restore lower 5 bits (CCR portion)
+        self.sr = (self.sr & 0xFF00) | (ccr & 0x00FF);
+        self.pc = new_pc;
+        
+        20
+    }
+
+    // === Status Register Operations ===
+    
+    fn exec_move_to_sr(&mut self, src: AddressingMode) -> u32 {
+        if (self.sr & 0x2000) == 0 {
+            return self.process_exception(8); // Privilege violation
+        }
+        
+        let mut cycles = 12u32;
+        let (src_ea, src_cycles) = calculate_ea(src, Size::Word, &self.d, &self.a, &mut self.pc, &self.memory);
+        cycles += src_cycles;
+        
+        let val = read_ea(src_ea, Size::Word, &self.d, &self.a, &self.memory) as u16;
+        self.set_sr(val);
+        cycles
+    }
+
+    fn exec_move_from_sr(&mut self, dst: AddressingMode) -> u32 {
+        // On 68000, this is not privileged. On 68010+, it is.
+        let mut cycles = 6u32;
+        let (dst_ea, dst_cycles) = calculate_ea(dst, Size::Word, &self.d, &self.a, &mut self.pc, &self.memory);
+        cycles += dst_cycles;
+        
+        write_ea(dst_ea, Size::Word, self.sr as u32, &mut self.d, &mut self.a, &mut self.memory);
+        cycles
+    }
+
+    fn exec_move_to_ccr(&mut self, src: AddressingMode) -> u32 {
+        let mut cycles = 12u32;
+        let (src_ea, src_cycles) = calculate_ea(src, Size::Word, &self.d, &self.a, &mut self.pc, &self.memory);
+        cycles += src_cycles;
+        
+        let val = read_ea(src_ea, Size::Word, &self.d, &self.a, &self.memory) as u16;
+        self.sr = (self.sr & 0xFF00) | (val & 0x00FF);
+        cycles
+    }
+
+    fn exec_andi_to_ccr(&mut self) -> u32 {
+        let imm = self.memory.read_word(self.pc) & 0x00FF;
+        self.pc = self.pc.wrapping_add(2);
+        self.sr = (self.sr & 0xFF00) | ((self.sr & imm) & 0x00FF);
+        20
+    }
+
+    fn exec_andi_to_sr(&mut self) -> u32 {
+        if (self.sr & 0x2000) == 0 {
+            return self.process_exception(8);
+        }
+        let imm = self.memory.read_word(self.pc);
+        self.pc = self.pc.wrapping_add(2);
+        self.set_sr(self.sr & imm);
+        20
+    }
+
+    fn exec_ori_to_ccr(&mut self) -> u32 {
+        let imm = self.memory.read_word(self.pc) & 0x00FF;
+        self.pc = self.pc.wrapping_add(2);
+        self.sr = (self.sr & 0xFF00) | ((self.sr | imm) & 0x00FF);
+        20
+    }
+
+    fn exec_ori_to_sr(&mut self) -> u32 {
+        if (self.sr & 0x2000) == 0 {
+            return self.process_exception(8);
+        }
+        let imm = self.memory.read_word(self.pc);
+        self.pc = self.pc.wrapping_add(2);
+        self.set_sr(self.sr | imm);
+        20
+    }
+
+    fn exec_eori_to_ccr(&mut self) -> u32 {
+        let imm = self.memory.read_word(self.pc) & 0x00FF;
+        self.pc = self.pc.wrapping_add(2);
+        self.sr = (self.sr & 0xFF00) | ((self.sr ^ imm) & 0x00FF);
+        20
+    }
+
+    fn exec_eori_to_sr(&mut self) -> u32 {
+        if (self.sr & 0x2000) == 0 {
+            return self.process_exception(8);
+        }
+        let imm = self.memory.read_word(self.pc);
+        self.pc = self.pc.wrapping_add(2);
+        self.set_sr(self.sr ^ imm);
+        20
     }
 
 
