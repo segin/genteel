@@ -206,6 +206,13 @@ As an emulator, `genteel` runs code from untrusted sources (game ROMs). Care mus
 - [ ] Compare with real hardware
 - [ ] Cycle-accurate timing (stretch goal)
 
+### Phase 9: 32X Expansion
+- [ ] Implement dual Hitachi SH7604 (SH2) CPU cores
+- [ ] Implement Master/Slave synchronization logic
+- [ ] 32X VDP (Shim) and Framebuffer rendering
+- [ ] Shared SDRAM and Communication Bridge
+
+
 ### Testing Roadmap
 - [ ] Unit tests for every component
 - [ ] Property-based tests with `proptest`
