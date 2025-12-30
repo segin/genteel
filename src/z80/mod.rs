@@ -10,7 +10,9 @@ pub mod flags {
     pub const CARRY: u8 = 0b0000_0001;      // C - Carry flag
     pub const ADD_SUB: u8 = 0b0000_0010;    // N - Add/Subtract flag
     pub const PARITY: u8 = 0b0000_0100;     // P/V - Parity/Overflow flag
+    pub const X_FLAG: u8 = 0b0000_1000;     // X - Undocumented (copy of bit 3)
     pub const HALF_CARRY: u8 = 0b0001_0000; // H - Half-carry flag
+    pub const Y_FLAG: u8 = 0b0010_0000;     // Y - Undocumented (copy of bit 5)
     pub const ZERO: u8 = 0b0100_0000;       // Z - Zero flag
     pub const SIGN: u8 = 0b1000_0000;       // S - Sign flag
 }
@@ -57,6 +59,9 @@ pub struct Z80 {
     // Interrupt mode (0, 1, or 2)
     pub im: u8,
 
+    // Internal hidden register (WZ/MEMPTR)
+    pub memptr: u16,
+
     // Halted state
     pub halted: bool,
 
@@ -77,6 +82,7 @@ impl Z80 {
             i: 0, r: 0,
             iff1: false, iff2: false,
             im: 0,
+            memptr: 0,
             halted: false,
             memory,
             cycles: 0,
@@ -94,6 +100,7 @@ impl Z80 {
         self.iff1 = false;
         self.iff2 = false;
         self.im = 0;
+        self.memptr = 0;
         self.halted = false;
     }
 
@@ -152,6 +159,8 @@ impl Z80 {
     fn set_sz_flags(&mut self, value: u8) {
         self.set_flag(flags::ZERO, value == 0);
         self.set_flag(flags::SIGN, (value & 0x80) != 0);
+        self.set_flag(flags::X_FLAG, (value & 0x08) != 0);
+        self.set_flag(flags::Y_FLAG, (value & 0x20) != 0);
     }
 
     fn set_parity_flag(&mut self, value: u8) {
@@ -295,6 +304,10 @@ impl Z80 {
         self.set_flag(flags::CARRY, result > 0xFFFF);
         self.set_flag(flags::HALF_CARRY, ((hl & 0x0FFF) + (v & 0x0FFF)) > 0x0FFF);
         self.set_flag(flags::ADD_SUB, false);
+        // X/Y from High Byte
+        let h_res = (result >> 8) as u8;
+        self.set_flag(flags::X_FLAG, (h_res & 0x08) != 0);
+        self.set_flag(flags::Y_FLAG, (h_res & 0x20) != 0);
         
         self.set_hl(result as u16);
     }
@@ -941,6 +954,19 @@ impl Z80 {
                 self.set_flag(flags::ZERO, bit == 0);
                 self.set_flag(flags::HALF_CARRY, true);
                 self.set_flag(flags::ADD_SUB, false);
+                
+                if z != 6 {
+                    self.set_flag(flags::X_FLAG, (val & 0x08) != 0);
+                    self.set_flag(flags::Y_FLAG, (val & 0x20) != 0);
+                } else {
+                     // For (HL), X/Y come from MEMPTR (WZ) high byte.
+                     // Since we don't fully track MEMPTR yet, we use memptr if available, or just leave as is/0?
+                     // Let's use memptr >> 8 for structural correctness.
+                     let h_memptr = (self.memptr >> 8) as u8;
+                     self.set_flag(flags::X_FLAG, (h_memptr & 0x08) != 0);
+                     self.set_flag(flags::Y_FLAG, (h_memptr & 0x20) != 0);
+                }
+
                 if z == 6 { 12 } else { 8 }
             }
             2 => { // RES y, r
@@ -1000,6 +1026,11 @@ impl Z80 {
                     let overflow = ((hl ^ rp) & (hl ^ result) & 0x8000) != 0;
                     self.set_flag(flags::PARITY, overflow);
                     
+                    // X/Y from High Byte
+                    let h_res = (result >> 8) as u8;
+                    self.set_flag(flags::X_FLAG, (h_res & 0x08) != 0);
+                    self.set_flag(flags::Y_FLAG, (h_res & 0x20) != 0);
+                    
                     self.set_hl(result as u16);
                     15
                 } else {
@@ -1018,6 +1049,11 @@ impl Z80 {
                     // P/V: Overflow
                     let overflow = (! (hl ^ rp) & (hl ^ result) & 0x8000) != 0;
                     self.set_flag(flags::PARITY, overflow);
+                    
+                    // X/Y from High Byte
+                    let h_res = (result >> 8) as u8;
+                    self.set_flag(flags::X_FLAG, (h_res & 0x08) != 0);
+                    self.set_flag(flags::Y_FLAG, (h_res & 0x20) != 0);
                     
                     self.set_hl(result as u16);
                     15
@@ -1603,6 +1639,9 @@ mod tests_block;
 
 #[cfg(test)]
 mod tests_undoc;
+
+#[cfg(test)]
+mod tests_exhaustive;
 
 #[cfg(test)]
 mod tests_ddcb;

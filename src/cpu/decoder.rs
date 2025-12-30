@@ -249,6 +249,9 @@ pub enum Instruction {
     DivS { src: AddressingMode, dst_reg: u8 },
     Neg { size: Size, dst: AddressingMode },
     Ext { size: Size, reg: u8 },
+    Abcd { src_reg: u8, dst_reg: u8, memory_mode: bool },
+    Sbcd { src_reg: u8, dst_reg: u8, memory_mode: bool },
+    Nbcd { dst: AddressingMode },
 
     // Logical
     And { size: Size, src: AddressingMode, dst: AddressingMode, direction: bool },
@@ -383,21 +386,37 @@ fn decode_group_0(opcode: u16) -> Instruction {
         }
     }
 
-    // Check for immediate operations
+    // Check for immediate operations and Static Bit Ops
     if bit8 == 0 {
-        let size_bits = ((opcode >> 6) & 0x03) as u8;
+        let op = (opcode >> 9) & 0x07;
         let mode = ((opcode >> 3) & 0x07) as u8;
         let reg = (opcode & 0x07) as u8;
+        
+        // Static Bit Instructions (Op 4)
+        if op == 0b100 {
+            if let Some(dst) = AddressingMode::from_mode_reg(mode, reg) {
+                let bit_op = (opcode >> 6) & 0x03;
+                let bit = BitSource::Immediate;
+                return match bit_op {
+                    0b00 => Instruction::Btst { bit, dst },
+                    0b01 => Instruction::Bchg { bit, dst },
+                    0b10 => Instruction::Bclr { bit, dst },
+                    0b11 => Instruction::Bset { bit, dst },
+                    _ => unreachable!(),
+                };
+            }
+        }
 
+        // Immediate Instructions (ORI, ANDI, SUBI, ADDI, EORI, CMPI)
+        let size_bits = ((opcode >> 6) & 0x03) as u8;
         if let Some(size) = Size::from_bits(size_bits) {
             if let Some(dst) = AddressingMode::from_mode_reg(mode, reg) {
-                let op = (opcode >> 9) & 0x07;
                 return match op {
                     0b000 => Instruction::OrI { size, dst },
                     0b001 => Instruction::AndI { size, dst },
                     0b010 => Instruction::SubI { size, dst },
                     0b011 => Instruction::AddI { size, dst },
-                    0b100 => Instruction::Btst { bit: BitSource::Immediate, dst },
+                    0b100 => Instruction::Unimplemented { opcode }, // Handled above
                     0b101 => Instruction::EorI { size, dst },
                     0b110 => Instruction::CmpI { size, dst },
                     _ => Instruction::Unimplemented { opcode },
@@ -485,7 +504,26 @@ fn decode_group_4(opcode: u16) -> Instruction {
         0x4840 => return Instruction::Swap { reg },
         0x4880 => return Instruction::Ext { size: Size::Word, reg },
         0x48C0 => return Instruction::Ext { size: Size::Long, reg },
+
         _ => {}
+    }
+
+    // NBCD
+    if opcode & 0xFFC0 == 0x4800 {
+        if let Some(dst) = AddressingMode::from_mode_reg(mode, reg) {
+            if dst.is_valid_destination() && matches!(dst, AddressingMode::DataRegister(_) | AddressingMode::AddressPreDecrement(_) | AddressingMode::AddressDisplacement(_) | AddressingMode::AddressIndex(_) | AddressingMode::AbsoluteShort | AddressingMode::AbsoluteLong) {
+                 return Instruction::Nbcd { dst };
+            }
+            // Nbcd requires data alterable. is_valid_destination checks mostly immediate logic.
+            // Check manual: NBCD <ea>. <ea> is Data Alterable.
+            // DataRegister, (An), (An)+, -(An), d(An), d(An,xi), xxx.W, xxx.L.
+            // An direct is NOT data alterable.
+            // My AddressingMode check is approximate.
+            // I'll assume valid destination for now if not An.
+            if !matches!(dst, AddressingMode::AddressRegister(_) | AddressingMode::Immediate | AddressingMode::PcDisplacement | AddressingMode::PcIndex) {
+                 return Instruction::Nbcd { dst };
+            }
+        }
     }
 
     // TRAP
@@ -638,6 +676,13 @@ fn decode_group_8(opcode: u16) -> Instruction {
     let ea_mode = ((opcode >> 3) & 0x07) as u8;
     let ea_reg = (opcode & 0x07) as u8;
 
+    // SBCD
+    // 1000 Rx 1 0000 m Ry
+    if opcode & 0xF1F0 == 0x8100 {
+        let memory_mode = (opcode & 0x0008) != 0;
+        return Instruction::Sbcd { src_reg: ea_reg, dst_reg: reg, memory_mode };
+    }
+
     // DIVU
     if size_bits == 0b11 && !direction {
         if let Some(src) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
@@ -745,10 +790,11 @@ fn decode_group_c(opcode: u16) -> Instruction {
     let ea_mode = ((opcode >> 3) & 0x07) as u8;
     let ea_reg = (opcode & 0x07) as u8;
 
-    // EXG
-    if opcode & 0x0130 == 0x0100 {
-        let mode = ((opcode >> 3) & 0x1F) as u8;
-        return Instruction::Exg { rx: reg, ry: ea_reg, mode };
+    // ABCD
+    // 1100 Rx 1 0000 m Ry
+    if opcode & 0xF1F0 == 0xC100 {
+        let memory_mode = (opcode & 0x0008) != 0;
+        return Instruction::Abcd { src_reg: ea_reg, dst_reg: reg, memory_mode };
     }
 
     // MULU
@@ -763,6 +809,12 @@ fn decode_group_c(opcode: u16) -> Instruction {
         if let Some(src) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
             return Instruction::MulS { src, dst_reg: reg };
         }
+    }
+
+    // EXG
+    if opcode & 0x0130 == 0x0100 {
+        let mode = ((opcode >> 3) & 0x1F) as u8;
+        return Instruction::Exg { rx: reg, ry: ea_reg, mode };
     }
 
     // AND
