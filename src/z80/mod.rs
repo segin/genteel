@@ -299,6 +299,43 @@ impl Z80 {
         self.set_hl(result as u16);
     }
 
+    // Index Register Half Accessors
+    pub fn ixh(&self) -> u8 { (self.ix >> 8) as u8 }
+    pub fn ixl(&self) -> u8 { (self.ix & 0xFF) as u8 }
+    pub fn iyh(&self) -> u8 { (self.iy >> 8) as u8 }
+    pub fn iyl(&self) -> u8 { (self.iy & 0xFF) as u8 }
+
+    pub fn set_ixh(&mut self, val: u8) { self.ix = (self.ix & 0x00FF) | ((val as u16) << 8); }
+    pub fn set_ixl(&mut self, val: u8) { self.ix = (self.ix & 0xFF00) | (val as u16); }
+    pub fn set_iyh(&mut self, val: u8) { self.iy = (self.iy & 0x00FF) | ((val as u16) << 8); }
+    pub fn set_iyl(&mut self, val: u8) { self.iy = (self.iy & 0xFF00) | (val as u16); }
+
+    fn get_index_byte(&self, r: u8, is_ix: bool) -> u8 {
+        match r {
+            0 => self.b,
+            1 => self.c,
+            2 => self.d,
+            3 => self.e,
+            4 => if is_ix { self.ixh() } else { self.iyh() },
+            5 => if is_ix { self.ixl() } else { self.iyl() },
+            7 => self.a,
+            _ => 0,
+        }
+    }
+
+    fn set_index_byte(&mut self, r: u8, val: u8, is_ix: bool) {
+        match r {
+            0 => self.b = val,
+            1 => self.c = val,
+            2 => self.d = val,
+            3 => self.e = val,
+            4 => if is_ix { self.set_ixh(val) } else { self.set_iyh(val) },
+            5 => if is_ix { self.set_ixl(val) } else { self.set_iyl(val) },
+            7 => self.a = val,
+            _ => {},
+        }
+    }
+
     fn add_ix(&mut self, value: u16) {
         let ix = self.ix as u32;
         let v = value as u32;
@@ -1180,6 +1217,9 @@ impl Z80 {
                 20
             }
             0x23 => { self.ix = self.ix.wrapping_add(1); 10 }
+            0x24 => { let val = self.ixh(); let res = self.inc(val); self.set_ixh(res); 8 }
+            0x25 => { let val = self.ixh(); let res = self.dec(val); self.set_ixh(res); 8 }
+            0x26 => { let n = self.fetch_byte(); self.set_ixh(n); 11 }
             0x29 => { self.add_ix(self.ix); 15 }
             0x2A => {
                 let addr = self.fetch_word();
@@ -1187,6 +1227,9 @@ impl Z80 {
                 20
             }
             0x2B => { self.ix = self.ix.wrapping_sub(1); 10 }
+            0x2C => { let val = self.ixl(); let res = self.inc(val); self.set_ixl(res); 8 }
+            0x2D => { let val = self.ixl(); let res = self.dec(val); self.set_ixl(res); 8 }
+            0x2E => { let n = self.fetch_byte(); self.set_ixl(n); 11 }
             0x34 => {
                 let d = self.fetch_byte() as i8;
                 let addr = (self.ix as i16 + d as i16) as u16;
@@ -1211,6 +1254,18 @@ impl Z80 {
                 19
             }
             0x39 => { self.add_ix(self.sp); 15 }
+            
+            // Specific ALU ops (must be before generic range)
+            0x86 => { let d = self.fetch_byte() as i8; let addr = (self.ix as i16 + d as i16) as u16; let val = self.read_byte(addr); self.add_a(val, false); 19 }
+            0x8E => { let d = self.fetch_byte() as i8; let addr = (self.ix as i16 + d as i16) as u16; let val = self.read_byte(addr); self.add_a(val, true); 19 }
+            0x96 => { let d = self.fetch_byte() as i8; let addr = (self.ix as i16 + d as i16) as u16; let val = self.read_byte(addr); self.sub_a(val, false, true); 19 }
+            0x9E => { let d = self.fetch_byte() as i8; let addr = (self.ix as i16 + d as i16) as u16; let val = self.read_byte(addr); self.sub_a(val, true, true); 19 }
+            0xA6 => { let d = self.fetch_byte() as i8; let addr = (self.ix as i16 + d as i16) as u16; let val = self.read_byte(addr); self.and_a(val); 19 }
+            0xAE => { let d = self.fetch_byte() as i8; let addr = (self.ix as i16 + d as i16) as u16; let val = self.read_byte(addr); self.xor_a(val); 19 }
+            0xB6 => { let d = self.fetch_byte() as i8; let addr = (self.ix as i16 + d as i16) as u16; let val = self.read_byte(addr); self.or_a(val); 19 }
+            0xBE => { let d = self.fetch_byte() as i8; let addr = (self.ix as i16 + d as i16) as u16; let val = self.read_byte(addr); self.sub_a(val, false, false); 19 }
+
+            // LD r, (IX+d) and LD (IX+d), r
             0x46 | 0x4E | 0x56 | 0x5E | 0x66 | 0x6E | 0x7E => {
                 let d = self.fetch_byte() as i8;
                 let addr = (self.ix as i16 + d as i16) as u16;
@@ -1227,62 +1282,35 @@ impl Z80 {
                 self.write_byte(addr, val);
                 19
             }
-            0x86 => { 
-                let d = self.fetch_byte() as i8;
-                let addr = (self.ix as i16 + d as i16) as u16;
-                let val = self.read_byte(addr); 
-                self.add_a(val, false); 
-                19 
+
+            // Generic Undocumented LD r, r' (involving IXH/IXL if 4/5)
+            // Note: 0x76 (HALT) is handled here as LD (HL), (HL) which is NOP or HALT?
+            // HALT is 76. In DD prefix, DD 76 is undefined/unstable or same as HALT.
+            // But 0x40..0x7F logic maps 6 to IXH/IXL access??
+            // Wait, get_index_byte(6) returns 0.
+            // DD 76 -> LD H, (HL) -> ???
+            // Actually DD 76 is NOT LD (HL), (HL). It is HALT.
+            // We should treat 76 as HALT if possible, or fall through.
+            // But let's keep the generic logic for now.
+            0x40..=0x7F => {
+                if opcode == 0x76 { return 4; } // HALT (Timing?)
+                let r_src = opcode & 0x07;
+                let r_dest = (opcode >> 3) & 0x07;
+                let val = self.get_index_byte(r_src, true);
+                self.set_index_byte(r_dest, val, true);
+                8
             }
-            0x8E => { 
-                let d = self.fetch_byte() as i8;
-                let addr = (self.ix as i16 + d as i16) as u16;
-                let val = self.read_byte(addr); 
-                self.add_a(val, true); 
-                19 
-            }
-            0x96 => { 
-                let d = self.fetch_byte() as i8;
-                let addr = (self.ix as i16 + d as i16) as u16;
-                let val = self.read_byte(addr); 
-                self.sub_a(val, false, true); 
-                19 
-            }
-            0x9E => { 
-                let d = self.fetch_byte() as i8;
-                let addr = (self.ix as i16 + d as i16) as u16;
-                let val = self.read_byte(addr); 
-                self.sub_a(val, true, true); 
-                19 
-            }
-            0xA6 => { 
-                let d = self.fetch_byte() as i8;
-                let addr = (self.ix as i16 + d as i16) as u16;
-                let val = self.read_byte(addr); 
-                self.and_a(val); 
-                19 
-            }
-            0xAE => { 
-                let d = self.fetch_byte() as i8;
-                let addr = (self.ix as i16 + d as i16) as u16;
-                let val = self.read_byte(addr); 
-                self.xor_a(val); 
-                19 
-            }
-            0xB6 => { 
-                let d = self.fetch_byte() as i8;
-                let addr = (self.ix as i16 + d as i16) as u16;
-                let val = self.read_byte(addr); 
-                self.or_a(val); 
-                19 
-            }
-            0xBE => { 
-                let d = self.fetch_byte() as i8;
-                let addr = (self.ix as i16 + d as i16) as u16;
-                let val = self.read_byte(addr); 
-                self.sub_a(val, false, false); 
-                19 
-            }
+            
+            // Generic Undocumented ALU
+            0x80..=0x87 => { self.add_a(self.get_index_byte(opcode & 0x07, true), false); 8 }
+            0x88..=0x8F => { self.add_a(self.get_index_byte(opcode & 0x07, true), true); 8 }
+            0x90..=0x97 => { self.sub_a(self.get_index_byte(opcode & 0x07, true), false, true); 8 }
+            0x98..=0x9F => { self.sub_a(self.get_index_byte(opcode & 0x07, true), true, true); 8 }
+            0xA0..=0xA7 => { self.and_a(self.get_index_byte(opcode & 0x07, true)); 8 }
+            0xA8..=0xAF => { self.xor_a(self.get_index_byte(opcode & 0x07, true)); 8 }
+            0xB0..=0xB7 => { self.or_a(self.get_index_byte(opcode & 0x07, true)); 8 }
+            0xB8..=0xBF => { self.sub_a(self.get_index_byte(opcode & 0x07, true), false, false); 8 } // CP
+
             0xE1 => { self.ix = self.pop(); 14 }
             0xE3 => {
                 let val = self.read_word(self.sp);
@@ -1313,6 +1341,9 @@ impl Z80 {
                 20
             }
             0x23 => { self.iy = self.iy.wrapping_add(1); 10 }
+            0x24 => { let val = self.iyh(); let res = self.inc(val); self.set_iyh(res); 8 }
+            0x25 => { let val = self.iyh(); let res = self.dec(val); self.set_iyh(res); 8 }
+            0x26 => { let n = self.fetch_byte(); self.set_iyh(n); 11 }
             0x29 => { self.add_iy(self.iy); 15 }
             0x2A => {
                 let addr = self.fetch_word();
@@ -1320,6 +1351,9 @@ impl Z80 {
                 20
             }
             0x2B => { self.iy = self.iy.wrapping_sub(1); 10 }
+            0x2C => { let val = self.iyl(); let res = self.inc(val); self.set_iyl(res); 8 }
+            0x2D => { let val = self.iyl(); let res = self.dec(val); self.set_iyl(res); 8 }
+            0x2E => { let n = self.fetch_byte(); self.set_iyl(n); 11 }
             0x34 => {
                 let d = self.fetch_byte() as i8;
                 let addr = (self.iy as i16 + d as i16) as u16;
@@ -1344,6 +1378,17 @@ impl Z80 {
                 19
             }
             0x39 => { self.add_iy(self.sp); 15 }
+
+            // Specific ALU ops (iy)
+            0x86 => { let d = self.fetch_byte() as i8; let addr = (self.iy as i16 + d as i16) as u16; let val = self.read_byte(addr); self.add_a(val, false); 19 }
+            0x8E => { let d = self.fetch_byte() as i8; let addr = (self.iy as i16 + d as i16) as u16; let val = self.read_byte(addr); self.add_a(val, true); 19 }
+            0x96 => { let d = self.fetch_byte() as i8; let addr = (self.iy as i16 + d as i16) as u16; let val = self.read_byte(addr); self.sub_a(val, false, true); 19 }
+            0x9E => { let d = self.fetch_byte() as i8; let addr = (self.iy as i16 + d as i16) as u16; let val = self.read_byte(addr); self.sub_a(val, true, true); 19 }
+            0xA6 => { let d = self.fetch_byte() as i8; let addr = (self.iy as i16 + d as i16) as u16; let val = self.read_byte(addr); self.and_a(val); 19 }
+            0xAE => { let d = self.fetch_byte() as i8; let addr = (self.iy as i16 + d as i16) as u16; let val = self.read_byte(addr); self.xor_a(val); 19 }
+            0xB6 => { let d = self.fetch_byte() as i8; let addr = (self.iy as i16 + d as i16) as u16; let val = self.read_byte(addr); self.or_a(val); 19 }
+            0xBE => { let d = self.fetch_byte() as i8; let addr = (self.iy as i16 + d as i16) as u16; let val = self.read_byte(addr); self.sub_a(val, false, false); 19 }
+
             0x46 | 0x4E | 0x56 | 0x5E | 0x66 | 0x6E | 0x7E => {
                 let d = self.fetch_byte() as i8;
                 let addr = (self.iy as i16 + d as i16) as u16;
@@ -1360,62 +1405,25 @@ impl Z80 {
                 self.write_byte(addr, val);
                 19
             }
-            0x86 => { 
-                let d = self.fetch_byte() as i8;
-                let addr = (self.iy as i16 + d as i16) as u16;
-                let val = self.read_byte(addr); 
-                self.add_a(val, false); 
-                19 
+            
+            // Generic Undocumented (IY)
+            0x40..=0x7F => {
+                if opcode == 0x76 { return 4; }
+                let r_src = opcode & 0x07;
+                let r_dest = (opcode >> 3) & 0x07;
+                let val = self.get_index_byte(r_src, false);
+                self.set_index_byte(r_dest, val, false);
+                8
             }
-            0x8E => { 
-                let d = self.fetch_byte() as i8;
-                let addr = (self.iy as i16 + d as i16) as u16;
-                let val = self.read_byte(addr); 
-                self.add_a(val, true); 
-                19 
-            }
-            0x96 => { 
-                let d = self.fetch_byte() as i8;
-                let addr = (self.iy as i16 + d as i16) as u16;
-                let val = self.read_byte(addr); 
-                self.sub_a(val, false, true); 
-                19 
-            }
-            0x9E => { 
-                let d = self.fetch_byte() as i8;
-                let addr = (self.iy as i16 + d as i16) as u16;
-                let val = self.read_byte(addr); 
-                self.sub_a(val, true, true); 
-                19 
-            }
-            0xA6 => { 
-                let d = self.fetch_byte() as i8;
-                let addr = (self.iy as i16 + d as i16) as u16;
-                let val = self.read_byte(addr); 
-                self.and_a(val); 
-                19 
-            }
-            0xAE => { 
-                let d = self.fetch_byte() as i8;
-                let addr = (self.iy as i16 + d as i16) as u16;
-                let val = self.read_byte(addr); 
-                self.xor_a(val); 
-                19 
-            }
-            0xB6 => { 
-                let d = self.fetch_byte() as i8;
-                let addr = (self.iy as i16 + d as i16) as u16;
-                let val = self.read_byte(addr); 
-                self.or_a(val); 
-                19 
-            }
-            0xBE => { 
-                let d = self.fetch_byte() as i8;
-                let addr = (self.iy as i16 + d as i16) as u16;
-                let val = self.read_byte(addr); 
-                self.sub_a(val, false, false); 
-                19 
-            }
+            0x80..=0x87 => { self.add_a(self.get_index_byte(opcode & 0x07, false), false); 8 }
+            0x88..=0x8F => { self.add_a(self.get_index_byte(opcode & 0x07, false), true); 8 }
+            0x90..=0x97 => { self.sub_a(self.get_index_byte(opcode & 0x07, false), false, true); 8 }
+            0x98..=0x9F => { self.sub_a(self.get_index_byte(opcode & 0x07, false), true, true); 8 }
+            0xA0..=0xA7 => { self.and_a(self.get_index_byte(opcode & 0x07, false)); 8 }
+            0xA8..=0xAF => { self.xor_a(self.get_index_byte(opcode & 0x07, false)); 8 }
+            0xB0..=0xB7 => { self.or_a(self.get_index_byte(opcode & 0x07, false)); 8 }
+            0xB8..=0xBF => { self.sub_a(self.get_index_byte(opcode & 0x07, false), false, false); 8 }
+
             0xE1 => { self.iy = self.pop(); 14 }
             0xE3 => {
                 let val = self.read_word(self.sp);

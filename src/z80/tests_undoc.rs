@@ -83,3 +83,18 @@ fn z80(program: &[u8]) -> Z80 {
     c.step();
     assert_eq!(c.pc, 2);
 }
+
+// ============ Undocumented IXH/IXL Access (DD prefix) ============
+
+#[test] fn dd_ld_ixh_b() { let mut c = z80(&[0xDD, 0x60]); c.b = 0x55; c.step(); assert_eq!(c.ixh(), 0x55); assert_eq!(c.ixl(), 0x00); }
+#[test] fn dd_ld_a_ixl() { let mut c = z80(&[0xDD, 0x7D]); c.set_ixl(0xAA); c.step(); assert_eq!(c.a, 0xAA); }
+#[test] fn dd_add_a_ixh() { let mut c = z80(&[0xDD, 0x84]); c.a = 0x10; c.set_ixh(0x20); c.step(); assert_eq!(c.a, 0x30); }
+#[test] fn dd_inc_ixh() { let mut c = z80(&[0xDD, 0x24]); c.set_ixh(0x10); c.step(); assert_eq!(c.ixh(), 0x11); }
+#[test] fn dd_dec_ixl() { let mut c = z80(&[0xDD, 0x2D]); c.set_ixl(0x10); c.step(); assert_eq!(c.ixl(), 0x0F); }
+#[test] fn dd_ld_ixh_n() { let mut c = z80(&[0xDD, 0x26, 0x55]); c.step(); assert_eq!(c.ixh(), 0x55); }
+
+// ============ Undocumented IYH/IYL Access (FD prefix) ============
+
+#[test] fn fd_ld_iyh_c() { let mut c = z80(&[0xFD, 0x61]); c.c = 0x55; c.step(); assert_eq!(c.iyh(), 0x55); }
+#[test] fn fd_sub_iyl() { let mut c = z80(&[0xFD, 0x95]); c.a = 0x10; c.set_iyl(0x05); c.step(); assert_eq!(c.a, 0x0B); }
+
