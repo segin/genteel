@@ -165,3 +165,30 @@ fn z80(program: &[u8]) -> Z80 {
 #[test] fn timing_ddcb_bit() { let mut c = z80(&[0xDD, 0xCB, 0x00, 0x46]); c.ix = 0x100; assert_eq!(c.step(), 20); }
 #[test] fn timing_ddcb_res() { let mut c = z80(&[0xDD, 0xCB, 0x00, 0x86]); c.ix = 0x100; assert_eq!(c.step(), 23); }
 #[test] fn timing_ddcb_set() { let mut c = z80(&[0xDD, 0xCB, 0x00, 0xC6]); c.ix = 0x100; assert_eq!(c.step(), 23); }
+
+// ============ FD prefix (IY) ============
+
+#[test] fn timing_fd_ld_iy_nn() { let mut c = z80(&[0xFD, 0x21, 0x00, 0x00]); assert_eq!(c.step(), 14); }
+#[test] fn timing_fd_ld_nn_iy() { let mut c = z80(&[0xFD, 0x22, 0x00, 0x10]); assert_eq!(c.step(), 20); }
+#[test] fn timing_fd_inc_iy() { let mut c = z80(&[0xFD, 0x23]); assert_eq!(c.step(), 10); }
+#[test] fn timing_fd_ld_iy_nn_ind() { let mut c = z80(&[0xFD, 0x2A, 0x00, 0x10]); assert_eq!(c.step(), 20); }
+#[test] fn timing_fd_dec_iy() { let mut c = z80(&[0xFD, 0x2B]); assert_eq!(c.step(), 10); }
+#[test] fn timing_fd_inc_iy_d() { let mut c = z80(&[0xFD, 0x34, 0x00]); c.iy = 0x100; assert_eq!(c.step(), 23); }
+#[test] fn timing_fd_dec_iy_d() { let mut c = z80(&[0xFD, 0x35, 0x00]); c.iy = 0x100; assert_eq!(c.step(), 23); }
+#[test] fn timing_fd_ld_iy_d_n() { let mut c = z80(&[0xFD, 0x36, 0x00, 0x00]); c.iy = 0x100; assert_eq!(c.step(), 19); }
+#[test] fn timing_fd_add_iy_bc() { let mut c = z80(&[0xFD, 0x09]); assert_eq!(c.step(), 15); }
+#[test] fn timing_fd_ld_b_iy_d() { let mut c = z80(&[0xFD, 0x46, 0x00]); c.iy = 0x100; assert_eq!(c.step(), 19); }
+#[test] fn timing_fd_ld_iy_d_b() { let mut c = z80(&[0xFD, 0x70, 0x00]); c.iy = 0x100; assert_eq!(c.step(), 19); }
+#[test] fn timing_fd_add_a_iy_d() { let mut c = z80(&[0xFD, 0x86, 0x00]); c.iy = 0x100; assert_eq!(c.step(), 19); }
+#[test] fn timing_fd_pop_iy() { let mut c = z80(&[0xFD, 0xE1]); c.sp = 0x100; assert_eq!(c.step(), 14); }
+#[test] fn timing_fd_ex_sp_iy() { let mut c = z80(&[0xFD, 0xE3]); c.sp = 0x100; assert_eq!(c.step(), 23); }
+#[test] fn timing_fd_push_iy() { let mut c = z80(&[0xFD, 0xE5]); c.sp = 0x200; assert_eq!(c.step(), 15); }
+#[test] fn timing_fd_jp_iy() { let mut c = z80(&[0xFD, 0xE9]); assert_eq!(c.step(), 8); }
+#[test] fn timing_fd_ld_sp_iy() { let mut c = z80(&[0xFD, 0xF9]); assert_eq!(c.step(), 10); }
+
+// ============ FD CB prefix ============
+
+#[test] fn timing_fdcb_rlc() { let mut c = z80(&[0xFD, 0xCB, 0x00, 0x06]); c.iy = 0x100; assert_eq!(c.step(), 23); }
+#[test] fn timing_fdcb_bit() { let mut c = z80(&[0xFD, 0xCB, 0x00, 0x46]); c.iy = 0x100; assert_eq!(c.step(), 20); }
+#[test] fn timing_fdcb_res() { let mut c = z80(&[0xFD, 0xCB, 0x00, 0x86]); c.iy = 0x100; assert_eq!(c.step(), 23); }
+#[test] fn timing_fdcb_set() { let mut c = z80(&[0xFD, 0xCB, 0x00, 0xC6]); c.iy = 0x100; assert_eq!(c.step(), 23); }
