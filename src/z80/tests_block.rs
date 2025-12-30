@@ -249,7 +249,12 @@ fn ldir_overlapping_forward() {
 
 #[test]
 fn ldir_wrap_around() {
-    let mut c = z80(&[0xED, 0xB0]);
+    let mut c = z80(&[]); // Empty init
+    // Manually write code at 0x0200 to avoid conflict with 0x0000 wrap target
+    c.memory.data[0x0200] = 0xED;
+    c.memory.data[0x0201] = 0xB0;
+    c.pc = 0x0200;
+
     c.set_hl(0xFFFE);
     c.set_de(0x0100);
     c.set_bc(0x0003);
