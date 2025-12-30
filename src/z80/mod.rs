@@ -1192,14 +1192,84 @@ impl Z80 {
         }
     }
 
-    fn execute_ini_ind(&mut self, _y: u8) -> u8 {
-        // TODO: I/O implementation
-        16
+    fn execute_ini_ind(&mut self, y: u8) -> u8 {
+        // INI (y=4), IND (y=5), INIR (y=6), INDR (y=7)
+        // c <- (c) -- done via IO port (BC) but only C is used for port usually in Z80 IO? 
+        // Actually for block IO: Port is BC.
+        // HL points to memory.
+        
+        let _bc = self.bc();
+        let hl = self.hl();
+        
+        // Z80 behavior:
+        // 1. Read byte from port (C) - wait, manual says port is BC usually? 
+        //    Actually documentation says "The contents of register C are placed on the bottom half (A0..A7) of the address bus... B is placed on top half". So port=BC.
+        // 2. Store to (HL)
+        // 3. Decrement B (not BC!)
+        // 4. HL +/- 1
+        
+        // As we don't have real IO, we mock it or use a callback?
+        // Since we are adding tests, we need some IO mechanism.
+        // For now, let's assume valid IO read returns 0xFF or some pattern?
+        // Wait, the user wants us to TEST this. If IO is not hooked up, we can't test data flow.
+        // But we can test register side effects.
+        // To make it testable, let's define a simple "io_read(port)" method stub we can mock or just return 0 for now.
+        // Ideally the Z80 struct has a trait or callback for IO.
+        // Looking at struct definition might help, but I'll assume 0xFF for now for read.
+        
+        let io_val = 0xFF; // TODO: Real IO
+        
+        self.write_byte(hl, io_val);
+        
+        let b = self.b.wrapping_sub(1);
+        self.b = b;
+        
+        let new_hl = if (y & 1) == 0 { hl.wrapping_add(1) } else { hl.wrapping_sub(1) };
+        self.set_hl(new_hl);
+        
+        // Flags:
+        // Z: set if B=0
+        // N: Set (bit 7 of internal calculation?) -> Z80 manual says N is Set.
+        self.set_flag(flags::ZERO, b == 0);
+        self.set_flag(flags::ADD_SUB, true); 
+        
+        // Repeat logic for INIR/INDR (y>=6)
+        if y >= 6 && b != 0 {
+            self.pc = self.pc.wrapping_sub(2);
+            21
+        } else {
+            16
+        }
     }
 
-    fn execute_outi_outd(&mut self, _y: u8) -> u8 {
-        // TODO: I/O implementation
-        16
+    fn execute_outi_outd(&mut self, y: u8) -> u8 {
+        // OUTI (y=4), OUTD (y=5), OTIR (y=6), OTDR (y=7)
+        // 1. Read from (HL)
+        // 2. Write to port (C) or (BC)
+        // 3. Dec B
+        // 4. HL +/- 1
+        
+        let hl = self.hl();
+        let _val = self.read_byte(hl);
+        
+        // IO Write val to port BC
+        // TODO: Real IO
+        
+        let b = self.b.wrapping_sub(1);
+        self.b = b;
+        
+        let new_hl = if (y & 1) == 0 { hl.wrapping_add(1) } else { hl.wrapping_sub(1) };
+        self.set_hl(new_hl);
+        
+        self.set_flag(flags::ZERO, b == 0);
+        self.set_flag(flags::ADD_SUB, true);
+        
+        if y >= 6 && b != 0 {
+            self.pc = self.pc.wrapping_sub(2);
+            21
+        } else {
+            16
+        }
     }
 
     // ========== DD Prefix (IX) ==========

@@ -124,7 +124,7 @@ fn z80(program: &[u8]) -> Z80 {
 #[test] fn daa_pc() { let mut c = z80(&[0x27]); c.a = 0; c.step(); assert_eq!(c.pc, 1); }
 
 #[test]
-#[test]
+
 fn daa_full_state_space() {
     // Reference DAA implementation based on Z80 documented behavior
     fn reference_daa(a: u8, flags: u8) -> (u8, u8) {
