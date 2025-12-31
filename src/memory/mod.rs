@@ -3,6 +3,8 @@
 //! Provides both simple memory (for testing) and full memory bus with Genesis memory map.
 
 pub mod bus;
+#[cfg(test)]
+mod tests_property;
 
 #[derive(Debug, Clone)]
 pub struct Memory {

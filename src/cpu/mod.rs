@@ -7,6 +7,8 @@ pub mod decoder;
 pub mod addressing;
 #[cfg(test)]
 mod tests_m68k_extended;
+#[cfg(test)]
+mod tests_m68k_comprehensive;
 
 use crate::memory::Memory;
 use decoder::{decode, Instruction, Size, AddressingMode, Condition, ShiftCount, BitSource};

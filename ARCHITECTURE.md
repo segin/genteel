@@ -10,7 +10,7 @@ This document outlines the architecture of the `genteel` emulator, providing a c
 - **Repository**: (To be added)
 - **Contact**: N/A
 - **License**: (To be determined)
-- **Date of Last Update**: 2025-12-29
+- **Date of Last Update**: 2025-12-31
 
 ## 1. High-level Architecture
 
@@ -172,9 +172,9 @@ As an emulator, `genteel` runs code from untrusted sources (game ROMs). Care mus
 - [ ] Exception handling
 
 ### Phase 2: Memory Bus
-- [ ] Implement the memory bus and ROM loading
-- [ ] Full Genesis memory map
-- [ ] Memory-mapped I/O
+- [x] Implement the memory bus and ROM loading
+- [x] Full Genesis memory map
+- [x] Memory-mapped I/O
 
 ### Phase 3: VDP Implementation
 - [ ] Basic VDP register handling
