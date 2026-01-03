@@ -5,7 +5,7 @@
 use crate::cpu::decoder::Size;
 use crate::cpu::flags;
 use crate::cpu::Cpu;
-use crate::memory::Memory;
+use crate::memory::{Memory, MemoryInterface};
 use proptest::prelude::*;
 
 // === Test Utilities ===
@@ -14,7 +14,7 @@ fn create_test_cpu() -> Cpu {
     let mut memory = Memory::new(0x10000);
     memory.write_long(0, 0x1000); // SP
     memory.write_long(4, 0x100);  // PC
-    Cpu::new(memory)
+    Cpu::new(Box::new(memory))
 }
 
 fn create_cpu_with_program(opcodes: &[u16]) -> Cpu {
@@ -24,7 +24,7 @@ fn create_cpu_with_program(opcodes: &[u16]) -> Cpu {
     for (i, &opcode) in opcodes.iter().enumerate() {
         memory.write_word(0x100 + (i * 2) as u32, opcode);
     }
-    Cpu::new(memory)
+    Cpu::new(Box::new(memory))
 }
 
 // === Data Movement Tests ===

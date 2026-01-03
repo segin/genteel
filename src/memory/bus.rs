@@ -20,9 +20,14 @@
 //! | 0xC00000-0xC0001F  | 32 B   | VDP Ports                      |
 //! | 0xE00000-0xFFFFFF  | 2 MB   | Work RAM (64KB mirrored)       |
 
+use super::MemoryInterface;
+use crate::vdp::Vdp;
+use crate::io::Io;
+
 /// Sega Genesis Memory Bus
 ///
 /// Routes memory accesses to the appropriate component based on address.
+#[derive(Debug)]
 pub struct Bus {
     /// ROM data (up to 4MB)
     pub rom: Vec<u8>,
@@ -33,12 +38,11 @@ pub struct Bus {
     /// Z80 RAM (8KB at 0xA00000-0xA01FFF)
     pub z80_ram: [u8; 0x2000],
 
-    /// VDP reference (for C00000-C0001F region)
-    /// For now, we'll have simple placeholder registers
-    pub vdp_registers: [u16; 16],
+    /// VDP Port access
+    pub vdp: Vdp,
 
     /// I/O ports (A10000-A1001F)
-    pub io_ports: [u8; 32],
+    pub io: Io,
 
     /// Z80 bus control registers
     pub z80_bus_request: bool,
@@ -55,8 +59,8 @@ impl Bus {
             rom: Vec::new(),
             work_ram: [0; 0x10000],
             z80_ram: [0; 0x2000],
-            vdp_registers: [0; 16],
-            io_ports: [0; 32],
+            vdp: Vdp::new(),
+            io: Io::new(),
             z80_bus_request: false,
             z80_reset: true, // Z80 starts in reset
             tmss_unlocked: false,
@@ -83,7 +87,7 @@ impl Bus {
     }
 
     /// Read a byte from the memory map
-    pub fn read_byte(&self, address: u32) -> u8 {
+    pub fn read_byte(&mut self, address: u32) -> u8 {
         let addr = address & 0xFFFFFF; // 24-bit address bus
 
         match addr {
@@ -109,7 +113,7 @@ impl Bus {
 
             // I/O Ports: 0xA10000-0xA1001F
             0xA10000..=0xA1001F => {
-                self.io_ports[(addr & 0x1F) as usize]
+                self.io.read(addr)
             }
 
             // Z80 Bus Request: 0xA11100
@@ -125,15 +129,18 @@ impl Bus {
             // VDP Ports: 0xC00000-0xC0001F
             0xC00000..=0xC00003 => {
                 // VDP data port
-                0x00 // Placeholder
+                (self.vdp.read_data() >> 8) as u8 // Placeholder: usually word-only
             }
-            0xC00004..=0xC00007 => {
-                // VDP control port / status
-                0x00 // Placeholder
+            0xC00004..=0xC00005 => {
+                // VDP status
+                (self.vdp.read_status() >> 8) as u8
+            }
+            0xC00006..=0xC00007 => {
+                (self.vdp.read_status() & 0xFF) as u8
             }
             0xC00008..=0xC0000F => {
                 // HV counter
-                0x00 // Placeholder
+                (self.vdp.read_hv_counter() >> 8) as u8 // Just a stub for byte read
             }
             0xC00010..=0xC0001F => {
                 // Reserved
@@ -167,7 +174,7 @@ impl Bus {
 
             // I/O Ports
             0xA10000..=0xA1001F => {
-                self.io_ports[(addr & 0x1F) as usize] = value;
+                self.io.write(addr, value);
             }
 
             // Z80 Bus Request
@@ -182,7 +189,7 @@ impl Bus {
 
             // VDP Ports
             0xC00000..=0xC00003 => {
-                // VDP data port - placeholder
+                // VDP data port - placeholder (writes are usually words)
             }
             0xC00004..=0xC00007 => {
                 // VDP control port - placeholder
@@ -199,7 +206,22 @@ impl Bus {
     }
 
     /// Read a word (16-bit, big-endian) from the memory map
-    pub fn read_word(&self, address: u32) -> u16 {
+    pub fn read_word(&mut self, address: u32) -> u16 {
+        let addr = address & 0xFFFFFF;
+        
+        // VDP Data Port (Word access)
+        if addr >= 0xC00000 && addr <= 0xC00003 {
+            return self.vdp.read_data();
+        }
+        // VDP Control Port / Status
+        if addr >= 0xC00004 && addr <= 0xC00007 {
+            return self.vdp.read_status();
+        }
+        // VDP H/V Counter
+        if addr >= 0xC00008 && addr <= 0xC0000F {
+            return self.vdp.read_hv_counter();
+        }
+
         let high = self.read_byte(address) as u16;
         let low = self.read_byte(address.wrapping_add(1)) as u16;
         (high << 8) | low
@@ -207,12 +229,25 @@ impl Bus {
 
     /// Write a word (16-bit, big-endian) to the memory map
     pub fn write_word(&mut self, address: u32, value: u16) {
+        let addr = address & 0xFFFFFF;
+
+        // VDP Data Port
+        if addr >= 0xC00000 && addr <= 0xC00003 {
+            self.vdp.write_data(value);
+            return;
+        }
+        // VDP Control Port
+        if addr >= 0xC00004 && addr <= 0xC00007 {
+            self.vdp.write_control(value);
+            return;
+        }
+
         self.write_byte(address, (value >> 8) as u8);
         self.write_byte(address.wrapping_add(1), value as u8);
     }
 
     /// Read a long word (32-bit, big-endian) from the memory map
-    pub fn read_long(&self, address: u32) -> u32 {
+    pub fn read_long(&mut self, address: u32) -> u32 {
         let high = self.read_word(address) as u32;
         let low = self.read_word(address.wrapping_add(2)) as u32;
         (high << 16) | low
@@ -222,6 +257,32 @@ impl Bus {
     pub fn write_long(&mut self, address: u32, value: u32) {
         self.write_word(address, (value >> 16) as u16);
         self.write_word(address.wrapping_add(2), value as u16);
+    }
+}
+
+impl MemoryInterface for Bus {
+    fn read_byte(&mut self, address: u32) -> u8 {
+        self.read_byte(address)
+    }
+
+    fn write_byte(&mut self, address: u32, value: u8) {
+        self.write_byte(address, value);
+    }
+
+    fn read_word(&mut self, address: u32) -> u16 {
+        self.read_word(address)
+    }
+
+    fn write_word(&mut self, address: u32, value: u16) {
+        self.write_word(address, value);
+    }
+
+    fn read_long(&mut self, address: u32) -> u32 {
+        self.read_long(address)
+    }
+
+    fn write_long(&mut self, address: u32, value: u32) {
+        self.write_long(address, value);
     }
 }
 
@@ -325,7 +386,7 @@ mod tests {
 
     #[test]
     fn test_unmapped_returns_ff() {
-        let bus = Bus::new();
+        let mut bus = Bus::new();
 
         // Unmapped ROM area
         assert_eq!(bus.read_byte(0x100000), 0xFF);

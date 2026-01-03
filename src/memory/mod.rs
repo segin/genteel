@@ -2,14 +2,84 @@
 //!
 //! Provides both simple memory (for testing) and full memory bus with Genesis memory map.
 
+use std::cell::RefCell;
+use std::rc::Rc;
 pub mod bus;
+use bus::Bus;
+
 #[cfg(test)]
 mod tests_property;
 
+pub trait MemoryInterface: std::fmt::Debug {
+    fn read_byte(&mut self, address: u32) -> u8;
+    fn write_byte(&mut self, address: u32, value: u8);
+    fn read_word(&mut self, address: u32) -> u16;
+    fn write_word(&mut self, address: u32, value: u16);
+    fn read_long(&mut self, address: u32) -> u32;
+    fn write_long(&mut self, address: u32, value: u32);
+}
+
+// Blanket impl for Box<dyn MemoryInterface>
+impl MemoryInterface for Box<dyn MemoryInterface> {
+    fn read_byte(&mut self, address: u32) -> u8 {
+        (**self).read_byte(address)
+    }
+    fn write_byte(&mut self, address: u32, value: u8) {
+        (**self).write_byte(address, value);
+    }
+    fn read_word(&mut self, address: u32) -> u16 {
+        (**self).read_word(address)
+    }
+    fn write_word(&mut self, address: u32, value: u16) {
+        (**self).write_word(address, value);
+    }
+    fn read_long(&mut self, address: u32) -> u32 {
+        (**self).read_long(address)
+    }
+    fn write_long(&mut self, address: u32, value: u32) {
+        (**self).write_long(address, value);
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct SharedBus {
+    pub bus: Rc<RefCell<Bus>>,
+}
+
+impl SharedBus {
+    pub fn new(bus: Rc<RefCell<Bus>>) -> Self {
+        Self { bus }
+    }
+}
+
+impl MemoryInterface for SharedBus {
+    fn read_byte(&mut self, address: u32) -> u8 {
+        self.bus.borrow_mut().read_byte(address)
+    }
+
+    fn write_byte(&mut self, address: u32, value: u8) {
+        self.bus.borrow_mut().write_byte(address, value);
+    }
+
+    fn read_word(&mut self, address: u32) -> u16 {
+        self.bus.borrow_mut().read_word(address)
+    }
+
+    fn write_word(&mut self, address: u32, value: u16) {
+        self.bus.borrow_mut().write_word(address, value);
+    }
+
+    fn read_long(&mut self, address: u32) -> u32 {
+        self.bus.borrow_mut().read_long(address)
+    }
+
+    fn write_long(&mut self, address: u32, value: u32) {
+        self.bus.borrow_mut().write_long(address, value);
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Memory {
-    // For now, a simple vector for the memory.
-    // The Genesis has a 24-bit address bus, so 16MB of address space.
     pub data: Vec<u8>,
 }
 
@@ -19,8 +89,29 @@ impl Memory {
             data: vec![0; size],
         }
     }
+}
 
-    pub fn read_long(&self, address: u32) -> u32 {
+impl MemoryInterface for Memory {
+    fn read_byte(&mut self, address: u32) -> u8 {
+        self.data[address as usize]
+    }
+
+    fn write_byte(&mut self, address: u32, value: u8) {
+        self.data[address as usize] = value;
+    }
+
+    fn read_word(&mut self, address: u32) -> u16 {
+        let address = address as usize;
+        (self.data[address] as u16) << 8 | (self.data[address + 1] as u16)
+    }
+
+    fn write_word(&mut self, address: u32, value: u16) {
+        let address = address as usize;
+        self.data[address] = (value >> 8) as u8;
+        self.data[address + 1] = value as u8;
+    }
+
+    fn read_long(&mut self, address: u32) -> u32 {
         let address = address as usize;
         (self.data[address] as u32) << 24
             | (self.data[address + 1] as u32) << 16
@@ -28,39 +119,16 @@ impl Memory {
             | (self.data[address + 3] as u32)
     }
 
-    pub fn read_word(&self, address: u32) -> u16 {
-        let address = address as usize;
-        (self.data[address] as u16) << 8
-            | (self.data[address + 1] as u16)
-    }
-
-    pub fn read_word_le(&self, address: u32) -> u16 {
-        let address = address as usize;
-        (self.data[address + 1] as u16) << 8
-            | (self.data[address] as u16)
-    }
-
-    pub fn read_byte(&self, address: u32) -> u8 {
-        self.data[address as usize]
-    }
-
-    pub fn write_byte(&mut self, address: u32, value: u8) {
-        self.data[address as usize] = value;
-    }
-
-    pub fn write_word(&mut self, address: u32, value: u16) {
-        let address = address as usize;
-        self.data[address] = (value >> 8) as u8;
-        self.data[address + 1] = value as u8;
-    }
-
-    pub fn write_long(&mut self, address: u32, value: u32) {
+    fn write_long(&mut self, address: u32, value: u32) {
         let address = address as usize;
         self.data[address] = (value >> 24) as u8;
         self.data[address + 1] = (value >> 16) as u8;
         self.data[address + 2] = (value >> 8) as u8;
         self.data[address + 3] = value as u8;
     }
+}
+
+impl Memory {
 
     pub fn hex_dump(&self, start: u32, end: u32) -> String {
         let mut output = String::new();

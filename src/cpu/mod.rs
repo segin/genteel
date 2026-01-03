@@ -10,7 +10,7 @@ mod tests_m68k_extended;
 #[cfg(test)]
 mod tests_m68k_comprehensive;
 
-use crate::memory::Memory;
+use crate::memory::{Memory, MemoryInterface};
 use decoder::{decode, Instruction, Size, AddressingMode, Condition, ShiftCount, BitSource};
 use addressing::{calculate_ea, read_ea, write_ea, EffectiveAddress};
 
@@ -39,7 +39,7 @@ pub struct Cpu {
     pub ssp: u32,    // Supervisor stack pointer (saved when in user mode)
 
     // Memory interface
-    memory: Memory,
+    pub memory: Box<dyn MemoryInterface>,
 
     // Cycle counter for timing
     pub cycles: u64,
@@ -49,10 +49,11 @@ pub struct Cpu {
 
     // Pending interrupt level (0-7, 0 = none)
     pub pending_interrupt: u8,
+    pub pending_exception: bool,
 }
 
 impl Cpu {
-    pub fn new(memory: Memory) -> Self {
+    pub fn new(memory: Box<dyn MemoryInterface>) -> Self {
         let mut cpu = Self {
             d: [0; 8],
             a: [0; 8],
@@ -64,6 +65,7 @@ impl Cpu {
             cycles: 0,
             halted: false,
             pending_interrupt: 0,
+            pending_exception: false,
         };
 
         // At startup, the supervisor stack pointer is read from address 0x00000000
@@ -89,6 +91,8 @@ impl Cpu {
 
     /// Execute a single instruction
     pub fn step_instruction(&mut self) -> u32 {
+        self.pending_exception = false;
+
         // Handle interrupts before fetching next instruction
         let int_cycles = self.check_interrupts();
         if int_cycles > 0 {
@@ -102,10 +106,23 @@ impl Cpu {
 
         let pc = self.pc;
         let opcode = self.read_instruction_word(pc);
+        if self.pending_exception {
+            // Address Error during fetch
+            self.cycles += 34;
+            return 34;
+        }
+
         self.pc = self.pc.wrapping_add(2);
 
         let instruction = decode(opcode);
-        let cycles = self.execute(instruction);
+        let mut cycles = self.execute(instruction);
+
+        if self.pending_exception {
+            // Instruction was aborted due to an exception (e.g. Address Error)
+            // The exception handlers (process_exception) already did the push/pc jump.
+            // We just return the cycles for the exception processing.
+            cycles = 34;
+        }
 
         self.cycles += cycles as u64;
         cycles
@@ -290,7 +307,7 @@ impl Cpu {
         let mut cycles = 4u32;
 
         // Calculate source EA
-        let (src_ea, src_cycles) = calculate_ea(src, size, &self.d, &self.a, &mut self.pc, &self.memory);
+        let (src_ea, src_cycles) = calculate_ea(src, size, &self.d, &self.a, &mut self.pc, &mut self.memory);
         cycles += src_cycles;
 
         // Handle post-increment for source
@@ -317,7 +334,7 @@ impl Cpu {
         let value = self.cpu_read_ea(src_ea, size);
 
         // Calculate destination EA
-        let (dst_ea, dst_cycles) = calculate_ea(dst, size, &self.d, &self.a, &mut self.pc, &self.memory);
+        let (dst_ea, dst_cycles) = calculate_ea(dst, size, &self.d, &self.a, &mut self.pc, &mut self.memory);
         cycles += dst_cycles;
 
         // Handle pre-decrement for destination
@@ -354,7 +371,7 @@ impl Cpu {
     fn exec_movea(&mut self, size: Size, src: AddressingMode, dst_reg: u8) -> u32 {
         let mut cycles = 4u32;
 
-        let (src_ea, src_cycles) = calculate_ea(src, size, &self.d, &self.a, &mut self.pc, &self.memory);
+        let (src_ea, src_cycles) = calculate_ea(src, size, &self.d, &self.a, &mut self.pc, &mut self.memory);
         cycles += src_cycles;
 
         // Handle post-increment
@@ -394,7 +411,7 @@ impl Cpu {
     }
 
     fn exec_lea(&mut self, src: AddressingMode, dst_reg: u8) -> u32 {
-        let (ea, cycles) = calculate_ea(src, Size::Long, &self.d, &self.a, &mut self.pc, &self.memory);
+        let (ea, cycles) = calculate_ea(src, Size::Long, &self.d, &self.a, &mut self.pc, &mut self.memory);
 
         if let EffectiveAddress::Memory(addr) = ea {
             self.a[dst_reg as usize] = addr;
@@ -404,7 +421,7 @@ impl Cpu {
     }
 
     fn exec_clr(&mut self, size: Size, dst: AddressingMode) -> u32 {
-        let (dst_ea, cycles) = calculate_ea(dst, size, &self.d, &self.a, &mut self.pc, &self.memory);
+        let (dst_ea, cycles) = calculate_ea(dst, size, &self.d, &self.a, &mut self.pc, &mut self.memory);
 
         // Handle pre-decrement
         if let AddressingMode::AddressPreDecrement(reg) = dst {
@@ -444,11 +461,11 @@ impl Cpu {
             (src, dst)
         };
 
-        let (src_ea, src_cycles) = calculate_ea(src_mode, size, &self.d, &self.a, &mut self.pc, &self.memory);
+        let (src_ea, src_cycles) = calculate_ea(src_mode, size, &self.d, &self.a, &mut self.pc, &mut self.memory);
         cycles += src_cycles;
         let src_val = self.cpu_read_ea(src_ea, size);
 
-        let (dst_ea, dst_cycles) = calculate_ea(dst_mode, size, &self.d, &self.a, &mut self.pc, &self.memory);
+        let (dst_ea, dst_cycles) = calculate_ea(dst_mode, size, &self.d, &self.a, &mut self.pc, &mut self.memory);
         cycles += dst_cycles;
         let dst_val = self.cpu_read_ea(dst_ea, size);
 
@@ -488,7 +505,7 @@ impl Cpu {
     fn exec_adda(&mut self, size: Size, src: AddressingMode, dst_reg: u8) -> u32 {
         let mut cycles = 4u32;
 
-        let (src_ea, src_cycles) = calculate_ea(src, size, &self.d, &self.a, &mut self.pc, &self.memory);
+        let (src_ea, src_cycles) = calculate_ea(src, size, &self.d, &self.a, &mut self.pc, &mut self.memory);
         cycles += src_cycles;
 
         let src_val = self.cpu_read_ea(src_ea, size);
@@ -507,7 +524,7 @@ impl Cpu {
     }
 
     fn exec_addq(&mut self, size: Size, dst: AddressingMode, data: u8) -> u32 {
-        let (dst_ea, cycles) = calculate_ea(dst, size, &self.d, &self.a, &mut self.pc, &self.memory);
+        let (dst_ea, cycles) = calculate_ea(dst, size, &self.d, &self.a, &mut self.pc, &mut self.memory);
         let dst_val = self.cpu_read_ea(dst_ea, size);
 
         let (result, carry, overflow) = self.add_with_flags(data as u32, dst_val, size);
@@ -534,11 +551,11 @@ impl Cpu {
             (src, dst)
         };
 
-        let (src_ea, src_cycles) = calculate_ea(src_mode, size, &self.d, &self.a, &mut self.pc, &self.memory);
+        let (src_ea, src_cycles) = calculate_ea(src_mode, size, &self.d, &self.a, &mut self.pc, &mut self.memory);
         cycles += src_cycles;
         let src_val = self.cpu_read_ea(src_ea, size);
 
-        let (dst_ea, dst_cycles) = calculate_ea(dst_mode, size, &self.d, &self.a, &mut self.pc, &self.memory);
+        let (dst_ea, dst_cycles) = calculate_ea(dst_mode, size, &self.d, &self.a, &mut self.pc, &mut self.memory);
         cycles += dst_cycles;
         let dst_val = self.cpu_read_ea(dst_ea, size);
 
@@ -578,10 +595,10 @@ impl Cpu {
     fn exec_suba(&mut self, size: Size, src: AddressingMode, dst_reg: u8) -> u32 {
         let mut cycles = 4u32;
 
-        let (src_ea, src_cycles) = calculate_ea(src, size, &self.d, &self.a, &mut self.pc, &self.memory);
+        let (src_ea, src_cycles) = calculate_ea(src, size, &self.d, &self.a, &mut self.pc, &mut self.memory);
         cycles += src_cycles;
 
-        let src_val = read_ea(src_ea, size, &self.d, &self.a, &self.memory);
+        let src_val = read_ea(src_ea, size, &self.d, &self.a, &mut self.memory);
 
         let src_val = match size {
             Size::Word => (src_val as i16) as i32 as u32,
@@ -595,7 +612,7 @@ impl Cpu {
     }
 
     fn exec_subq(&mut self, size: Size, dst: AddressingMode, data: u8) -> u32 {
-        let (dst_ea, cycles) = calculate_ea(dst, size, &self.d, &self.a, &mut self.pc, &self.memory);
+        let (dst_ea, cycles) = calculate_ea(dst, size, &self.d, &self.a, &mut self.pc, &mut self.memory);
         let dst_val = self.cpu_read_ea(dst_ea, size);
 
         let (result, borrow, overflow) = self.sub_with_flags(dst_val, data as u32, size);
@@ -613,7 +630,7 @@ impl Cpu {
     }
 
     fn exec_neg(&mut self, size: Size, dst: AddressingMode) -> u32 {
-        let (dst_ea, cycles) = calculate_ea(dst, size, &self.d, &self.a, &mut self.pc, &self.memory);
+        let (dst_ea, cycles) = calculate_ea(dst, size, &self.d, &self.a, &mut self.pc, &mut self.memory);
         let val = self.cpu_read_ea(dst_ea, size);
 
         let (result, _borrow, overflow) = self.sub_with_flags(0, val, size);
@@ -631,11 +648,11 @@ impl Cpu {
     fn exec_and(&mut self, size: Size, src: AddressingMode, dst: AddressingMode, _direction: bool) -> u32 {
         let mut cycles = 4u32;
 
-        let (src_ea, src_cycles) = calculate_ea(src, size, &self.d, &self.a, &mut self.pc, &self.memory);
+        let (src_ea, src_cycles) = calculate_ea(src, size, &self.d, &self.a, &mut self.pc, &mut self.memory);
         cycles += src_cycles;
         let src_val = self.cpu_read_ea(src_ea, size);
 
-        let (dst_ea, dst_cycles) = calculate_ea(dst, size, &self.d, &self.a, &mut self.pc, &self.memory);
+        let (dst_ea, dst_cycles) = calculate_ea(dst, size, &self.d, &self.a, &mut self.pc, &mut self.memory);
         cycles += dst_cycles;
         let dst_val = self.cpu_read_ea(dst_ea, size);
 
@@ -653,11 +670,11 @@ impl Cpu {
     fn exec_or(&mut self, size: Size, src: AddressingMode, dst: AddressingMode, _direction: bool) -> u32 {
         let mut cycles = 4u32;
 
-        let (src_ea, src_cycles) = calculate_ea(src, size, &self.d, &self.a, &mut self.pc, &self.memory);
+        let (src_ea, src_cycles) = calculate_ea(src, size, &self.d, &self.a, &mut self.pc, &mut self.memory);
         cycles += src_cycles;
         let src_val = self.cpu_read_ea(src_ea, size);
 
-        let (dst_ea, dst_cycles) = calculate_ea(dst, size, &self.d, &self.a, &mut self.pc, &self.memory);
+        let (dst_ea, dst_cycles) = calculate_ea(dst, size, &self.d, &self.a, &mut self.pc, &mut self.memory);
         cycles += dst_cycles;
         let dst_val = self.cpu_read_ea(dst_ea, size);
 
@@ -679,7 +696,7 @@ impl Cpu {
             Size::Long => self.d[src_reg as usize],
         };
 
-        let (dst_ea, cycles) = calculate_ea(dst, size, &self.d, &self.a, &mut self.pc, &self.memory);
+        let (dst_ea, cycles) = calculate_ea(dst, size, &self.d, &self.a, &mut self.pc, &mut self.memory);
         let dst_val = self.cpu_read_ea(dst_ea, size);
 
         let result = src_val ^ dst_val;
@@ -694,8 +711,8 @@ impl Cpu {
     }
 
     fn exec_not(&mut self, size: Size, dst: AddressingMode) -> u32 {
-        let (dst_ea, cycles) = calculate_ea(dst, size, &self.d, &self.a, &mut self.pc, &self.memory);
-        let val = read_ea(dst_ea, size, &self.d, &self.a, &self.memory);
+        let (dst_ea, cycles) = calculate_ea(dst, size, &self.d, &self.a, &mut self.pc, &mut self.memory);
+        let val = read_ea(dst_ea, size, &self.d, &self.a, &mut self.memory);
 
         let result = !val;
 
@@ -714,8 +731,8 @@ impl Cpu {
             ShiftCount::Register(r) => self.d[r as usize] & 63,
         };
 
-        let (dst_ea, cycles) = calculate_ea(dst, size, &self.d, &self.a, &mut self.pc, &self.memory);
-        let val = read_ea(dst_ea, size, &self.d, &self.a, &self.memory);
+        let (dst_ea, cycles) = calculate_ea(dst, size, &self.d, &self.a, &mut self.pc, &mut self.memory);
+        let val = read_ea(dst_ea, size, &self.d, &self.a, &mut self.memory);
 
         let (mask, sign_bit) = match size {
             Size::Byte => (0xFFu32, 0x80u32),
@@ -767,8 +784,8 @@ impl Cpu {
             ShiftCount::Register(r) => self.d[r as usize] & 63,
         };
 
-        let (dst_ea, cycles) = calculate_ea(dst, size, &self.d, &self.a, &mut self.pc, &self.memory);
-        let val = read_ea(dst_ea, size, &self.d, &self.a, &self.memory);
+        let (dst_ea, cycles) = calculate_ea(dst, size, &self.d, &self.a, &mut self.pc, &mut self.memory);
+        let val = read_ea(dst_ea, size, &self.d, &self.a, &mut self.memory);
 
         let (mask, bits) = match size {
             Size::Byte => (0xFFu32, 8u32),
@@ -803,7 +820,7 @@ impl Cpu {
     }
 
     fn exec_cmp(&mut self, size: Size, src: AddressingMode, dst_reg: u8) -> u32 {
-        let (src_ea, cycles) = calculate_ea(src, size, &self.d, &self.a, &mut self.pc, &self.memory);
+        let (src_ea, cycles) = calculate_ea(src, size, &self.d, &self.a, &mut self.pc, &mut self.memory);
         let src_val = self.cpu_read_ea(src_ea, size);
 
         let dst_val = match size {
@@ -822,8 +839,8 @@ impl Cpu {
     }
 
     fn exec_cmpa(&mut self, size: Size, src: AddressingMode, dst_reg: u8) -> u32 {
-        let (src_ea, cycles) = calculate_ea(src, size, &self.d, &self.a, &mut self.pc, &self.memory);
-        let src_val = read_ea(src_ea, size, &self.d, &self.a, &self.memory);
+        let (src_ea, cycles) = calculate_ea(src, size, &self.d, &self.a, &mut self.pc, &mut self.memory);
+        let src_val = read_ea(src_ea, size, &self.d, &self.a, &mut self.memory);
 
         // Sign-extend source to 32 bits
         let src_val = match size {
@@ -844,7 +861,7 @@ impl Cpu {
     }
 
     fn exec_tst(&mut self, size: Size, dst: AddressingMode) -> u32 {
-        let (dst_ea, cycles) = calculate_ea(dst, size, &self.d, &self.a, &mut self.pc, &self.memory);
+        let (dst_ea, cycles) = calculate_ea(dst, size, &self.d, &self.a, &mut self.pc, &mut self.memory);
         let val = self.cpu_read_ea(dst_ea, size);
 
         self.update_nz_flags(val, size);
@@ -925,7 +942,7 @@ impl Cpu {
     }
 
     fn exec_jmp(&mut self, dst: AddressingMode) -> u32 {
-        let (ea, cycles) = calculate_ea(dst, Size::Long, &self.d, &self.a, &mut self.pc, &self.memory);
+        let (ea, cycles) = calculate_ea(dst, Size::Long, &self.d, &self.a, &mut self.pc, &mut self.memory);
 
         if let EffectiveAddress::Memory(addr) = ea {
             self.pc = addr;
@@ -935,7 +952,7 @@ impl Cpu {
     }
 
     fn exec_jsr(&mut self, dst: AddressingMode) -> u32 {
-        let (ea, cycles) = calculate_ea(dst, Size::Long, &self.d, &self.a, &mut self.pc, &self.memory);
+        let (ea, cycles) = calculate_ea(dst, Size::Long, &self.d, &self.a, &mut self.pc, &mut self.memory);
 
         if let EffectiveAddress::Memory(addr) = ea {
             // Push return address
@@ -983,7 +1000,7 @@ impl Cpu {
 
     fn exec_mulu(&mut self, src: AddressingMode, dst_reg: u8) -> u32 {
         let mut cycles = 4u32;
-        let (src_ea, src_cycles) = calculate_ea(src, Size::Word, &self.d, &self.a, &mut self.pc, &self.memory);
+        let (src_ea, src_cycles) = calculate_ea(src, Size::Word, &self.d, &self.a, &mut self.pc, &mut self.memory);
         cycles += src_cycles;
 
         let src_val = self.cpu_read_ea(src_ea, Size::Word) as u16;
@@ -1001,10 +1018,10 @@ impl Cpu {
 
     fn exec_muls(&mut self, src: AddressingMode, dst_reg: u8) -> u32 {
         let mut cycles = 4u32;
-        let (src_ea, src_cycles) = calculate_ea(src, Size::Word, &self.d, &self.a, &mut self.pc, &self.memory);
+        let (src_ea, src_cycles) = calculate_ea(src, Size::Word, &self.d, &self.a, &mut self.pc, &mut self.memory);
         cycles += src_cycles;
 
-        let src_val = read_ea(src_ea, Size::Word, &self.d, &self.a, &self.memory) as i16;
+        let src_val = read_ea(src_ea, Size::Word, &self.d, &self.a, &mut self.memory) as i16;
         let dst_val = self.d[dst_reg as usize] as i16;
 
         let result = (src_val as i32) * (dst_val as i32);
@@ -1019,7 +1036,7 @@ impl Cpu {
 
     fn exec_divu(&mut self, src: AddressingMode, dst_reg: u8) -> u32 {
         let mut cycles = 4u32;
-        let (src_ea, src_cycles) = calculate_ea(src, Size::Word, &self.d, &self.a, &mut self.pc, &self.memory);
+        let (src_ea, src_cycles) = calculate_ea(src, Size::Word, &self.d, &self.a, &mut self.pc, &mut self.memory);
         cycles += src_cycles;
 
         let src_val = self.cpu_read_ea(src_ea, Size::Word) as u16;
@@ -1055,10 +1072,10 @@ impl Cpu {
 
     fn exec_divs(&mut self, src: AddressingMode, dst_reg: u8) -> u32 {
         let mut cycles = 4u32;
-        let (src_ea, src_cycles) = calculate_ea(src, Size::Word, &self.d, &self.a, &mut self.pc, &self.memory);
+        let (src_ea, src_cycles) = calculate_ea(src, Size::Word, &self.d, &self.a, &mut self.pc, &mut self.memory);
         cycles += src_cycles;
 
-        let src_val = read_ea(src_ea, Size::Word, &self.d, &self.a, &self.memory) as i16;
+        let src_val = read_ea(src_ea, Size::Word, &self.d, &self.a, &mut self.memory) as i16;
         
         if src_val == 0 {
             #[cfg(debug_assertions)]
@@ -1293,7 +1310,7 @@ impl Cpu {
 
     fn exec_nbcd(&mut self, dst: AddressingMode) -> u32 {
         let mut cycles = 6u32;
-        let (dst_ea, dst_cycles) = calculate_ea(dst, Size::Byte, &self.d, &self.a, &mut self.pc, &self.memory);
+        let (dst_ea, dst_cycles) = calculate_ea(dst, Size::Byte, &self.d, &self.a, &mut self.pc, &mut self.memory);
         cycles += dst_cycles;
         
         let dst_val = self.cpu_read_ea(dst_ea, Size::Byte) as u8;
@@ -1382,7 +1399,7 @@ impl Cpu {
         let size = if is_memory { Size::Byte } else { Size::Long };
         
         let mut cycles = 4u32;
-        let (dst_ea, dst_cycles) = calculate_ea(dst, size, &self.d, &self.a, &mut self.pc, &self.memory);
+        let (dst_ea, dst_cycles) = calculate_ea(dst, size, &self.d, &self.a, &mut self.pc, &mut self.memory);
         cycles += dst_cycles;
         
         let val = if matches!(dst, AddressingMode::Immediate) {
@@ -1415,7 +1432,7 @@ impl Cpu {
         let size = if is_memory { Size::Byte } else { Size::Long };
         
         let mut cycles = 8u32;
-        let (dst_ea, dst_cycles) = calculate_ea(dst, size, &self.d, &self.a, &mut self.pc, &self.memory);
+        let (dst_ea, dst_cycles) = calculate_ea(dst, size, &self.d, &self.a, &mut self.pc, &mut self.memory);
         cycles += dst_cycles;
         
         let val = self.cpu_read_ea(dst_ea, size);
@@ -1436,7 +1453,7 @@ impl Cpu {
         let size = if is_memory { Size::Byte } else { Size::Long };
 
         let mut cycles = 8u32;
-        let (dst_ea, dst_cycles) = calculate_ea(dst, size, &self.d, &self.a, &mut self.pc, &self.memory);
+        let (dst_ea, dst_cycles) = calculate_ea(dst, size, &self.d, &self.a, &mut self.pc, &mut self.memory);
         cycles += dst_cycles;
 
         let val = self.cpu_read_ea(dst_ea, size);
@@ -1457,7 +1474,7 @@ impl Cpu {
         let size = if is_memory { Size::Byte } else { Size::Long };
 
         let mut cycles = 8u32;
-        let (dst_ea, dst_cycles) = calculate_ea(dst, size, &self.d, &self.a, &mut self.pc, &self.memory);
+        let (dst_ea, dst_cycles) = calculate_ea(dst, size, &self.d, &self.a, &mut self.pc, &mut self.memory);
         cycles += dst_cycles;
 
         let val = self.cpu_read_ea(dst_ea, size);
@@ -1507,6 +1524,7 @@ impl Cpu {
     // === Centralized Memory Access with Alignment Checks ===
     
     fn read_instruction_word(&mut self, addr: u32) -> u16 {
+        if self.pending_exception { return 0; }
         if addr % 2 != 0 {
             self.process_exception(3); // Address Error
             return 0;
@@ -1515,6 +1533,7 @@ impl Cpu {
     }
 
     fn read_word(&mut self, addr: u32) -> u16 {
+        if self.pending_exception { return 0; }
         if addr % 2 != 0 {
             self.process_exception(3); // Address Error
             return 0;
@@ -1523,6 +1542,7 @@ impl Cpu {
     }
 
     fn read_long(&mut self, addr: u32) -> u32 {
+        if self.pending_exception { return 0; }
         if addr % 2 != 0 {
             self.process_exception(3); // Address Error
             return 0;
@@ -1531,6 +1551,7 @@ impl Cpu {
     }
 
     fn write_word(&mut self, addr: u32, val: u16) {
+        if self.pending_exception { return; }
         if addr % 2 != 0 {
             self.process_exception(3); // Address Error
             return;
@@ -1539,6 +1560,7 @@ impl Cpu {
     }
 
     fn write_long(&mut self, addr: u32, val: u32) {
+        if self.pending_exception { return; }
         if addr % 2 != 0 {
             self.process_exception(3); // Address Error
             return;
@@ -1552,7 +1574,7 @@ impl Cpu {
                 return self.process_exception(3);
             }
         }
-        read_ea(ea, size, &self.d, &self.a, &self.memory)
+        read_ea(ea, size, &self.d, &self.a, &mut self.memory)
     }
 
     fn cpu_write_ea(&mut self, ea: EffectiveAddress, size: Size, val: u32) -> u32 {
@@ -1630,6 +1652,7 @@ impl Cpu {
     }
     
     fn process_exception(&mut self, vector: u32) -> u32 {
+        self.pending_exception = true;
         // Save old SR for pushing
         let old_sr = self.sr_value();
         
@@ -1712,13 +1735,29 @@ impl Cpu {
     }
     
     fn set_sr(&mut self, val: u16) {
-        self.sr = val; // Set full SR
+        let old_sr = self.sr;
+        let new_sr = val;
+
+        // Trace or Supervisor bit change?
+        if (old_sr ^ new_sr) & flags::SUPERVISOR != 0 {
+            if new_sr & flags::SUPERVISOR != 0 {
+                // Switching to Supervisor mode: save USP, load SSP
+                self.usp = self.a[7];
+                self.a[7] = self.ssp;
+            } else {
+                // Switching to User mode: save SSP, load USP
+                self.ssp = self.a[7];
+                self.a[7] = self.usp;
+            }
+        }
+
+        self.sr = new_sr;
     }
 
     // === CHK - Check Register Against Bounds ===
     fn exec_chk(&mut self, src: AddressingMode, dst_reg: u8) -> u32 {
         let mut cycles = 10u32;
-        let (src_ea, src_cycles) = calculate_ea(src, Size::Word, &self.d, &self.a, &mut self.pc, &self.memory);
+        let (src_ea, src_cycles) = calculate_ea(src, Size::Word, &self.d, &self.a, &mut self.pc, &mut self.memory);
         cycles += src_cycles;
         
         let bound = self.cpu_read_ea(src_ea, Size::Word) as i16;
@@ -1739,7 +1778,7 @@ impl Cpu {
     // === TAS - Test and Set (Atomic) ===
     fn exec_tas(&mut self, dst: AddressingMode) -> u32 {
         let mut cycles = 4u32;
-        let (dst_ea, dst_cycles) = calculate_ea(dst, Size::Byte, &self.d, &self.a, &mut self.pc, &self.memory);
+        let (dst_ea, dst_cycles) = calculate_ea(dst, Size::Byte, &self.d, &self.a, &mut self.pc, &mut self.memory);
         cycles += dst_cycles;
         
         let val = self.cpu_read_ea(dst_ea, Size::Byte) as u8;
@@ -1766,7 +1805,7 @@ impl Cpu {
         let mut cycles = 8u32;
         
         // Get base address from EA
-        let (ea_result, ea_cycles) = calculate_ea(ea, size, &self.d, &self.a, &mut self.pc, &self.memory);
+        let (ea_result, ea_cycles) = calculate_ea(ea, size, &self.d, &self.a, &mut self.pc, &mut self.memory);
         cycles += ea_cycles;
         
         let base_addr = match ea_result {
@@ -1846,7 +1885,7 @@ impl Cpu {
     // === PEA - Push Effective Address ===
     fn exec_pea(&mut self, src: AddressingMode) -> u32 {
         let mut cycles = 12u32;
-        let (src_ea, src_cycles) = calculate_ea(src, Size::Long, &self.d, &self.a, &mut self.pc, &self.memory);
+        let (src_ea, src_cycles) = calculate_ea(src, Size::Long, &self.d, &self.a, &mut self.pc, &mut self.memory);
         cycles += src_cycles;
         
         let addr = match src_ea {
@@ -1878,7 +1917,7 @@ impl Cpu {
         }
         
         let mut cycles = 12u32;
-        let (src_ea, src_cycles) = calculate_ea(src, Size::Word, &self.d, &self.a, &mut self.pc, &self.memory);
+        let (src_ea, src_cycles) = calculate_ea(src, Size::Word, &self.d, &self.a, &mut self.pc, &mut self.memory);
         cycles += src_cycles;
         
         let val = self.cpu_read_ea(src_ea, Size::Word) as u16;
@@ -1889,7 +1928,7 @@ impl Cpu {
     fn exec_move_from_sr(&mut self, dst: AddressingMode) -> u32 {
         // On 68000, this is not privileged. On 68010+, it is.
         let mut cycles = 6u32;
-        let (dst_ea, dst_cycles) = calculate_ea(dst, Size::Word, &self.d, &self.a, &mut self.pc, &self.memory);
+        let (dst_ea, dst_cycles) = calculate_ea(dst, Size::Word, &self.d, &self.a, &mut self.pc, &mut self.memory);
         cycles += dst_cycles;
         
         self.cpu_write_ea(dst_ea, Size::Word, self.sr as u32);
@@ -1898,7 +1937,7 @@ impl Cpu {
 
     fn exec_move_to_ccr(&mut self, src: AddressingMode) -> u32 {
         let mut cycles = 12u32;
-        let (src_ea, src_cycles) = calculate_ea(src, Size::Word, &self.d, &self.a, &mut self.pc, &self.memory);
+        let (src_ea, src_cycles) = calculate_ea(src, Size::Word, &self.d, &self.a, &mut self.pc, &mut self.memory);
         cycles += src_cycles;
         
         let val = self.cpu_read_ea(src_ea, Size::Word) as u16;
@@ -1971,7 +2010,7 @@ mod tests {
         // Initial SP and PC
         memory.write_long(0, 0x1000); // SP
         memory.write_long(4, 0x100);  // PC
-        Cpu::new(memory)
+        Cpu::new(Box::new(memory))
     }
 
     #[test]
@@ -1986,7 +2025,7 @@ mod tests {
         memory.data[6] = 0x56;
         memory.data[7] = 0x78;
 
-        let cpu = Cpu::new(memory);
+        let cpu = Cpu::new(Box::new(memory));
 
         assert_eq!(cpu.a[7], 0x1234);
         assert_eq!(cpu.pc, 0x5678);
@@ -2002,7 +2041,7 @@ mod tests {
         memory.data[0] = 0x00; memory.data[1] = 0x00; memory.data[2] = 0x00; memory.data[3] = 0x00;
         memory.data[4] = 0x00; memory.data[5] = 0x00; memory.data[6] = 0x00; memory.data[7] = 0x08;
 
-        let mut cpu = Cpu::new(memory);
+        let mut cpu = Cpu::new(Box::new(memory));
         cpu.d[1] = 0xABCD1234;
 
         assert_eq!(cpu.d[0], 0);
@@ -2344,7 +2383,7 @@ mod tests {
             memory.data[0] = 0x00; memory.data[1] = 0x00; memory.data[2] = 0x00; memory.data[3] = 0x00;
             memory.data[4] = 0x00; memory.data[5] = 0x00; memory.data[6] = 0x00; memory.data[7] = 0x08;
 
-            let mut cpu = Cpu::new(memory);
+            let mut cpu = Cpu::new(Box::new(memory));
             cpu.d[1] = val;
 
             cpu.step_instruction();

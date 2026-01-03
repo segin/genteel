@@ -4,7 +4,7 @@
 //! and reading/writing operands for all M68k addressing modes.
 
 use super::decoder::{AddressingMode, Size};
-use crate::memory::Memory;
+use crate::memory::{Memory, MemoryInterface};
 
 /// Result of resolving an effective address
 #[derive(Debug, Clone, Copy)]
@@ -78,13 +78,13 @@ impl Operand {
 ///
 /// Returns the effective address and updates PC if extension words are read.
 /// Also returns the number of cycles used.
-pub fn calculate_ea(
+pub fn calculate_ea<M: MemoryInterface + ?Sized>(
     mode: AddressingMode,
     size: Size,
     d: &[u32; 8],
     a: &[u32; 8],
     pc: &mut u32,
-    memory: &Memory,
+    memory: &mut M,
 ) -> (EffectiveAddress, u32) {
     match mode {
         AddressingMode::DataRegister(reg) => {
@@ -201,12 +201,12 @@ pub fn calculate_ea(
 }
 
 /// Read a value from an effective address
-pub fn read_ea(
+pub fn read_ea<M: MemoryInterface + ?Sized>(
     ea: EffectiveAddress,
     size: Size,
     d: &[u32; 8],
     a: &[u32; 8],
-    memory: &Memory,
+    memory: &mut M,
 ) -> u32 {
     match ea {
         EffectiveAddress::DataRegister(reg) => {
@@ -234,13 +234,13 @@ pub fn read_ea(
 }
 
 /// Write a value to an effective address
-pub fn write_ea(
+pub fn write_ea<M: MemoryInterface + ?Sized>(
     ea: EffectiveAddress,
     size: Size,
     value: u32,
     d: &mut [u32; 8],
     a: &mut [u32; 8],
-    memory: &mut Memory,
+    memory: &mut M,
 ) {
     match ea {
         EffectiveAddress::DataRegister(reg) => {

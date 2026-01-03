@@ -6,32 +6,52 @@ pub mod io;
 pub mod z80;
 pub mod debugger;
 
+use std::cell::RefCell;
+use std::rc::Rc;
 use cpu::Cpu;
-use memory::Memory;
+use z80::Z80;
+use memory::bus::Bus;
+use memory::SharedBus;
 // use apu::Apu; // Not yet implemented
 // use vdp::Vdp; // Not yet implemented
 // use io::Io;   // Not yet implemented
 
-const RAM_SIZE: usize = 0x400000; // 4MB for testing
-
 pub struct Emulator {
-    cpu: Cpu,
-    // apu: Apu,
-    // vdp: Vdp,
-    // io: Io,
+    pub cpu: Cpu,
+    pub z80: Z80,
+    pub bus: Rc<RefCell<Bus>>,
 }
 
 impl Emulator {
     pub fn new() -> Self {
-        let memory = Memory::new(RAM_SIZE); // Create memory
-        let cpu = Cpu::new(memory);         // Pass memory to CPU
+        let bus = Rc::new(RefCell::new(Bus::new()));
+        
+        // M68k uses SharedBus wrapper for main Genesis bus access
+        let cpu = Cpu::new(Box::new(SharedBus::new(bus.clone())));
+        // Z80 has dedicated 8KB sound RAM 
+        let z80 = Z80::new(memory::Memory::new(0x2000));
 
-        Self {
+        let mut emulator = Self {
             cpu,
-            // apu: Apu::new(),
-            // vdp: Vdp::new(),
-            // io: Io::new(),
-        }
+            z80,
+            bus,
+        };
+        
+        emulator.cpu.reset();
+        emulator.z80.reset();
+        
+        emulator
+    }
+
+    pub fn load_rom(&mut self, path: &str) -> std::io::Result<()> {
+        let data = std::fs::read(path)?;
+        self.bus.borrow_mut().load_rom(&data);
+        
+        // Reset again to load initial PC/SP from ROM vectors
+        self.cpu.reset();
+        self.z80.reset();
+        
+        Ok(())
     }
 
     pub fn step_frame(&mut self) {
@@ -44,19 +64,22 @@ impl Emulator {
 
         // For now, let's just step the CPU a few times.
         // A single frame has 70937.5 CPU cycles, approx.
-        for _ in 0..100 { // Step CPU 100 instructions as a placeholder
+        // For testing, we run fewer.
+        for _ in 0..100 { 
             self.cpu.step_instruction();
+            // Z80 runs at ~ half clock speed of 68k, but for now just step it too
+            // self.z80.step(); // Z80 step returns T-states
         }
 
-        println!("Stepped one frame.");
+        // println!("Stepped one frame.");
     }
 
     pub fn run(&mut self) {
         println!("Emulator running...");
         // This is a very basic loop, will be expanded later
-        for _frame_count in 0..10 { // Run for 10 frames as a placeholder
+        // In a real app, this would be the main event loop
+        for _frame_count in 0..60 { 
             self.step_frame();
-            // TODO: Render video, play audio, handle input
         }
         println!("Emulator finished.");
     }
@@ -64,5 +87,16 @@ impl Emulator {
 
 fn main() {
     let mut emulator = Emulator::new();
+    if let Some(rom_path) = std::env::args().nth(1) {
+        println!("Loading ROM: {}", rom_path);
+        if let Err(e) = emulator.load_rom(&rom_path) {
+            eprintln!("Failed to load ROM: {}", e);
+            return;
+        }
+    } else {
+        println!("No ROM provided. Usage: cargo run <rom_path>");
+        println!("Running in empty mode...");
+    }
+    
     emulator.run();
 }

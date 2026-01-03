@@ -3,7 +3,7 @@
 //! The Z80 is used as a sound co-processor in the Sega Genesis, running at 3.58 MHz.
 //! It has access to 8KB of dedicated sound RAM and controls the YM2612 and SN76489.
 
-use crate::memory::Memory;
+use crate::memory::{Memory, MemoryInterface};
 
 /// Z80 Flag bits in the F register
 pub mod flags {
@@ -178,6 +178,11 @@ impl Z80 {
     fn fetch_byte(&mut self) -> u8 {
         let byte = self.memory.read_byte(self.pc as u32);
         self.pc = self.pc.wrapping_add(1);
+        
+        // Refresh register (R) increments on every instruction fetch
+        // Bits 0-6 increment, Bit 7 is stable
+        self.r = (self.r & 0x80) | ((self.r.wrapping_add(1)) & 0x7F);
+        
         byte
     }
 
@@ -187,7 +192,7 @@ impl Z80 {
         (high << 8) | low
     }
 
-    fn read_byte(&self, addr: u16) -> u8 {
+    fn read_byte(&mut self, addr: u16) -> u8 {
         self.memory.read_byte(addr as u32)
     }
 
@@ -195,7 +200,7 @@ impl Z80 {
         self.memory.write_byte(addr as u32, value);
     }
 
-    fn read_word(&self, addr: u16) -> u16 {
+    fn read_word(&mut self, addr: u16) -> u16 {
         let low = self.read_byte(addr) as u16;
         let high = self.read_byte(addr.wrapping_add(1)) as u16;
         (high << 8) | low
@@ -416,7 +421,7 @@ impl Z80 {
 
     // ========== Helper to get/set register by index ==========
 
-    fn get_reg(&self, index: u8) -> u8 {
+    fn get_reg(&mut self, index: u8) -> u8 {
         match index {
             0 => self.b,
             1 => self.c,
@@ -551,9 +556,6 @@ impl Z80 {
         let interrupts_inhibited = self.pending_ei;
         self.pending_ei = false;
 
-        // Increment R register (lower 7 bits only)
-        self.r = (self.r & 0x80) | ((self.r.wrapping_add(1)) & 0x7F);
-
         let opcode = self.fetch_byte();
         
         let x = (opcode >> 6) & 0x03;
@@ -644,22 +646,26 @@ impl Z80 {
                 (2, 0) => { // LD (nn), HL
                     let addr = self.fetch_word();
                     self.write_word(addr, self.hl());
+                    self.memptr = addr.wrapping_add(1);
                     16
                 }
                 (2, 1) => { // LD HL, (nn)
                     let addr = self.fetch_word();
                     let val = self.read_word(addr);
                     self.set_hl(val);
+                    self.memptr = addr.wrapping_add(1);
                     16
                 }
                 (3, 0) => { // LD (nn), A
                     let addr = self.fetch_word();
                     self.write_byte(addr, self.a);
+                    self.memptr = (self.a as u16) << 8 | addr.wrapping_add(1) & 0xFF;
                     13
                 }
                 (3, 1) => { // LD A, (nn)
                     let addr = self.fetch_word();
                     self.a = self.read_byte(addr);
+                    self.memptr = addr.wrapping_add(1);
                     13
                 }
                 _ => 4,
@@ -1118,6 +1124,7 @@ impl Z80 {
                         let val = self.read_word(nn);
                         self.set_rp(p, val);
                     }
+                    self.memptr = nn.wrapping_add(1);
                     20
                 }
                 4 => { // NEG
@@ -1389,6 +1396,7 @@ impl Z80 {
             0x34 => {
                 let d = self.fetch_byte() as i8;
                 let addr = (self.ix as i16 + d as i16) as u16;
+                self.memptr = addr;
                 let val = self.read_byte(addr);
                 let result = self.inc(val);
                 self.write_byte(addr, result);
@@ -1397,6 +1405,7 @@ impl Z80 {
             0x35 => {
                 let d = self.fetch_byte() as i8;
                 let addr = (self.ix as i16 + d as i16) as u16;
+                self.memptr = addr;
                 let val = self.read_byte(addr);
                 let result = self.dec(val);
                 self.write_byte(addr, result);
@@ -1406,25 +1415,27 @@ impl Z80 {
                 let d = self.fetch_byte() as i8;
                 let n = self.fetch_byte();
                 let addr = (self.ix as i16 + d as i16) as u16;
+                self.memptr = addr;
                 self.write_byte(addr, n);
                 19
             }
             0x39 => { self.add_ix(self.sp); 15 }
             
             // Specific ALU ops (must be before generic range)
-            0x86 => { let d = self.fetch_byte() as i8; let addr = (self.ix as i16 + d as i16) as u16; let val = self.read_byte(addr); self.add_a(val, false); 19 }
-            0x8E => { let d = self.fetch_byte() as i8; let addr = (self.ix as i16 + d as i16) as u16; let val = self.read_byte(addr); self.add_a(val, true); 19 }
-            0x96 => { let d = self.fetch_byte() as i8; let addr = (self.ix as i16 + d as i16) as u16; let val = self.read_byte(addr); self.sub_a(val, false, true); 19 }
-            0x9E => { let d = self.fetch_byte() as i8; let addr = (self.ix as i16 + d as i16) as u16; let val = self.read_byte(addr); self.sub_a(val, true, true); 19 }
-            0xA6 => { let d = self.fetch_byte() as i8; let addr = (self.ix as i16 + d as i16) as u16; let val = self.read_byte(addr); self.and_a(val); 19 }
-            0xAE => { let d = self.fetch_byte() as i8; let addr = (self.ix as i16 + d as i16) as u16; let val = self.read_byte(addr); self.xor_a(val); 19 }
-            0xB6 => { let d = self.fetch_byte() as i8; let addr = (self.ix as i16 + d as i16) as u16; let val = self.read_byte(addr); self.or_a(val); 19 }
-            0xBE => { let d = self.fetch_byte() as i8; let addr = (self.ix as i16 + d as i16) as u16; let val = self.read_byte(addr); self.sub_a(val, false, false); 19 }
+            0x86 => { let d = self.fetch_byte() as i8; let addr = (self.ix as i16 + d as i16) as u16; self.memptr = addr; let val = self.read_byte(addr); self.add_a(val, false); 19 }
+            0x8E => { let d = self.fetch_byte() as i8; let addr = (self.ix as i16 + d as i16) as u16; self.memptr = addr; let val = self.read_byte(addr); self.add_a(val, true); 19 }
+            0x96 => { let d = self.fetch_byte() as i8; let addr = (self.ix as i16 + d as i16) as u16; self.memptr = addr; let val = self.read_byte(addr); self.sub_a(val, false, true); 19 }
+            0x9E => { let d = self.fetch_byte() as i8; let addr = (self.ix as i16 + d as i16) as u16; self.memptr = addr; let val = self.read_byte(addr); self.sub_a(val, true, true); 19 }
+            0xA6 => { let d = self.fetch_byte() as i8; let addr = (self.ix as i16 + d as i16) as u16; self.memptr = addr; let val = self.read_byte(addr); self.and_a(val); 19 }
+            0xAE => { let d = self.fetch_byte() as i8; let addr = (self.ix as i16 + d as i16) as u16; self.memptr = addr; let val = self.read_byte(addr); self.xor_a(val); 19 }
+            0xB6 => { let d = self.fetch_byte() as i8; let addr = (self.ix as i16 + d as i16) as u16; self.memptr = addr; let val = self.read_byte(addr); self.or_a(val); 19 }
+            0xBE => { let d = self.fetch_byte() as i8; let addr = (self.ix as i16 + d as i16) as u16; self.memptr = addr; let val = self.read_byte(addr); self.sub_a(val, false, false); 19 }
 
             // LD r, (IX+d) and LD (IX+d), r
             0x46 | 0x4E | 0x56 | 0x5E | 0x66 | 0x6E | 0x7E => {
                 let d = self.fetch_byte() as i8;
                 let addr = (self.ix as i16 + d as i16) as u16;
+                self.memptr = addr;
                 let val = self.read_byte(addr);
                 let r = (opcode >> 3) & 0x07;
                 self.set_reg(r, val);
@@ -1433,6 +1444,7 @@ impl Z80 {
             0x70..=0x77 => {
                 let d = self.fetch_byte() as i8;
                 let addr = (self.ix as i16 + d as i16) as u16;
+                self.memptr = addr;
                 let r = opcode & 0x07;
                 let val = self.get_reg(r);
                 self.write_byte(addr, val);
@@ -1513,6 +1525,7 @@ impl Z80 {
             0x34 => {
                 let d = self.fetch_byte() as i8;
                 let addr = (self.iy as i16 + d as i16) as u16;
+                self.memptr = addr;
                 let val = self.read_byte(addr);
                 let result = self.inc(val);
                 self.write_byte(addr, result);
@@ -1521,6 +1534,7 @@ impl Z80 {
             0x35 => {
                 let d = self.fetch_byte() as i8;
                 let addr = (self.iy as i16 + d as i16) as u16;
+                self.memptr = addr;
                 let val = self.read_byte(addr);
                 let result = self.dec(val);
                 self.write_byte(addr, result);
@@ -1530,24 +1544,26 @@ impl Z80 {
                 let d = self.fetch_byte() as i8;
                 let n = self.fetch_byte();
                 let addr = (self.iy as i16 + d as i16) as u16;
+                self.memptr = addr;
                 self.write_byte(addr, n);
                 19
             }
             0x39 => { self.add_iy(self.sp); 15 }
 
             // Specific ALU ops (iy)
-            0x86 => { let d = self.fetch_byte() as i8; let addr = (self.iy as i16 + d as i16) as u16; let val = self.read_byte(addr); self.add_a(val, false); 19 }
-            0x8E => { let d = self.fetch_byte() as i8; let addr = (self.iy as i16 + d as i16) as u16; let val = self.read_byte(addr); self.add_a(val, true); 19 }
-            0x96 => { let d = self.fetch_byte() as i8; let addr = (self.iy as i16 + d as i16) as u16; let val = self.read_byte(addr); self.sub_a(val, false, true); 19 }
-            0x9E => { let d = self.fetch_byte() as i8; let addr = (self.iy as i16 + d as i16) as u16; let val = self.read_byte(addr); self.sub_a(val, true, true); 19 }
-            0xA6 => { let d = self.fetch_byte() as i8; let addr = (self.iy as i16 + d as i16) as u16; let val = self.read_byte(addr); self.and_a(val); 19 }
-            0xAE => { let d = self.fetch_byte() as i8; let addr = (self.iy as i16 + d as i16) as u16; let val = self.read_byte(addr); self.xor_a(val); 19 }
-            0xB6 => { let d = self.fetch_byte() as i8; let addr = (self.iy as i16 + d as i16) as u16; let val = self.read_byte(addr); self.or_a(val); 19 }
-            0xBE => { let d = self.fetch_byte() as i8; let addr = (self.iy as i16 + d as i16) as u16; let val = self.read_byte(addr); self.sub_a(val, false, false); 19 }
+            0x86 => { let d = self.fetch_byte() as i8; let addr = (self.iy as i16 + d as i16) as u16; self.memptr = addr; let val = self.read_byte(addr); self.add_a(val, false); 19 }
+            0x8E => { let d = self.fetch_byte() as i8; let addr = (self.iy as i16 + d as i16) as u16; self.memptr = addr; let val = self.read_byte(addr); self.add_a(val, true); 19 }
+            0x96 => { let d = self.fetch_byte() as i8; let addr = (self.iy as i16 + d as i16) as u16; self.memptr = addr; let val = self.read_byte(addr); self.sub_a(val, false, true); 19 }
+            0x9E => { let d = self.fetch_byte() as i8; let addr = (self.iy as i16 + d as i16) as u16; self.memptr = addr; let val = self.read_byte(addr); self.sub_a(val, true, true); 19 }
+            0xA6 => { let d = self.fetch_byte() as i8; let addr = (self.iy as i16 + d as i16) as u16; self.memptr = addr; let val = self.read_byte(addr); self.and_a(val); 19 }
+            0xAE => { let d = self.fetch_byte() as i8; let addr = (self.iy as i16 + d as i16) as u16; self.memptr = addr; let val = self.read_byte(addr); self.xor_a(val); 19 }
+            0xB6 => { let d = self.fetch_byte() as i8; let addr = (self.iy as i16 + d as i16) as u16; self.memptr = addr; let val = self.read_byte(addr); self.or_a(val); 19 }
+            0xBE => { let d = self.fetch_byte() as i8; let addr = (self.iy as i16 + d as i16) as u16; self.memptr = addr; let val = self.read_byte(addr); self.sub_a(val, false, false); 19 }
 
             0x46 | 0x4E | 0x56 | 0x5E | 0x66 | 0x6E | 0x7E => {
                 let d = self.fetch_byte() as i8;
                 let addr = (self.iy as i16 + d as i16) as u16;
+                self.memptr = addr;
                 let val = self.read_byte(addr);
                 let r = (opcode >> 3) & 0x07;
                 self.set_reg(r, val);
@@ -1556,6 +1572,7 @@ impl Z80 {
             0x70..=0x77 => {
                 let d = self.fetch_byte() as i8;
                 let addr = (self.iy as i16 + d as i16) as u16;
+                self.memptr = addr;
                 let r = opcode & 0x07;
                 let val = self.get_reg(r);
                 self.write_byte(addr, val);
