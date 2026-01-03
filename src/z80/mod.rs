@@ -65,6 +65,9 @@ pub struct Z80 {
     // Halted state
     pub halted: bool,
 
+    // Interrupt logic
+    pub pending_ei: bool,
+
     // Memory
     pub memory: Memory,
 
@@ -84,6 +87,7 @@ impl Z80 {
             im: 0,
             memptr: 0,
             halted: false,
+            pending_ei: false,
             memory,
             cycles: 0,
         }
@@ -102,6 +106,7 @@ impl Z80 {
         self.im = 0;
         self.memptr = 0;
         self.halted = false;
+        self.pending_ei = false;
     }
 
     // ========== Register pair getters/setters ==========
@@ -498,31 +503,75 @@ impl Z80 {
 
     // ========== Main execution ==========
 
+    /// Trigger a maskable interrupt
+    pub fn trigger_interrupt(&mut self, vector: u8) -> u8 {
+        if !self.iff1 || self.pending_ei {
+            return 0;
+        }
+
+        self.halted = false;
+        self.iff1 = false;
+        self.iff2 = false;
+
+        match self.im {
+            0 | 1 => {
+                self.push(self.pc);
+                self.pc = 0x0038;
+                13
+            }
+            2 => {
+                self.push(self.pc);
+                let addr = ((self.i as u16) << 8) | vector as u16;
+                self.memptr = addr;
+                let handler = self.read_word(addr);
+                self.pc = handler;
+                19
+            }
+            _ => 0,
+        }
+    }
+
+    /// Trigger a non-maskable interrupt (NMI)
+    pub fn trigger_nmi(&mut self) -> u8 {
+        self.halted = false;
+        self.iff2 = self.iff1;
+        self.iff1 = false;
+        self.push(self.pc);
+        self.pc = 0x0066;
+        11
+    }
+
     /// Execute one instruction, returns number of T-states used
     pub fn step(&mut self) -> u8 {
         if self.halted {
-            return 4; // HALT uses 4 T-states per cycle
+            return 4;
         }
+
+        // Handle EI shadow: iff1/iff2 are set but interrupts are inhibited for one instruction
+        let interrupts_inhibited = self.pending_ei;
+        self.pending_ei = false;
 
         // Increment R register (lower 7 bits only)
         self.r = (self.r & 0x80) | ((self.r.wrapping_add(1)) & 0x7F);
 
         let opcode = self.fetch_byte();
         
-        // Decode using the standard Z80 opcode structure
         let x = (opcode >> 6) & 0x03;
         let y = (opcode >> 3) & 0x07;
         let z = opcode & 0x07;
         let p = (y >> 1) & 0x03;
         let q = y & 0x01;
 
-        match x {
+        let t_states = match x {
             0 => self.execute_x0(opcode, y, z, p, q),
             1 => self.execute_x1(y, z),
             2 => self.execute_x2(y, z),
             3 => self.execute_x3(opcode, y, z, p, q),
             _ => 4,
-        }
+        };
+
+        self.cycles += t_states as u64;
+        t_states
     }
 
     fn execute_x0(&mut self, _opcode: u8, y: u8, z: u8, p: u8, q: u8) -> u8 {
@@ -820,6 +869,7 @@ impl Z80 {
                 7 => { // EI
                     self.iff1 = true;
                     self.iff2 = true;
+                    self.pending_ei = true;
                     4
                 }
                 _ => 4,
@@ -1591,6 +1641,11 @@ impl Z80 {
                 self.set_flag(flags::ZERO, bit == 0);
                 self.set_flag(flags::HALF_CARRY, true);
                 self.set_flag(flags::ADD_SUB, false);
+                
+                // X/Y from High Byte of EA
+                let h_ea = (addr >> 8) as u8;
+                self.set_flag(flags::X_FLAG, (h_ea & 0x08) != 0);
+                self.set_flag(flags::Y_FLAG, (h_ea & 0x20) != 0);
                 20
             }
             2 => { // RES y, (IX/IY+d)
@@ -1663,3 +1718,5 @@ mod proptest_tests;
 
 #[cfg(test)]
 mod proptest_expanded;
+#[cfg(test)]
+mod tests_torture;

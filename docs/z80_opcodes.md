@@ -504,4 +504,32 @@ These perform CB-prefix operations on (IX+d) or (IY+d).
 
 ---
 
+## Undocumented & Behavioral Nuances
+
+For high-accuracy emulation (e.g., Genesis co-processor tasks), the following nuances are implemented:
+
+### MEMPTR (WZ Register)
+An internal 16-bit register not directly accessible via software. It is updated during:
+- **16-bit Loads**: Loaded with value+1 or effective address.
+- **BIT Instructions**: Its high byte is "leaked" into the X (bit 3) and Y (bit 5) flags during `BIT n, (HL)`.
+- **Block Operations**: Updated with the temporary pointer used during transfer.
+
+### R Register (Refresh Counter)
+- The lower 7 bits increment on every opcode fetch (including prefixes).
+- Bit 7 is **constant** during normal operation and only changes via `LD R, A`.
+- Fetched with `LD A, R`, which also leaks `IFF2` into the P/V flag.
+
+### Flag Leakage (X/Y)
+- **Standard ALU**: Bits 3 and 5 of the result are copied to the X and Y flags.
+- **BIT n, (HL)**: Bits 3 and 5 are copied from the **high byte of MEMPTR**.
+- **BIT n, (IX+d)**: Bits 3 and 5 are copied from the **high byte of the Effective Address** (`IX+d`).
+
+### EI Instruction Shadow
+The instruction immediately following `EI` is guaranteed to execute *before* any maskable interrupt is serviced. This is the "interrupt shadow".
+
+### IM 2 Vectoring
+In Mode 2, an external device provides an 8-bit vector on the bus. The CPU forms a 16-bit address as `(I << 8) | vector`. It THEN reads a 16-bit word from this address to find the handler's entry point.
+
+---
+
 *This document is part of the genteel emulator project.*

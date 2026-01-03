@@ -205,6 +205,7 @@ As an emulator, `genteel` runs code from untrusted sources (game ROMs). Care mus
 - [ ] Run existing test suites
 - [ ] Compare with real hardware
 - [ ] Cycle-accurate timing (stretch goal)
+- [x] Z80 Torture Phase (MEMPTR, IM2 Vectors, EI Latency)
 
 ### Phase 9: 32X Expansion
 - [ ] Implement dual Hitachi SH7604 (SH2) CPU cores
@@ -250,3 +251,18 @@ The debugging features will include:
 - **Memory access**: Reading and writing to any part of the emulated memory map.
 
 This functionality will be provided by the `debugger` module. Each component of the emulator that holds state (like the CPU and memory) will implement the `Debuggable` trait, which allows the `debugger` module to access and modify its internal state.
+## 12. Z80 Architectural Nuances
+
+To achieve high compatibility with Sega Genesis software, the Z80 implementation must adhere to several undocumented behaviors:
+
+### 12.1. MEMPTR (WZ Register)
+An internal 16-bit register used for temporary storage during 16-bit operations. Its state "leaks" into the X (bit 3) and Y (bit 5) flags during `BIT n, (HL)` instructions.
+
+### 12.2. R Register (Refresh)
+The lower 7 bits of the R register increment on every instruction fetch (including prefixes). Bit 7 is preserved and can only be modified via `LD R, A`.
+
+### 12.3. Interrupt Latency
+The `EI` instruction (Enable Interrupts) disables maskable interrupts for the instruction immediately following it. This "interrupt shadow" is critical for safe stack manipulation.
+
+### 12.4. IM 2 Interrupts
+In Mode 2, the CPU fetches an 8-bit vector from the data bus, combines it with the `I` register to form a 16-bit address, and jumps to the address stored at that location.

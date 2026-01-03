@@ -36,7 +36,16 @@ All new features, especially CPU opcodes, must be accompanied by comprehensive t
 - **Property-based tests**: Use `proptest` crate for wide input coverage
 - **Flag coverage**: 
   - M68k: C, V, Z, N, X flags
-  - Z80: C, N, P/V, H, Z, S flags
+  - Z80: S, Z, Y, H, X, P/V, N, C flags (must include undocumented X/Y)
+
+### 4. Z80 Architectural Integrity
+
+Agents must implement and verify the following Z80 nuances for high compatibility:
+
+- **MEMPTR (WZ)**: Must be updated during 16-bit loads, block ops, and bit tests.
+- **Undocumented Flags (X/Y)**: Must leak from MEMPTR or Effective Address during `BIT` operations.
+- **R Register**: Bit 7 must be stable during fetch; only lower 7 bits increment.
+- **Interrupts**: `EI` instructions must have a 1-instruction shadow. `IM 2` must use a bus-provided vector.
 
 ```bash
 # Run all tests

@@ -150,6 +150,15 @@ proptest! {
     #[test] fn prop_add_hl_hl(hl in 0u16..=0xFFFF) { let mut c = z80_prog(&[0x29]); c.set_hl(hl); c.step(); prop_assert_eq!(c.hl(), hl.wrapping_add(hl)); }
     #[test] fn prop_add_hl_sp(hl in 0u16..=0xFFFF, sp in 0u16..=0xFFFF) { let mut c = z80_prog(&[0x39]); c.set_hl(hl); c.sp = sp; c.step(); prop_assert_eq!(c.hl(), hl.wrapping_add(sp)); }
 
+    // ============ R-Register invariants ============
+    #[test] fn prop_r_inc_preserves_bit7(r_val in 0u8..=255) {
+        let mut c = z80_prog(&[0x00]); // NOP
+        c.r = r_val;
+        c.step();
+        prop_assert_eq!(c.r & 0x80, r_val & 0x80); // Bit 7 MUST be same
+        prop_assert_eq!(c.r & 0x7F, (r_val.wrapping_add(1)) & 0x7F); // Lower 7 bits MUST increment and wrap
+    }
+
     // ============ NOP does nothing ============
     #[test] fn prop_nop(a in 0u8..=255, b in 0u8..=255, bc in 0u16..=0xFFFF, sp in 0u16..=0xFFFF) { let mut c = z80_prog(&[0x00]); c.a = a; c.b = b; c.set_bc(bc); c.sp = sp; c.step(); prop_assert_eq!(c.a, a); prop_assert_eq!(c.bc(), bc); prop_assert_eq!(c.sp, sp); prop_assert_eq!(c.pc, 1); }
 }
