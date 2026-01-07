@@ -314,3 +314,136 @@ proptest! {
         prop_assert_eq!(cpu.d[0], a as u32);
     }
 }
+
+// ============ Extended Arithmetic Tests ============
+
+#[test]
+fn test_addx_extended() {
+    let mut cpu = create_test_cpu();
+    
+    // ADDX.L D1, D0
+    // Opcode: 1101 0001 1000 0001 = D181
+    cpu.memory.write_word(0x100, 0xD181);
+    
+    cpu.d[0] = 100;
+    cpu.d[1] = 50;
+    cpu.set_flag(flags::EXTEND, true); // X set
+    
+    cpu.step_instruction();
+    
+    // 100 + 50 + 1 = 151
+    assert_eq!(cpu.d[0], 151);
+    // X should be clear (no carry out)
+    assert!(!cpu.get_flag(flags::EXTEND));
+    assert!(!cpu.get_flag(flags::CARRY));
+}
+
+#[test]
+fn test_subx_z_flag() {
+    let mut cpu = create_test_cpu();
+    
+    // SUBX.L D1, D0
+    // Opcode: 1001 0001 1000 0001 = 9181
+    cpu.memory.write_word(0x100, 0x9181);
+    
+    cpu.d[0] = 100;
+    cpu.d[1] = 100;
+    cpu.set_flag(flags::ZERO, true); // Z starts set
+    cpu.set_flag(flags::EXTEND, false);
+    
+    cpu.step_instruction();
+    
+    // 100 - 100 - 0 = 0
+    assert_eq!(cpu.d[0], 0);
+    // Z should remain set (unchanged if result is 0)
+    assert!(cpu.get_flag(flags::ZERO));
+}
+
+#[test]
+fn test_negx() {
+    let mut cpu = create_test_cpu();
+    
+    // NEGX.B D0
+    // Opcode: 0100 0000 0000 0000 = 4000
+    cpu.memory.write_word(0x100, 0x4000);
+    
+    cpu.d[0] = 0x10;
+    cpu.set_flag(flags::EXTEND, true);
+    
+    cpu.step_instruction();
+    
+    // 0 - 0x10 - 1 = -0x11 = 0xEF
+    assert_eq!(cpu.d[0] & 0xFF, 0xEF);
+    assert!(cpu.get_flag(flags::EXTEND)); // Borrow occurred
+}
+
+#[test]
+fn test_cmpm() {
+    let mut cpu = create_test_cpu();
+    
+    // CMPM.B (A0)+, (A1)+
+    // Opcode: 1011 0001 0000 1000 = B308
+    cpu.memory.write_word(0x100, 0xB308);
+    
+    cpu.a[0] = 0x2000;
+    cpu.a[1] = 0x3000;
+    cpu.memory.write_byte(0x2000, 0x10);
+    cpu.memory.write_byte(0x3000, 0x10);
+    
+    cpu.step_instruction();
+    
+    // 0x10 - 0x10 = 0
+    assert!(cpu.get_flag(flags::ZERO));
+    assert_eq!(cpu.a[0], 0x2001);
+    assert_eq!(cpu.a[1], 0x3001);
+}
+
+#[test]
+fn test_roxl() {
+    let mut cpu = create_test_cpu();
+    
+    // ROXL.B #1, D0
+    // Opcode: 1110 0001 0001 0000 = E310
+    cpu.memory.write_word(0x100, 0xE310);
+    
+    cpu.d[0] = 0x80; // 1000 0000
+    cpu.set_flag(flags::EXTEND, false);
+    
+    cpu.step_instruction();
+    
+    // Shift left, MSB goes to X/C, old X goes to LSB
+    // 1000 0000 -> 0000 0000, X=1 (from MSB), C=1
+    assert_eq!(cpu.d[0] & 0xFF, 0x00);
+    assert!(cpu.get_flag(flags::EXTEND));
+    assert!(cpu.get_flag(flags::CARRY));
+}
+
+#[test]
+fn test_line_a() {
+    let mut cpu = create_test_cpu();
+    
+    // Set up vector 10 (Line 1010 Emulator) = 0x28
+    cpu.memory.write_long(0x28, 0x5000);
+    
+    // Line A instructions: 1010 ...
+    cpu.memory.write_word(0x100, 0xA000);
+    
+    cpu.step_instruction();
+    
+    assert_eq!(cpu.pc, 0x5000);
+}
+
+#[test]
+fn test_line_f() {
+    let mut cpu = create_test_cpu();
+    
+    // Set up vector 11 (Line 1111 Emulator) = 0x2C
+    cpu.memory.write_long(0x2C, 0x6000);
+    
+    // Line F instructions: 1111 ...
+    cpu.memory.write_word(0x100, 0xF000);
+    
+    cpu.step_instruction();
+    
+    assert_eq!(cpu.pc, 0x6000);
+}

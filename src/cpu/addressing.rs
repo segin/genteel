@@ -81,8 +81,8 @@ impl Operand {
 pub fn calculate_ea<M: MemoryInterface + ?Sized>(
     mode: AddressingMode,
     size: Size,
-    d: &[u32; 8],
-    a: &[u32; 8],
+    d: &mut [u32; 8],
+    a: &mut [u32; 8],
     pc: &mut u32,
     memory: &mut M,
 ) -> (EffectiveAddress, u32) {
@@ -97,23 +97,23 @@ pub fn calculate_ea<M: MemoryInterface + ?Sized>(
             (EffectiveAddress::Memory(a[reg as usize]), 4)
         }
         AddressingMode::AddressPostIncrement(reg) => {
-            // Post-increment: address is used, then incremented
             let addr = a[reg as usize];
-            // Note: caller must handle the increment after use
+            let increment = match size {
+                Size::Byte => if reg == 7 { 2 } else { 1 },
+                Size::Word => 2,
+                Size::Long => 4,
+            };
+            a[reg as usize] = addr.wrapping_add(increment);
             (EffectiveAddress::Memory(addr), 4)
         }
         AddressingMode::AddressPreDecrement(reg) => {
-            // Pre-decrement: address is decremented, then used
-            // Note: caller must handle the decrement before use
             let decrement = match size {
-                Size::Byte => {
-                    // Special case: A7 always stays word-aligned
-                    if reg == 7 { 2 } else { 1 }
-                }
+                Size::Byte => if reg == 7 { 2 } else { 1 },
                 Size::Word => 2,
                 Size::Long => 4,
             };
             let addr = a[reg as usize].wrapping_sub(decrement);
+            a[reg as usize] = addr;
             (EffectiveAddress::Memory(addr), 6)
         }
         AddressingMode::AddressDisplacement(reg) => {

@@ -233,6 +233,7 @@ pub enum Instruction {
     Pea { src: AddressingMode },
     Clr { size: Size, dst: AddressingMode },
     Exg { rx: u8, ry: u8, mode: u8 },
+    Movep { size: Size, reg: u8, an: u8, direction: bool },
 
     // Arithmetic
     Add { size: Size, src: AddressingMode, dst: AddressingMode, direction: bool },
@@ -252,6 +253,9 @@ pub enum Instruction {
     Abcd { src_reg: u8, dst_reg: u8, memory_mode: bool },
     Sbcd { src_reg: u8, dst_reg: u8, memory_mode: bool },
     Nbcd { dst: AddressingMode },
+    AddX { size: Size, src_reg: u8, dst_reg: u8, memory_mode: bool },
+    SubX { size: Size, src_reg: u8, dst_reg: u8, memory_mode: bool },
+    NegX { size: Size, dst: AddressingMode },
     Chk { src: AddressingMode, dst_reg: u8 },
     Tas { dst: AddressingMode },
     Movem { size: Size, direction: bool, mask: u16, ea: AddressingMode },
@@ -285,12 +289,14 @@ pub enum Instruction {
     Cmp { size: Size, src: AddressingMode, dst_reg: u8 },
     CmpA { size: Size, src: AddressingMode, dst_reg: u8 },
     CmpI { size: Size, dst: AddressingMode },
+    CmpM { size: Size, ax: u8, ay: u8 },
     Tst { size: Size, dst: AddressingMode },
 
     // Branch and Jump
     Bra { displacement: i16 },
     Bsr { displacement: i16 },
     Bcc { condition: Condition, displacement: i16 },
+    Scc { condition: Condition, dst: AddressingMode },
     DBcc { condition: Condition, reg: u8 },
     Jmp { dst: AddressingMode },
     Jsr { dst: AddressingMode },
@@ -322,6 +328,8 @@ pub enum Instruction {
 
     // Illegal/Unimplemented
     Illegal,
+    LineA { opcode: u16 },
+    LineF { opcode: u16 },
     Unimplemented { opcode: u16 },
 }
 
@@ -355,12 +363,12 @@ pub fn decode(opcode: u16) -> Instruction {
         0x7 => decode_moveq(opcode),
         0x8 => decode_group_8(opcode),
         0x9 => decode_sub(opcode),
-        0xA => Instruction::Unimplemented { opcode }, // A-line traps
+        0xA => Instruction::LineA { opcode },
         0xB => decode_group_b(opcode),
         0xC => decode_group_c(opcode),
         0xD => decode_add(opcode),
         0xE => decode_shifts(opcode),
-        0xF => Instruction::Unimplemented { opcode }, // F-line traps
+        0xF => Instruction::LineF { opcode },
         _ => unreachable!(),
     }
 }
@@ -371,7 +379,18 @@ fn decode_group_0(opcode: u16) -> Instruction {
     // Bit manipulation, MOVEP, and immediate operations
     let bit8 = (opcode >> 8) & 0x01;
 
-    if opcode & 0x0100 != 0 && opcode & 0x0038 != 0x0008 {
+    if opcode & 0x0138 == 0x0108 {
+        let reg = ((opcode >> 9) & 0x07) as u8;
+        let op = (opcode >> 6) & 0x07;
+        let an = (opcode & 0x07) as u8;
+        if op >= 4 {
+            let size = if op & 0x01 != 0 { Size::Long } else { Size::Word };
+            let direction = (op & 0x02) != 0; // 0 = mem to reg, 1 = reg to mem
+            return Instruction::Movep { size, reg, an, direction };
+        }
+    }
+
+    if opcode & 0x0100 != 0 {
         // Bit manipulation with register
         let reg = ((opcode >> 9) & 0x07) as u8;
         let mode = ((opcode >> 3) & 0x07) as u8;
@@ -380,6 +399,7 @@ fn decode_group_0(opcode: u16) -> Instruction {
         if let Some(dst) = AddressingMode::from_mode_reg(mode, ea_reg) {
             let op = (opcode >> 6) & 0x03;
             let bit = BitSource::Register(reg);
+            
             return match op {
                 0b00 => Instruction::Btst { bit, dst },
                 0b01 => Instruction::Bchg { bit, dst },
@@ -617,6 +637,7 @@ fn decode_group_4(opcode: u16) -> Instruction {
     if let Some(size) = Size::from_bits(bits_7_6 as u8) {
         if let Some(dst) = AddressingMode::from_mode_reg(mode, reg) {
             return match bits_11_8 {
+                0x0 => Instruction::NegX { size, dst },
                 0x2 => Instruction::Clr { size, dst },
                 0x4 => Instruction::Neg { size, dst },
                 0x6 => Instruction::Not { size, dst },
@@ -665,10 +686,12 @@ fn decode_group_5(opcode: u16) -> Instruction {
         return Instruction::DBcc { condition, reg };
     }
 
-    // Scc (size_bits == 0b11, mode != 0b001)
-    if size_bits == 0b11 {
-        // TODO: Implement Scc
-        return Instruction::Unimplemented { opcode };
+    // Scc
+    if size_bits == 0b11 && mode != 0b001 {
+        let condition = Condition::from_bits(((opcode >> 8) & 0x0F) as u8);
+        if let Some(dst) = AddressingMode::from_mode_reg(mode, reg) {
+            return Instruction::Scc { condition, dst };
+        }
     }
 
     if let Some(size) = Size::from_bits(size_bits) {
@@ -772,6 +795,14 @@ fn decode_sub(opcode: u16) -> Instruction {
     let ea_mode = ((opcode >> 3) & 0x07) as u8;
     let ea_reg = (opcode & 0x07) as u8;
 
+    // SUBX
+    if direction && (opcode & 0x30) == 0 {
+        if let Some(size) = Size::from_bits(size_bits) {
+            let memory_mode = (opcode & 0x08) != 0;
+            return Instruction::SubX { size, src_reg: ea_reg, dst_reg: reg, memory_mode };
+        }
+    }
+
     // SUBA
     if size_bits == 0b11 || (size_bits == 0b11 && direction) {
         if size_bits == 0b11 {
@@ -805,6 +836,14 @@ fn decode_group_b(opcode: u16) -> Instruction {
     let ea_mode = ((opcode >> 3) & 0x07) as u8;
     let ea_reg = (opcode & 0x07) as u8;
 
+    // CMPM
+    if (opcode & 0x0138) == 0x0108 {
+        let size_bits = ((opcode >> 6) & 0x03) as u8;
+        if let Some(size) = Size::from_bits(size_bits) {
+            return Instruction::CmpM { size, ax: reg, ay: ea_reg };
+        }
+    }
+
     // CMPA
     if opmode == 0b011 || opmode == 0b111 {
         let size = if opmode == 0b011 { Size::Word } else { Size::Long };
@@ -822,6 +861,7 @@ fn decode_group_b(opcode: u16) -> Instruction {
             }
         }
     }
+
 
     // CMP
     let size_bits = (opmode & 0x03) as u8;
@@ -891,6 +931,14 @@ fn decode_add(opcode: u16) -> Instruction {
     let size_bits = ((opcode >> 6) & 0x03) as u8;
     let ea_mode = ((opcode >> 3) & 0x07) as u8;
     let ea_reg = (opcode & 0x07) as u8;
+
+    // ADDX
+    if direction && (opcode & 0x30) == 0 {
+        if let Some(size) = Size::from_bits(size_bits) {
+            let memory_mode = (opcode & 0x08) != 0;
+            return Instruction::AddX { size, src_reg: ea_reg, dst_reg: reg, memory_mode };
+        }
+    }
 
     // ADDA
     if size_bits == 0b11 {
