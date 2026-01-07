@@ -10,7 +10,7 @@ This document outlines the architecture of the `genteel` emulator, providing a c
 - **Repository**: (To be added)
 - **Contact**: N/A
 - **License**: (To be determined)
-- **Date of Last Update**: 2025-12-31
+- **Date of Last Update**: 2026-01-07
 
 ## 1. High-level Architecture
 
@@ -23,11 +23,10 @@ The main interaction flow is as follows:
 2. The external tool loads a game ROM into the emulator.
 3. The external tool starts the main emulation loop.
 4. In each iteration of the loop, the emulator:
-    - Executes a number of CPU cycles for the main M68k CPU.
-    - Executes a number of CPU cycles for the Z80 sound co-processor.
-    - Updates the state of the VDP (Video Display Processor).
-    - Updates the state of the sound chips.
-    - Handles input from the external tool.
+    - Steps the M68k CPU (linked to the main Genesis bus).
+    - Steps the Z80 co-processor (with its dedicated Sound RAM).
+    - Updates VDP state and checks for H/V interrupts.
+5. Multi-component bus contention is managed through a `SharedBus` wrapper and the `MemoryInterface` trait.
 5. The external tool can pause the emulation at any time to inspect the state of the system, provide input, or get the video and audio output.
 
 ## 2. Project Structure
@@ -81,9 +80,11 @@ The `genteel` emulator is composed of the following core components, each locate
 **Technologies**: Rust
 
 ### 3.4. Memory (`src/memory/`)
-**Description**: This module implements the memory bus and memory mapping. It manages the different types of memory in the system, including ROM, RAM, and VRAM, and handles memory access from the different components.
+**Description**: Implements the memory bus and memory mapping via the `MemoryInterface` trait. The M68k CPU uses a trait object (`Box<dyn MemoryInterface>`) to access the `Bus`, which routes requests to ROM, WRAM, VDP, and I/O.
 
-**Technologies**: Rust
+The `SharedBus` wrapper allows multiple components to share the same `Bus` state via `Rc<RefCell<Bus>>`.
+
+**Technologies**: Rust (Trait Objects, Interior Mutability)
 
 ### 3.5. I/O (`src/io/`)
 **Description**: This module handles all input and output, including the game controllers.
@@ -177,13 +178,15 @@ As an emulator, `genteel` runs code from untrusted sources (game ROMs). Care mus
 - [x] Memory-mapped I/O
 
 ### Phase 3: VDP Implementation
-- [ ] Basic VDP register handling
-- [ ] Tile/pattern rendering
-- [ ] Sprite rendering
-- [ ] Background layers (A, B, Window)
+- [x] Basic VDP register handling
+- [x] Tile/pattern rendering
+- [x] Sprite rendering
+- [x] Background layers (A, B)
 
-### Phase 4: APU Implementation
-- [ ] Z80 CPU core
+### Phase 4: APU & System Integration
+- [x] Z80 CPU core
+- [x] Unified Genesis Memory Bus implementation
+- [x] M68k/Z80/Bus Integration via SharedBus
 - [ ] Yamaha YM2612 FM synthesizer
 - [ ] Texas Instruments SN76489 PSG
 
