@@ -5,7 +5,11 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 pub mod bus;
+pub mod z80_bus;
 use bus::Bus;
+pub use z80_bus::Z80Bus;
+
+use crate::cpu::decoder::Size;
 
 #[cfg(test)]
 mod tests_property;
@@ -17,7 +21,24 @@ pub trait MemoryInterface: std::fmt::Debug {
     fn write_word(&mut self, address: u32, value: u16);
     fn read_long(&mut self, address: u32) -> u32;
     fn write_long(&mut self, address: u32, value: u32);
+    
+    fn read_size(&mut self, address: u32, size: Size) -> u32 {
+        match size {
+            Size::Byte => self.read_byte(address) as u32,
+            Size::Word => self.read_word(address) as u32,
+            Size::Long => self.read_long(address),
+        }
+    }
+    
+    fn write_size(&mut self, address: u32, value: u32, size: Size) {
+        match size {
+            Size::Byte => self.write_byte(address, value as u8),
+            Size::Word => self.write_word(address, value as u16),
+            Size::Long => self.write_long(address, value),
+        }
+    }
 }
+
 
 // Blanket impl for Box<dyn MemoryInterface>
 impl MemoryInterface for Box<dyn MemoryInterface> {

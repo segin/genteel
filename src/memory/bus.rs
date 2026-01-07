@@ -23,6 +23,7 @@
 use super::MemoryInterface;
 use crate::vdp::Vdp;
 use crate::io::Io;
+use crate::apu::Apu;
 
 /// Sega Genesis Memory Bus
 ///
@@ -43,6 +44,9 @@ pub struct Bus {
 
     /// I/O ports (A10000-A1001F)
     pub io: Io,
+    
+    /// Audio Processing Unit (YM2612 + PSG)
+    pub apu: Apu,
 
     /// Z80 bus control registers
     pub z80_bus_request: bool,
@@ -61,11 +65,13 @@ impl Bus {
             z80_ram: [0; 0x2000],
             vdp: Vdp::new(),
             io: Io::new(),
+            apu: Apu::new(),
             z80_bus_request: false,
             z80_reset: true, // Z80 starts in reset
             tmss_unlocked: false,
         }
     }
+
 
     /// Load a ROM into the bus
     pub fn load_rom(&mut self, data: &[u8]) {
@@ -106,6 +112,10 @@ impl Bus {
                 // Z80 RAM (8KB)
                 self.z80_ram[(addr & 0x1FFF) as usize]
             }
+            // YM2612 from 68k: 0xA04000-0xA04003
+            0xA04000..=0xA04003 => {
+                self.apu.ym2612.read((addr & 3) as u8)
+            }
             0xA02000..=0xA0FFFF => {
                 // Z80 area bank registers and other hardware
                 0xFF
@@ -142,7 +152,9 @@ impl Bus {
                 // HV counter
                 (self.vdp.read_hv_counter() >> 8) as u8 // Just a stub for byte read
             }
-            0xC00010..=0xC0001F => {
+            // PSG: 0xC00010-0xC00011 (write-only, reads return FF)
+            0xC00010..=0xC00011 => 0xFF,
+            0xC00012..=0xC0001F => {
                 // Reserved
                 0xFF
             }
@@ -171,6 +183,18 @@ impl Bus {
             0xA00000..=0xA01FFF => {
                 self.z80_ram[(addr & 0x1FFF) as usize] = value;
             }
+            
+            // YM2612 from 68k: 0xA04000-0xA04003
+            0xA04000..=0xA04003 => {
+                let port = ((addr & 2) >> 1) as u8;  // 0 for 4000/4001, 1 for 4002/4003
+                let is_data = (addr & 1) != 0;
+                
+                if is_data {
+                    self.apu.ym2612.write_data(port, value);
+                } else {
+                    self.apu.ym2612.write_address(port, value);
+                }
+            }
 
             // I/O Ports
             0xA10000..=0xA1001F => {
@@ -193,6 +217,10 @@ impl Bus {
             }
             0xC00004..=0xC00007 => {
                 // VDP control port - placeholder
+            }
+            // PSG: 0xC00011
+            0xC00011 => {
+                self.apu.psg.write(value);
             }
 
             // Work RAM
@@ -367,8 +395,8 @@ mod tests {
     fn test_io_ports() {
         let mut bus = Bus::new();
 
-        bus.write_byte(0xA10001, 0x40);
-        assert_eq!(bus.read_byte(0xA10001), 0x40);
+        bus.write_byte(0xA10009, 0x40);
+        assert_eq!(bus.read_byte(0xA10009), 0x40);
     }
 
     #[test]
