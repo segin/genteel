@@ -11,7 +11,7 @@ use crate::memory::Memory;
 fn z80(program: &[u8]) -> Z80 {
     let mut m = Memory::new(0x10000);
     for (i, &b) in program.iter().enumerate() { m.data[i] = b; }
-    Z80::new(m)
+    Z80::new(Box::new(m))
 }
 
 // ============ DI (Disable Interrupts) ============
@@ -65,8 +65,8 @@ fn z80(program: &[u8]) -> Z80 {
 #[test] fn retn_returns() {
     let mut c = z80(&[0xED, 0x45]);
     c.sp = 0x1FFE;
-    c.memory.data[0x1FFE] = 0x34;
-    c.memory.data[0x1FFF] = 0x12;
+    c.memory.write_byte(0x1FFE as u32, 0x34);
+    c.memory.write_byte(0x1FFF as u32, 0x12);
     c.step();
     assert_eq!(c.pc, 0x1234);
     assert_eq!(c.sp, 0x2000);
@@ -75,8 +75,8 @@ fn z80(program: &[u8]) -> Z80 {
 #[test] fn retn_restores_iff1_from_iff2_true() {
     let mut c = z80(&[0xED, 0x45]);
     c.sp = 0x1FFE;
-    c.memory.data[0x1FFE] = 0x00;
-    c.memory.data[0x1FFF] = 0x00;
+    c.memory.write_byte(0x1FFE as u32, 0x00);
+    c.memory.write_byte(0x1FFF as u32, 0x00);
     c.iff1 = false;
     c.iff2 = true;
     c.step();
@@ -87,8 +87,8 @@ fn z80(program: &[u8]) -> Z80 {
 #[test] fn retn_restores_iff1_from_iff2_false() {
     let mut c = z80(&[0xED, 0x45]);
     c.sp = 0x1FFE;
-    c.memory.data[0x1FFE] = 0x00;
-    c.memory.data[0x1FFF] = 0x00;
+    c.memory.write_byte(0x1FFE as u32, 0x00);
+    c.memory.write_byte(0x1FFF as u32, 0x00);
     c.iff1 = true;
     c.iff2 = false;
     c.step();
@@ -101,8 +101,8 @@ fn z80(program: &[u8]) -> Z80 {
 #[test] fn reti_returns() {
     let mut c = z80(&[0xED, 0x4D]);
     c.sp = 0x1FFE;
-    c.memory.data[0x1FFE] = 0x78;
-    c.memory.data[0x1FFF] = 0x56;
+    c.memory.write_byte(0x1FFE as u32, 0x78);
+    c.memory.write_byte(0x1FFF as u32, 0x56);
     c.step();
     assert_eq!(c.pc, 0x5678);
     assert_eq!(c.sp, 0x2000);
@@ -112,8 +112,8 @@ fn z80(program: &[u8]) -> Z80 {
     // RETI doesn't modify IFF flags (unlike RETN)
     let mut c = z80(&[0xED, 0x4D]);
     c.sp = 0x1FFE;
-    c.memory.data[0x1FFE] = 0x00;
-    c.memory.data[0x1FFF] = 0x00;
+    c.memory.write_byte(0x1FFE as u32, 0x00);
+    c.memory.write_byte(0x1FFF as u32, 0x00);
     c.iff1 = false;
     c.iff2 = true;
     c.step();

@@ -9,7 +9,7 @@ use crate::memory::Memory;
 fn z80(program: &[u8]) -> Z80 {
     let mut m = Memory::new(0x10000);
     for (i, &b) in program.iter().enumerate() { m.data[i] = b; }
-    Z80::new(m)
+    Z80::new(Box::new(m))
 }
 
 // ============ Main opcodes (no prefix) ============
@@ -75,7 +75,7 @@ fn z80(program: &[u8]) -> Z80 {
 #[test] fn timing_cp_b() { let mut c = z80(&[0xB8]); assert_eq!(c.step(), 4); }
 
 // Control flow
-#[test] fn timing_ret_nz_taken() { let mut c = z80(&[0xC0]); c.sp = 0x100; c.memory.data[0x100] = 0x00; c.memory.data[0x101] = 0x10; c.f = 0; assert_eq!(c.step(), 11); }
+#[test] fn timing_ret_nz_taken() { let mut c = z80(&[0xC0]); c.sp = 0x100; c.memory.write_byte(0x100 as u32, 0x00); c.memory.write_byte(0x101 as u32, 0x10); c.f = 0; assert_eq!(c.step(), 11); }
 #[test] fn timing_ret_nz_not_taken() { let mut c = z80(&[0xC0]); c.set_flag(flags::ZERO, true); assert_eq!(c.step(), 5); }
 #[test] fn timing_pop_bc() { let mut c = z80(&[0xC1]); c.sp = 0x100; assert_eq!(c.step(), 10); }
 #[test] fn timing_jp_nn() { let mut c = z80(&[0xC3, 0x00, 0x10]); assert_eq!(c.step(), 10); }

@@ -24,7 +24,7 @@ impl XorShift64 {
 
 fn z80_setup() -> Z80 {
     let m = Memory::new(0x10000);
-    Z80::new(m)
+    Z80::new(Box::new(m))
 }
 
 // ============ Reference Models ============
@@ -337,7 +337,7 @@ fn exhaustive_8bit_arithmetic() {
         let a = rng.next_u8();
         let b = rng.next_u8();
         cpu.a = a; cpu.b = b; cpu.f = rng.next_u8();
-        cpu.memory.data[0] = 0x80; cpu.pc = 0;
+        cpu.memory.write_byte(0 as u32, 0x80); cpu.pc = 0;
         cpu.step();
         let (exp_res, exp_f) = ref_add(a, b);
         assert_eq!(cpu.a, exp_res, "ADD Res iter {}", i);
@@ -350,7 +350,7 @@ fn exhaustive_8bit_arithmetic() {
         let b = rng.next_u8();
         let f_init = rng.next_u8();
         cpu.a = a; cpu.b = b; cpu.f = f_init;
-        cpu.memory.data[0] = 0x88; cpu.pc = 0;
+        cpu.memory.write_byte(0 as u32, 0x88); cpu.pc = 0;
         cpu.step();
         let (exp_res, exp_f) = ref_adc(a, b, (f_init & flags::CARRY) != 0);
         assert_eq!(cpu.a, exp_res);
@@ -362,7 +362,7 @@ fn exhaustive_8bit_arithmetic() {
         let a = rng.next_u8();
         let b = rng.next_u8();
         cpu.a = a; cpu.b = b; cpu.f = rng.next_u8();
-        cpu.memory.data[0] = 0x90; cpu.pc = 0;
+        cpu.memory.write_byte(0 as u32, 0x90); cpu.pc = 0;
         cpu.step();
         let (exp_res, exp_f) = ref_sub(a, b);
         assert_eq!(cpu.a, exp_res);
@@ -375,7 +375,7 @@ fn exhaustive_8bit_arithmetic() {
         let b = rng.next_u8();
         let f_init = rng.next_u8();
         cpu.a = a; cpu.b = b; cpu.f = f_init;
-        cpu.memory.data[0] = 0x98; cpu.pc = 0;
+        cpu.memory.write_byte(0 as u32, 0x98); cpu.pc = 0;
         cpu.step();
         let (exp_res, exp_f) = ref_sbc(a, b, (f_init & flags::CARRY) != 0);
         assert_eq!(cpu.a, exp_res);
@@ -392,7 +392,7 @@ fn exhaustive_logic() {
         let a = rng.next_u8();
         let b = rng.next_u8();
         cpu.a = a; cpu.b = b; cpu.f = rng.next_u8();
-        cpu.memory.data[0] = 0xA0; cpu.pc = 0;
+        cpu.memory.write_byte(0 as u32, 0xA0); cpu.pc = 0;
         cpu.step();
         let (exp_res, exp_f) = ref_logic(0, a, b);
         assert_eq!(cpu.a, exp_res);
@@ -403,7 +403,7 @@ fn exhaustive_logic() {
         let a = rng.next_u8();
         let b = rng.next_u8();
         cpu.a = a; cpu.b = b; cpu.f = rng.next_u8();
-        cpu.memory.data[0] = 0xA8; cpu.pc = 0;
+        cpu.memory.write_byte(0 as u32, 0xA8); cpu.pc = 0;
         cpu.step();
         let (exp_res, exp_f) = ref_logic(1, a, b);
         assert_eq!(cpu.a, exp_res);
@@ -414,7 +414,7 @@ fn exhaustive_logic() {
         let a = rng.next_u8();
         let b = rng.next_u8();
         cpu.a = a; cpu.b = b; cpu.f = rng.next_u8();
-        cpu.memory.data[0] = 0xB0; cpu.pc = 0;
+        cpu.memory.write_byte(0 as u32, 0xB0); cpu.pc = 0;
         cpu.step();
         let (exp_res, exp_f) = ref_logic(2, a, b);
         assert_eq!(cpu.a, exp_res);
@@ -431,7 +431,7 @@ fn exhaustive_inc_dec() {
         let b = rng.next_u8();
         let f_init = rng.next_u8();
         cpu.b = b; cpu.f = f_init;
-        cpu.memory.data[0] = 0x04; cpu.pc = 0;
+        cpu.memory.write_byte(0 as u32, 0x04); cpu.pc = 0;
         cpu.step();
         let (exp_res, exp_f) = ref_inc(b, f_init);
         assert_eq!(cpu.b, exp_res);
@@ -442,7 +442,7 @@ fn exhaustive_inc_dec() {
         let b = rng.next_u8();
         let f_init = rng.next_u8();
         cpu.b = b; cpu.f = f_init;
-        cpu.memory.data[0] = 0x05; cpu.pc = 0;
+        cpu.memory.write_byte(0 as u32, 0x05); cpu.pc = 0;
         cpu.step();
         let (exp_res, exp_f) = ref_dec(b, f_init);
         assert_eq!(cpu.b, exp_res);
@@ -460,7 +460,7 @@ fn exhaustive_16bit_arithmetic() {
         let bc = rng.next_u16();
         let f_init = rng.next_u8();
         cpu.set_hl(hl); cpu.set_bc(bc); cpu.f = f_init;
-        cpu.memory.data[0] = 0x09; cpu.pc = 0;
+        cpu.memory.write_byte(0 as u32, 0x09); cpu.pc = 0;
         cpu.step();
         let (exp_res, exp_f) = ref_add16(hl, bc, f_init);
         assert_eq!(cpu.hl(), exp_res);
@@ -472,7 +472,7 @@ fn exhaustive_16bit_arithmetic() {
         let bc = rng.next_u16();
         let f_init = rng.next_u8();
         cpu.set_hl(hl); cpu.set_bc(bc); cpu.f = f_init;
-        cpu.memory.data[0] = 0xED; cpu.memory.data[1] = 0x4A; cpu.pc = 0;
+        cpu.memory.write_byte(0 as u32, 0xED); cpu.memory.write_byte(1 as u32, 0x4A); cpu.pc = 0;
         cpu.step();
         let (exp_res, exp_f) = ref_adc16(hl, bc, f_init);
         assert_eq!(cpu.hl(), exp_res);
@@ -484,7 +484,7 @@ fn exhaustive_16bit_arithmetic() {
         let bc = rng.next_u16();
         let f_init = rng.next_u8();
         cpu.set_hl(hl); cpu.set_bc(bc); cpu.f = f_init;
-        cpu.memory.data[0] = 0xED; cpu.memory.data[1] = 0x42; cpu.pc = 0;
+        cpu.memory.write_byte(0 as u32, 0xED); cpu.memory.write_byte(1 as u32, 0x42); cpu.pc = 0;
         cpu.step();
         let (exp_res, exp_f) = ref_sbc16(hl, bc, f_init);
         assert_eq!(cpu.hl(), exp_res);
@@ -504,7 +504,7 @@ fn exhaustive_shifts() {
             let val = rng.next_u8();
             let f_init = rng.next_u8();
             cpu.b = val; cpu.f = f_init;
-            cpu.memory.data[0] = 0xCB; cpu.memory.data[1] = opcode_byte; cpu.pc = 0;
+            cpu.memory.write_byte(0 as u32, 0xCB); cpu.memory.write_byte(1 as u32, opcode_byte); cpu.pc = 0;
             cpu.step();
             let (exp_res, exp_f) = ref_shift(t, val, f_init);
             assert_eq!(cpu.b, exp_res, "{} Res iter {}", type_names[idx], i);
@@ -530,8 +530,8 @@ fn exhaustive_bit_register() {
                 let f_init = rng.next_u8();
                 cpu.f = f_init;
                 let opcode = 0x40 | (b << 3) | r;
-                cpu.memory.data[0] = 0xCB;
-                cpu.memory.data[1] = opcode;
+                cpu.memory.write_byte(0 as u32, 0xCB);
+                cpu.memory.write_byte(1 as u32, opcode);
                 cpu.pc = 0;
                 cpu.step();
                 let exp_f = ref_bit(b, val, f_init);

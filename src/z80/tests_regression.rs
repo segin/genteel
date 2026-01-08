@@ -8,7 +8,7 @@ use crate::memory::Memory;
 fn z80(program: &[u8]) -> Z80 {
     let mut m = Memory::new(0x10000);
     for (i, &b) in program.iter().enumerate() { m.data[i] = b; }
-    Z80::new(m)
+    Z80::new(Box::new(m))
 }
 
 // ============ Common emulator bugs ============
@@ -49,7 +49,7 @@ fn regression_ld_hl_h() {
     let mut c = z80(&[0x74]); // LD (HL), H
     c.set_hl(0x1234);
     c.step();
-    assert_eq!(c.memory.data[0x1234], 0x12); // H value, not modified
+    assert_eq!(c.memory.read_byte(0x1234 as u32), 0x12); // H value, not modified
 }
 
 // Bug: PUSH/POP AF not preserving all flag bits
@@ -73,12 +73,12 @@ fn regression_ex_sp_hl() {
     let mut c = z80(&[0xE3]);
     c.sp = 0x1000;
     c.set_hl(0x1234);
-    c.memory.data[0x1000] = 0xCD;
-    c.memory.data[0x1001] = 0xAB;
+    c.memory.write_byte(0x1000 as u32, 0xCD);
+    c.memory.write_byte(0x1001 as u32, 0xAB);
     c.step();
     assert_eq!(c.hl(), 0xABCD);
-    assert_eq!(c.memory.data[0x1000], 0x34);
-    assert_eq!(c.memory.data[0x1001], 0x12);
+    assert_eq!(c.memory.read_byte(0x1000 as u32), 0x34);
+    assert_eq!(c.memory.read_byte(0x1001 as u32), 0x12);
 }
 
 // Bug: INC/DEC not affecting V flag correctly
@@ -156,11 +156,11 @@ fn regression_ldir_bc_zero() {
     c.set_hl(0x1000);
     c.set_de(0x2000);
     c.set_bc(0x0000);
-    c.memory.data[0x1000] = 0xAA;
+    c.memory.write_byte(0x1000 as u32, 0xAA);
     c.step();
     // BC was 0, now 0xFFFF
     assert_eq!(c.bc(), 0xFFFF);
-    assert_eq!(c.memory.data[0x2000], 0xAA);
+    assert_eq!(c.memory.read_byte(0x2000 as u32), 0xAA);
 }
 
 // Bug: ADD HL, SP affects only C and H flags
@@ -218,16 +218,16 @@ fn regression_sp_wrap_push() {
     c.set_bc(0x1234);
     c.step();
     assert_eq!(c.sp, 0xFFFF);
-    assert_eq!(c.memory.data[0xFFFF], 0x34);
-    assert_eq!(c.memory.data[0x0000], 0x12);
+    assert_eq!(c.memory.read_byte(0xFFFF as u32), 0x34);
+    assert_eq!(c.memory.read_byte(0x0000 as u32), 0x12);
 }
 
 #[test]
 fn regression_sp_wrap_pop() {
     let mut c = z80(&[0xC1]); // POP BC at addr 0
     c.sp = 0xFFFE; // Use 0xFFFE so we don't overwrite the instruction
-    c.memory.data[0xFFFE] = 0xCD;
-    c.memory.data[0xFFFF] = 0xAB;
+    c.memory.write_byte(0xFFFE as u32, 0xCD);
+    c.memory.write_byte(0xFFFF as u32, 0xAB);
     c.step();
     assert_eq!(c.bc(), 0xABCD);
     assert_eq!(c.sp, 0x0000);
@@ -237,7 +237,7 @@ fn regression_sp_wrap_pop() {
 fn regression_pc_wrap() {
     let mut c = z80(&[0x00]); // NOP at 0xFFFF
     c.pc = 0xFFFF;
-    c.memory.data[0xFFFF] = 0x00;
+    c.memory.write_byte(0xFFFF as u32, 0x00);
     c.step();
     assert_eq!(c.pc, 0x0000);
 }

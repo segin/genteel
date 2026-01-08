@@ -13,7 +13,7 @@ use crate::memory::Memory;
 fn z80(program: &[u8]) -> Z80 {
     let mut m = Memory::new(0x10000);
     for (i, &b) in program.iter().enumerate() { m.data[i] = b; }
-    Z80::new(m)
+    Z80::new(Box::new(m))
 }
 
 // ============ 1. IM 2 Vector Fetching ============
@@ -26,8 +26,8 @@ fn torture_im2_vector_fetch() {
     
     // Setup vector table at 0x10FF
     // Vector provided by bus is 0xFF
-    c.memory.data[0x10FF] = 0x30;
-    c.memory.data[0x1100] = 0x20; 
+    c.memory.write_byte(0x10FF as u32, 0x30);
+    c.memory.write_byte(0x1100 as u32, 0x20); 
     
     c.trigger_interrupt(0xFF);
     
@@ -54,7 +54,7 @@ fn torture_ei_latency_shadow() {
     assert!(!c.pending_ei);
     
     // Now interrupt should fire
-    c.memory.data[0x0038] = 0x00; // Handler at 0x0038 is NOP
+    c.memory.write_byte(0x0038 as u32, 0x00); // Handler at 0x0038 is NOP
     let cycles = c.trigger_interrupt(0x00);
     assert!(cycles > 0);
     assert_eq!(c.pc, 0x0038);
@@ -84,7 +84,7 @@ fn torture_bit_hl_memptr_leakage() {
     let mut c = z80(&[0xCB, 0x46]); // BIT 0, (HL)
     c.memptr = 0x2800; // Bit 5 & 3 of high byte are 1
     c.set_hl(0x8000);
-    c.memory.data[0x8000] = 0x00;
+    c.memory.write_byte(0x8000 as u32, 0x00);
     c.step();
     assert!(c.get_flag(flags::X_FLAG)); 
     assert!(c.get_flag(flags::Y_FLAG)); 
@@ -97,7 +97,7 @@ fn torture_bit_ix_ea_leakage() {
     // 0x28 = 0010 1000. Bit 5=1, Bit 3=1.
     let mut c = z80(&[0xDD, 0xCB, 0x28, 0x46]); 
     c.ix = 0x2800; // EA = 0x2800 + 0x28 = 0x2828. High byte is 0x28.
-    c.memory.data[0x2828] = 0x00;
+    c.memory.write_byte(0x2828 as u32, 0x00);
     c.step(); 
     assert!(c.get_flag(flags::X_FLAG));
     assert!(c.get_flag(flags::Y_FLAG));
@@ -110,10 +110,58 @@ fn torture_ldi_flags() {
     c.set_hl(0x1000);
     c.set_de(0x2000);
     c.set_bc(0x0002);
-    c.memory.data[0x1000] = 0x55;
+    c.memory.write_byte(0x1000 as u32, 0x55);
     c.step();
     // Flags: N=0, H=0, PV=1 (BC != 0), Z=0, C preserved
     assert!(!c.get_flag(flags::ADD_SUB));
     assert!(!c.get_flag(flags::HALF_CARRY));
     assert!(c.get_flag(flags::PARITY)); // PV=1 because BC=1 after dec
+}
+
+// ============ 6. Undocumented Flag Leakage (SCF/CCF/Rotates) ============
+#[test]
+fn torture_flag_leakage_scf() {
+    let mut c = z80(&[0x37, 0x37]); // Two SCF instructions
+    c.a = 0x28; // X=1 (bit 3), Y=1 (bit 5)
+    c.step();
+    assert!(c.get_flag(flags::X_FLAG));
+    assert!(c.get_flag(flags::Y_FLAG));
+    
+    c.a = 0x00;
+    c.step(); // Execute second SCF with A=0
+    assert!(!c.get_flag(flags::X_FLAG));
+    assert!(!c.get_flag(flags::Y_FLAG));
+}
+
+#[test]
+fn torture_flag_leakage_ccf() {
+    let mut c = z80(&[0x3F]); // CCF
+    c.a = 0x28; 
+    c.step();
+    assert!(c.get_flag(flags::X_FLAG));
+    assert!(c.get_flag(flags::Y_FLAG));
+}
+
+#[test]
+fn torture_flag_leakage_rotates() {
+    let mut c = z80(&[0x07, 0x0F, 0x17, 0x1F]); // RLCA, RRCA, RLA, RRA
+    c.a = 0x14; // bit 3 is 0, bit 5 is 0
+    c.step(); // RLCA -> A becomes 0x28 (bit 3=1, bit 5=1)
+    assert!(c.get_flag(flags::X_FLAG));
+    assert!(c.get_flag(flags::Y_FLAG));
+}
+
+// ============ 7. 16-bit Add MEMPTR update ============
+#[test]
+fn torture_add_hl_memptr() {
+    // ADD HL, BC; BIT 0, (HL)
+    let mut c = z80(&[0x09, 0xCB, 0x46]);
+    c.set_hl(0x2800); // MEMPTR should become 0x2801
+    c.set_bc(0x0001);
+    c.memory.write_byte(0x2801 as u32, 0x00);
+    c.step(); // ADD HL, BC
+    assert_eq!(c.memptr, 0x2801);
+    c.step(); // BIT 0, (HL) -> leaks High byte of WZ (0x28)
+    assert!(c.get_flag(flags::X_FLAG)); // bit 3 of 0x28 is 1
+    assert!(c.get_flag(flags::Y_FLAG)); // bit 5 of 0x28 is 1
 }

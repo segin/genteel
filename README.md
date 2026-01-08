@@ -14,8 +14,28 @@ Genteel is an instrumentable Sega Mega Drive/Genesis emulator designed to be dri
 
 ## Building from Source
 
-(Coming soon)
+To build Genteel, you will need the Rust toolchain installed. You can build the project using Cargo:
+
+```bash
+cargo build --release
+```
+
+## Running Tests
+
+Genteel features a comprehensive test suite including unit tests, property-based tests, and regression tests.
+
+```bash
+cargo test
+```
+
+## Status
+
+Phase 4: System Integration is currently in progress.
+- [x] M68k CPU Core (Instruction set complete)
+- [x] Z80 CPU Core (Architectural nuances & Torture tests complete)
+- [x] Unified Memory Bus (ROM, RAM, VDP, I/O)
+- [x] Core Integration (M68k & Z80 sharing the same bus)
 
 ## License
 
-(Coming soon)
+MIT

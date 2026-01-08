@@ -338,9 +338,11 @@ impl Vdp {
         } else {
             // Second word of command
             self.control_address = (self.control_address & 0x3FFF) | ((value & 0x0003) << 14);
-            self.control_code = (self.control_code & 0x03) | ((value >> 2) as u8 & 0x3C);
+            let cd2_3 = (value & 0x000C) as u8;
+            let cd4_5 = ((value & 0xC000) >> 10) as u8;
+            self.control_code = (self.control_code & 0x03) | cd2_3 | cd4_5;
             self.control_pending = false;
-
+ 
             // Check for DMA
             if self.dma_enabled() && (self.control_code & 0x20) != 0 {
                 self.dma_pending = true;
@@ -383,14 +385,154 @@ impl Vdp {
             return;
         }
 
-        // Render planes (simplified - just background color for now)
-        // Full implementation would render:
-        // 1. Plane B (low priority)
-        // 2. Plane A (low priority)
-        // 3. Sprites (low priority)
-        // 4. Plane B (high priority)
-        // 5. Plane A (high priority)
-        // 6. Sprites (high priority)
+        // Plane rendering (Low priority)
+        self.render_plane(false, line, false); // Plane B low
+        self.render_plane(true, line, false);  // Plane A low
+        
+        // Sprites low priority
+        self.render_sprites(line, false);
+        
+        // Plane rendering (High priority)
+        self.render_plane(false, line, true); // Plane B high
+        self.render_plane(true, line, true);  // Plane A high
+        
+        // Sprites high priority
+        self.render_sprites(line, true);
+    }
+
+    fn render_sprites(&mut self, line: u16, priority_filter: bool) {
+        let sat_base = self.sprite_table_address() as usize;
+        let mut sprite_idx = 0;
+        let mut sprite_count = 0;
+        let max_sprites = if self.h40_mode() { 80 } else { 64 };
+        
+        let screen_width = self.screen_width();
+        let line_offset = (line as usize) * 320;
+
+        // SAT structure is 8 bytes per sprite
+        // We follow the 'link' pointer starting from sprite 0
+        loop {
+            let addr = sat_base + (sprite_idx as usize * 8);
+            if addr + 8 > 0x10000 { break; }
+
+            let cur_v = (((self.vram[addr] as u16) << 8) | (self.vram[addr + 1] as u16)) & 0x03FF;
+            let v_pos = cur_v.wrapping_sub(128);
+            
+            let size = self.vram[addr + 2];
+            let sprite_h_tiles = ((size >> 2) & 0x03) + 1;
+            let sprite_v_tiles = (size & 0x03) + 1;
+            let sprite_h_px = sprite_h_tiles * 8;
+            let sprite_v_px = sprite_v_tiles * 8;
+            
+            let link = self.vram[addr + 3] & 0x7F;
+            
+            let attr = ((self.vram[addr + 4] as u16) << 8) | (self.vram[addr + 5] as u16);
+            let priority = (attr & 0x8000) != 0;
+            let palette = ((attr >> 13) & 0x03) as u8;
+            let v_flip = (attr & 0x1000) != 0;
+            let h_flip = (attr & 0x0800) != 0;
+            let base_tile = attr & 0x07FF;
+            
+            let cur_h = (((self.vram[addr + 6] as u16) << 8) | (self.vram[addr + 7] as u16)) & 0x03FF;
+            let h_pos = cur_h.wrapping_sub(128);
+
+            // Check if sprite is visible on this line
+            if priority == priority_filter && line >= v_pos && line < v_pos + sprite_v_px as u16 {
+                let py = line - v_pos;
+                let fetch_py = if v_flip { (sprite_v_px as u16 - 1) - py } else { py };
+                
+                let tile_v_offset = fetch_py / 8;
+                let pixel_v = fetch_py % 8;
+                
+                for px in 0..sprite_h_px {
+                    let screen_x = h_pos + px as u16;
+                    if screen_x >= screen_width { continue; }
+                    
+                    let fetch_px = if h_flip { (sprite_h_px as u16 - 1) - px as u16 } else { px as u16 };
+                    let tile_h_offset = fetch_px / 8;
+                    let pixel_h = fetch_px % 8;
+                    
+                    // In a multi-tile sprite, tiles are arranged vertically first
+                    let tile_idx = base_tile + (tile_h_offset * sprite_v_tiles as u16) + tile_v_offset;
+                    
+                    let pattern_addr = (tile_idx * 32) + (pixel_v * 4) + (pixel_h / 2);
+                    if pattern_addr as usize + 4 > 0x10000 { continue; }
+
+                    let byte = self.vram[pattern_addr as usize];
+                    let color_idx = if pixel_h % 2 == 0 { byte >> 4 } else { byte & 0x0F };
+                    
+                    if color_idx != 0 {
+                        let color = self.get_cram_color(palette, color_idx);
+                        self.framebuffer[line_offset + screen_x as usize] = color;
+                    }
+                }
+            }
+
+            sprite_count += 1;
+            sprite_idx = link;
+            if sprite_idx == 0 || sprite_count >= max_sprites {
+                break;
+            }
+        }
+    }
+
+    fn render_plane(&mut self, is_plane_a: bool, line: u16, priority_filter: bool) {
+        let (plane_w, plane_h) = self.plane_size();
+        let name_table_base = if is_plane_a { self.plane_a_address() } else { self.plane_b_address() };
+        
+        // Get vertical scroll
+        let vs_addr = if is_plane_a { 0 } else { 2 };
+        let v_scroll = (((self.vsram[vs_addr] as u16) << 8) | (self.vsram[vs_addr + 1] as u16)) & 0x03FF;
+        
+        // Get horizontal scroll (per-screen for now)
+        let hs_base = self.hscroll_address();
+        let hs_addr = if is_plane_a { hs_base } else { hs_base + 2 };
+        let hi = self.vram[hs_addr as usize];
+        let lo = self.vram[hs_addr as usize + 1];
+        let h_scroll = (((hi as u16) << 8) | (lo as u16)) & 0x03FF;
+        
+        let scrolled_v = line.wrapping_add(v_scroll);
+        let tile_v = (scrolled_v / 8) % plane_h;
+        let pixel_v = scrolled_v % 8;
+        
+        let screen_width = self.screen_width();
+        let line_offset = (line as usize) * 320;
+
+        for screen_x in 0..screen_width {
+            let scrolled_h = (screen_x as u16).wrapping_sub(h_scroll);
+            let tile_h = (scrolled_h / 8) % plane_w;
+            let pixel_h = scrolled_h % 8;
+            
+            // Fetch nametable entry (2 bytes)
+            let nt_entry_addr = name_table_base + (tile_v * plane_w + tile_h) * 2;
+            let hi = self.vram[nt_entry_addr as usize];
+            let lo = self.vram[nt_entry_addr as usize + 1];
+            let entry = ((hi as u16) << 8) | (lo as u16);
+            
+            let priority = (entry & 0x8000) != 0;
+            if priority != priority_filter {
+                continue;
+            }
+            
+            let palette = ((entry >> 13) & 0x03) as u8;
+            let v_flip = (entry & 0x1000) != 0;
+            let h_flip = (entry & 0x0800) != 0;
+            let tile_idx = entry & 0x07FF;
+            
+            // Fetch tile pixel (4 bits per pixel)
+            let fetch_v = if v_flip { 7 - pixel_v } else { pixel_v };
+            let fetch_h = if h_flip { 7 - pixel_h } else { pixel_h };
+            
+            let pattern_addr = (tile_idx * 32) + (fetch_v * 4) + (fetch_h / 2);
+            let byte = self.vram[pattern_addr as usize];
+            let color_idx = if fetch_h % 2 == 0 { byte >> 4 } else { byte & 0x0F };
+            
+            // Color 0 is transparent
+            if color_idx != 0 {
+                let color = self.get_cram_color(palette, color_idx);
+                self.framebuffer[line_offset + screen_x as usize] = color;
+            }
+        }
     }
 
     /// Get color from CRAM as RGB565
@@ -538,5 +680,90 @@ mod tests {
         assert_eq!(vdp.vram[1], 0x11);
         assert_eq!(vdp.vram[2], 0x22);
         assert_eq!(vdp.vram[3], 0x22);
+    }
+
+    #[test]
+    fn test_plane_rendering() {
+        let mut vdp = Vdp::new();
+        
+        // 1. Set background color to palette 0, color 0
+        vdp.write_control(0x8700); 
+        
+        // 2. Set Plane A nametable to 0xE000
+        vdp.write_control(0x8238); 
+        
+        // 3. Set auto-increment to 2
+        vdp.write_control(0x8F02);
+        
+        // 4. Define Tile 1 at VRAM 0x0020 (8x8 pixels, 4 bits each = 32 bytes)
+        // Fill it with color index 2
+        vdp.write_control(0x4020); vdp.write_control(0x0000);
+        for _ in 0..16 {
+            vdp.write_data(0x2222);
+        }
+        
+        // 5. Define CRAM index 2 (Palette 0, Color 2) as pure Red (0x000E)
+        vdp.write_control(0xC004); vdp.write_control(0x0000);
+        vdp.write_data(0x000E);
+        
+        // 6. Set Nametable entry at (0,0) in Plane A (address 0xE000)
+        // Entry: bit 15=priority, 14-13=pal, 12=vflip, 11=hflip, 10-0=index
+        // We want: Tile 1, Palette 0, No flip, No priority = 0x0001
+        vdp.write_control(0x4000); vdp.write_control(0x0002); // 0xE000 -> CD=01, A15-14=11 -> 0x4000 0003? 
+        // Wait, command format: CD1-0 A13-0 | CD5-2 0000 00 A15-14
+        // For 0xE000 (1110 0000 0000 0000):
+        // CD=01 (VRAM Write)
+        // Word 1: 01 100000 000000 -> 0x6000
+        // Word 2: 0000 0000 0000 0011 -> 0x0003
+        vdp.write_control(0x6000); vdp.write_control(0x0003);
+        vdp.write_data(0x0001);
+        
+        // 7. Enable display
+        vdp.write_control(0x8144);
+        
+        // 8. Render line 0
+        vdp.render_line(0);
+        
+        // Pixel at (0,0) should be Red (0xF800 in RGB565)
+        assert_eq!(vdp.framebuffer[0], 0xF800);
+    }
+
+    #[test]
+    fn test_sprite_rendering() {
+        let mut vdp = Vdp::new();
+        vdp.vram.fill(0);
+        
+        // 1. Set auto-increment to 2
+        vdp.write_control(0x8F02);
+        
+        // 2. Set SAT at 0xD000 (Reg 5 = 0x68)
+        vdp.write_control(0x8568);
+        
+        // 3. Set Plane A background color (Pal 0, Col 0)
+        vdp.write_control(0x8700);
+        
+        // 4. Define Sprite 0 at (10, 10) -> internal pos (138, 138)
+        vdp.write_control(0x5000); vdp.write_control(0x0003);
+        vdp.write_data(0x008A); // V-pos 138
+        vdp.write_data(0x0000); // Size 1x1, Link 0
+        vdp.write_data(0x0001); // Attr: Tile 1, Pal 0
+        vdp.write_data(0x008A); // H-pos 138
+        
+        // 5. Define Tile 1 at 0x0020 (all color 3)
+        vdp.write_control(0x4020); vdp.write_control(0x0000);
+        for _ in 0..16 { vdp.write_data(0x3333); }
+        
+        // 6. Define CRAM index 3 (Pal 0, Col 3) as Blue (0x0E00)
+        vdp.write_control(0xC006); vdp.write_control(0x0000);
+        vdp.write_data(0x0E00);
+        
+        // 7. Enable display
+        vdp.write_control(0x8144);
+        
+        // 8. Render line 10
+        vdp.render_line(10);
+        
+        // Pixel at (10, 10) should be Blue (0x001F in RGB565)
+        assert_eq!(vdp.framebuffer[320 * 10 + 10], 0x001F);
     }
 }

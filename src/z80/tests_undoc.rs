@@ -11,7 +11,7 @@ use crate::memory::Memory;
 fn z80(program: &[u8]) -> Z80 {
     let mut m = Memory::new(0x10000);
     for (i, &b) in program.iter().enumerate() { m.data[i] = b; }
-    Z80::new(m)
+    Z80::new(Box::new(m))
 }
 
 // ============ SLL (CB 30-37) - Undocumented shift ============
@@ -26,7 +26,7 @@ fn z80(program: &[u8]) -> Z80 {
 #[test] fn sll_e() { let mut c = z80(&[0xCB, 0x33]); c.e = 0x40; c.step(); assert_eq!(c.e, 0x81); }
 #[test] fn sll_h() { let mut c = z80(&[0xCB, 0x34]); c.h = 0x00; c.step(); assert_eq!(c.h, 0x01); }
 #[test] fn sll_l() { let mut c = z80(&[0xCB, 0x35]); c.l = 0x7F; c.step(); assert_eq!(c.l, 0xFF); }
-#[test] fn sll_hl() { let mut c = z80(&[0xCB, 0x36]); c.set_hl(0x100); c.memory.data[0x100] = 0x00; c.step(); assert_eq!(c.memory.data[0x100], 0x01); }
+#[test] fn sll_hl() { let mut c = z80(&[0xCB, 0x36]); c.set_hl(0x100); c.memory.write_byte(0x100 as u32, 0x00); c.step(); assert_eq!(c.memory.read_byte(0x100 as u32), 0x01); }
 #[test] fn sll_a() { let mut c = z80(&[0xCB, 0x37]); c.a = 0x42; c.step(); assert_eq!(c.a, 0x85); }
 
 // ============ ED mirror opcodes ============
@@ -42,16 +42,16 @@ fn z80(program: &[u8]) -> Z80 {
 #[test] fn neg_7c() { let mut c = z80(&[0xED, 0x7C]); c.a = 0x01; c.step(); assert_eq!(c.a, 0xFF); }
 
 // RETN mirrors: 45, 55, 65, 75
-#[test] fn retn_45() { let mut c = z80(&[0xED, 0x45]); c.sp = 0x100; c.memory.data[0x100] = 0x00; c.memory.data[0x101] = 0x20; c.iff2 = true; c.step(); assert_eq!(c.pc, 0x2000); assert!(c.iff1); }
-#[test] fn retn_55() { let mut c = z80(&[0xED, 0x55]); c.sp = 0x100; c.memory.data[0x100] = 0x00; c.memory.data[0x101] = 0x20; c.iff2 = true; c.step(); assert_eq!(c.pc, 0x2000); }
-#[test] fn retn_65() { let mut c = z80(&[0xED, 0x65]); c.sp = 0x100; c.memory.data[0x100] = 0x00; c.memory.data[0x101] = 0x20; c.step(); assert_eq!(c.pc, 0x2000); }
-#[test] fn retn_75() { let mut c = z80(&[0xED, 0x75]); c.sp = 0x100; c.memory.data[0x100] = 0x00; c.memory.data[0x101] = 0x20; c.step(); assert_eq!(c.pc, 0x2000); }
+#[test] fn retn_45() { let mut c = z80(&[0xED, 0x45]); c.sp = 0x100; c.memory.write_byte(0x100 as u32, 0x00); c.memory.write_byte(0x101 as u32, 0x20); c.iff2 = true; c.step(); assert_eq!(c.pc, 0x2000); assert!(c.iff1); }
+#[test] fn retn_55() { let mut c = z80(&[0xED, 0x55]); c.sp = 0x100; c.memory.write_byte(0x100 as u32, 0x00); c.memory.write_byte(0x101 as u32, 0x20); c.iff2 = true; c.step(); assert_eq!(c.pc, 0x2000); }
+#[test] fn retn_65() { let mut c = z80(&[0xED, 0x65]); c.sp = 0x100; c.memory.write_byte(0x100 as u32, 0x00); c.memory.write_byte(0x101 as u32, 0x20); c.step(); assert_eq!(c.pc, 0x2000); }
+#[test] fn retn_75() { let mut c = z80(&[0xED, 0x75]); c.sp = 0x100; c.memory.write_byte(0x100 as u32, 0x00); c.memory.write_byte(0x101 as u32, 0x20); c.step(); assert_eq!(c.pc, 0x2000); }
 
 // RETI mirrors: 4D, 5D, 6D, 7D
-#[test] fn reti_4d() { let mut c = z80(&[0xED, 0x4D]); c.sp = 0x100; c.memory.data[0x100] = 0x00; c.memory.data[0x101] = 0x30; c.step(); assert_eq!(c.pc, 0x3000); }
-#[test] fn reti_5d() { let mut c = z80(&[0xED, 0x5D]); c.sp = 0x100; c.memory.data[0x100] = 0x00; c.memory.data[0x101] = 0x30; c.step(); assert_eq!(c.pc, 0x3000); }
-#[test] fn reti_6d() { let mut c = z80(&[0xED, 0x6D]); c.sp = 0x100; c.memory.data[0x100] = 0x00; c.memory.data[0x101] = 0x30; c.step(); assert_eq!(c.pc, 0x3000); }
-#[test] fn reti_7d() { let mut c = z80(&[0xED, 0x7D]); c.sp = 0x100; c.memory.data[0x100] = 0x00; c.memory.data[0x101] = 0x30; c.step(); assert_eq!(c.pc, 0x3000); }
+#[test] fn reti_4d() { let mut c = z80(&[0xED, 0x4D]); c.sp = 0x100; c.memory.write_byte(0x100 as u32, 0x00); c.memory.write_byte(0x101 as u32, 0x30); c.step(); assert_eq!(c.pc, 0x3000); }
+#[test] fn reti_5d() { let mut c = z80(&[0xED, 0x5D]); c.sp = 0x100; c.memory.write_byte(0x100 as u32, 0x00); c.memory.write_byte(0x101 as u32, 0x30); c.step(); assert_eq!(c.pc, 0x3000); }
+#[test] fn reti_6d() { let mut c = z80(&[0xED, 0x6D]); c.sp = 0x100; c.memory.write_byte(0x100 as u32, 0x00); c.memory.write_byte(0x101 as u32, 0x30); c.step(); assert_eq!(c.pc, 0x3000); }
+#[test] fn reti_7d() { let mut c = z80(&[0xED, 0x7D]); c.sp = 0x100; c.memory.write_byte(0x100 as u32, 0x00); c.memory.write_byte(0x101 as u32, 0x30); c.step(); assert_eq!(c.pc, 0x3000); }
 
 // IM mirrors
 #[test] fn im0_46() { let mut c = z80(&[0xED, 0x46]); c.step(); assert_eq!(c.im, 0); }

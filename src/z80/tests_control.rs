@@ -6,7 +6,7 @@ use crate::memory::Memory;
 fn z80(program: &[u8]) -> Z80 {
     let mut m = Memory::new(0x10000);
     for (i, &b) in program.iter().enumerate() { m.data[i] = b; }
-    Z80::new(m)
+    Z80::new(Box::new(m))
 }
 
 // ============ JP nn ============
@@ -51,7 +51,7 @@ fn z80(program: &[u8]) -> Z80 {
 
 // ============ CALL nn ============
 #[test] fn test_call() { let mut c = z80(&[0xCD, 0x00, 0x10]); c.sp = 0x2000; c.step(); assert_eq!(c.pc, 0x1000); assert_eq!(c.sp, 0x1FFE); }
-#[test] fn test_call_stack() { let mut c = z80(&[0xCD, 0x00, 0x10]); c.sp = 0x2000; c.step(); assert_eq!(c.memory.data[0x1FFF], 0x00); assert_eq!(c.memory.data[0x1FFE], 0x03); }
+#[test] fn test_call_stack() { let mut c = z80(&[0xCD, 0x00, 0x10]); c.sp = 0x2000; c.step(); assert_eq!(c.memory.read_byte(0x1FFF as u32), 0x00); assert_eq!(c.memory.read_byte(0x1FFE as u32), 0x03); }
 
 // ============ CALL cc, nn ============
 #[test] fn test_call_nz_taken() { let mut c = z80(&[0xC4, 0x00, 0x10]); c.sp = 0x2000; c.f = 0; c.step(); assert_eq!(c.pc, 0x1000); }
@@ -61,14 +61,14 @@ fn z80(program: &[u8]) -> Z80 {
 #[test] fn test_call_c_taken() { let mut c = z80(&[0xDC, 0x00, 0x10]); c.sp = 0x2000; c.set_flag(flags::CARRY, true); c.step(); assert_eq!(c.pc, 0x1000); }
 
 // ============ RET ============
-#[test] fn test_ret() { let mut c = z80(&[0xC9]); c.sp = 0x1FFE; c.memory.data[0x1FFE] = 0x34; c.memory.data[0x1FFF] = 0x12; c.step(); assert_eq!(c.pc, 0x1234); assert_eq!(c.sp, 0x2000); }
+#[test] fn test_ret() { let mut c = z80(&[0xC9]); c.sp = 0x1FFE; c.memory.write_byte(0x1FFE as u32, 0x34); c.memory.write_byte(0x1FFF as u32, 0x12); c.step(); assert_eq!(c.pc, 0x1234); assert_eq!(c.sp, 0x2000); }
 
 // ============ RET cc ============
-#[test] fn test_ret_nz_taken() { let mut c = z80(&[0xC0]); c.sp = 0x1FFE; c.memory.data[0x1FFE] = 0x00; c.memory.data[0x1FFF] = 0x10; c.f = 0; c.step(); assert_eq!(c.pc, 0x1000); }
+#[test] fn test_ret_nz_taken() { let mut c = z80(&[0xC0]); c.sp = 0x1FFE; c.memory.write_byte(0x1FFE as u32, 0x00); c.memory.write_byte(0x1FFF as u32, 0x10); c.f = 0; c.step(); assert_eq!(c.pc, 0x1000); }
 #[test] fn test_ret_nz_not_taken() { let mut c = z80(&[0xC0]); c.sp = 0x1FFE; c.set_flag(flags::ZERO, true); c.step(); assert_eq!(c.pc, 1); assert_eq!(c.sp, 0x1FFE); }
-#[test] fn test_ret_z_taken() { let mut c = z80(&[0xC8]); c.sp = 0x1FFE; c.memory.data[0x1FFE] = 0x00; c.memory.data[0x1FFF] = 0x10; c.set_flag(flags::ZERO, true); c.step(); assert_eq!(c.pc, 0x1000); }
-#[test] fn test_ret_nc_taken() { let mut c = z80(&[0xD0]); c.sp = 0x1FFE; c.memory.data[0x1FFE] = 0x00; c.memory.data[0x1FFF] = 0x10; c.f = 0; c.step(); assert_eq!(c.pc, 0x1000); }
-#[test] fn test_ret_c_taken() { let mut c = z80(&[0xD8]); c.sp = 0x1FFE; c.memory.data[0x1FFE] = 0x00; c.memory.data[0x1FFF] = 0x10; c.set_flag(flags::CARRY, true); c.step(); assert_eq!(c.pc, 0x1000); }
+#[test] fn test_ret_z_taken() { let mut c = z80(&[0xC8]); c.sp = 0x1FFE; c.memory.write_byte(0x1FFE as u32, 0x00); c.memory.write_byte(0x1FFF as u32, 0x10); c.set_flag(flags::ZERO, true); c.step(); assert_eq!(c.pc, 0x1000); }
+#[test] fn test_ret_nc_taken() { let mut c = z80(&[0xD0]); c.sp = 0x1FFE; c.memory.write_byte(0x1FFE as u32, 0x00); c.memory.write_byte(0x1FFF as u32, 0x10); c.f = 0; c.step(); assert_eq!(c.pc, 0x1000); }
+#[test] fn test_ret_c_taken() { let mut c = z80(&[0xD8]); c.sp = 0x1FFE; c.memory.write_byte(0x1FFE as u32, 0x00); c.memory.write_byte(0x1FFF as u32, 0x10); c.set_flag(flags::CARRY, true); c.step(); assert_eq!(c.pc, 0x1000); }
 
 // ============ RST n ============
 #[test] fn test_rst_00() { let mut c = z80(&[0xC7]); c.sp = 0x2000; c.step(); assert_eq!(c.pc, 0x0000); }
@@ -86,14 +86,14 @@ fn z80(program: &[u8]) -> Z80 {
 #[test] fn test_jp_iy() { let mut c = z80(&[0xFD, 0xE9]); c.iy = 0x9ABC; c.step(); assert_eq!(c.pc, 0x9ABC); }
 
 // ============ PUSH/POP ============
-#[test] fn test_push_bc() { let mut c = z80(&[0xC5]); c.sp = 0x2000; c.set_bc(0x1234); c.step(); assert_eq!(c.sp, 0x1FFE); assert_eq!(c.memory.data[0x1FFE], 0x34); assert_eq!(c.memory.data[0x1FFF], 0x12); }
-#[test] fn test_push_de() { let mut c = z80(&[0xD5]); c.sp = 0x2000; c.set_de(0xABCD); c.step(); assert_eq!(c.memory.data[0x1FFE], 0xCD); assert_eq!(c.memory.data[0x1FFF], 0xAB); }
-#[test] fn test_push_hl() { let mut c = z80(&[0xE5]); c.sp = 0x2000; c.set_hl(0x5678); c.step(); assert_eq!(c.memory.data[0x1FFE], 0x78); assert_eq!(c.memory.data[0x1FFF], 0x56); }
-#[test] fn test_push_af() { let mut c = z80(&[0xF5]); c.sp = 0x2000; c.set_af(0x9ABC); c.step(); assert_eq!(c.memory.data[0x1FFE], 0xBC); assert_eq!(c.memory.data[0x1FFF], 0x9A); }
-#[test] fn test_pop_bc() { let mut c = z80(&[0xC1]); c.sp = 0x1FFE; c.memory.data[0x1FFE] = 0x34; c.memory.data[0x1FFF] = 0x12; c.step(); assert_eq!(c.bc(), 0x1234); assert_eq!(c.sp, 0x2000); }
-#[test] fn test_pop_de() { let mut c = z80(&[0xD1]); c.sp = 0x1FFE; c.memory.data[0x1FFE] = 0xCD; c.memory.data[0x1FFF] = 0xAB; c.step(); assert_eq!(c.de(), 0xABCD); }
-#[test] fn test_pop_hl() { let mut c = z80(&[0xE1]); c.sp = 0x1FFE; c.memory.data[0x1FFE] = 0x78; c.memory.data[0x1FFF] = 0x56; c.step(); assert_eq!(c.hl(), 0x5678); }
-#[test] fn test_pop_af() { let mut c = z80(&[0xF1]); c.sp = 0x1FFE; c.memory.data[0x1FFE] = 0xBC; c.memory.data[0x1FFF] = 0x9A; c.step(); assert_eq!(c.af(), 0x9ABC); }
+#[test] fn test_push_bc() { let mut c = z80(&[0xC5]); c.sp = 0x2000; c.set_bc(0x1234); c.step(); assert_eq!(c.sp, 0x1FFE); assert_eq!(c.memory.read_byte(0x1FFE as u32), 0x34); assert_eq!(c.memory.read_byte(0x1FFF as u32), 0x12); }
+#[test] fn test_push_de() { let mut c = z80(&[0xD5]); c.sp = 0x2000; c.set_de(0xABCD); c.step(); assert_eq!(c.memory.read_byte(0x1FFE as u32), 0xCD); assert_eq!(c.memory.read_byte(0x1FFF as u32), 0xAB); }
+#[test] fn test_push_hl() { let mut c = z80(&[0xE5]); c.sp = 0x2000; c.set_hl(0x5678); c.step(); assert_eq!(c.memory.read_byte(0x1FFE as u32), 0x78); assert_eq!(c.memory.read_byte(0x1FFF as u32), 0x56); }
+#[test] fn test_push_af() { let mut c = z80(&[0xF5]); c.sp = 0x2000; c.set_af(0x9ABC); c.step(); assert_eq!(c.memory.read_byte(0x1FFE as u32), 0xBC); assert_eq!(c.memory.read_byte(0x1FFF as u32), 0x9A); }
+#[test] fn test_pop_bc() { let mut c = z80(&[0xC1]); c.sp = 0x1FFE; c.memory.write_byte(0x1FFE as u32, 0x34); c.memory.write_byte(0x1FFF as u32, 0x12); c.step(); assert_eq!(c.bc(), 0x1234); assert_eq!(c.sp, 0x2000); }
+#[test] fn test_pop_de() { let mut c = z80(&[0xD1]); c.sp = 0x1FFE; c.memory.write_byte(0x1FFE as u32, 0xCD); c.memory.write_byte(0x1FFF as u32, 0xAB); c.step(); assert_eq!(c.de(), 0xABCD); }
+#[test] fn test_pop_hl() { let mut c = z80(&[0xE1]); c.sp = 0x1FFE; c.memory.write_byte(0x1FFE as u32, 0x78); c.memory.write_byte(0x1FFF as u32, 0x56); c.step(); assert_eq!(c.hl(), 0x5678); }
+#[test] fn test_pop_af() { let mut c = z80(&[0xF1]); c.sp = 0x1FFE; c.memory.write_byte(0x1FFE as u32, 0xBC); c.memory.write_byte(0x1FFF as u32, 0x9A); c.step(); assert_eq!(c.af(), 0x9ABC); }
 
 // ============ HALT, DI, EI ============
 #[test] fn test_halt() { let mut c = z80(&[0x76]); c.step(); assert!(c.halted); }

@@ -47,6 +47,14 @@ Agents must implement and verify the following Z80 nuances for high compatibilit
 - **R Register**: Bit 7 must be stable during fetch; only lower 7 bits increment.
 - **Interrupts**: `EI` instructions must have a 1-instruction shadow. `IM 2` must use a bus-provided vector.
 
+### 5. Memory & Bus Integration
+
+The emulator uses a unified `MemoryInterface` trait for all bus interactions.
+
+- **Mutable Reads**: The `read` methods require `&mut self` because some hardware components (like VDP or certain I/O registers) have side-effects on read.
+- **Shared Access**: Use `SharedBus` (which wraps `Rc<RefCell<Bus>>`) for components that need to share the main Genesis bus.
+- **Concrete Memory**: For isolated RAM (like Z80 Sound RAM), prefer concrete `Memory` struct unless generic bus participation is required.
+
 ```bash
 # Run all tests
 cargo test

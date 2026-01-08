@@ -3,7 +3,7 @@
 //! The Z80 is used as a sound co-processor in the Sega Genesis, running at 3.58 MHz.
 //! It has access to 8KB of dedicated sound RAM and controls the YM2612 and SN76489.
 
-use crate::memory::{Memory, MemoryInterface};
+use crate::memory::MemoryInterface;
 
 /// Z80 Flag bits in the F register
 pub mod flags {
@@ -18,7 +18,7 @@ pub mod flags {
 }
 
 /// Z80 CPU state
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Z80 {
     // Main registers
     pub a: u8,
@@ -68,15 +68,15 @@ pub struct Z80 {
     // Interrupt logic
     pub pending_ei: bool,
 
-    // Memory
-    pub memory: Memory,
+    // Memory (trait object for flexibility)
+    pub memory: Box<dyn MemoryInterface>,
 
     // Cycle counter for timing
     pub cycles: u64,
 }
 
 impl Z80 {
-    pub fn new(memory: Memory) -> Self {
+    pub fn new(memory: Box<dyn MemoryInterface>) -> Self {
         Self {
             a: 0xFF, f: 0xFF, b: 0, c: 0, d: 0, e: 0, h: 0, l: 0,
             a_prime: 0, f_prime: 0, b_prime: 0, c_prime: 0, d_prime: 0, e_prime: 0, h_prime: 0, l_prime: 0,
@@ -92,6 +92,7 @@ impl Z80 {
             cycles: 0,
         }
     }
+
 
     /// Reset the CPU to initial state
     pub fn reset(&mut self) {
@@ -319,6 +320,7 @@ impl Z80 {
         self.set_flag(flags::X_FLAG, (h_res & 0x08) != 0);
         self.set_flag(flags::Y_FLAG, (h_res & 0x20) != 0);
         
+        self.memptr = hl.wrapping_add(1) as u16;
         self.set_hl(result as u16);
     }
 
@@ -368,6 +370,7 @@ impl Z80 {
         self.set_flag(flags::HALF_CARRY, ((ix & 0x0FFF) + (v & 0x0FFF)) > 0x0FFF);
         self.set_flag(flags::ADD_SUB, false);
         
+        self.memptr = ix.wrapping_add(1) as u16;
         self.ix = result as u16;
     }
 
@@ -380,6 +383,7 @@ impl Z80 {
         self.set_flag(flags::HALF_CARRY, ((iy & 0x0FFF) + (v & 0x0FFF)) > 0x0FFF);
         self.set_flag(flags::ADD_SUB, false);
         
+        self.memptr = iy.wrapping_add(1) as u16;
         self.iy = result as u16;
     }
 
@@ -391,6 +395,9 @@ impl Z80 {
         self.set_flag(flags::CARRY, carry);
         self.set_flag(flags::HALF_CARRY, false);
         self.set_flag(flags::ADD_SUB, false);
+        // X/Y from A
+        self.set_flag(flags::X_FLAG, (self.a & 0x08) != 0);
+        self.set_flag(flags::Y_FLAG, (self.a & 0x20) != 0);
     }
 
     fn rrca(&mut self) {
@@ -399,6 +406,9 @@ impl Z80 {
         self.set_flag(flags::CARRY, carry);
         self.set_flag(flags::HALF_CARRY, false);
         self.set_flag(flags::ADD_SUB, false);
+        // X/Y from A
+        self.set_flag(flags::X_FLAG, (self.a & 0x08) != 0);
+        self.set_flag(flags::Y_FLAG, (self.a & 0x20) != 0);
     }
 
     fn rla(&mut self) {
@@ -408,6 +418,9 @@ impl Z80 {
         self.set_flag(flags::CARRY, new_carry);
         self.set_flag(flags::HALF_CARRY, false);
         self.set_flag(flags::ADD_SUB, false);
+        // X/Y from A
+        self.set_flag(flags::X_FLAG, (self.a & 0x08) != 0);
+        self.set_flag(flags::Y_FLAG, (self.a & 0x20) != 0);
     }
 
     fn rra(&mut self) {
@@ -417,6 +430,9 @@ impl Z80 {
         self.set_flag(flags::CARRY, new_carry);
         self.set_flag(flags::HALF_CARRY, false);
         self.set_flag(flags::ADD_SUB, false);
+        // X/Y from A
+        self.set_flag(flags::X_FLAG, (self.a & 0x08) != 0);
+        self.set_flag(flags::Y_FLAG, (self.a & 0x20) != 0);
     }
 
     // ========== Helper to get/set register by index ==========
@@ -738,12 +754,16 @@ impl Z80 {
                     self.a = !self.a;
                     self.set_flag(flags::HALF_CARRY, true);
                     self.set_flag(flags::ADD_SUB, true);
+                    self.set_flag(flags::X_FLAG, (self.a & 0x08) != 0);
+                    self.set_flag(flags::Y_FLAG, (self.a & 0x20) != 0);
                     4
                 }
                 6 => { // SCF
                     self.set_flag(flags::CARRY, true);
                     self.set_flag(flags::HALF_CARRY, false);
                     self.set_flag(flags::ADD_SUB, false);
+                    self.set_flag(flags::X_FLAG, (self.a & 0x08) != 0);
+                    self.set_flag(flags::Y_FLAG, (self.a & 0x20) != 0);
                     4
                 }
                 7 => { // CCF
@@ -751,6 +771,8 @@ impl Z80 {
                     self.set_flag(flags::HALF_CARRY, c);
                     self.set_flag(flags::CARRY, !c);
                     self.set_flag(flags::ADD_SUB, false);
+                    self.set_flag(flags::X_FLAG, (self.a & 0x08) != 0);
+                    self.set_flag(flags::Y_FLAG, (self.a & 0x20) != 0);
                     4
                 }
                 _ => 4,
@@ -1055,9 +1077,14 @@ impl Z80 {
             1 => match z {
                 0 => { // IN r, (C)
                     // TODO: I/O implementation
+                    let val = 0xFF; 
                     if y != 6 {
-                        self.set_reg(y, 0xFF);
+                        self.set_reg(y, val);
                     }
+                    self.set_sz_flags(val);
+                    self.set_parity_flag(val);
+                    self.set_flag(flags::HALF_CARRY, false);
+                    self.set_flag(flags::ADD_SUB, false);
                     12
                 }
                 1 => { // OUT (C), r
@@ -1241,6 +1268,9 @@ impl Z80 {
         self.set_hl(new_hl);
         self.set_de(new_de);
         
+        let n_val = val.wrapping_add(self.a);
+        self.set_flag(flags::Y_FLAG, (n_val & 0x02) != 0);
+        self.set_flag(flags::X_FLAG, (n_val & 0x08) != 0);
         self.set_flag(flags::PARITY, bc != 0);
         self.set_flag(flags::HALF_CARRY, false);
         self.set_flag(flags::ADD_SUB, false);
@@ -1248,6 +1278,7 @@ impl Z80 {
         // LDIR/LDDR
         if y >= 6 && bc != 0 {
             self.pc = self.pc.wrapping_sub(2);
+            self.memptr = self.pc.wrapping_add(1);
             21
         } else {
             16
@@ -1270,15 +1301,25 @@ impl Z80 {
         
         self.set_hl(new_hl);
         
+        let h = (self.a & 0x0F) < (val & 0x0F);
         self.set_flag(flags::ZERO, result == 0);
         self.set_flag(flags::SIGN, (result & 0x80) != 0);
-        self.set_flag(flags::HALF_CARRY, (self.a & 0x0F) < (val & 0x0F));
+        self.set_flag(flags::HALF_CARRY, h);
         self.set_flag(flags::PARITY, bc != 0);
         self.set_flag(flags::ADD_SUB, true);
         
+        // CPI/CPD X/Y flags: based on A - val - H
+        let mut x_val = self.a.wrapping_sub(val);
+        if h { x_val = x_val.wrapping_sub(1); }
+        self.set_flag(flags::Y_FLAG, (x_val & 0x02) != 0);
+        self.set_flag(flags::X_FLAG, (x_val & 0x08) != 0);
+        
+        self.memptr = self.memptr.wrapping_add(1);
+
         // CPIR/CPDR
         if y >= 6 && bc != 0 && result != 0 {
             self.pc = self.pc.wrapping_sub(2);
+            self.memptr = self.pc.wrapping_add(1);
             21
         } else {
             16

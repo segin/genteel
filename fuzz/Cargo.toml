@@ -18,3 +18,9 @@ name = "memory_ops"
 path = "fuzz_targets/memory_ops.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "bus_shared"
+path = "fuzz_targets/bus_shared.rs"
+test = false
+doc = false

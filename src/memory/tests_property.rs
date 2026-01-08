@@ -72,4 +72,22 @@ proptest! {
         bus.write_byte(addr, val);
         prop_assert_eq!(bus.read_byte(addr), val);
     }
+
+    // Test I/O Control Port write/read (writable registers)
+    #[test]
+    fn prop_io_control_access(val in 0..=255u8) {
+        let mut bus = Bus::new();
+        // Port 1 Control is at 0xA10009
+        bus.write_byte(0xA10009, val);
+        prop_assert_eq!(bus.read_byte(0xA10009), val);
+    }
+}
+
+// Regular unit tests that don't need proptest arguments
+#[test]
+fn test_vdp_status_read_consistency() {
+    let mut bus = Bus::new();
+    let status = bus.read_word(0xC00004);
+    // Status should have FIFO bits set by default in our stub
+    assert_eq!(status & 0x3600, 0x3600);
 }

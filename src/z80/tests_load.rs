@@ -6,7 +6,7 @@ use crate::memory::Memory;
 fn z80(program: &[u8]) -> Z80 {
     let mut m = Memory::new(0x10000);
     for (i, &b) in program.iter().enumerate() { m.data[i] = b; }
-    Z80::new(m)
+    Z80::new(Box::new(m))
 }
 
 // ============ LD r, n (8-bit immediate) ============
@@ -101,35 +101,35 @@ fn z80(program: &[u8]) -> Z80 {
 #[test] fn test_ld_a_a() { let mut c = z80(&[0x7F]); c.a = 0x77; c.step(); assert_eq!(c.a, 0x77); }
 
 // ============ LD r, (HL) ============
-#[test] fn test_ld_b_hl_ind() { let mut c = z80(&[0x46]); c.set_hl(0x100); c.memory.data[0x100] = 0xAB; c.step(); assert_eq!(c.b, 0xAB); }
-#[test] fn test_ld_c_hl_ind() { let mut c = z80(&[0x4E]); c.set_hl(0x100); c.memory.data[0x100] = 0xCD; c.step(); assert_eq!(c.c, 0xCD); }
-#[test] fn test_ld_d_hl_ind() { let mut c = z80(&[0x56]); c.set_hl(0x100); c.memory.data[0x100] = 0xEF; c.step(); assert_eq!(c.d, 0xEF); }
-#[test] fn test_ld_e_hl_ind() { let mut c = z80(&[0x5E]); c.set_hl(0x100); c.memory.data[0x100] = 0x12; c.step(); assert_eq!(c.e, 0x12); }
-#[test] fn test_ld_h_hl_ind() { let mut c = z80(&[0x66]); c.set_hl(0x100); c.memory.data[0x100] = 0x34; c.step(); assert_eq!(c.h, 0x34); }
-#[test] fn test_ld_l_hl_ind() { let mut c = z80(&[0x6E]); c.set_hl(0x100); c.memory.data[0x100] = 0x56; c.step(); assert_eq!(c.l, 0x56); }
-#[test] fn test_ld_a_hl_ind() { let mut c = z80(&[0x7E]); c.set_hl(0x100); c.memory.data[0x100] = 0x78; c.step(); assert_eq!(c.a, 0x78); }
+#[test] fn test_ld_b_hl_ind() { let mut c = z80(&[0x46]); c.set_hl(0x100); c.memory.write_byte(0x100 as u32, 0xAB); c.step(); assert_eq!(c.b, 0xAB); }
+#[test] fn test_ld_c_hl_ind() { let mut c = z80(&[0x4E]); c.set_hl(0x100); c.memory.write_byte(0x100 as u32, 0xCD); c.step(); assert_eq!(c.c, 0xCD); }
+#[test] fn test_ld_d_hl_ind() { let mut c = z80(&[0x56]); c.set_hl(0x100); c.memory.write_byte(0x100 as u32, 0xEF); c.step(); assert_eq!(c.d, 0xEF); }
+#[test] fn test_ld_e_hl_ind() { let mut c = z80(&[0x5E]); c.set_hl(0x100); c.memory.write_byte(0x100 as u32, 0x12); c.step(); assert_eq!(c.e, 0x12); }
+#[test] fn test_ld_h_hl_ind() { let mut c = z80(&[0x66]); c.set_hl(0x100); c.memory.write_byte(0x100 as u32, 0x34); c.step(); assert_eq!(c.h, 0x34); }
+#[test] fn test_ld_l_hl_ind() { let mut c = z80(&[0x6E]); c.set_hl(0x100); c.memory.write_byte(0x100 as u32, 0x56); c.step(); assert_eq!(c.l, 0x56); }
+#[test] fn test_ld_a_hl_ind() { let mut c = z80(&[0x7E]); c.set_hl(0x100); c.memory.write_byte(0x100 as u32, 0x78); c.step(); assert_eq!(c.a, 0x78); }
 
 // ============ LD (HL), r ============
-#[test] fn test_ld_hl_b() { let mut c = z80(&[0x70]); c.set_hl(0x200); c.b = 0x11; c.step(); assert_eq!(c.memory.data[0x200], 0x11); }
-#[test] fn test_ld_hl_c() { let mut c = z80(&[0x71]); c.set_hl(0x200); c.c = 0x22; c.step(); assert_eq!(c.memory.data[0x200], 0x22); }
-#[test] fn test_ld_hl_d() { let mut c = z80(&[0x72]); c.set_hl(0x200); c.d = 0x33; c.step(); assert_eq!(c.memory.data[0x200], 0x33); }
-#[test] fn test_ld_hl_e() { let mut c = z80(&[0x73]); c.set_hl(0x200); c.e = 0x44; c.step(); assert_eq!(c.memory.data[0x200], 0x44); }
-#[test] fn test_ld_hl_h() { let mut c = z80(&[0x74]); c.set_hl(0x200); c.step(); assert_eq!(c.memory.data[0x200], 0x02); }
-#[test] fn test_ld_hl_l() { let mut c = z80(&[0x75]); c.set_hl(0x200); c.step(); assert_eq!(c.memory.data[0x200], 0x00); }
-#[test] fn test_ld_hl_a() { let mut c = z80(&[0x77]); c.set_hl(0x200); c.a = 0x77; c.step(); assert_eq!(c.memory.data[0x200], 0x77); }
+#[test] fn test_ld_hl_b() { let mut c = z80(&[0x70]); c.set_hl(0x200); c.b = 0x11; c.step(); assert_eq!(c.memory.read_byte(0x200 as u32), 0x11); }
+#[test] fn test_ld_hl_c() { let mut c = z80(&[0x71]); c.set_hl(0x200); c.c = 0x22; c.step(); assert_eq!(c.memory.read_byte(0x200 as u32), 0x22); }
+#[test] fn test_ld_hl_d() { let mut c = z80(&[0x72]); c.set_hl(0x200); c.d = 0x33; c.step(); assert_eq!(c.memory.read_byte(0x200 as u32), 0x33); }
+#[test] fn test_ld_hl_e() { let mut c = z80(&[0x73]); c.set_hl(0x200); c.e = 0x44; c.step(); assert_eq!(c.memory.read_byte(0x200 as u32), 0x44); }
+#[test] fn test_ld_hl_h() { let mut c = z80(&[0x74]); c.set_hl(0x200); c.step(); assert_eq!(c.memory.read_byte(0x200 as u32), 0x02); }
+#[test] fn test_ld_hl_l() { let mut c = z80(&[0x75]); c.set_hl(0x200); c.step(); assert_eq!(c.memory.read_byte(0x200 as u32), 0x00); }
+#[test] fn test_ld_hl_a() { let mut c = z80(&[0x77]); c.set_hl(0x200); c.a = 0x77; c.step(); assert_eq!(c.memory.read_byte(0x200 as u32), 0x77); }
 
 // ============ LD (BC), A and LD A, (BC) ============
-#[test] fn test_ld_bc_a() { let mut c = z80(&[0x02]); c.set_bc(0x300); c.a = 0xAA; c.step(); assert_eq!(c.memory.data[0x300], 0xAA); }
-#[test] fn test_ld_a_bc() { let mut c = z80(&[0x0A]); c.set_bc(0x300); c.memory.data[0x300] = 0xBB; c.step(); assert_eq!(c.a, 0xBB); }
+#[test] fn test_ld_bc_a() { let mut c = z80(&[0x02]); c.set_bc(0x300); c.a = 0xAA; c.step(); assert_eq!(c.memory.read_byte(0x300 as u32), 0xAA); }
+#[test] fn test_ld_a_bc() { let mut c = z80(&[0x0A]); c.set_bc(0x300); c.memory.write_byte(0x300 as u32, 0xBB); c.step(); assert_eq!(c.a, 0xBB); }
 
 // ============ LD (DE), A and LD A, (DE) ============
-#[test] fn test_ld_de_a() { let mut c = z80(&[0x12]); c.set_de(0x400); c.a = 0xCC; c.step(); assert_eq!(c.memory.data[0x400], 0xCC); }
-#[test] fn test_ld_a_de() { let mut c = z80(&[0x1A]); c.set_de(0x400); c.memory.data[0x400] = 0xDD; c.step(); assert_eq!(c.a, 0xDD); }
+#[test] fn test_ld_de_a() { let mut c = z80(&[0x12]); c.set_de(0x400); c.a = 0xCC; c.step(); assert_eq!(c.memory.read_byte(0x400 as u32), 0xCC); }
+#[test] fn test_ld_a_de() { let mut c = z80(&[0x1A]); c.set_de(0x400); c.memory.write_byte(0x400 as u32, 0xDD); c.step(); assert_eq!(c.a, 0xDD); }
 
 // ============ LD (nn), A and LD A, (nn) ============
-#[test] fn test_ld_nn_a() { let mut c = z80(&[0x32, 0x00, 0x50]); c.a = 0xEE; c.step(); assert_eq!(c.memory.data[0x5000], 0xEE); }
-#[test] fn test_ld_a_nn() { let mut c = z80(&[0x3A, 0x00, 0x50]); c.memory.data[0x5000] = 0xFF; c.step(); assert_eq!(c.a, 0xFF); }
+#[test] fn test_ld_nn_a() { let mut c = z80(&[0x32, 0x00, 0x50]); c.a = 0xEE; c.step(); assert_eq!(c.memory.read_byte(0x5000 as u32), 0xEE); }
+#[test] fn test_ld_a_nn() { let mut c = z80(&[0x3A, 0x00, 0x50]); c.memory.write_byte(0x5000 as u32, 0xFF); c.step(); assert_eq!(c.a, 0xFF); }
 
 // ============ LD (nn), HL and LD HL, (nn) ============
-#[test] fn test_ld_nn_hl() { let mut c = z80(&[0x22, 0x00, 0x60]); c.set_hl(0x1234); c.step(); assert_eq!(c.memory.data[0x6000], 0x34); assert_eq!(c.memory.data[0x6001], 0x12); }
-#[test] fn test_ld_hl_nn_ind() { let mut c = z80(&[0x2A, 0x00, 0x60]); c.memory.data[0x6000] = 0x78; c.memory.data[0x6001] = 0x56; c.step(); assert_eq!(c.hl(), 0x5678); }
+#[test] fn test_ld_nn_hl() { let mut c = z80(&[0x22, 0x00, 0x60]); c.set_hl(0x1234); c.step(); assert_eq!(c.memory.read_byte(0x6000 as u32), 0x34); assert_eq!(c.memory.read_byte(0x6001 as u32), 0x12); }
+#[test] fn test_ld_hl_nn_ind() { let mut c = z80(&[0x2A, 0x00, 0x60]); c.memory.write_byte(0x6000 as u32, 0x78); c.memory.write_byte(0x6001 as u32, 0x56); c.step(); assert_eq!(c.hl(), 0x5678); }

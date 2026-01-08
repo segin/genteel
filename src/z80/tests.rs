@@ -8,8 +8,9 @@ fn create_z80(program: &[u8]) -> Z80 {
     for (i, &byte) in program.iter().enumerate() {
         memory.data[i] = byte;
     }
-    Z80::new(memory)
+    Z80::new(Box::new(memory))
 }
+
 
 // ==================== Register Pair Tests ====================
 
@@ -190,7 +191,7 @@ fn test_ld_hl_indirect() {
     let mut z80 = create_z80(&[0x36, 0xAB]);
     z80.set_hl(0x0100);
     z80.step();
-    assert_eq!(z80.memory.data[0x0100], 0xAB);
+    assert_eq!(z80.memory.read_byte(0x0100 as u32), 0xAB);
 }
 
 // ==================== ALU Tests ====================
@@ -323,8 +324,8 @@ fn test_call_nn() {
 fn test_ret() {
     let mut z80 = create_z80(&[0xC9]);
     z80.sp = 0x1FFE;
-    z80.memory.data[0x1FFE] = 0x34;
-    z80.memory.data[0x1FFF] = 0x12;
+    z80.memory.write_byte(0x1FFE as u32, 0x34);
+    z80.memory.write_byte(0x1FFF as u32, 0x12);
     z80.step();
     assert_eq!(z80.pc, 0x1234);
     assert_eq!(z80.sp, 0x2000);
@@ -339,16 +340,16 @@ fn test_push_bc() {
     z80.set_bc(0x1234);
     z80.step();
     assert_eq!(z80.sp, 0x1FFE);
-    assert_eq!(z80.memory.data[0x1FFE], 0x34);
-    assert_eq!(z80.memory.data[0x1FFF], 0x12);
+    assert_eq!(z80.memory.read_byte(0x1FFE as u32), 0x34);
+    assert_eq!(z80.memory.read_byte(0x1FFF as u32), 0x12);
 }
 
 #[test]
 fn test_pop_bc() {
     let mut z80 = create_z80(&[0xC1]);
     z80.sp = 0x1FFE;
-    z80.memory.data[0x1FFE] = 0xCD;
-    z80.memory.data[0x1FFF] = 0xAB;
+    z80.memory.write_byte(0x1FFE as u32, 0xCD);
+    z80.memory.write_byte(0x1FFF as u32, 0xAB);
     z80.step();
     assert_eq!(z80.bc(), 0xABCD);
     assert_eq!(z80.sp, 0x2000);
@@ -410,7 +411,7 @@ fn test_ld_ix_d_n() {
     let mut z80 = create_z80(&[0xDD, 0x36, 0x05, 0x42]);
     z80.ix = 0x1000;
     z80.step();
-    assert_eq!(z80.memory.data[0x1005], 0x42);
+    assert_eq!(z80.memory.read_byte(0x1005 as u32), 0x42);
 }
 
 // ==================== ED Prefix Tests ====================
@@ -429,9 +430,9 @@ fn test_ed_ldi() {
     z80.set_hl(0x1000);
     z80.set_de(0x2000);
     z80.set_bc(0x0010);
-    z80.memory.data[0x1000] = 0x42;
+    z80.memory.write_byte(0x1000 as u32, 0x42);
     z80.step();
-    assert_eq!(z80.memory.data[0x2000], 0x42);
+    assert_eq!(z80.memory.read_byte(0x2000 as u32), 0x42);
     assert_eq!(z80.hl(), 0x1001);
     assert_eq!(z80.de(), 0x2001);
     assert_eq!(z80.bc(), 0x000F);

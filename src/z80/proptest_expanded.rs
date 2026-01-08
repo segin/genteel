@@ -7,7 +7,7 @@ use crate::memory::Memory;
 fn z80_prog(program: &[u8]) -> Z80 {
     let mut m = Memory::new(0x10000);
     for (i, &b) in program.iter().enumerate() { m.data[i] = b; }
-    Z80::new(m)
+    Z80::new(Box::new(m))
 }
 
 proptest! {
