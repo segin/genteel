@@ -11,6 +11,14 @@ mod tests_m68k_extended;
 mod tests_m68k_comprehensive;
 #[cfg(test)]
 mod tests_m68k_torture;
+#[cfg(test)]
+mod tests_m68k_alu;
+#[cfg(test)]
+mod tests_m68k_shift;
+#[cfg(test)]
+mod tests_m68k_bits;
+#[cfg(test)]
+mod tests_m68k_control;
 
 use crate::memory::MemoryInterface;
 use decoder::{decode, Instruction, Size, AddressingMode, Condition, ShiftCount, BitSource};
