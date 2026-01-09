@@ -24,3 +24,21 @@ name = "bus_shared"
 path = "fuzz_targets/bus_shared.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "m68k_arithmetic"
+path = "fuzz_targets/m68k_arithmetic.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "m68k_control"
+path = "fuzz_targets/m68k_control.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "m68k_random"
+path = "fuzz_targets/m68k_random.rs"
+test = false
+doc = false
