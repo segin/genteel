@@ -411,11 +411,12 @@ fn test_cmpi_w() {
 
 
 #[test]
-#[ignore] // TODO: Fix CMPM opcode encoding vs exec_cmpm implementation
+
 fn test_cmpm_b() {
     let mut cpu = create_cpu();
-    // CMPM.B (A0)+, (A1)+ : 1011 xxx 100 001 yyy where xxx=Ax, yyy=Ay
-    write_op(&mut cpu, &[0xB309]); // CMPM.B (A1)+, (A0)+
+    // CMPM.B (A1)+, (A0)+
+    // Opcode: 1011 (B) 000 (Rx=A0) 1 00 (size) 001 (mode) 001 (Ry=A1) -> 0xB109
+    write_op(&mut cpu, &[0xB109]); 
     cpu.a[0] = 0x2000; cpu.a[1] = 0x3000;
     cpu.memory.write_byte(0x2000, 0x42);
     cpu.memory.write_byte(0x3000, 0x42);

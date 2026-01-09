@@ -313,14 +313,13 @@ fn test_jsr_rts_roundtrip() {
 }
 
 #[test]
-#[ignore] // TODO: Fix BSR displacement calculation
 fn test_bsr_rts() {
     let mut cpu = create_cpu();
-    write_op(&mut cpu, &[0x6100, 0x0012]); // BSR.W +18 (from PC after opcode = 0x1002)
-    cpu.memory.write_word(0x1016, 0x4E75); // RTS at target (0x1002 + 2 + 0x12 = 0x1016)
+    write_op(&mut cpu, &[0x6100, 0x0012]); // BSR.W +18 (from PC of ext word 0x1002 -> 0x1014)
+    cpu.memory.write_word(0x1014, 0x4E75); // RTS at target (0x1002 + 0x12 = 0x1014)
     
     cpu.step_instruction(); // BSR
-    assert_eq!(cpu.pc, 0x1016);
+    assert_eq!(cpu.pc, 0x1014);
     
     cpu.step_instruction(); // RTS
     assert_eq!(cpu.pc, 0x1004);
@@ -390,7 +389,6 @@ fn test_nop() {
 // ============================================================================
 
 #[test]
-#[ignore] // TODO: Fix ILLEGAL instruction execution
 fn test_illegal() {
     let mut cpu = create_cpu();
     write_op(&mut cpu, &[0x4AFC]); // ILLEGAL

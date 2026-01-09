@@ -615,6 +615,11 @@ fn decode_group_4(opcode: u16) -> Instruction {
         }
     }
 
+    // ILLEGAL - 4AFC
+    if opcode == 0x4AFC {
+        return Instruction::Illegal;
+    }
+
     // TAS - 0100 1010 11 mmm rrr (4AC0)
     if opcode & 0xFFC0 == 0x4AC0 {
         if let Some(dst) = AddressingMode::from_mode_reg(mode, reg) {
