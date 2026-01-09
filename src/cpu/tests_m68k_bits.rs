@@ -28,22 +28,23 @@ fn write_op(cpu: &mut Cpu, opcodes: &[u16]) {
 // ============================================================================
 
 #[test]
-#[ignore] // TODO: Fix opcode encoding
 fn test_btst_register_bit_0() {
     let mut cpu = create_cpu();
-    write_op(&mut cpu, &[0x0100]); // BTST D0, D0
-    cpu.d[0] = 1; // Bit 0 set
+    write_op(&mut cpu, &[0x0300]); // BTST D1, D0 (bit number in D1, test D0)
+    cpu.d[0] = 0x01; // Bit 0 set
+    cpu.d[1] = 0;    // Test bit 0
     cpu.step_instruction();
-    assert!(!cpu.get_flag(flags::ZERO)); // Bit is set
+    assert!(!cpu.get_flag(flags::ZERO)); // Bit 0 is set
 }
 
 #[test]
 fn test_btst_register_bit_clear() {
     let mut cpu = create_cpu();
-    write_op(&mut cpu, &[0x0100]); // BTST D0, D0
-    cpu.d[0] = 0;
+    write_op(&mut cpu, &[0x0300]); // BTST D1, D0
+    cpu.d[0] = 0x02; // Bit 1 set, bit 0 clear
+    cpu.d[1] = 0;    // Test bit 0
     cpu.step_instruction();
-    assert!(cpu.get_flag(flags::ZERO)); // Bit is clear
+    assert!(cpu.get_flag(flags::ZERO)); // Bit 0 is clear
 }
 
 #[test]
@@ -95,13 +96,14 @@ fn test_bset_immediate() {
 // ============================================================================
 
 #[test]
-#[ignore] // TODO: Fix opcode encoding
 fn test_bclr_register() {
     let mut cpu = create_cpu();
-    write_op(&mut cpu, &[0x0180]); // BCLR D0, D0
-    cpu.d[0] = 0x10; // Bit 4 set, clear bit 4
+    write_op(&mut cpu, &[0x0380]); // BCLR D1, D0 (bit number in D1, clear in D0)
+    cpu.d[0] = 0x10; // Bit 4 set
+    cpu.d[1] = 4;    // Clear bit 4
     cpu.step_instruction();
     assert_eq!(cpu.d[0] & 0x10, 0); // Bit 4 cleared
+    assert!(!cpu.get_flag(flags::ZERO)); // Was set before
 }
 
 #[test]

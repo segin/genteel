@@ -201,18 +201,19 @@ fn test_ble_signed_le() {
 // ============================================================================
 
 #[test]
-#[ignore] // TODO: Fix opcode encoding
 fn test_dbf_loop() {
     let mut cpu = create_cpu();
-    write_op(&mut cpu, &[0x51C8, 0xFFFC]); // DBF D0, -4
-    cpu.d[0] = 3; // Loop 4 times
+    // DBF decrements first, then checks. Counter wraps 3->2->1->0->-1.
+    // At -1 (0xFFFF), it exits. So 4 iterations from counter=3.
+    write_op(&mut cpu, &[0x51C8, 0xFFFE]); // DBF D0, -2 (back to start)
+    cpu.d[0] = 3;
     
     let mut iterations = 0;
-    for _ in 0..10 {
-        cpu.pc = 0x1000;
+    while iterations < 10 {
         cpu.step_instruction();
         iterations += 1;
-        if cpu.pc != 0x1000 { break; }
+        if cpu.pc == 0x1004 { break; } // Fell through
+        cpu.pc = 0x1000; // Reset for next iteration
     }
     assert_eq!(iterations, 4);
 }
@@ -312,14 +313,14 @@ fn test_jsr_rts_roundtrip() {
 }
 
 #[test]
-#[ignore] // TODO: Fix opcode encoding
+#[ignore] // TODO: Fix BSR displacement calculation
 fn test_bsr_rts() {
     let mut cpu = create_cpu();
-    write_op(&mut cpu, &[0x6100, 0x0010]); // BSR.W +16
-    cpu.memory.write_word(0x1014, 0x4E75); // RTS at target
+    write_op(&mut cpu, &[0x6100, 0x0012]); // BSR.W +18 (from PC after opcode = 0x1002)
+    cpu.memory.write_word(0x1016, 0x4E75); // RTS at target (0x1002 + 2 + 0x12 = 0x1016)
     
     cpu.step_instruction(); // BSR
-    assert_eq!(cpu.pc, 0x1014);
+    assert_eq!(cpu.pc, 0x1016);
     
     cpu.step_instruction(); // RTS
     assert_eq!(cpu.pc, 0x1004);
@@ -389,12 +390,13 @@ fn test_nop() {
 // ============================================================================
 
 #[test]
-#[ignore] // TODO: Fix opcode encoding
+#[ignore] // TODO: Fix ILLEGAL instruction execution
 fn test_illegal() {
     let mut cpu = create_cpu();
     write_op(&mut cpu, &[0x4AFC]); // ILLEGAL
-    cpu.memory.write_long(0x10, 0x5000); // Illegal instruction vector
+    cpu.memory.write_long(0x10, 0x5000); // Illegal instruction vector (vector 4)
     cpu.step_instruction();
+    // ILLEGAL triggers exception 4, which reads from vector 4*4 = 0x10
     assert_eq!(cpu.pc, 0x5000);
 }
 

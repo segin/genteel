@@ -153,10 +153,13 @@ impl Cpu {
             // === Arithmetic ===
             Instruction::Add { size, src, dst, direction } => self.exec_add(size, src, dst, direction),
             Instruction::AddA { size, src, dst_reg } => self.exec_adda(size, src, dst_reg),
+            Instruction::AddI { size, dst } => self.exec_addi(size, dst),
             Instruction::AddQ { size, dst, data } => self.exec_addq(size, dst, data),
             Instruction::Sub { size, src, dst, direction } => self.exec_sub(size, src, dst, direction),
             Instruction::SubA { size, src, dst_reg } => self.exec_suba(size, src, dst_reg),
+            Instruction::SubI { size, dst } => self.exec_subi(size, dst),
             Instruction::SubQ { size, dst, data } => self.exec_subq(size, dst, data),
+
             Instruction::Neg { size, dst } => self.exec_neg(size, dst),
             Instruction::NegX { size, dst } => self.exec_negx(size, dst),
             Instruction::AddX { size, src_reg, dst_reg, memory_mode } => self.exec_addx(size, src_reg, dst_reg, memory_mode),
@@ -171,9 +174,13 @@ impl Cpu {
 
             // === Logical ===
             Instruction::And { size, src, dst, direction } => self.exec_and(size, src, dst, direction),
+            Instruction::AndI { size, dst } => self.exec_andi(size, dst),
             Instruction::Or { size, src, dst, direction } => self.exec_or(size, src, dst, direction),
+            Instruction::OrI { size, dst } => self.exec_ori(size, dst),
             Instruction::Eor { size, src_reg, dst } => self.exec_eor(size, src_reg, dst),
+            Instruction::EorI { size, dst } => self.exec_eori(size, dst),
             Instruction::Not { size, dst } => self.exec_not(size, dst),
+
 
             // === Shifts ===
             Instruction::Lsl { size, dst, count } => self.exec_shift(size, dst, count, true, false),
@@ -194,8 +201,10 @@ impl Cpu {
             // === Compare and Test ===
             Instruction::Cmp { size, src, dst_reg } => self.exec_cmp(size, src, dst_reg),
             Instruction::CmpA { size, src, dst_reg } => self.exec_cmpa(size, src, dst_reg),
+            Instruction::CmpI { size, dst } => self.exec_cmpi(size, dst),
             Instruction::CmpM { size, ax, ay } => self.exec_cmpm(size, ax, ay),
             Instruction::Tst { size, dst } => self.exec_tst(size, dst),
+
 
             // === Branch and Jump ===
             Instruction::Bra { displacement } => self.exec_bra(displacement),
@@ -509,7 +518,137 @@ impl Cpu {
         4 + cycles
     }
 
+    fn exec_addi(&mut self, size: Size, dst: AddressingMode) -> u32 {
+        // Read immediate value from extension word(s)
+        let imm = match size {
+            Size::Byte => (self.memory.read_word(self.pc) & 0xFF) as u32,
+            Size::Word => self.memory.read_word(self.pc) as u32,
+            Size::Long => self.memory.read_long(self.pc),
+        };
+        self.pc = self.pc.wrapping_add(if size == Size::Long { 4 } else { 2 });
+
+        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
+        let dst_val = self.cpu_read_ea(dst_ea, size);
+
+        let (result, carry, overflow) = self.add_with_flags(imm, dst_val, size);
+        write_ea(dst_ea, size, result, &mut self.d, &mut self.a, &mut self.memory);
+
+        self.update_nz_flags(result, size);
+        self.set_flag(flags::CARRY, carry);
+        self.set_flag(flags::EXTEND, carry);
+        self.set_flag(flags::OVERFLOW, overflow);
+
+        8 + cycles
+    }
+
+    fn exec_subi(&mut self, size: Size, dst: AddressingMode) -> u32 {
+        let imm = match size {
+            Size::Byte => (self.memory.read_word(self.pc) & 0xFF) as u32,
+            Size::Word => self.memory.read_word(self.pc) as u32,
+            Size::Long => self.memory.read_long(self.pc),
+        };
+        self.pc = self.pc.wrapping_add(if size == Size::Long { 4 } else { 2 });
+
+        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
+        let dst_val = self.cpu_read_ea(dst_ea, size);
+
+        let (result, borrow, overflow) = self.sub_with_flags(dst_val, imm, size);
+        write_ea(dst_ea, size, result, &mut self.d, &mut self.a, &mut self.memory);
+
+        self.update_nz_flags(result, size);
+        self.set_flag(flags::CARRY, borrow);
+        self.set_flag(flags::EXTEND, borrow);
+        self.set_flag(flags::OVERFLOW, overflow);
+
+        8 + cycles
+    }
+
+    fn exec_cmpi(&mut self, size: Size, dst: AddressingMode) -> u32 {
+        let imm = match size {
+            Size::Byte => (self.memory.read_word(self.pc) & 0xFF) as u32,
+            Size::Word => self.memory.read_word(self.pc) as u32,
+            Size::Long => self.memory.read_long(self.pc),
+        };
+        self.pc = self.pc.wrapping_add(if size == Size::Long { 4 } else { 2 });
+
+        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
+        let dst_val = self.cpu_read_ea(dst_ea, size);
+
+        let (result, borrow, overflow) = self.sub_with_flags(dst_val, imm, size);
+
+        self.update_nz_flags(result, size);
+        self.set_flag(flags::CARRY, borrow);
+        self.set_flag(flags::OVERFLOW, overflow);
+        // Note: CMPI does NOT set X flag
+
+        8 + cycles
+    }
+
+    fn exec_andi(&mut self, size: Size, dst: AddressingMode) -> u32 {
+        let imm = match size {
+            Size::Byte => (self.memory.read_word(self.pc) & 0xFF) as u32,
+            Size::Word => self.memory.read_word(self.pc) as u32,
+            Size::Long => self.memory.read_long(self.pc),
+        };
+        self.pc = self.pc.wrapping_add(if size == Size::Long { 4 } else { 2 });
+
+        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
+        let dst_val = self.cpu_read_ea(dst_ea, size);
+
+        let result = dst_val & imm;
+        write_ea(dst_ea, size, result, &mut self.d, &mut self.a, &mut self.memory);
+
+        self.update_nz_flags(result, size);
+        self.set_flag(flags::CARRY, false);
+        self.set_flag(flags::OVERFLOW, false);
+
+        8 + cycles
+    }
+
+    fn exec_ori(&mut self, size: Size, dst: AddressingMode) -> u32 {
+        let imm = match size {
+            Size::Byte => (self.memory.read_word(self.pc) & 0xFF) as u32,
+            Size::Word => self.memory.read_word(self.pc) as u32,
+            Size::Long => self.memory.read_long(self.pc),
+        };
+        self.pc = self.pc.wrapping_add(if size == Size::Long { 4 } else { 2 });
+
+        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
+        let dst_val = self.cpu_read_ea(dst_ea, size);
+
+        let result = dst_val | imm;
+        write_ea(dst_ea, size, result, &mut self.d, &mut self.a, &mut self.memory);
+
+        self.update_nz_flags(result, size);
+        self.set_flag(flags::CARRY, false);
+        self.set_flag(flags::OVERFLOW, false);
+
+        8 + cycles
+    }
+
+    fn exec_eori(&mut self, size: Size, dst: AddressingMode) -> u32 {
+        let imm = match size {
+            Size::Byte => (self.memory.read_word(self.pc) & 0xFF) as u32,
+            Size::Word => self.memory.read_word(self.pc) as u32,
+            Size::Long => self.memory.read_long(self.pc),
+        };
+        self.pc = self.pc.wrapping_add(if size == Size::Long { 4 } else { 2 });
+
+        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
+        let dst_val = self.cpu_read_ea(dst_ea, size);
+
+        let result = dst_val ^ imm;
+        write_ea(dst_ea, size, result, &mut self.d, &mut self.a, &mut self.memory);
+
+        self.update_nz_flags(result, size);
+        self.set_flag(flags::CARRY, false);
+        self.set_flag(flags::OVERFLOW, false);
+
+        8 + cycles
+    }
+
     fn exec_sub(&mut self, size: Size, src: AddressingMode, dst: AddressingMode, direction: bool) -> u32 {
+
         let mut cycles = 4u32;
 
         let (src_mode, dst_mode) = if direction {

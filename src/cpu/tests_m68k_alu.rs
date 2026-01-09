@@ -101,7 +101,6 @@ fn test_add_zero_byte() {
 // ============================================================================
 
 #[test]
-#[ignore] // TODO: Fix opcode encoding
 fn test_addi_b() {
     let mut cpu = create_cpu();
     write_op(&mut cpu, &[0x0600, 0x0042]); // ADDI.B #$42, D0
@@ -111,7 +110,6 @@ fn test_addi_b() {
 }
 
 #[test]
-#[ignore] // TODO: Fix opcode encoding
 fn test_addi_w() {
     let mut cpu = create_cpu();
     write_op(&mut cpu, &[0x0640, 0x1234]); // ADDI.W #$1234, D0
@@ -121,7 +119,6 @@ fn test_addi_w() {
 }
 
 #[test]
-#[ignore] // TODO: Fix opcode encoding
 fn test_addi_l() {
     let mut cpu = create_cpu();
     write_op(&mut cpu, &[0x0680, 0x0001, 0x0000]); // ADDI.L #$10000, D0
@@ -254,7 +251,6 @@ fn test_sub_overflow() {
 // ============================================================================
 
 #[test]
-#[ignore] // TODO: Fix opcode encoding
 fn test_subi_b() {
     let mut cpu = create_cpu();
     write_op(&mut cpu, &[0x0400, 0x0010]); // SUBI.B #$10, D0
@@ -264,7 +260,6 @@ fn test_subi_b() {
 }
 
 #[test]
-#[ignore] // TODO: Fix opcode encoding
 fn test_subi_w() {
     let mut cpu = create_cpu();
     write_op(&mut cpu, &[0x0440, 0x1000]); // SUBI.W #$1000, D0
@@ -393,7 +388,6 @@ fn test_cmp_less() {
 // ============================================================================
 
 #[test]
-#[ignore] // TODO: Fix opcode encoding
 fn test_cmpi_b() {
     let mut cpu = create_cpu();
     write_op(&mut cpu, &[0x0C00, 0x0042]); // CMPI.B #$42, D0
@@ -403,7 +397,6 @@ fn test_cmpi_b() {
 }
 
 #[test]
-#[ignore] // TODO: Fix opcode encoding
 fn test_cmpi_w() {
     let mut cpu = create_cpu();
     write_op(&mut cpu, &[0x0C40, 0x1234]); // CMPI.W #$1234, D0
@@ -416,11 +409,13 @@ fn test_cmpi_w() {
 // CMPM Tests
 // ============================================================================
 
+
 #[test]
-#[ignore] // TODO: Fix opcode encoding
+#[ignore] // TODO: Fix CMPM opcode encoding vs exec_cmpm implementation
 fn test_cmpm_b() {
     let mut cpu = create_cpu();
-    write_op(&mut cpu, &[0xB108]); // CMPM.B (A0)+, (A1)+
+    // CMPM.B (A0)+, (A1)+ : 1011 xxx 100 001 yyy where xxx=Ax, yyy=Ay
+    write_op(&mut cpu, &[0xB309]); // CMPM.B (A1)+, (A0)+
     cpu.a[0] = 0x2000; cpu.a[1] = 0x3000;
     cpu.memory.write_byte(0x2000, 0x42);
     cpu.memory.write_byte(0x3000, 0x42);
@@ -429,6 +424,7 @@ fn test_cmpm_b() {
     assert_eq!(cpu.a[0], 0x2001);
     assert_eq!(cpu.a[1], 0x3001);
 }
+
 
 // ============================================================================
 // AND Tests
@@ -458,7 +454,6 @@ fn test_and_l() {
 // ============================================================================
 
 #[test]
-#[ignore] // TODO: Fix opcode encoding
 fn test_andi_b() {
     let mut cpu = create_cpu();
     write_op(&mut cpu, &[0x0200, 0x000F]); // ANDI.B #$0F, D0
@@ -494,7 +489,6 @@ fn test_or_l() {
 // ============================================================================
 
 #[test]
-#[ignore] // TODO: Fix opcode encoding
 fn test_ori_b() {
     let mut cpu = create_cpu();
     write_op(&mut cpu, &[0x0000, 0x00F0]); // ORI.B #$F0, D0
@@ -531,7 +525,6 @@ fn test_eor_l() {
 // ============================================================================
 
 #[test]
-#[ignore] // TODO: Fix opcode encoding
 fn test_eori_b() {
     let mut cpu = create_cpu();
     write_op(&mut cpu, &[0x0A00, 0x00FF]); // EORI.B #$FF, D0
