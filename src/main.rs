@@ -7,6 +7,7 @@ pub mod z80;
 pub mod debugger;
 pub mod input;
 pub mod frontend;
+pub mod audio;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -142,10 +143,25 @@ impl Emulator {
         println!("Controls: Arrow keys=D-pad, Z=A, X=B, C=C, Enter=Start");
         println!("Press Escape to quit.");
         
+        // Audio sample buffer (reused each frame)
+        let samples_per_frame = audio::samples_per_frame();
+        let mut audio_samples = vec![0i16; samples_per_frame * 2]; // Stereo
+        
         while frontend.poll_events() {
             // Get live input from frontend
             let input = frontend.get_input();
             self.step_frame_with_input(input.p1, input.p2);
+            
+            // Generate audio samples for this frame
+            {
+                let mut bus = self.bus.borrow_mut();
+                bus.apu.generate_samples(&mut audio_samples, samples_per_frame);
+            }
+            
+            // Push audio samples to buffer
+            if let Ok(mut buf) = frontend.audio_buffer.lock() {
+                buf.push(&audio_samples);
+            }
             
             // Convert VDP framebuffer (RGB565) to RGB24 and render
             let bus = self.bus.borrow();

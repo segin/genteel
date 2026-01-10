@@ -126,6 +126,23 @@ pub struct Frontend {
     pub paused: bool,
     /// Current live input state
     pub live_input: FrameInput,
+    /// Audio device (kept alive to maintain audio callback)
+    _audio_device: Option<sdl2::audio::AudioDevice<AudioCallback>>,
+    /// Shared audio buffer for sample transfer
+    pub audio_buffer: crate::audio::SharedAudioBuffer,
+}
+
+/// SDL2 audio callback wrapper
+pub struct AudioCallback {
+    buffer: crate::audio::SharedAudioBuffer,
+}
+
+impl sdl2::audio::AudioCallback for AudioCallback {
+    type Channel = i16;
+    
+    fn callback(&mut self, out: &mut [i16]) {
+        crate::audio::audio_callback(&self.buffer, out);
+    }
 }
 
 impl Frontend {
@@ -151,6 +168,10 @@ impl Frontend {
         let event_pump = sdl_context.event_pump()?;
         let texture_creator = canvas.texture_creator();
         
+        // Initialize audio
+        let audio_buffer = crate::audio::create_audio_buffer();
+        let audio_device = Self::init_audio(&sdl_context, audio_buffer.clone())?;
+        
         Ok(Self {
             sdl_context,
             video_subsystem,
@@ -160,7 +181,29 @@ impl Frontend {
             running: true,
             paused: false,
             live_input: FrameInput::default(),
+            _audio_device: Some(audio_device),
+            audio_buffer,
         })
+    }
+    
+    /// Initialize SDL2 audio device
+    fn init_audio(sdl: &sdl2::Sdl, buffer: crate::audio::SharedAudioBuffer) -> Result<sdl2::audio::AudioDevice<AudioCallback>, String> {
+        let audio_subsystem = sdl.audio()?;
+        
+        let desired_spec = sdl2::audio::AudioSpecDesired {
+            freq: Some(crate::audio::SAMPLE_RATE as i32),
+            channels: Some(2), // Stereo
+            samples: Some(1024), // Buffer size
+        };
+        
+        let device = audio_subsystem.open_playback(None, &desired_spec, |_spec| {
+            AudioCallback { buffer }
+        })?;
+        
+        // Start playback
+        device.resume();
+        
+        Ok(device)
     }
     
     /// Poll events and update state

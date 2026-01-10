@@ -11,10 +11,12 @@ pub mod z80;
 pub mod debugger;
 pub mod input;
 pub mod frontend;
+pub mod audio;
 
 pub use cpu::Cpu;
 pub use memory::Memory;
 pub use z80::Z80;
 pub use input::{InputManager, InputScript};
 pub use frontend::Frontend;
+pub use audio::{AudioBuffer, SharedAudioBuffer, create_audio_buffer};
 
