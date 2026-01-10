@@ -1,0 +1,186 @@
+//! Frontend Module - SDL2 + egui GUI
+//!
+//! Provides cross-platform windowing, input handling, and GUI menus
+//! for the Genesis emulator.
+
+use sdl2::event::Event;
+use sdl2::keyboard::Keycode;
+use sdl2::pixels::PixelFormatEnum;
+use sdl2::EventPump;
+
+use crate::io::ControllerState;
+use crate::input::FrameInput;
+
+/// Genesis display dimensions
+pub const GENESIS_WIDTH: u32 = 320;
+pub const GENESIS_HEIGHT: u32 = 224;
+
+/// Key mapping for player 1
+pub fn keycode_to_button(keycode: Keycode) -> Option<(&'static str, bool)> {
+    match keycode {
+        // Player 1 - Arrow keys + ZXC/Enter
+        Keycode::Up => Some(("up", true)),
+        Keycode::Down => Some(("down", true)),
+        Keycode::Left => Some(("left", true)),
+        Keycode::Right => Some(("right", true)),
+        Keycode::Z => Some(("a", true)),
+        Keycode::X => Some(("b", true)),
+        Keycode::C => Some(("c", true)),
+        Keycode::Return => Some(("start", true)),
+        // 6-button extension
+        Keycode::A => Some(("x", true)),
+        Keycode::S => Some(("y", true)),
+        Keycode::D => Some(("z", true)),
+        Keycode::Q => Some(("mode", true)),
+        _ => None,
+    }
+}
+
+/// Poll SDL2 events and update controller state
+pub fn poll_input(event_pump: &mut EventPump, state: &mut ControllerState) -> bool {
+    for event in event_pump.poll_iter() {
+        match event {
+            Event::Quit { .. } => return false,
+            
+            Event::KeyDown { keycode: Some(keycode), .. } => {
+                if keycode == Keycode::Escape {
+                    return false;
+                }
+                if let Some((button, _)) = keycode_to_button(keycode) {
+                    state.set_button(button, true);
+                }
+            }
+            
+            Event::KeyUp { keycode: Some(keycode), .. } => {
+                if let Some((button, _)) = keycode_to_button(keycode) {
+                    state.set_button(button, false);
+                }
+            }
+            
+            _ => {}
+        }
+    }
+    true
+}
+
+/// Poll events and return frame input for both players
+pub fn poll_frame_input(event_pump: &mut EventPump, current: &mut FrameInput) -> bool {
+    for event in event_pump.poll_iter() {
+        match event {
+            Event::Quit { .. } => return false,
+            
+            Event::KeyDown { keycode: Some(keycode), .. } => {
+                if keycode == Keycode::Escape {
+                    return false;
+                }
+                if let Some((button, _)) = keycode_to_button(keycode) {
+                    current.p1.set_button(button, true);
+                }
+            }
+            
+            Event::KeyUp { keycode: Some(keycode), .. } => {
+                if let Some((button, _)) = keycode_to_button(keycode) {
+                    current.p1.set_button(button, false);
+                }
+            }
+            
+            _ => {}
+        }
+    }
+    true
+}
+
+/// Frontend window manager
+pub struct Frontend {
+    pub sdl_context: sdl2::Sdl,
+    pub video_subsystem: sdl2::VideoSubsystem,
+    pub canvas: sdl2::render::Canvas<sdl2::video::Window>,
+    pub event_pump: EventPump,
+    pub texture_creator: sdl2::render::TextureCreator<sdl2::video::WindowContext>,
+    pub running: bool,
+    pub paused: bool,
+    /// Current live input state
+    pub live_input: FrameInput,
+}
+
+impl Frontend {
+    /// Create a new frontend window
+    pub fn new(title: &str, scale: u32) -> Result<Self, String> {
+        let sdl_context = sdl2::init()?;
+        let video_subsystem = sdl_context.video()?;
+        
+        let window = video_subsystem
+            .window(title, GENESIS_WIDTH * scale, GENESIS_HEIGHT * scale)
+            .position_centered()
+            .resizable()
+            .build()
+            .map_err(|e| e.to_string())?;
+        
+        let canvas = window
+            .into_canvas()
+            .accelerated()
+            .present_vsync()
+            .build()
+            .map_err(|e| e.to_string())?;
+        
+        let event_pump = sdl_context.event_pump()?;
+        let texture_creator = canvas.texture_creator();
+        
+        Ok(Self {
+            sdl_context,
+            video_subsystem,
+            canvas,
+            event_pump,
+            texture_creator,
+            running: true,
+            paused: false,
+            live_input: FrameInput::default(),
+        })
+    }
+    
+    /// Poll events and update state
+    pub fn poll_events(&mut self) -> bool {
+        self.running = poll_frame_input(&mut self.event_pump, &mut self.live_input);
+        self.running
+    }
+    
+    /// Get current frame input (for live play mode)
+    pub fn get_input(&self) -> FrameInput {
+        self.live_input.clone()
+    }
+    
+    /// Render a frame buffer to the window
+    pub fn render_frame(&mut self, framebuffer: &[u8]) -> Result<(), String> {
+        let mut texture = self.texture_creator
+            .create_texture_streaming(PixelFormatEnum::RGB24, GENESIS_WIDTH, GENESIS_HEIGHT)
+            .map_err(|e| e.to_string())?;
+        
+        texture.update(None, framebuffer, (GENESIS_WIDTH * 3) as usize)
+            .map_err(|e| e.to_string())?;
+        
+        self.canvas.clear();
+        self.canvas.copy(&texture, None, None)?;
+        self.canvas.present();
+        
+        Ok(())
+    }
+    
+    /// Present a blank/placeholder frame
+    pub fn present_blank(&mut self) {
+        self.canvas.set_draw_color(sdl2::pixels::Color::RGB(0, 0, 0));
+        self.canvas.clear();
+        self.canvas.present();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[test]
+    fn test_keycode_mapping() {
+        assert_eq!(keycode_to_button(Keycode::Z), Some(("a", true)));
+        assert_eq!(keycode_to_button(Keycode::X), Some(("b", true)));
+        assert_eq!(keycode_to_button(Keycode::Up), Some(("up", true)));
+    }
+}

@@ -5,6 +5,8 @@ pub mod memory;
 pub mod io;
 pub mod z80;
 pub mod debugger;
+pub mod input;
+pub mod frontend;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -12,11 +14,14 @@ use cpu::Cpu;
 use z80::Z80;
 use memory::bus::Bus;
 use memory::{SharedBus, Z80Bus};
+use input::InputManager;
+use frontend::Frontend;
 
 pub struct Emulator {
     pub cpu: Cpu,
     pub z80: Z80,
     pub bus: Rc<RefCell<Bus>>,
+    pub input: InputManager,
 }
 
 impl Emulator {
@@ -34,6 +39,7 @@ impl Emulator {
             cpu,
             z80,
             bus,
+            input: InputManager::new(),
         };
         
         emulator.cpu.reset();
@@ -53,7 +59,38 @@ impl Emulator {
         Ok(())
     }
 
+    /// Step one frame with current input state
     pub fn step_frame(&mut self) {
+        // Apply inputs from script or live input
+        let frame_input = self.input.advance_frame();
+        {
+            let mut bus = self.bus.borrow_mut();
+            if let Some(ctrl) = bus.io.controller(1) {
+                *ctrl = frame_input.p1;
+            }
+            if let Some(ctrl) = bus.io.controller(2) {
+                *ctrl = frame_input.p2;
+            }
+        }
+
+        self.step_frame_internal();
+    }
+
+    /// Step one frame with provided input (for live play)
+    pub fn step_frame_with_input(&mut self, p1: io::ControllerState, p2: io::ControllerState) {
+        {
+            let mut bus = self.bus.borrow_mut();
+            if let Some(ctrl) = bus.io.controller(1) {
+                *ctrl = p1;
+            }
+            if let Some(ctrl) = bus.io.controller(2) {
+                *ctrl = p2;
+            }
+        }
+        self.step_frame_internal();
+    }
+
+    fn step_frame_internal(&mut self) {
         // Genesis timing constants (NTSC):
         // M68k: 7.67 MHz, Z80: 3.58 MHz
         // One frame = ~262 scanlines, ~488 M68k cycles per scanline
@@ -86,30 +123,122 @@ impl Emulator {
         }
     }
 
-
-    pub fn run(&mut self) {
-        println!("Emulator running...");
-        // This is a very basic loop, will be expanded later
-        // In a real app, this would be the main event loop
-        for _frame_count in 0..60 { 
+    /// Run headless for N frames (for TAS/testing)
+    pub fn run(&mut self, frames: u32) {
+        println!("Running {} frames headless...", frames);
+        for _ in 0..frames {
             self.step_frame();
         }
-        println!("Emulator finished.");
+        println!("Done.");
+    }
+
+    /// Run with SDL2 window (interactive play mode)
+    pub fn run_with_frontend(&mut self) -> Result<(), String> {
+        let mut frontend = Frontend::new("Genteel - Sega Genesis Emulator", 3)?;
+        
+        println!("Controls: Arrow keys=D-pad, Z=A, X=B, C=C, Enter=Start");
+        println!("Press Escape to quit.");
+        
+        // Create a blank framebuffer (VDP rendering not complete yet)
+        let framebuffer = vec![0u8; (frontend::GENESIS_WIDTH * frontend::GENESIS_HEIGHT * 3) as usize];
+        
+        while frontend.poll_events() {
+            // Get live input from frontend
+            let input = frontend.get_input();
+            self.step_frame_with_input(input.p1, input.p2);
+            
+            // Render (placeholder blank frame for now)
+            frontend.render_frame(&framebuffer)?;
+        }
+        
+        Ok(())
     }
 }
 
+fn print_usage() {
+    println!("Genteel - Sega Genesis/Mega Drive Emulator");
+    println!();
+    println!("Usage: genteel [OPTIONS] <ROM>");
+    println!();
+    println!("Options:");
+    println!("  --script <path>  Load TAS input script");
+    println!("  --headless <n>   Run N frames without display");
+    println!("  --help           Show this help");
+    println!();
+    println!("Controls (play mode):");
+    println!("  Arrow keys       D-pad");
+    println!("  Z/X/C            A/B/C buttons");
+    println!("  Enter            Start");
+    println!("  Escape           Quit");
+}
+
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    
+    let mut rom_path: Option<String> = None;
+    let mut script_path: Option<String> = None;
+    let mut headless_frames: Option<u32> = None;
+    
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--help" | "-h" => {
+                print_usage();
+                return;
+            }
+            "--script" => {
+                i += 1;
+                if i < args.len() {
+                    script_path = Some(args[i].clone());
+                }
+            }
+            "--headless" => {
+                i += 1;
+                if i < args.len() {
+                    headless_frames = args[i].parse().ok();
+                }
+            }
+            arg if !arg.starts_with('-') => {
+                rom_path = Some(arg.to_string());
+            }
+            _ => {
+                eprintln!("Unknown option: {}", args[i]);
+            }
+        }
+        i += 1;
+    }
+    
     let mut emulator = Emulator::new();
-    if let Some(rom_path) = std::env::args().nth(1) {
-        println!("Loading ROM: {}", rom_path);
-        if let Err(e) = emulator.load_rom(&rom_path) {
+    
+    // Load ROM if provided
+    if let Some(ref path) = rom_path {
+        println!("Loading ROM: {}", path);
+        if let Err(e) = emulator.load_rom(path) {
             eprintln!("Failed to load ROM: {}", e);
             return;
         }
     } else {
-        println!("No ROM provided. Usage: cargo run <rom_path>");
-        println!("Running in empty mode...");
+        print_usage();
+        return;
     }
     
-    emulator.run();
+    // Load input script if provided
+    if let Some(ref path) = script_path {
+        println!("Loading input script: {}", path);
+        if let Err(e) = emulator.input.load_script(path) {
+            eprintln!("Failed to load script: {}", e);
+            return;
+        }
+    }
+    
+    // Run in appropriate mode
+    if let Some(frames) = headless_frames {
+        emulator.run(frames);
+    } else {
+        // Interactive mode with SDL2 window
+        if let Err(e) = emulator.run_with_frontend() {
+            eprintln!("Frontend error: {}", e);
+        }
+    }
 }
+
