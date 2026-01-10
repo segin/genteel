@@ -51,7 +51,13 @@ impl Emulator {
     }
 
     pub fn load_rom(&mut self, path: &str) -> std::io::Result<()> {
-        let data = std::fs::read(path)?;
+        let data = if path.to_lowercase().ends_with(".zip") {
+            // Extract ROM from zip file
+            Self::load_rom_from_zip(path)?
+        } else {
+            std::fs::read(path)?
+        };
+        
         self.bus.borrow_mut().load_rom(&data);
         
         // Reset again to load initial PC/SP from ROM vectors
@@ -59,6 +65,37 @@ impl Emulator {
         self.z80.reset();
         
         Ok(())
+    }
+    
+    /// Load ROM from a zip file (finds first .bin, .md, .gen, or .smd file)
+    fn load_rom_from_zip(path: &str) -> std::io::Result<Vec<u8>> {
+        use std::io::Read;
+        
+        let file = std::fs::File::open(path)?;
+        let mut archive = zip::ZipArchive::new(file)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        
+        // ROM file extensions to look for
+        let rom_extensions = [".bin", ".md", ".gen", ".smd", ".32x"];
+        
+        // Find first ROM file in archive
+        for i in 0..archive.len() {
+            let mut entry = archive.by_index(i)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+            
+            let name = entry.name().to_lowercase();
+            if rom_extensions.iter().any(|ext| name.ends_with(ext)) {
+                let mut data = Vec::new();
+                entry.read_to_end(&mut data)?;
+                println!("Extracted ROM: {} ({} bytes)", entry.name(), data.len());
+                return Ok(data);
+            }
+        }
+        
+        Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "No ROM file found in zip archive"
+        ))
     }
 
     /// Step one frame with current input state
