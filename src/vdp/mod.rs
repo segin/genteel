@@ -350,6 +350,12 @@ impl Vdp {
         }
     }
 
+    /// Get current control address (for testing)
+    #[cfg(test)]
+    pub fn get_control_address(&self) -> u16 {
+        self.control_address
+    }
+
     /// Read H/V counter
     pub fn read_hv_counter(&self) -> u16 {
         let h = (self.h_counter >> 1) as u8;
@@ -560,6 +566,12 @@ impl Vdp {
         (r5 << 11) | (g6 << 5) | b5
     }
 
+    /// Public wrapper for get_cram_color (for testing)
+    #[cfg(test)]
+    pub fn get_cram_color_pub(&self, palette: u8, index: u8) -> u16 {
+        self.get_cram_color(palette, index)
+    }
+
     /// Render a full frame
     pub fn render_frame(&mut self) {
         let height = self.screen_height();
@@ -574,6 +586,9 @@ impl Default for Vdp {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests_properties;
 
 #[cfg(test)]
 mod tests {

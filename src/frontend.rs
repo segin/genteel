@@ -90,6 +90,31 @@ pub fn poll_frame_input(event_pump: &mut EventPump, current: &mut FrameInput) ->
     true
 }
 
+/// Convert RGB565 framebuffer to RGB24 for SDL2
+/// VDP outputs RGB565: RRRRR GGGGGG BBBBB
+/// SDL2 expects RGB24: RRRRRRRR GGGGGGGG BBBBBBBB
+pub fn rgb565_to_rgb24(framebuffer_565: &[u16]) -> Vec<u8> {
+    let mut rgb24 = Vec::with_capacity(framebuffer_565.len() * 3);
+    
+    for &pixel in framebuffer_565 {
+        // Extract RGB565 components
+        let r5 = ((pixel >> 11) & 0x1F) as u8;
+        let g6 = ((pixel >> 5) & 0x3F) as u8;
+        let b5 = (pixel & 0x1F) as u8;
+        
+        // Scale to 8-bit (replicate upper bits to fill lower bits)
+        let r8 = (r5 << 3) | (r5 >> 2);
+        let g8 = (g6 << 2) | (g6 >> 4);
+        let b8 = (b5 << 3) | (b5 >> 2);
+        
+        rgb24.push(r8);
+        rgb24.push(g8);
+        rgb24.push(b8);
+    }
+    
+    rgb24
+}
+
 /// Frontend window manager
 pub struct Frontend {
     pub sdl_context: sdl2::Sdl,

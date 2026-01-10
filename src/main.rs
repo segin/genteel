@@ -121,6 +121,9 @@ impl Emulator {
                 }
             }
         }
+        
+        // Render VDP frame after CPU execution
+        self.bus.borrow_mut().vdp.render_frame();
     }
 
     /// Run headless for N frames (for TAS/testing)
@@ -139,15 +142,16 @@ impl Emulator {
         println!("Controls: Arrow keys=D-pad, Z=A, X=B, C=C, Enter=Start");
         println!("Press Escape to quit.");
         
-        // Create a blank framebuffer (VDP rendering not complete yet)
-        let framebuffer = vec![0u8; (frontend::GENESIS_WIDTH * frontend::GENESIS_HEIGHT * 3) as usize];
-        
         while frontend.poll_events() {
             // Get live input from frontend
             let input = frontend.get_input();
             self.step_frame_with_input(input.p1, input.p2);
             
-            // Render (placeholder blank frame for now)
+            // Convert VDP framebuffer (RGB565) to RGB24 and render
+            let bus = self.bus.borrow();
+            let framebuffer = frontend::rgb565_to_rgb24(&bus.vdp.framebuffer);
+            drop(bus);
+            
             frontend.render_frame(&framebuffer)?;
         }
         
