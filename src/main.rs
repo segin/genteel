@@ -14,9 +14,10 @@ use std::rc::Rc;
 use cpu::Cpu;
 use z80::Z80;
 use memory::bus::Bus;
-use memory::{SharedBus, Z80Bus};
+use memory::{SharedBus, Z80Bus, MemoryInterface};
 use input::InputManager;
 use frontend::Frontend;
+use debugger::{GdbServer, GdbRegisters, GdbMemory, StopReason};
 
 pub struct Emulator {
     pub cpu: Cpu,
@@ -136,6 +137,89 @@ impl Emulator {
         println!("Done.");
     }
 
+    /// Run with GDB debugger attached
+    pub fn run_with_gdb(&mut self, port: u16) -> std::io::Result<()> {
+        let mut gdb = GdbServer::new(port)?;
+        
+        println!("Waiting for GDB connection on port {}...", port);
+        println!("Connect with: m68k-elf-gdb -ex \"target remote :{}\" <elf_file>", port);
+        
+        // Wait for connection
+        while !gdb.accept() {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        
+        let mut stepping = false;
+        let mut running = false;
+        
+        loop {
+            // Check for GDB commands
+            if let Some(cmd) = gdb.receive_packet() {
+                // Build register state from CPU
+                let mut regs = GdbRegisters {
+                    d: self.cpu.d,
+                    a: self.cpu.a,
+                    sr: self.cpu.sr,
+                    pc: self.cpu.pc,
+                };
+                
+                // Create memory accessor
+                let mut mem_access = BusGdbMemory { bus: self.bus.clone() };
+                
+                let response = gdb.process_command(&cmd, &mut regs, &mut mem_access);
+                
+                // Apply register changes back to CPU
+                self.cpu.d = regs.d;
+                self.cpu.a = regs.a;
+                self.cpu.sr = regs.sr;
+                self.cpu.pc = regs.pc;
+                
+                match response.as_str() {
+                    "CONTINUE" => {
+                        running = true;
+                        stepping = false;
+                    }
+                    "STEP" => {
+                        stepping = true;
+                        running = true;
+                    }
+                    _ if !response.is_empty() => {
+                        gdb.send_packet(&response).ok();
+                    }
+                    _ => {}
+                }
+            }
+            
+            // Execute if running
+            if running {
+                // Step one instruction
+                self.cpu.step_instruction();
+                
+                // Check for breakpoint
+                if gdb.is_breakpoint(self.cpu.pc) {
+                    gdb.stop_reason = StopReason::Breakpoint;
+                    gdb.send_packet(&format!("S{:02x}", StopReason::Breakpoint.signal())).ok();
+                    running = false;
+                } else if stepping {
+                    gdb.stop_reason = StopReason::Step;
+                    gdb.send_packet(&format!("S{:02x}", StopReason::Step.signal())).ok();
+                    running = false;
+                }
+            } else {
+                // Not running, sleep a bit to avoid spinning
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            
+            // Check if client disconnected
+            if !gdb.is_connected() && !gdb.accept() {
+                println!("GDB client disconnected");
+                break;
+            }
+        }
+        
+        Ok(())
+    }
+
     /// Run with SDL2 window (interactive play mode)
     pub fn run_with_frontend(&mut self) -> Result<(), String> {
         let mut frontend = Frontend::new("Genteel - Sega Genesis Emulator", 3)?;
@@ -183,6 +267,7 @@ fn print_usage() {
     println!("Options:");
     println!("  --script <path>  Load TAS input script");
     println!("  --headless <n>   Run N frames without display");
+    println!("  --gdb [port]     Start GDB server (default port: 1234)");
     println!("  --help           Show this help");
     println!();
     println!("Controls (play mode):");
@@ -192,12 +277,28 @@ fn print_usage() {
     println!("  Escape           Quit");
 }
 
+/// GDB memory accessor for Bus
+struct BusGdbMemory {
+    bus: Rc<RefCell<Bus>>,
+}
+
+impl GdbMemory for BusGdbMemory {
+    fn read_byte(&mut self, addr: u32) -> u8 {
+        self.bus.borrow_mut().read_byte(addr)
+    }
+    
+    fn write_byte(&mut self, addr: u32, value: u8) {
+        self.bus.borrow_mut().write_byte(addr, value);
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     
     let mut rom_path: Option<String> = None;
     let mut script_path: Option<String> = None;
     let mut headless_frames: Option<u32> = None;
+    let mut gdb_port: Option<u16> = None;
     
     let mut i = 1;
     while i < args.len() {
@@ -216,6 +317,15 @@ fn main() {
                 i += 1;
                 if i < args.len() {
                     headless_frames = args[i].parse().ok();
+                }
+            }
+            "--gdb" => {
+                // Optional port argument
+                if i + 1 < args.len() && !args[i + 1].starts_with('-') {
+                    i += 1;
+                    gdb_port = args[i].parse().ok();
+                } else {
+                    gdb_port = Some(debugger::DEFAULT_PORT);
                 }
             }
             arg if !arg.starts_with('-') => {
@@ -252,7 +362,12 @@ fn main() {
     }
     
     // Run in appropriate mode
-    if let Some(frames) = headless_frames {
+    if let Some(port) = gdb_port {
+        // Debug mode with GDB
+        if let Err(e) = emulator.run_with_gdb(port) {
+            eprintln!("GDB server error: {}", e);
+        }
+    } else if let Some(frames) = headless_frames {
         emulator.run(frames);
     } else {
         // Interactive mode with SDL2 window
