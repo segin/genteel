@@ -4,7 +4,7 @@
 //! and reading/writing operands for all M68k addressing modes.
 
 use super::decoder::{AddressingMode, Size};
-use crate::memory::{Memory, MemoryInterface};
+use crate::memory::MemoryInterface;
 
 /// Result of resolving an effective address
 #[derive(Debug, Clone, Copy)]

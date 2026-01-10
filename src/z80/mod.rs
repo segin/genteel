@@ -569,7 +569,7 @@ impl Z80 {
         }
 
         // Handle EI shadow: iff1/iff2 are set but interrupts are inhibited for one instruction
-        let interrupts_inhibited = self.pending_ei;
+        let _interrupts_inhibited = self.pending_ei;
         self.pending_ei = false;
 
         let opcode = self.fetch_byte();

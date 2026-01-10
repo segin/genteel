@@ -268,9 +268,6 @@ impl Cpu {
                 eprintln!("Unimplemented opcode: {:04X} at PC {:08X}", opcode, self.pc.wrapping_sub(2));
                 self.process_exception(4)
             }
-
-            // Catch-all for instructions not yet implemented
-            _ => 4,
         }
     }
 
@@ -2267,7 +2264,7 @@ impl Cpu {
         let disp = self.read_word(self.pc) as i16;
         self.pc = self.pc.wrapping_add(2);
         
-        let mut addr = self.a[an as usize].wrapping_add(disp as u32);
+        let addr = self.a[an as usize].wrapping_add(disp as u32);
         
         match size {
             Size::Word => {

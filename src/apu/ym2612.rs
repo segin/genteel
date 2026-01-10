@@ -310,7 +310,7 @@ impl Ym2612 {
     
     /// Write to channel register
     fn write_channel_register(&mut self, bank: u8, addr: u8, value: u8) {
-        let reg_type = (addr >> 2) & 0x07;
+        let _reg_type = (addr >> 2) & 0x07;
         let channel_in_bank = (addr & 0x03) as usize;
         
         if channel_in_bank >= 3 {

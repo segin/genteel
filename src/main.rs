@@ -14,7 +14,7 @@ use std::rc::Rc;
 use cpu::Cpu;
 use z80::Z80;
 use memory::bus::Bus;
-use memory::{SharedBus, Z80Bus, MemoryInterface};
+use memory::{SharedBus, Z80Bus};
 use input::InputManager;
 use frontend::Frontend;
 use debugger::{GdbServer, GdbRegisters, GdbMemory, StopReason};

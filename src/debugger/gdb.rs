@@ -3,7 +3,7 @@
 //! Implements a GDB stub for debugging M68k code running in the emulator.
 //! Connect with: `m68k-elf-gdb -ex "target remote :1234"`
 
-use std::io::{Read, Write, BufRead, BufReader};
+use std::io::{Read, Write, BufReader};
 use std::net::{TcpListener, TcpStream};
 use std::collections::HashSet;
 
