@@ -165,6 +165,13 @@ impl Frontend {
             .build()
             .map_err(|e| e.to_string())?;
         
+        // Disable audio device events (sdl2-rs 0.37 doesn't handle them)
+        // Event types 0x1100 (4352) = SDL_AUDIODEVICEADDED, 0x1101 = SDL_AUDIODEVICEREMOVED
+        unsafe {
+            sdl2::sys::SDL_EventState(0x1100, sdl2::sys::SDL_IGNORE as i32);
+            sdl2::sys::SDL_EventState(0x1101, sdl2::sys::SDL_IGNORE as i32);
+        }
+        
         let event_pump = sdl_context.event_pump()?;
         let texture_creator = canvas.texture_creator();
         
