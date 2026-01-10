@@ -64,30 +64,67 @@ pub fn poll_input(event_pump: &mut EventPump, state: &mut ControllerState) -> bo
 }
 
 /// Poll events and return frame input for both players
-pub fn poll_frame_input(event_pump: &mut EventPump, current: &mut FrameInput) -> bool {
-    for event in event_pump.poll_iter() {
-        match event {
-            Event::Quit { .. } => return false,
+pub fn poll_frame_input(_event_pump: &mut EventPump, current: &mut FrameInput) -> bool {
+    // Use raw SDL2 polling to filter unknown events before sdl2-rs can panic
+    unsafe {
+        let mut raw_event: sdl2::sys::SDL_Event = std::mem::zeroed();
+        while sdl2::sys::SDL_PollEvent(&mut raw_event) != 0 {
+            // Only process events that we care about
+            let event_type = raw_event.type_;
             
-            Event::KeyDown { keycode: Some(keycode), .. } => {
-                if keycode == Keycode::Escape {
-                    return false;
+            // SDL_QUIT = 0x100 (256), SDL_KEYDOWN = 0x300 (768), SDL_KEYUP = 0x301 (769)
+            match event_type {
+                0x100 => return false, // SDL_QUIT
+                
+                0x300 => { // SDL_KEYDOWN
+                    let key_event = raw_event.key;
+                    let scancode = key_event.keysym.scancode;
+                    
+                    // Check for Escape (scancode 41)
+                    if scancode == sdl2::sys::SDL_Scancode::SDL_SCANCODE_ESCAPE {
+                        return false;
+                    }
+                    
+                    // Map scancodes to buttons
+                    if let Some((button, _)) = scancode_to_button(scancode) {
+                        current.p1.set_button(button, true);
+                    }
                 }
-                if let Some((button, _)) = keycode_to_button(keycode) {
-                    current.p1.set_button(button, true);
+                
+                0x301 => { // SDL_KEYUP
+                    let key_event = raw_event.key;
+                    let scancode = key_event.keysym.scancode;
+                    
+                    if let Some((button, _)) = scancode_to_button(scancode) {
+                        current.p1.set_button(button, false);
+                    }
                 }
+                
+                _ => {} // Ignore all other events
             }
-            
-            Event::KeyUp { keycode: Some(keycode), .. } => {
-                if let Some((button, _)) = keycode_to_button(keycode) {
-                    current.p1.set_button(button, false);
-                }
-            }
-            
-            _ => {}
         }
     }
     true
+}
+
+/// Map SDL scancode to button name
+fn scancode_to_button(scancode: sdl2::sys::SDL_Scancode) -> Option<(&'static str, bool)> {
+    use sdl2::sys::SDL_Scancode::*;
+    match scancode {
+        SDL_SCANCODE_UP => Some(("up", true)),
+        SDL_SCANCODE_DOWN => Some(("down", true)),
+        SDL_SCANCODE_LEFT => Some(("left", true)),
+        SDL_SCANCODE_RIGHT => Some(("right", true)),
+        SDL_SCANCODE_Z => Some(("a", true)),
+        SDL_SCANCODE_X => Some(("b", true)),
+        SDL_SCANCODE_C => Some(("c", true)),
+        SDL_SCANCODE_RETURN => Some(("start", true)),
+        SDL_SCANCODE_A => Some(("x", true)),
+        SDL_SCANCODE_S => Some(("y", true)),
+        SDL_SCANCODE_D => Some(("z", true)),
+        SDL_SCANCODE_Q => Some(("mode", true)),
+        _ => None,
+    }
 }
 
 /// Convert RGB565 framebuffer to RGB24 for SDL2
