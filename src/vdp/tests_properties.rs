@@ -84,7 +84,7 @@ proptest! {
         // Set mode register 4 (reg 12): H40 is bits 7 and 0 both set
         vdp.registers[12] = if h40 { 0x81 } else { 0x00 };
         
-        let expected_h = if h40 { 240 } else { 224 };
+        let _expected_h = if h40 { 240 } else { 224 };
         let expected_w = if h40 { 320 } else { 256 };
         
         // Note: v30 controls height, h40 controls width
@@ -120,7 +120,14 @@ proptest! {
 #[cfg(test)]
 mod unit_tests {
     use super::*;
-    use crate::frontend::rgb565_to_rgb24;
+    use crate::frontend::rgb565_to_rgba8;
+
+    fn rgb565_to_rgb24(input: &[u16]) -> Vec<u8> {
+        let mut output = vec![0u8; input.len() * 4];
+        rgb565_to_rgba8(input, &mut output);
+        // Extract RGB, dropping Alpha
+        output.chunks(4).flat_map(|c| vec![c[0], c[1], c[2]]).collect()
+    }
 
     #[test]
     fn test_rgb565_to_rgb24_black() {

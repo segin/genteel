@@ -114,7 +114,7 @@ impl Bus {
             }
             // YM2612 from 68k: 0xA04000-0xA04003
             0xA04000..=0xA04003 => {
-                self.apu.ym2612.read((addr & 3) as u8)
+                self.apu.fm.read((addr & 3) as u8)
             }
             0xA02000..=0xA0FFFF => {
                 // Z80 area bank registers and other hardware
@@ -190,9 +190,9 @@ impl Bus {
                 let is_data = (addr & 1) != 0;
                 
                 if is_data {
-                    self.apu.ym2612.write_data(port, value);
+                    self.apu.fm.write_data(port, value);
                 } else {
-                    self.apu.ym2612.write_address(port, value);
+                    self.apu.fm.write_address(port, value);
                 }
             }
 
@@ -202,14 +202,19 @@ impl Bus {
             }
 
             // Z80 Bus Request
-            0xA11100..=0xA11101 => {
+            // Z80 Bus Request
+            0xA11100 => {
                 self.z80_bus_request = (value & 0x01) != 0;
+            }
+            0xA11101 => {
+                // Ignore writes to lower byte of Z80 bus request
             }
 
             // Z80 Reset
-            0xA11200..=0xA11201 => {
+            0xA11200 => {
                 self.z80_reset = (value & 0x01) == 0;
             }
+            0xA11201 => {}
 
             // VDP Ports
             0xC00000..=0xC00003 => {
@@ -267,6 +272,9 @@ impl Bus {
         // VDP Control Port
         if addr >= 0xC00004 && addr <= 0xC00007 {
             self.vdp.write_control(value);
+            if self.vdp.dma_pending {
+                self.run_dma();
+            }
             return;
         }
 
@@ -285,6 +293,57 @@ impl Bus {
     pub fn write_long(&mut self, address: u32, value: u32) {
         self.write_word(address, (value >> 16) as u16);
         self.write_word(address.wrapping_add(2), value as u16);
+    }
+    // === DMA ===
+
+    fn run_dma(&mut self) {
+        // VDP registers:
+        // 0x13/0x14: DMA Length (low/high)
+        // 0x15/0x16/0x17: DMA Source (low/mid/high)
+        
+        // Mode check (Reg 23 bit 7, 6)
+        // 00/01: 68k -> VDP (Supported)
+        // 10: VRAM Copy (Should be internal to VDP)
+        // 11: VRAM Fill (Should be internal)
+        let mode = self.vdp.registers[0x17] >> 6;
+
+        
+        // Debug DMA
+        // println!("DMA Check: Mode={} dma_enabled={} pending={}", mode, self.vdp.dma_enabled(), self.vdp.dma_pending);
+
+        if (mode & 0x02) != 0 {
+            // Not 68k transfer (VDP copy/fill)
+            // Ideally VDP handles these itself, or we need another handler.
+            // For now, assume VDP handles them or they are triggered differently.
+            // Clear pending just in case.
+            self.vdp.dma_pending = false;
+            return;
+        }
+
+        let len_low = self.vdp.registers[0x13];
+        let len_high = self.vdp.registers[0x14];
+        let length = ((len_high as u32) << 8) | (len_low as u32);
+        
+        // Source address (word index in regs 21-23)
+        // Reg 23 (A22-A17), Reg 22 (A16-A9), Reg 21 (A8-A1)
+        let src_low = self.vdp.registers[0x15];
+        let src_mid = self.vdp.registers[0x16];
+        let src_high = self.vdp.registers[0x17] & 0x3F; // Mask mode bits? (bits 0-5 are address)
+
+        let mut source = ((src_high as u32) << 17)
+                       | ((src_mid as u32) << 9)
+                       | ((src_low as u32) << 1);
+        
+        println!("DMA EXECUTE: Mode={} Length=0x{:X} Source=0x{:06X}", mode, length, source);
+        
+        // Transfer
+        for _ in 0..length {
+            let word = self.read_word(source);
+            self.vdp.write_data(word);
+            source = source.wrapping_add(2);
+        }
+
+        self.vdp.dma_pending = false;
     }
 }
 
@@ -380,6 +439,7 @@ mod tests {
         assert_eq!(bus.read_byte(0xFF0000), 0x42);
     }
 
+
     #[test]
     fn test_z80_ram() {
         let mut bus = Bus::new();
@@ -423,3 +483,4 @@ mod tests {
         assert_eq!(bus.read_byte(0x800000), 0xFF);
     }
 }
+

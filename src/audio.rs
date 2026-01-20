@@ -1,11 +1,12 @@
 //! Audio Output Module
 //!
-//! Provides SDL2 audio callback integration for Genesis audio output.
+//! Provides cross-platform audio output using cpal.
 //! Uses a ring buffer to transfer samples from emulation thread to audio callback.
 
 use std::sync::{Arc, Mutex};
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
-/// Sample rate for audio output (Genesis runs at ~53kHz internally, we resample)
+/// Sample rate for audio output
 pub const SAMPLE_RATE: u32 = 44100;
 
 /// Audio buffer size (in stereo sample pairs)
@@ -59,6 +60,21 @@ impl AudioBuffer {
             }
         }
     }
+    
+    /// Pop samples as f32 (for cpal)
+    pub fn pop_f32(&mut self, dest: &mut [f32]) {
+        for sample in dest.iter_mut() {
+            if self.available > 0 {
+                let i16_sample = self.buffer[self.read_pos];
+                self.read_pos = (self.read_pos + 1) % self.buffer.len();
+                self.available -= 1;
+                // Convert i16 to f32 [-1.0, 1.0]
+                *sample = i16_sample as f32 / 32768.0;
+            } else {
+                *sample = 0.0;
+            }
+        }
+    }
 
     /// Get number of available samples
     pub fn available(&self) -> usize {
@@ -81,16 +97,46 @@ pub fn create_audio_buffer() -> SharedAudioBuffer {
     Arc::new(Mutex::new(AudioBuffer::new(BUFFER_SIZE * 4)))
 }
 
-/// Audio callback function for SDL2
-/// This is called from the audio thread to fill the output buffer
-pub fn audio_callback(buffer: &SharedAudioBuffer, out: &mut [i16]) {
-    if let Ok(mut buf) = buffer.lock() {
-        buf.pop(out);
-    } else {
-        // Lock failed, output silence
-        for sample in out.iter_mut() {
-            *sample = 0;
-        }
+/// Audio output stream wrapper
+pub struct AudioOutput {
+    _stream: cpal::Stream,
+}
+
+impl AudioOutput {
+    /// Create a new audio output using cpal
+    pub fn new(buffer: SharedAudioBuffer) -> Result<Self, String> {
+        let host = cpal::default_host();
+        
+        let device = host.default_output_device()
+            .ok_or("No audio output device found")?;
+        
+        let config = cpal::StreamConfig {
+            channels: 2,
+            sample_rate: cpal::SampleRate(SAMPLE_RATE),
+            buffer_size: cpal::BufferSize::Default,
+        };
+        
+        let buffer_clone = buffer.clone();
+        
+        let stream = device.build_output_stream(
+            &config,
+            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                if let Ok(mut buf) = buffer_clone.lock() {
+                    buf.pop_f32(data);
+                } else {
+                    // Lock failed, output silence
+                    for sample in data.iter_mut() {
+                        *sample = 0.0;
+                    }
+                }
+            },
+            |err| eprintln!("Audio stream error: {}", err),
+            None,
+        ).map_err(|e| e.to_string())?;
+        
+        stream.play().map_err(|e| e.to_string())?;
+        
+        Ok(Self { _stream: stream })
     }
 }
 
@@ -174,5 +220,17 @@ mod tests {
     fn test_samples_per_frame() {
         let spf = samples_per_frame();
         assert_eq!(spf, 735); // 44100 / 60 = 735
+    }
+    
+    #[test]
+    fn test_pop_f32() {
+        let mut buf = AudioBuffer::new(64);
+        buf.push(&[16384i16, -16384]); // Half max positive/negative
+        
+        let mut out = [0.0f32; 2];
+        buf.pop_f32(&mut out);
+        
+        assert!((out[0] - 0.5).abs() < 0.001);
+        assert!((out[1] + 0.5).abs() < 0.001);
     }
 }

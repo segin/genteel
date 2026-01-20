@@ -60,7 +60,7 @@ impl MemoryInterface for Z80Bus {
             
             // YM2612: 4000h-4003h
             0x4000..=0x4003 => {
-                self.bus.bus.borrow().apu.ym2612.read((addr & 3) as u8)
+                self.bus.bus.borrow().apu.fm.read((addr & 3) as u8)
             }
             
             // Reserved: 4004h-5FFFh
@@ -101,9 +101,9 @@ impl MemoryInterface for Z80Bus {
                 let is_data = (addr & 1) != 0;
                 
                 if is_data {
-                    self.bus.bus.borrow_mut().apu.ym2612.write_data(port as u8, value);
+                    self.bus.bus.borrow_mut().apu.fm.write_data(port as u8, value);
                 } else {
-                    self.bus.bus.borrow_mut().apu.ym2612.write_address(port as u8, value);
+                    self.bus.bus.borrow_mut().apu.fm.write_address(port as u8, value);
                 }
             }
             

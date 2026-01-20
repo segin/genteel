@@ -16,7 +16,7 @@ impl Rng {
     }
     fn next_u16(&mut self) -> u16 { (self.next() >> 16) as u16 }
     fn next_u8(&mut self) -> u8 { (self.next() >> 24) as u8 }
-    fn range(&mut self, min: u16, max: u16) -> u16 {
+    fn _range(&mut self, min: u16, max: u16) -> u16 {
         min + (self.next_u16() % (max - min))
     }
 }
@@ -103,7 +103,7 @@ fn test_ldir_exhaustive() {
         let mut cpu = z80(&[]);
         // Put Opcode at 0x100 avoids conflict usually?
         // Let's randomize PC placement too? No, keep simple.
-        let code_base = 0x0000;
+        let _code_base = 0x0000;
         cpu.memory.write_byte(0 as u32, 0xED);
         cpu.memory.write_byte(1 as u32, 0xB0); // LDIR
         cpu.pc = 0;
@@ -177,7 +177,7 @@ fn test_ldir_exhaustive() {
              
              // Check memory window
              // We can't check all 64k. Check random samples + boundaries.
-             for k in 0..50 {
+             for _k in 0..50 {
                  let offset = rng.next() as usize % 0x10000;
                  assert_eq!(cpu.memory.read_byte(offset as u32), ref_mem[offset], "Mem mismatch at {} case #{} BC={}", offset, i, bc);
              }

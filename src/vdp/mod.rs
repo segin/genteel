@@ -36,7 +36,7 @@ pub struct Vdp {
     control_address: u16,
 
     /// DMA state
-    dma_pending: bool,
+    pub dma_pending: bool,
 
     /// Status register
     status: u16,
@@ -338,9 +338,12 @@ impl Vdp {
         } else {
             // Second word of command
             self.control_address = (self.control_address & 0x3FFF) | ((value & 0x0003) << 14);
-            let cd2_3 = (value & 0x000C) as u8;
-            let cd4_5 = ((value & 0xC000) >> 10) as u8;
-            self.control_code = (self.control_code & 0x03) | cd2_3 | cd4_5;
+            
+            // Command bits CD5..CD2 are in bits 7..4 of the second word
+            // Shift right by 2 to align them to bits 5..2 of control_code
+            let cd_upper = ((value & 0x00F0) >> 2) as u8;
+            self.control_code = (self.control_code & 0x03) | cd_upper;
+            
             self.control_pending = false;
  
             // Check for DMA
@@ -365,6 +368,16 @@ impl Vdp {
             self.v_counter as u8
         };
         ((v as u16) << 8) | (h as u16)
+    }
+
+    /// Set V-counter (scanline)
+    pub fn set_v_counter(&mut self, v: u16) {
+        self.v_counter = v;
+    }
+
+    /// Set H-counter
+    pub fn set_h_counter(&mut self, h: u16) {
+        self.h_counter = h;
     }
 
     // === Rendering ===

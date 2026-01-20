@@ -97,6 +97,16 @@ impl Cpu {
         self.pc = self.memory.read_long(0x4);
         self.cycles = 0;
         self.halted = false;
+        self.pending_interrupt = 0;
+    }
+
+    /// Request an interrupt at the specified level
+    pub fn request_interrupt(&mut self, level: u8) {
+        if level > 7 { return; }
+        // Only raise priority, don't lower it (unless acknowledged)
+        if level > self.pending_interrupt {
+            self.pending_interrupt = level;
+        }
     }
 
     /// Execute a single instruction

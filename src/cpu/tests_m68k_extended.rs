@@ -245,7 +245,7 @@ proptest! {
         cpu.memory.write_word(0x100, 0xD041);
         cpu.step_instruction();
         
-        let sum = cpu.d[0] & 0xFFFF;
+        let _sum = cpu.d[0] & 0xFFFF;
         
         // SUB.W D1, D0
         cpu.pc = 0x102;

@@ -1,85 +1,104 @@
-//! Audio Processing Unit
+//! Audio Processing Unit (APU)
 //!
-//! The Genesis APU consists of:
-//! - Yamaha YM2612: 6-channel FM synthesis
-//! - Texas Instruments SN76489: 4-channel PSG (3 tone + 1 noise)
+//! The APU orchestrates the sound components:
+//! - Z80 CPU (managed separately in `src/z80`, but interfaced here if needed)
+//! - YM2612 FM Synthesizer
+//! - SN76489 PSG
+//!
+//! It handles routing of register writes and audio sample generation.
 
+pub mod sn76489;
 pub mod ym2612;
-pub mod psg;
 
-pub use ym2612::Ym2612;
-pub use psg::Psg;
+use sn76489::Sn76489;
+use ym2612::Ym2612;
 
-/// Combined APU state
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Apu {
-    /// YM2612 FM chip
-    pub ym2612: Ym2612,
-    /// SN76489 PSG chip
-    pub psg: Psg,
+    pub psg: Sn76489,
+    pub fm: Ym2612,
 }
 
 impl Apu {
-    /// Create a new APU
     pub fn new() -> Self {
         Self {
-            ym2612: Ym2612::new(),
-            psg: Psg::new(),
+            psg: Sn76489::new(),
+            fm: Ym2612::new(),
         }
     }
-    
-    /// Reset both sound chips
+
     pub fn reset(&mut self) {
-        self.ym2612.reset();
         self.psg.reset();
+        self.fm.reset();
     }
-    
-    /// Generate audio samples
-    /// 
-    /// # Arguments
-    /// * `buffer` - Output buffer for stereo samples (L, R, L, R, ...)
-    /// * `sample_count` - Number of stereo sample pairs to generate
-    pub fn generate_samples(&mut self, buffer: &mut [i16], sample_count: usize) {
-        for i in 0..sample_count {
-            let fm_sample = self.ym2612.step();
-            let psg_sample = self.psg.step();
-            
-            // Mix FM and PSG
-            let mixed = ((fm_sample as i32) + (psg_sample as i32)).clamp(i16::MIN as i32, i16::MAX as i32) as i16;
-            
-            // Stereo output (duplicate for now, proper panning later)
-            let idx = i * 2;
-            if idx + 1 < buffer.len() {
-                buffer[idx] = mixed;
-                buffer[idx + 1] = mixed;
-            }
-        }
+
+    // === PSG Interface ===
+    pub fn write_psg(&mut self, data: u8) {
+        self.psg.write(data);
+    }
+
+    // === YM2612 Interface ===
+    pub fn read_fm_status(&self) -> u8 {
+        self.fm.read_status()
+    }
+
+    pub fn write_fm_addr0(&mut self, data: u8) {
+        self.fm.write_addr0(data);
+    }
+
+    pub fn write_fm_data0(&mut self, data: u8) {
+        self.fm.write_data0(data);
+    }
+
+    pub fn write_fm_addr1(&mut self, data: u8) {
+        self.fm.write_addr1(data);
+    }
+
+    pub fn write_fm_data1(&mut self, data: u8) {
+        self.fm.write_data1(data);
+    }
+
+    /// Run one sample cycle (at ~44100Hz or system clock)
+    /// Returns a mixed sample.
+    pub fn step(&mut self) -> i16 {
+        // Placeholder: Return silence
+        // Real impl would require stepping PSG and FM generators
+        0
+    }
+}
+
+impl Default for Apu {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
-    fn test_apu_new() {
+    fn test_initialization() {
         let apu = Apu::new();
-        assert!(!apu.ym2612.dac_enable);
+        // PSG should be silent
+        assert_eq!(apu.psg.tone1_vol, 0x0F);
+        // FM status should be clean
+        assert_eq!(apu.fm.status, 0);
     }
-    
+
     #[test]
-    fn test_apu_reset() {
+    fn test_psg_passthrough() {
         let mut apu = Apu::new();
-        apu.ym2612.dac_enable = true;
-        apu.reset();
-        assert!(!apu.ym2612.dac_enable);
+        apu.write_psg(0x8F); // Latch Tone 1 Vol to 15 (Silent)
+        apu.write_psg(0x90); // Latch Tone 1 Vol to 0 (Loud)
+        assert_eq!(apu.psg.tone1_vol, 0);
     }
-    
+
     #[test]
-    fn test_apu_generate_samples() {
+    fn test_fm_passthrough() {
         let mut apu = Apu::new();
-        let mut buffer = [0i16; 64];
-        apu.generate_samples(&mut buffer, 32);
-        // Just verify it doesn't crash
+        apu.write_fm_addr0(0x28);
+        apu.write_fm_data0(0xF0); // Key on Ch 1
+        assert_eq!(apu.fm.registers[0][0x28], 0xF0);
     }
 }

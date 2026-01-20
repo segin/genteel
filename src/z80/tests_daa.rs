@@ -127,7 +127,7 @@ fn z80(program: &[u8]) -> Z80 {
 
 fn daa_full_state_space() {
     // Reference DAA implementation based on Z80 documented behavior
-    fn reference_daa(a: u8, flags: u8) -> (u8, u8) {
+    fn _reference_daa(a: u8, flags: u8) -> (u8, u8) {
         let n = (flags & flags::ADD_SUB as u8) != 0;
         let c = (flags & flags::CARRY as u8) != 0;
         let h = (flags & flags::HALF_CARRY as u8) != 0;
@@ -226,7 +226,7 @@ fn daa_full_state_space() {
             let c_flag = (f_in & flags::CARRY as u8) != 0;
             let h_flag = (f_in & flags::HALF_CARRY as u8) != 0;
             
-            let mut expected_a = a_in;
+            let expected_a;
             let mut expected_c = c_flag;
             
             let mut diff = 0;

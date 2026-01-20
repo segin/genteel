@@ -2,7 +2,7 @@
 //!
 //! Contains 100+ unit and property-based tests covering the M68k instruction set.
 
-use crate::cpu::decoder::Size;
+
 use crate::cpu::flags;
 use crate::cpu::Cpu;
 use crate::memory::{Memory, MemoryInterface};
@@ -17,7 +17,7 @@ fn create_test_cpu() -> Cpu {
     Cpu::new(Box::new(memory))
 }
 
-fn create_cpu_with_program(opcodes: &[u16]) -> Cpu {
+fn _create_cpu_with_program(opcodes: &[u16]) -> Cpu {
     let mut memory = Memory::new(0x10000);
     memory.write_long(0, 0x1000); // SP
     memory.write_long(4, 0x100);  // PC
@@ -449,7 +449,7 @@ fn test_push_pop_long_sequence() {
     
     // Push sequence
     let values = [0x11111111u32, 0x22222222, 0x33333333, 0x44444444];
-    for (i, &val) in values.iter().enumerate() {
+    for (_i, &val) in values.iter().enumerate() {
         cpu.a[7] = cpu.a[7].wrapping_sub(4);
         cpu.memory.write_long(cpu.a[7], val);
     }
