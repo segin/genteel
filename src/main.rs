@@ -163,47 +163,55 @@ impl Emulator {
         let samples_per_frame = audio::samples_per_frame() as f32;
         let samples_per_line = samples_per_frame / (LINES_PER_FRAME as f32);
         
-        let mut z80_cycles_run: f32 = 0.0;
+        let mut z80_cycle_debt: f32 = 0.0;
         
         for line in 0..LINES_PER_FRAME {
-            // Update V-counter in VDP
-            self.bus.borrow_mut().vdp.set_v_counter(line);
-            
-            // Render scanline if active
-            if line < ACTIVE_LINES {
-                self.bus.borrow_mut().vdp.render_line(line);
+            // === VDP scanline setup (single borrow) ===
+            {
+                let mut bus = self.bus.borrow_mut();
+                bus.vdp.set_v_counter(line);
+                
+                // Render scanline if active
+                if line < ACTIVE_LINES {
+                    bus.vdp.render_line(line);
+                }
+                
+                // Execute any pending DMA (TODO: proper cycle-accurate DMA)
+                if bus.vdp.dma_pending {
+                    bus.vdp.execute_dma();
+                }
             }
             
-            // Run CPU for this scanline
-            let mut cycles_scanline = 0;
+            // === CPU execution for this scanline ===
+            let mut cycles_scanline: u32 = 0;
             while cycles_scanline < CYCLES_PER_LINE {
-
-
-
-                let cycles = self.cpu.step_instruction();
-                cycles_scanline += cycles as u32;
+                let m68k_cycles = self.cpu.step_instruction();
+                cycles_scanline += m68k_cycles as u32;
                 
-                // Z80 execution
-                let bus = self.bus.borrow();
-                let z80_can_run = !bus.z80_reset && !bus.z80_bus_request;
-                drop(bus);
+                // Z80 execution - cache bus state to avoid borrow during Z80 step
+                let (z80_can_run, _z80_bus_req) = {
+                    let bus = self.bus.borrow();
+                    (!bus.z80_reset && !bus.z80_bus_request, bus.z80_bus_request)
+                };
                 
                 if z80_can_run {
-                    z80_cycles_run += (cycles as f32) * Z80_CYCLES_PER_M68K_CYCLE;
-                    while z80_cycles_run >= 1.0 {
-                        self.z80.step();
-                        z80_cycles_run -= 1.0;
+                    // Calculate Z80 cycles to run based on M68k cycles
+                    z80_cycle_debt += (m68k_cycles as f32) * Z80_CYCLES_PER_M68K_CYCLE;
+                    
+                    // Run Z80 until we've consumed the cycle debt
+                    while z80_cycle_debt >= 1.0 {
+                        let z80_cycles = self.z80.step();
+                        z80_cycle_debt -= z80_cycles as f32;
                     }
                 }
             }
             
-            // Run APU for this scanline (Interleaved)
+            // === APU sample generation (single borrow) ===
             self.apu_accumulator += samples_per_line;
             let samples_to_run = self.apu_accumulator as usize;
             if samples_to_run > 0 {
                 self.apu_accumulator -= samples_to_run as f32;
                 
-                // Borrow bus only for APU step
                 let mut bus = self.bus.borrow_mut();
                 for _ in 0..samples_to_run {
                     let sample = bus.apu.step();
@@ -213,41 +221,34 @@ impl Emulator {
                 }
             }
             
-            // Handle Interrupts
-            let bus = self.bus.borrow();
-            
-            // VBlank Interrupt (Level 6) - Triggered at start of VBlank (line 224)
-            if line == ACTIVE_LINES {
-                // vdp.status |= 0x0008; // VBlank flag is handled by read_status using v_counter
-                // Check if VInterrupt enabled (Reg 1, bit 5)
-                if (bus.vdp.mode2() & 0x20) != 0 {
-                    self.cpu.request_interrupt(6);
-                }
-            }
-            
-            // HBlank Interrupt (Level 4) - Triggered at end of active lines
-            if line < ACTIVE_LINES {
-                // Check if HInterrupt enabled (Reg 0, bit 4)
-                if (bus.vdp.mode1() & 0x10) != 0 {
-                    // Start of HBlank?
-                    // HCounter logic would trigger here
-                     // For now, simplify: trigger if enabled and line counter expiration logic matches
-                     // But strictly, HInt happens every line if enabled? Or based on HInt Counter?
-                     // Reg 10 is HInt Counter.
-                     
-                    let h_counter = bus.vdp.hint_counter();
-                    if h_counter == 0 {
-                        // Reload counter
-                        // TODO: Implement proper HInt counter reloading from Reg 10
-                        self.cpu.request_interrupt(4);
-                    } else {
-                        // Decrement? VDP should handle this state.
-                        // For MVP, trigger HInt every line if enabled to unblock games use it for timing
-                        // self.cpu.request_interrupt(4);
+            // === Interrupt handling (single borrow) ===
+            {
+                let mut bus = self.bus.borrow_mut();
+                
+                // VBlank Interrupt (Level 6) - Triggered at start of VBlank (line 224)
+                if line == ACTIVE_LINES {
+                    // Check if VInterrupt enabled (Reg 1, bit 5)
+                    if (bus.vdp.mode2() & 0x20) != 0 {
+                        self.cpu.request_interrupt(6);
                     }
-                    
-                    // Force HInt for now if enabled, many games need it for raster effects
-                    self.cpu.request_interrupt(4); 
+                }
+                
+                // HBlank Interrupt (Level 4) - Proper counter logic
+                if line < ACTIVE_LINES {
+                    // Check if HInterrupt enabled (Reg 0, bit 4)
+                    if (bus.vdp.mode1() & 0x10) != 0 {
+                        // Decrement line counter
+                        if bus.vdp.line_counter == 0 {
+                            // Counter expired - trigger HInt and reload
+                            self.cpu.request_interrupt(4);
+                            bus.vdp.line_counter = bus.vdp.registers[10];
+                        } else {
+                            bus.vdp.line_counter = bus.vdp.line_counter.saturating_sub(1);
+                        }
+                    }
+                } else {
+                    // During VBlank, reload HInt counter every line
+                    bus.vdp.line_counter = bus.vdp.registers[10];
                 }
             }
         }

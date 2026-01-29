@@ -12,6 +12,8 @@ pub mod ym2612;
 
 use sn76489::Sn76489;
 use ym2612::Ym2612;
+use crate::debugger::Debuggable;
+use serde_json::{json, Value};
 
 #[derive(Debug)]
 pub struct Apu {
@@ -64,6 +66,28 @@ impl Apu {
         // Placeholder: Return silence
         // Real impl would require stepping PSG and FM generators
         0
+    }
+}
+
+impl Debuggable for Apu {
+    fn read_state(&self) -> Value {
+        json!({
+            "psg": {
+                "tone1_freq": self.psg.tone1_freq,
+                "tone1_vol": self.psg.tone1_vol,
+                "tone2_freq": self.psg.tone2_freq,
+                "tone3_freq": self.psg.tone3_freq,
+                "noise_ctrl": self.psg.noise_ctrl,
+            },
+            "fm": {
+                "status": self.fm.status,
+                // Dumping all registers is too heavy, maybe just status
+            }
+        })
+    }
+
+    fn write_state(&mut self, _state: &Value) {
+        // Read-only for now
     }
 }
 

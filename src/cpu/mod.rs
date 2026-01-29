@@ -36,6 +36,7 @@ pub mod flags {
     pub const TRACE: u16 = 0x8000;      // T - Trace mode
 }
 
+/// Motorola 68000 Central Processing Unit
 #[derive(Debug)]
 pub struct Cpu {
     // Registers
@@ -60,6 +61,9 @@ pub struct Cpu {
     // Pending interrupt level (0-7, 0 = none)
     pub pending_interrupt: u8,
     pub pending_exception: bool,
+    
+    // Interrupt pending bitmask (bit N = level N is pending)
+    pub interrupt_pending_mask: u8,
 }
 
 impl Cpu {
@@ -76,6 +80,7 @@ impl Cpu {
             halted: false,
             pending_interrupt: 0,
             pending_exception: false,
+            interrupt_pending_mask: 0,
         };
 
         // At startup, the supervisor stack pointer is read from address 0x00000000
@@ -98,15 +103,38 @@ impl Cpu {
         self.cycles = 0;
         self.halted = false;
         self.pending_interrupt = 0;
+        self.interrupt_pending_mask = 0;
     }
 
     /// Request an interrupt at the specified level
+    /// Uses a bitmask to queue multiple interrupt levels
     pub fn request_interrupt(&mut self, level: u8) {
-        if level > 7 { return; }
-        // Only raise priority, don't lower it (unless acknowledged)
-        if level > self.pending_interrupt {
-            self.pending_interrupt = level;
+        if level == 0 || level > 7 { return; }
+        // Set the bit for this interrupt level
+        self.interrupt_pending_mask |= 1 << level;
+        // Update pending_interrupt to highest priority
+        self.update_pending_interrupt();
+    }
+    
+    /// Update pending_interrupt to highest priority level from bitmask
+    fn update_pending_interrupt(&mut self) {
+        // Find highest set bit in mask
+        for level in (1..=7).rev() {
+            if (self.interrupt_pending_mask & (1 << level)) != 0 {
+                self.pending_interrupt = level;
+                return;
+            }
         }
+        self.pending_interrupt = 0;
+    }
+    
+    /// Acknowledge an interrupt (called after processing)
+    pub fn acknowledge_interrupt(&mut self, level: u8) {
+        if level > 7 { return; }
+        // Clear the bit for this interrupt level
+        self.interrupt_pending_mask &= !(1 << level);
+        // Update to next highest priority
+        self.update_pending_interrupt();
     }
 
     /// Execute a single instruction
@@ -2012,7 +2040,7 @@ impl Cpu {
         // Level 7 is non-maskable (NMI)
         if self.pending_interrupt > current_mask as u8 || self.pending_interrupt == 7 {
             let level = self.pending_interrupt;
-            self.pending_interrupt = 0; // Clear pending
+            self.acknowledge_interrupt(level); // Use new queuing system
             self.halted = false;       // Wake if halted
             
             // Interrupt Exception Processing

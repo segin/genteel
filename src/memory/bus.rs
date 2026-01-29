@@ -24,6 +24,8 @@ use super::MemoryInterface;
 use crate::vdp::Vdp;
 use crate::io::Io;
 use crate::apu::Apu;
+use crate::debugger::Debuggable;
+use serde_json::{json, Value};
 
 /// Sega Genesis Memory Bus
 ///
@@ -376,6 +378,21 @@ impl MemoryInterface for Bus {
 impl Default for Bus {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Debuggable for Bus {
+    fn read_state(&self) -> Value {
+        json!({
+            "z80_bus_request": self.z80_bus_request,
+            "z80_reset": self.z80_reset,
+            "tmss_unlocked": self.tmss_unlocked,
+            // Sub-components are debugged separately usually, but we could link them
+        })
+    }
+
+    fn write_state(&mut self, _state: &Value) {
+        // Bus state write not supported
     }
 }
 

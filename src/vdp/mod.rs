@@ -12,9 +12,12 @@
 //! |:-----------------|:-------------------------------|
 //! | 0xC00000-0xC00003| Data Port (read/write VRAM)    |
 //! | 0xC00004-0xC00007| Control Port (commands/status) |
-//! | 0xC00008-0xC0000F| H/V Counter                    |
+//! | 0xC00008-0xC0000F| H/V Couse std::rc::Rc;
+// use std::cell::RefCell;
+use crate::debugger::Debuggable;
+use serde_json::{json, Value};
 
-/// Video Display Processor
+/// Video Display Processor (VDP)
 #[derive(Debug)]
 pub struct Vdp {
     /// Video RAM (64KB) - stores tile patterns and nametables
@@ -46,7 +49,7 @@ pub struct Vdp {
     v_counter: u16,
 
     /// Internal line counter for HINT
-    line_counter: u8,
+    pub line_counter: u8,
 
     /// Framebuffer (320×224 pixels, 2 bytes per pixel for RGB565)
     pub framebuffer: Vec<u16>,
@@ -592,6 +595,76 @@ impl Vdp {
             self.render_line(line);
         }
     }
+    
+    /// Execute pending DMA operation
+    /// Returns the number of bytes transferred (for cycle timing)
+    pub fn execute_dma(&mut self) -> u32 {
+        if !self.dma_pending {
+            return 0;
+        }
+        
+        // DMA type is in register 23 bits 6-7
+        let dma_type = (self.registers[23] >> 6) & 0x03;
+        
+        // DMA length from registers 19-20 (in words for most modes)
+        let dma_length = ((self.registers[20] as u32) << 8) | (self.registers[19] as u32);
+        if dma_length == 0 {
+            self.dma_pending = false;
+            return 0;
+        }
+        
+        // DMA source from registers 21-23 (bits 0-5 of reg 23)
+        let dma_source = ((self.registers[23] as u32 & 0x3F) << 16)
+            | ((self.registers[22] as u32) << 8)
+            | (self.registers[21] as u32);
+        
+        let bytes_transferred = match dma_type {
+            0 | 1 => {
+                // 68k to VRAM/CRAM/VSRAM - requires bus access (handled externally)
+                // This mode needs M68k bus access which we don't have here
+                // For now, just clear the pending flag - actual transfer should be
+                // done by the main loop with bus access
+                0
+            }
+            2 => {
+                // VRAM Fill
+                // Fill data is the LSB of the last data written
+                let fill_data = 0; // Would need to track last data write
+                let dest_code = self.control_code & 0x0F;
+                
+                if dest_code == 0x01 {
+                    // VRAM fill
+                    for i in 0..dma_length {
+                        let addr = (self.control_address as u32 + i) as usize & 0xFFFF;
+                        self.vram[addr] = fill_data;
+                    }
+                }
+                
+                self.dma_pending = false;
+                dma_length
+            }
+            3 => {
+                // VRAM Copy
+                let mut src = (dma_source as usize) & 0xFFFF;
+                let mut dst = self.control_address as usize;
+                
+                for _ in 0..dma_length {
+                    self.vram[dst & 0xFFFF] = self.vram[src & 0xFFFF];
+                    src = src.wrapping_add(1);
+                    dst = dst.wrapping_add(self.auto_increment() as usize);
+                }
+                
+                self.dma_pending = false;
+                dma_length
+            }
+            _ => {
+                self.dma_pending = false;
+                0
+            }
+        };
+        
+        bytes_transferred
+    }
 }
 
 impl Default for Vdp {
@@ -793,5 +866,27 @@ mod tests {
         
         // Pixel at (10, 10) should be Blue (0x001F in RGB565)
         assert_eq!(vdp.framebuffer[320 * 10 + 10], 0x001F);
+    }
+}
+
+impl Debuggable for Vdp {
+    fn read_state(&self) -> Value {
+        json!({
+            "v_counter": self.v_counter,
+            "h_counter": self.h_counter,
+            "status": self.status,
+            "mode1": self.registers[0],
+            "mode2": self.registers[1],
+            "mode3": self.registers[11],
+            "mode4": self.registers[12],
+            "dma_pending": self.dma_pending,
+            "control_pending": self.control_pending,
+            "control_code": self.control_code,
+            "control_address": self.control_address,
+        })
+    }
+
+    fn write_state(&mut self, _state: &Value) {
+        // VDP state write not fully supported yet
     }
 }

@@ -17,7 +17,10 @@ pub mod flags {
     pub const SIGN: u8 = 0b1000_0000;       // S - Sign flag
 }
 
-/// Z80 CPU state
+use crate::debugger::Debuggable;
+use serde_json::{json, Value};
+
+/// Z80 CPU
 #[derive(Debug)]
 pub struct Z80 {
     // Main registers
@@ -1781,3 +1784,36 @@ mod tests_torture;
 
 #[cfg(test)]
 mod tests_gaps;
+
+impl Debuggable for Z80 {
+    fn read_state(&self) -> Value {
+        json!({
+            "a": self.a,
+            "f": self.f,
+            "b": self.b,
+            "c": self.c,
+            "d": self.d,
+            "e": self.e,
+            "h": self.h,
+            "l": self.l,
+            "pc": self.pc,
+            "sp": self.sp,
+            "ix": self.ix,
+            "iy": self.iy,
+            "i": self.i,
+            "r": self.r,
+            "im": self.im,
+            "iff1": self.iff1,
+            "iff2": self.iff2,
+        })
+    }
+
+    fn write_state(&mut self, state: &Value) {
+        if let Some(pc) = state["pc"].as_u64() {
+            self.pc = pc as u16;
+        }
+        if let Some(sp) = state["sp"].as_u64() {
+            self.sp = sp as u16;
+        }
+    }
+}
