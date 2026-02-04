@@ -3,7 +3,7 @@
 //! The Z80 is used as a sound co-processor in the Sega Genesis, running at 3.58 MHz.
 //! It has access to 8KB of dedicated sound RAM and controls the YM2612 and SN76489.
 
-use crate::memory::MemoryInterface;
+use crate::memory::{MemoryInterface, IoInterface};
 
 /// Z80 Flag bits in the F register
 pub mod flags {
@@ -74,12 +74,18 @@ pub struct Z80 {
     // Memory (trait object for flexibility)
     pub memory: Box<dyn MemoryInterface>,
 
+    // I/O (trait object for flexibility)
+    pub io: Box<dyn IoInterface>,
+
     // Cycle counter for timing
     pub cycles: u64,
+
+    // Debug flag
+    pub debug: bool,
 }
 
 impl Z80 {
-    pub fn new(memory: Box<dyn MemoryInterface>) -> Self {
+    pub fn new(memory: Box<dyn MemoryInterface>, io: Box<dyn IoInterface>) -> Self {
         Self {
             a: 0xFF, f: 0xFF, b: 0, c: 0, d: 0, e: 0, h: 0, l: 0,
             a_prime: 0, f_prime: 0, b_prime: 0, c_prime: 0, d_prime: 0, e_prime: 0, h_prime: 0, l_prime: 0,
@@ -92,7 +98,9 @@ impl Z80 {
             halted: false,
             pending_ei: false,
             memory,
+            io,
             cycles: 0,
+            debug: false,
         }
     }
 
@@ -213,6 +221,16 @@ impl Z80 {
     fn write_word(&mut self, addr: u16, value: u16) {
         self.write_byte(addr, value as u8);
         self.write_byte(addr.wrapping_add(1), (value >> 8) as u8);
+    }
+
+    // ========== I/O access helpers ==========
+
+    fn read_port(&mut self, port: u16) -> u8 {
+        self.io.read_port(port)
+    }
+
+    fn write_port(&mut self, port: u16, value: u8) {
+        self.io.write_port(port, value);
     }
 
     fn push(&mut self, value: u16) {
@@ -575,7 +593,13 @@ impl Z80 {
         let _interrupts_inhibited = self.pending_ei;
         self.pending_ei = false;
 
+        let _pc_before = self.pc;
         let opcode = self.fetch_byte();
+        
+        if self.debug {
+            eprintln!("DEBUG: Z80 STEP: PC=0x{:04X} Op=0x{:02X} A={:02X} F={:02X} BC={:04X} DE={:04X} HL={:04X} SP={:04X} CYC={}", 
+                _pc_before, opcode, self.a, self.f, self.bc(), self.de(), self.hl(), self.sp, self.cycles);
+        }
         
         let x = (opcode >> 6) & 0x03;
         let y = (opcode >> 3) & 0x07;
@@ -869,14 +893,15 @@ impl Z80 {
                 }
                 1 => self.execute_cb_prefix(),
                 2 => { // OUT (n), A
-                    let _port = self.fetch_byte();
-                    // TODO: I/O implementation
+                    let n = self.fetch_byte();
+                    let port = (n as u16) | ((self.a as u16) << 8);
+                    self.write_port(port, self.a);
                     11
                 }
                 3 => { // IN A, (n)
-                    let _port = self.fetch_byte();
-                    // TODO: I/O implementation
-                    self.a = 0xFF;
+                    let n = self.fetch_byte();
+                    let port = (n as u16) | ((self.a as u16) << 8);
+                    self.a = self.read_port(port);
                     11
                 }
                 4 => { // EX (SP), HL
@@ -1079,8 +1104,8 @@ impl Z80 {
         match x {
             1 => match z {
                 0 => { // IN r, (C)
-                    // TODO: I/O implementation
-                    let val = 0xFF; 
+                    let port = self.bc();
+                    let val = self.read_port(port);
                     if y != 6 {
                         self.set_reg(y, val);
                     }
@@ -1091,7 +1116,9 @@ impl Z80 {
                     12
                 }
                 1 => { // OUT (C), r
-                    // TODO: I/O implementation
+                    let port = self.bc();
+                    let val = if y == 6 { 0 } else { self.get_reg(y) };
+                    self.write_port(port, val);
                     12
                 }
                 2 => if q == 0 {
@@ -1331,31 +1358,11 @@ impl Z80 {
 
     fn execute_ini_ind(&mut self, y: u8) -> u8 {
         // INI (y=4), IND (y=5), INIR (y=6), INDR (y=7)
-        // c <- (c) -- done via IO port (BC) but only C is used for port usually in Z80 IO? 
-        // Actually for block IO: Port is BC.
-        // HL points to memory.
         
-        let _bc = self.bc();
+        let port = self.bc();
         let hl = self.hl();
         
-        // Z80 behavior:
-        // 1. Read byte from port (C) - wait, manual says port is BC usually? 
-        //    Actually documentation says "The contents of register C are placed on the bottom half (A0..A7) of the address bus... B is placed on top half". So port=BC.
-        // 2. Store to (HL)
-        // 3. Decrement B (not BC!)
-        // 4. HL +/- 1
-        
-        // As we don't have real IO, we mock it or use a callback?
-        // Since we are adding tests, we need some IO mechanism.
-        // For now, let's assume valid IO read returns 0xFF or some pattern?
-        // Wait, the user wants us to TEST this. If IO is not hooked up, we can't test data flow.
-        // But we can test register side effects.
-        // To make it testable, let's define a simple "io_read(port)" method stub we can mock or just return 0 for now.
-        // Ideally the Z80 struct has a trait or callback for IO.
-        // Looking at struct definition might help, but I'll assume 0xFF for now for read.
-        
-        let io_val = 0xFF; // TODO: Real IO
-        
+        let io_val = self.read_port(port);
         self.write_byte(hl, io_val);
         
         let b = self.b.wrapping_sub(1);
@@ -1381,16 +1388,12 @@ impl Z80 {
 
     fn execute_outi_outd(&mut self, y: u8) -> u8 {
         // OUTI (y=4), OUTD (y=5), OTIR (y=6), OTDR (y=7)
-        // 1. Read from (HL)
-        // 2. Write to port (C) or (BC)
-        // 3. Dec B
-        // 4. HL +/- 1
         
         let hl = self.hl();
-        let _val = self.read_byte(hl);
+        let val = self.read_byte(hl);
         
-        // IO Write val to port BC
-        // TODO: Real IO
+        let port = self.bc();
+        self.write_port(port, val);
         
         let b = self.b.wrapping_sub(1);
         self.b = b;
@@ -1784,6 +1787,17 @@ mod tests_torture;
 
 #[cfg(test)]
 mod tests_gaps;
+
+#[cfg(test)]
+pub mod test_utils {
+    use crate::memory::IoInterface;
+    #[derive(Debug, Default)]
+    pub struct TestIo;
+    impl IoInterface for TestIo {
+        fn read_port(&mut self, _port: u16) -> u8 { 0xFF }
+        fn write_port(&mut self, _port: u16, _value: u8) {}
+    }
+}
 
 impl Debuggable for Z80 {
     fn read_state(&self) -> Value {

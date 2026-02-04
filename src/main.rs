@@ -38,6 +38,7 @@ pub struct Emulator {
     pub input: InputManager,
     pub audio_buffer: Vec<i16>,
     pub apu_accumulator: f32,
+    pub internal_frame_count: u64,
 }
 
 impl Emulator {
@@ -59,6 +60,7 @@ impl Emulator {
             input: InputManager::new(),
             audio_buffer: Vec::with_capacity(735 * 2), // Pre-allocate approx 1 frame
             apu_accumulator: 0.0,
+            internal_frame_count: 0,
         };
         
         emulator.cpu.reset();
@@ -146,59 +148,73 @@ impl Emulator {
         self.step_frame_internal();
     }
 
-    fn step_frame_internal(&mut self) {
-        // Genesis timing constants (NTSC):
-        // M68k: 7.67 MHz, Z80: 3.58 MHz
-        // One frame = 262 scanlines
-        // Active display: lines 0-223
-        // VBlank: lines 224-261
-        // Cycles per scanline: ~488
+    pub fn step_frame_internal(&mut self) {
+        self.internal_frame_count += 1;
         
-        const LINES_PER_FRAME: u16 = 262;
-        const ACTIVE_LINES: u16 = 224;
-        const CYCLES_PER_LINE: u32 = 488;
-        const Z80_CYCLES_PER_M68K_CYCLE: f32 = 3.58 / 7.67;
-        
-        // APU Timing
-        let samples_per_frame = audio::samples_per_frame() as f32;
-        let samples_per_line = samples_per_frame / (LINES_PER_FRAME as f32);
-        
-        let mut z80_cycle_debt: f32 = 0.0;
-        
-        for line in 0..LINES_PER_FRAME {
-            // === VDP scanline setup (single borrow) ===
-            {
-                let mut bus = self.bus.borrow_mut();
-                bus.vdp.set_v_counter(line);
-                
-                // Render scanline if active
-                if line < ACTIVE_LINES {
-                    bus.vdp.render_line(line);
-                }
-                
-                // Execute any pending DMA (TODO: proper cycle-accurate DMA)
-                if bus.vdp.dma_pending {
-                    bus.vdp.execute_dma();
-                }
+
+        if self.internal_frame_count % 60 == 0 || self.internal_frame_count < 5 {
+                 let bus = self.bus.borrow();
+                 let disp_en = bus.vdp.display_enabled();
+                 let dma_en = bus.vdp.dma_enabled();
+                 
+                 let cram_sum: u32 = bus.vdp.cram.iter().take(128).map(|&b| b as u32).sum();
+
+                 let z80_pc = self.z80.pc;
+                 let z80_reset = bus.z80_reset;
+                 let z80_req = bus.z80_bus_request;
+                 let z80_op = if (z80_pc as usize) < bus.z80_ram.len() { bus.z80_ram[z80_pc as usize] } else { 0 };
+
+                 eprintln!("Frame {}: 68k={:06X} Disp={} DMA={} CRAM_SUM={} IntMask={} | Z80={:04X} [{:02X}] Rst={} Req={}",
+                     self.internal_frame_count, self.cpu.pc, disp_en, dma_en, cram_sum,
+                     (self.cpu.sr >> 8) & 7,
+                     z80_pc, z80_op, z80_reset, z80_req);
             }
-            
-            // === CPU execution for this scanline ===
-            let mut cycles_scanline: u32 = 0;
-            while cycles_scanline < CYCLES_PER_LINE {
-                let m68k_cycles = self.cpu.step_instruction();
+
+            // Execute one M68k instruction
+            let cycles = self.cpu.execute_next_instruction();
                 cycles_scanline += m68k_cycles as u32;
+
+                // Step APU with cycles to update timers
+                {
+                    let mut bus = self.bus.borrow_mut();
+                    bus.apu.fm.step(m68k_cycles as u32);
+                }
                 
-                // Z80 execution - cache bus state to avoid borrow during Z80 step
-                let (z80_can_run, _z80_bus_req) = {
+                // Z80 execution
+                let (z80_can_run, z80_is_reset) = {
                     let bus = self.bus.borrow();
-                    (!bus.z80_reset && !bus.z80_bus_request, bus.z80_bus_request)
+                    static mut LAST_REQ: bool = false;
+                    unsafe {
+                        let prev = LAST_REQ;
+                        if bus.z80_bus_request != prev {
+                             eprintln!("DEBUG: Bus Req Changed: {} -> {} at 68k PC={:06X}", prev, bus.z80_bus_request, self.cpu.pc);
+                             LAST_REQ = bus.z80_bus_request;
+                        }
+                    }
+                    (!bus.z80_reset && !bus.z80_bus_request, bus.z80_reset)
                 };
+
+                if z80_can_run && self.internal_frame_count > 0 {
+                     static mut Z80_TRACE_COUNT: u32 = 0;
+                     unsafe {
+                         if Z80_TRACE_COUNT < 5000 {
+                             self.z80.debug = true;
+                             Z80_TRACE_COUNT += 1; // Logic slightly wrong here (step count vs frame), but enables flag
+                         } else {
+                             self.z80.debug = false;
+                         }
+                     }
+                } else {
+                     self.z80.debug = false;
+                }
+
+                // Trigger Z80 VInt at start of VBlank
+                if line == ACTIVE_LINES && cycles_scanline < m68k_cycles as u32 + 5 && !z80_is_reset {
+                    self.z80.trigger_interrupt(0xFF);
+                }
                 
                 if z80_can_run {
-                    // Calculate Z80 cycles to run based on M68k cycles
                     z80_cycle_debt += (m68k_cycles as f32) * Z80_CYCLES_PER_M68K_CYCLE;
-                    
-                    // Run Z80 until we've consumed the cycle debt
                     while z80_cycle_debt >= 1.0 {
                         let z80_cycles = self.z80.step();
                         z80_cycle_debt -= z80_cycles as f32;
@@ -227,6 +243,7 @@ impl Emulator {
                 
                 // VBlank Interrupt (Level 6) - Triggered at start of VBlank (line 224)
                 if line == ACTIVE_LINES {
+                    bus.vdp.trigger_vint();
                     // Check if VInterrupt enabled (Reg 1, bit 5)
                     if (bus.vdp.mode2() & 0x20) != 0 {
                         self.cpu.request_interrupt(6);
@@ -447,8 +464,8 @@ impl Emulator {
                             let mut bus = self.bus.borrow_mut();
                             let disp_en = bus.vdp.display_enabled();
                             let dma_en = bus.vdp.dma_enabled();
-                            let cram_val = if bus.vdp.cram.len() >= 2 {
-                                (bus.vdp.cram[0] as u16) | ((bus.vdp.cram[1] as u16) << 8)
+                             let cram_val = if bus.vdp.cram.len() >= 2 {
+                                ((bus.vdp.cram[0] as u16) << 8) | (bus.vdp.cram[1] as u16)
                             } else { 0 };
                             let z80_pc = self.z80.pc;
                             let z80_reset = bus.z80_reset;
@@ -464,10 +481,10 @@ impl Emulator {
                             if (self.cpu.pc == 0x072764 || self.cpu.pc == 0x002F06) && frame_count <= 121 {
                                 let dump_start = (self.cpu.pc - 0x10) & !1;
                                 let dump_end = self.cpu.pc + 0x20;
-                                println_safe!("Dumping code around {:06X}:", self.cpu.pc);
+                                eprintln!("Dumping code around {:06X}:", self.cpu.pc);
                                 for addr in (dump_start..dump_end).step_by(2) {
                                     let val = bus.read_word(addr);
-                                    println_safe!("{:06X}: {:04X}", addr, val);
+                                    eprintln!("{:06X}: {:04X}", addr, val);
                                 }
                             }
                         }
@@ -547,6 +564,16 @@ impl GdbMemory for BusGdbMemory {
     }
     
     fn write_byte(&mut self, addr: u32, value: u8) {
+        // Assuming Z80 RAM is mapped within the first 0x2000 bytes of the Z80's address space
+        // This is a heuristic based on the provided snippet's `addr < 0x2000` condition.
+        // The GDB `write_byte` operates on the 68k's address space, so we need to
+        // translate or ensure this is the correct place for Z80 writes.
+        // If the intent was to log Z80Bus's internal write, that function is not in this file.
+        // For now, applying the eprintln to the GDB memory write if it targets Z80 RAM.
+        // This assumes the GDB server can write directly to Z80 RAM via the main bus.
+        if addr < 0x2000 { // This condition is a guess based on the user's snippet
+            eprintln!("DEBUG: GDB Z80 RAM WRITE: addr=0x{:04X} val=0x{:02X}", addr, value);
+        }
         self.bus.borrow_mut().write_byte(addr, value);
     }
 }

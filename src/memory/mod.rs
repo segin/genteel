@@ -39,6 +39,10 @@ pub trait MemoryInterface: std::fmt::Debug {
     }
 }
 
+pub trait IoInterface: std::fmt::Debug {
+    fn read_port(&mut self, port: u16) -> u8;
+    fn write_port(&mut self, port: u16, value: u8);
+}
 
 // Blanket impl for Box<dyn MemoryInterface>
 impl MemoryInterface for Box<dyn MemoryInterface> {
@@ -59,6 +63,16 @@ impl MemoryInterface for Box<dyn MemoryInterface> {
     }
     fn write_long(&mut self, address: u32, value: u32) {
         (**self).write_long(address, value);
+    }
+}
+
+// Blanket impl for Box<dyn IoInterface>
+impl IoInterface for Box<dyn IoInterface> {
+    fn read_port(&mut self, port: u16) -> u8 {
+        (**self).read_port(port)
+    }
+    fn write_port(&mut self, port: u16, value: u8) {
+        (**self).write_port(port, value);
     }
 }
 
