@@ -19,6 +19,8 @@ mod tests_m68k_shift;
 mod tests_m68k_bits;
 #[cfg(test)]
 mod tests_m68k_control;
+#[cfg(test)]
+mod tests_bug_fixes;
 
 use crate::memory::MemoryInterface;
 use decoder::{decode, Instruction, Size, AddressingMode, Condition, ShiftCount, BitSource};
@@ -434,27 +436,7 @@ impl Cpu {
     fn exec_clr(&mut self, size: Size, dst: AddressingMode) -> u32 {
         let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
 
-        // Handle pre-decrement
-        if let AddressingMode::AddressPreDecrement(reg) = dst {
-            let dec = match size {
-                Size::Byte => if reg == 7 { 2 } else { 1 },
-                Size::Word => 2,
-                Size::Long => 4,
-            };
-            self.a[reg as usize] = self.a[reg as usize].wrapping_sub(dec);
-        }
-
         self.cpu_write_ea(dst_ea, size, 0);
-
-        // Handle post-increment
-        if let AddressingMode::AddressPostIncrement(reg) = dst {
-            let inc = match size {
-                Size::Byte => if reg == 7 { 2 } else { 1 },
-                Size::Word => 2,
-                Size::Long => 4,
-            };
-            self.a[reg as usize] = self.a[reg as usize].wrapping_add(inc);
-        }
 
         // CLR always sets Z=1, N=0, V=0, C=0
         self.sr = (self.sr & !0x000F) | flags::ZERO;
