@@ -24,7 +24,7 @@ impl XorShift64 {
 
 fn z80_setup() -> Z80 {
     let m = Memory::new(0x10000);
-    Z80::new(Box::new(m))
+    Z80::new(Box::new(m), Box::new(crate::z80::test_utils::TestIo::default()))
 }
 
 // ============ Reference Models ============

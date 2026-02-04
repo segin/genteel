@@ -24,7 +24,7 @@ impl Rng {
 fn z80(program: &[u8]) -> Z80 {
     let mut m = Memory::new(0x10000);
     for (i, &b) in program.iter().enumerate() { m.data[i] = b; }
-    Z80::new(Box::new(m))
+    Z80::new(Box::new(m), Box::new(crate::z80::test_utils::TestIo::default()))
 }
 
 /// Snapshot memory contents into a Vec for reference comparison

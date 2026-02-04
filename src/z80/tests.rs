@@ -8,7 +8,7 @@ fn create_z80(program: &[u8]) -> Z80 {
     for (i, &byte) in program.iter().enumerate() {
         memory.data[i] = byte;
     }
-    Z80::new(Box::new(memory))
+    Z80::new(Box::new(memory), Box::new(crate::z80::test_utils::TestIo::default()))
 }
 
 
