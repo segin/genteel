@@ -50,7 +50,16 @@ impl Emulator {
         
         // Z80 uses Z80Bus which routes to sound chips and banked 68k memory
         let z80_bus = Z80Bus::new(SharedBus::new(bus.clone()));
-        let z80 = Z80::new(Box::new(z80_bus));
+        
+        // Temporary null I/O implementation for Z80 ports
+        #[derive(Debug)]
+        struct NullIo;
+        impl crate::memory::IoInterface for NullIo {
+            fn read_port(&mut self, _port: u16) -> u8 { 0xFF }
+            fn write_port(&mut self, _port: u16, _value: u8) {}
+        }
+        
+        let z80 = Z80::new(Box::new(z80_bus), Box::new(NullIo));
 
         let mut emulator = Self {
             cpu,
@@ -170,8 +179,40 @@ impl Emulator {
                      z80_pc, z80_op, z80_reset, z80_req);
             }
 
-            // Execute one M68k instruction
-            let cycles = self.cpu.execute_next_instruction();
+        // Genesis timing constants (NTSC):
+        // M68k: 7.67 MHz, Z80: 3.58 MHz
+        // One frame = 262 scanlines
+        // Active display: lines 0-223
+        // VBlank: lines 224-261
+        // Cycles per scanline: ~488
+        
+        const LINES_PER_FRAME: u16 = 262;
+        const ACTIVE_LINES: u16 = 224;
+        const CYCLES_PER_LINE: u32 = 488;
+        const Z80_CYCLES_PER_M68K_CYCLE: f32 = 3.58 / 7.67;
+        
+        // APU Timing
+        let samples_per_frame = audio::samples_per_frame() as f32;
+        let samples_per_line = samples_per_frame / (LINES_PER_FRAME as f32);
+        
+        let mut z80_cycle_debt: f32 = 0.0;
+        
+        for line in 0..LINES_PER_FRAME {
+            // === VDP scanline setup (single borrow) ===
+            {
+                let mut bus = self.bus.borrow_mut();
+                bus.vdp.set_v_counter(line);
+                
+                // Render scanline if active
+                if line < ACTIVE_LINES {
+                    bus.vdp.render_line(line);
+                }
+            }
+
+            // === CPU execution for this scanline ===
+            let mut cycles_scanline: u32 = 0;
+            while cycles_scanline < CYCLES_PER_LINE {
+                let m68k_cycles = self.cpu.step_instruction();
                 cycles_scanline += m68k_cycles as u32;
 
                 // Step APU with cycles to update timers

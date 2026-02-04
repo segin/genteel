@@ -303,9 +303,7 @@ impl Cpu {
             Instruction::Illegal => self.process_exception(4),
             Instruction::LineA { opcode: _ } => self.process_exception(10),
             Instruction::LineF { opcode: _ } => self.process_exception(11),
-            Instruction::Unimplemented { opcode } => {
-                #[cfg(debug_assertions)]
-                eprintln!("Unimplemented opcode: {:04X} at PC {:08X}", opcode, self.pc.wrapping_sub(2));
+            Instruction::Unimplemented { opcode: _ } => {
                 self.process_exception(4)
             }
         }
