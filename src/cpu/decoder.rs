@@ -701,6 +701,11 @@ fn decode_group_5(opcode: u16) -> Instruction {
 
     if let Some(size) = Size::from_bits(size_bits) {
         if let Some(dst) = AddressingMode::from_mode_reg(mode, reg) {
+            // Check for illegal Byte operation on Address Register
+            if size == Size::Byte && matches!(dst, AddressingMode::AddressRegister(_)) {
+                return Instruction::Illegal;
+            }
+
             let is_sub = (opcode >> 8) & 0x01 != 0;
             if is_sub {
                 return Instruction::SubQ { size, dst, data };
