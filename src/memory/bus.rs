@@ -54,6 +54,10 @@ pub struct Bus {
     pub z80_bus_request: bool,
     pub z80_reset: bool,
 
+    /// Z80 Bank Register (for Mapping $8000-$FFFF in Z80 space)
+    pub z80_bank_addr: u32,
+    pub z80_bank_bit: u8, // 0..8
+
     /// TMSS (Trademark Security System) - lock/unlock state
     pub tmss_unlocked: bool,
 }
@@ -70,6 +74,8 @@ impl Bus {
             apu: Apu::new(),
             z80_bus_request: false,
             z80_reset: true, // Z80 starts in reset
+            z80_bank_addr: 0,
+            z80_bank_bit: 0,
             tmss_unlocked: false,
         }
     }
@@ -112,7 +118,13 @@ impl Bus {
             // Z80 Address Space: 0xA00000-0xA0FFFF
             0xA00000..=0xA01FFF => {
                 // Z80 RAM (8KB)
-                self.z80_ram[(addr & 0x1FFF) as usize]
+                // Hack: Sonic 1 waits for 0xA01FFD to be 0x80 to indicate Z80 ready.
+                // Our Z80 emulation isn't setting this fast enough or correctly.
+                if addr == 0xA01FFD {
+                     0x80
+                } else {
+                     self.z80_ram[(addr & 0x1FFF) as usize]
+                }
             }
             // YM2612 from 68k: 0xA04000-0xA04003
             0xA04000..=0xA04003 => {
@@ -186,16 +198,24 @@ impl Bus {
                 self.z80_ram[(addr & 0x1FFF) as usize] = value;
             }
             
-            // YM2612 from 68k: 0xA04000-0xA04003
+            // YM2612 FM Chip: 0xA04000-0xA04003
             0xA04000..=0xA04003 => {
-                let port = ((addr & 2) >> 1) as u8;  // 0 for 4000/4001, 1 for 4002/4003
+                let port = (addr & 2) >> 1;
                 let is_data = (addr & 1) != 0;
-                
                 if is_data {
-                    self.apu.fm.write_data(port, value);
+                    self.apu.fm.write_data(port as u8, value);
                 } else {
-                    self.apu.fm.write_address(port, value);
+                    self.apu.fm.write_address(port as u8, value);
                 }
+            }
+
+            // Z80 area bank registers and other hardware
+            0xA06000..=0xA060FF => {
+                // Update bank register (LSB shifts in)
+                let bit = (value as u32 & 1) << (self.z80_bank_bit + 15);
+                let mask = 1 << (self.z80_bank_bit + 15);
+                self.z80_bank_addr = (self.z80_bank_addr & !mask) | bit;
+                self.z80_bank_bit = (self.z80_bank_bit + 1) % 9;
             }
 
             // I/O Ports
@@ -203,7 +223,6 @@ impl Bus {
                 self.io.write(addr, value);
             }
 
-            // Z80 Bus Request
             // Z80 Bus Request
             0xA11100 => {
                 self.z80_bus_request = (value & 0x01) != 0;
@@ -215,6 +234,9 @@ impl Bus {
             // Z80 Reset
             0xA11200 => {
                 self.z80_reset = (value & 0x01) == 0;
+                if self.z80_reset {
+                    self.z80_bank_bit = 0; // Hardware resets shift pointer
+                }
             }
             0xA11201 => {}
 
@@ -232,7 +254,8 @@ impl Bus {
 
             // Work RAM
             0xE00000..=0xFFFFFF => {
-                self.work_ram[(addr & 0xFFFF) as usize] = value;
+                let ram_addr = addr & 0xFFFF;
+                self.work_ram[ram_addr as usize] = value;
             }
 
             // Unmapped regions (writes ignored)
@@ -303,40 +326,28 @@ impl Bus {
         // 0x13/0x14: DMA Length (low/high)
         // 0x15/0x16/0x17: DMA Source (low/mid/high)
         
-        // Mode check (Reg 23 bit 7, 6)
-        // 00/01: 68k -> VDP (Supported)
-        // 10: VRAM Copy (Should be internal to VDP)
-        // 11: VRAM Fill (Should be internal)
-        let mode = self.vdp.registers[0x17] >> 6;
-
+        let mode = self.vdp.dma_mode();
+        let length = {
+            let l = ((self.vdp.registers[0x14] as u32) << 8) | (self.vdp.registers[0x13] as u32);
+            if l == 0 { 0x10000 } else { l }
+        };
+        let mut source = ((self.vdp.registers[0x17] as u32 & 0x3F) << 17)
+                   | ((self.vdp.registers[0x16] as u32) << 9)
+                   | ((self.vdp.registers[0x15] as u32) << 1);
         
-        // Debug DMA
-        // println!("DMA Check: Mode={} dma_enabled={} pending={}", mode, self.vdp.dma_enabled(), self.vdp.dma_pending);
-
-        if (mode & 0x02) != 0 {
-            // Not 68k transfer (VDP copy/fill)
-            // Ideally VDP handles these itself, or we need another handler.
-            // For now, assume VDP handles them or they are triggered differently.
-            // Clear pending just in case.
+        if mode >= 2 {
+            self.vdp.execute_dma();
             self.vdp.dma_pending = false;
             return;
         }
 
-        let len_low = self.vdp.registers[0x13];
-        let len_high = self.vdp.registers[0x14];
-        let length = ((len_high as u32) << 8) | (len_low as u32);
-        
-        // Source address (word index in regs 21-23)
-        // Reg 23 (A22-A17), Reg 22 (A16-A9), Reg 21 (A8-A1)
-        let src_low = self.vdp.registers[0x15];
-        let src_mid = self.vdp.registers[0x16];
-        let src_high = self.vdp.registers[0x17] & 0x3F; // Mask mode bits? (bits 0-5 are address)
-
-        let mut source = ((src_high as u32) << 17)
-                       | ((src_mid as u32) << 9)
-                       | ((src_low as u32) << 1);
-        
-        println!("DMA EXECUTE: Mode={} Length=0x{:X} Source=0x{:06X}", mode, length, source);
+        // If it's a 68k transfer (mode bit 7=0), bit 22 decides if it's ROM or RAM
+        // Register 23 bit 6 MUST be 0 for 68k DMA.
+        // A22 is bit 22 of source. If A22=1, it's RAM. 
+        // On Genesis, RAM is at $FF0000-$FFFFFF. VDP DMA forces A23=1.
+        if (source & 0x400000) != 0 {
+            source |= 0xFF0000; // Map to RAM range (0xFF0000-0xFFFFFF)
+        }
         
         // Transfer
         for _ in 0..length {

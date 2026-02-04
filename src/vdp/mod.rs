@@ -50,7 +50,10 @@ pub struct Vdp {
 
     /// Internal line counter for HINT
     pub line_counter: u8,
-
+ 
+    /// Last data value written (for VRAM fill DMA)
+    pub last_data_write: u16,
+ 
     /// Framebuffer (320×224 pixels, 2 bytes per pixel for RGB565)
     pub framebuffer: Vec<u16>,
 }
@@ -71,6 +74,7 @@ impl Vdp {
             h_counter: 0,
             v_counter: 0,
             line_counter: 0,
+            last_data_write: 0,
             framebuffer: vec![0; 320 * 224],
         }
     }
@@ -202,6 +206,16 @@ impl Vdp {
         (self.registers[1] & 0x10) != 0
     }
 
+    /// Return the current DMA mode (00, 01, 10, 11)
+    pub fn dma_mode(&self) -> u8 {
+        self.registers[23] >> 6
+    }
+
+    /// Return the current control code (0-63)
+    pub fn control_code(&self) -> u8 {
+        self.control_code
+    }
+
     /// V30 mode (30 rows instead of 28)?
     pub fn v30_mode(&self) -> bool {
         (self.registers[1] & 0x08) != 0
@@ -266,7 +280,8 @@ impl Vdp {
     /// Write to data port
     pub fn write_data(&mut self, value: u16) {
         self.control_pending = false;
-
+        self.last_data_write = value;
+        
         let addr = self.control_address;
         match self.control_code & 0x0F {
             0x01 => {
@@ -275,11 +290,13 @@ impl Vdp {
                 self.vram[vram_addr] = (value >> 8) as u8;
                 self.vram[(vram_addr + 1) & 0xFFFF] = value as u8;
             }
-            0x03 => {
-                // CRAM write
-                let cram_addr = (addr & 0x7E) as usize;
+            0x03 => { // CRAM write
+                let cram_addr = (addr & 0x7E) as usize; // Ensure word alignment
                 self.cram[cram_addr] = (value >> 8) as u8;
-                self.cram[cram_addr | 1] = value as u8;
+                self.cram[cram_addr + 1] = (value & 0xFF) as u8;
+                if value != 0 {
+                    eprintln!("DEBUG: NON-ZERO CRAM WRITE: addr=0x{:02X} val=0x{:04X}", cram_addr, value);
+                }
             }
             0x05 => {
                 // VSRAM write
@@ -296,28 +313,32 @@ impl Vdp {
         self.control_address = self.control_address.wrapping_add(self.auto_increment() as u16);
     }
 
-    /// Read from control port (status register)
+    /// Read Status Register
     pub fn read_status(&mut self) -> u16 {
         self.control_pending = false;
-
-        // Build status register
         let mut status = self.status;
-
-        // Bit 1: DMA busy
+        // set bit 3 if in VBlank
+        if self.v_counter >= 224 {
+            status |= 0x0008;
+        }
+        
+        // Clear VInt pending bit on read
+        self.status &= !0x0080;
+        
+        // Ensure other status bits (like DMA Busy, etc) are correct
         if self.dma_pending {
             status |= 0x0002;
         }
-
-        // Bit 2: HBlank
-        // Bit 3: VBlank
-        if self.v_counter >= self.screen_height() {
-            status |= 0x0008;
-        }
-
+        
         // Bit 9: FIFO empty (always empty for now)
         status |= 0x0200;
 
         status
+    }
+
+    /// Set VInt pending bit (bit 7)
+    pub fn trigger_vint(&mut self) {
+        self.status |= 0x0080;
     }
 
     /// Write to control port
@@ -330,6 +351,7 @@ impl Vdp {
                 let data = value as u8;
                 if reg < 24 {
                     self.registers[reg] = data;
+                    eprintln!("DEBUG: VDP REG WRITE: Reg {} = 0x{:02X}", reg, data);
                 }
                 self.control_pending = false;
             } else {
@@ -342,15 +364,18 @@ impl Vdp {
             // Second word of command
             self.control_address = (self.control_address & 0x3FFF) | ((value & 0x0003) << 14);
             
-            // Command bits CD5..CD2 are in bits 7..4 of the second word
-            // Shift right by 2 to align them to bits 5..2 of control_code
-            let cd_upper = ((value & 0x00F0) >> 2) as u8;
+            // Command bits CD5..CD2 are in bits 13..10 of the second word
+            // Extract them and place them in bits 5..2 of control_code
+            let cd_upper = ((value >> 8) & 0x3C) as u8;
             self.control_code = (self.control_code & 0x03) | cd_upper;
             
             self.control_pending = false;
  
+            eprintln!("DEBUG: VDP COMMAND: addr=0x{:04X} code=0x{:02X}", self.control_address, self.control_code);
+ 
             // Check for DMA
             if self.dma_enabled() && (self.control_code & 0x20) != 0 {
+                eprintln!("DEBUG: VDP DMA PENDING SET");
                 self.dma_pending = true;
             }
         }
@@ -607,11 +632,8 @@ impl Vdp {
         let dma_type = (self.registers[23] >> 6) & 0x03;
         
         // DMA length from registers 19-20 (in words for most modes)
-        let dma_length = ((self.registers[20] as u32) << 8) | (self.registers[19] as u32);
-        if dma_length == 0 {
-            self.dma_pending = false;
-            return 0;
-        }
+        let mut dma_length = ((self.registers[20] as u32) << 8) | (self.registers[19] as u32);
+        if dma_length == 0 { dma_length = 0x10000; }
         
         // DMA source from registers 21-23 (bits 0-5 of reg 23)
         let dma_source = ((self.registers[23] as u32 & 0x3F) << 16)
@@ -628,19 +650,32 @@ impl Vdp {
             }
             2 => {
                 // VRAM Fill
-                // Fill data is the LSB of the last data written
-                let fill_data = 0; // Would need to track last data write
+                let fill_data = (self.last_data_write >> 8) as u8;
                 let dest_code = self.control_code & 0x0F;
                 
-                if dest_code == 0x01 {
-                    // VRAM fill
-                    for i in 0..dma_length {
-                        let addr = (self.control_address as u32 + i) as usize & 0xFFFF;
-                        self.vram[addr] = fill_data;
+                for _ in 0..dma_length {
+                    match dest_code {
+                        0x01 => {
+                            let addr = self.control_address as usize;
+                            self.vram[addr & 0xFFFF] = fill_data;
+                        }
+                        0x03 => {
+                            let addr = (self.control_address & 0x7F) as usize;
+                            self.cram[addr] = fill_data;
+                        }
+                        0x05 => {
+                            let addr = (self.control_address & 0x7F) as usize;
+                            if addr < 80 {
+                                self.vsram[addr] = fill_data;
+                            }
+                        }
+                        _ => {}
                     }
+                    self.control_address = self.control_address.wrapping_add(self.auto_increment() as u16);
                 }
                 
                 self.dma_pending = false;
+                eprintln!("DEBUG: VDP FILL/COPY EXECUTE: Mode={} Length={} Dest={:02X}", dma_type, dma_length, dest_code);
                 dma_length
             }
             3 => {
@@ -655,6 +690,7 @@ impl Vdp {
                 }
                 
                 self.dma_pending = false;
+                eprintln!("DEBUG: VDP FILL/COPY EXECUTE: Mode={} Length={}", dma_type, dma_length);
                 dma_length
             }
             _ => {

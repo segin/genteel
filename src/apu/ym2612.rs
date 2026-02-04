@@ -39,6 +39,9 @@ pub struct Ym2612 {
     /// Bit 2: Timer B overflow
     /// Bit 1: Timer A overflow
     pub status: u8,
+
+    /// Internal timer counter (skeletal)
+    timer_a_counter: u32,
 }
 
 impl Ym2612 {
@@ -48,6 +51,7 @@ impl Ym2612 {
             addr0: 0,
             addr1: 0,
             status: 0,
+            timer_a_counter: 0,
         }
     }
 
@@ -58,8 +62,26 @@ impl Ym2612 {
     /// Read Status Register
     pub fn read_status(&self) -> u8 {
         // In a real implementation, busy flag depends on write timing.
-        // For now, return status (Timer flags)
+        // For now, always return status with some timer flags if they are enabled
+        // to prevent sound drivers from hanging.
         self.status
+    }
+
+    /// Update timers based on elapsed cycles (skeletal)
+    pub fn step(&mut self, _cycles: u32) {
+        // TODO: Proper timer implementation. 
+        // For now, we'll just toggle the timer A overflow bit occasionally 
+        // if it's enabled (Reg 0x27 bit 0) to keep drivers moving.
+        if (self.registers[0][0x27] & 0x01) != 0 {
+             self.timer_a_counter += 1;
+             if self.timer_a_counter > 100 {
+                 self.status |= 0x01; // Timer A overflow
+                 self.timer_a_counter = 0;
+             }
+        }
+        if (self.registers[0][0x27] & 0x02) != 0 {
+             self.status |= 0x02; // Timer B overflow
+        }
     }
 
     /// Unified read from port (0 or 1)

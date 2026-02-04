@@ -63,8 +63,10 @@ impl Apu {
     /// Run one sample cycle (at ~44100Hz or system clock)
     /// Returns a mixed sample.
     pub fn step(&mut self) -> i16 {
+        // Step the components
+        self.fm.step(1); // 1 "cycle" per sample step (simplified)
+        
         // Placeholder: Return silence
-        // Real impl would require stepping PSG and FM generators
         0
     }
 }

@@ -79,6 +79,9 @@ pub struct Z80 {
 
     // Cycle counter for timing
     pub cycles: u64,
+
+    // Debug flag
+    pub debug: bool,
 }
 
 impl Z80 {
@@ -97,6 +100,7 @@ impl Z80 {
             memory,
             io,
             cycles: 0,
+            debug: false,
         }
     }
 
@@ -589,7 +593,13 @@ impl Z80 {
         let _interrupts_inhibited = self.pending_ei;
         self.pending_ei = false;
 
+        let _pc_before = self.pc;
         let opcode = self.fetch_byte();
+        
+        if self.debug {
+            eprintln!("DEBUG: Z80 STEP: PC=0x{:04X} Op=0x{:02X} A={:02X} F={:02X} BC={:04X} DE={:04X} HL={:04X} SP={:04X} CYC={}", 
+                _pc_before, opcode, self.a, self.f, self.bc(), self.de(), self.hl(), self.sp, self.cycles);
+        }
         
         let x = (opcode >> 6) & 0x03;
         let y = (opcode >> 3) & 0x07;

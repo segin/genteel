@@ -2037,9 +2037,13 @@ impl Cpu {
 
         let current_mask = (self.sr & flags::INTERRUPT_MASK) >> 8;
         
-        // Level 7 is non-maskable (NMI)
         if self.pending_interrupt > current_mask as u8 || self.pending_interrupt == 7 {
             let level = self.pending_interrupt;
+            if level == 6 {
+                let f62a = self.memory.read_byte(0xFFF62A);
+                let f605 = self.memory.read_byte(0xFFF605);
+                eprintln!("DEBUG: VInt triggered! PC={:06X} F62A={:02X} F605={:02X}", self.pc, f62a, f605);
+            }
             self.acknowledge_interrupt(level); // Use new queuing system
             self.halted = false;       // Wake if halted
             
@@ -2065,7 +2069,9 @@ impl Cpu {
             // 6. Fetch vector (Autovectoring: Vector 24+level)
             let vector = 24 + level as u32;
             let vector_addr = vector * 4;
-            self.pc = self.memory.read_long(vector_addr);
+            let handler_pc = self.memory.read_long(vector_addr);
+            eprintln!("DEBUG: Interrupt Level {} Vector {} -> PC={:06X}", level, vector, handler_pc);
+            self.pc = handler_pc;
             
             return 44; // Interrupt takes about 44 cycles
         }
@@ -2220,16 +2226,21 @@ impl Cpu {
             
             for i in 0..16 {
                 if (mask & (1 << i)) != 0 {
-                    let val = if size == Size::Word {
-                        self.read_word(addr) as i16 as i32 as u32 // Sign extend
-                    } else {
-                        self.read_long(addr)
-                    };
-                    
                     if i < 8 {
-                        self.d[i] = val;
+                        // Data register: Word load affects only lower 16 bits, Long load affects all
+                        if size == Size::Word {
+                            let val = self.read_word(addr);
+                            self.d[i] = (self.d[i] & 0xFFFF0000) | (val as u32);
+                        } else {
+                            self.d[i] = self.read_long(addr);
+                        }
                     } else {
-                        self.a[i - 8] = val;
+                        // Address register: Word load is sign-extended, Long load is normal
+                        if size == Size::Word {
+                            self.a[i - 8] = self.read_word(addr) as i16 as i32 as u32;
+                        } else {
+                            self.a[i - 8] = self.read_long(addr);
+                        }
                     }
                     addr = addr.wrapping_add(reg_size);
                     cycles += if size == Size::Word { 4 } else { 8 };

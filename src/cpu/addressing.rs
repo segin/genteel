@@ -184,7 +184,11 @@ pub fn calculate_ea<M: MemoryInterface + ?Sized>(
             (EffectiveAddress::Memory(addr), 10)
         }
         AddressingMode::Immediate => {
-            let value_addr = *pc;
+            let value_addr = if size == Size::Byte {
+                pc.wrapping_add(1)
+            } else {
+                *pc
+            };
             let ext_words = match size {
                 Size::Byte | Size::Word => {
                     *pc = pc.wrapping_add(2);
