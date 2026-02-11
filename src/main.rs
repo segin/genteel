@@ -27,7 +27,6 @@ use memory::bus::Bus;
 use memory::{SharedBus, Z80Bus};
 use apu::Apu;
 use input::InputManager;
-// use frontend::Frontend;
 use debugger::{GdbServer, GdbRegisters, GdbMemory, StopReason};
 
 pub struct Emulator {
