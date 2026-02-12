@@ -174,23 +174,23 @@ mod tests {
     use std::rc::Rc;
     use std::cell::RefCell;
     use crate::memory::bus::Bus;
-    
+
     fn create_test_z80_bus() -> Z80Bus {
         let bus = Rc::new(RefCell::new(Bus::new()));
         Z80Bus::new(SharedBus::new(bus))
     }
-    
+
     #[test]
     fn test_z80_ram_read_write() {
         let mut z80_bus = create_test_z80_bus();
-        
+
         z80_bus.write_byte(0x0000, 0x42);
         assert_eq!(z80_bus.read_byte(0x0000), 0x42);
-        
+
         z80_bus.write_byte(0x1FFF, 0xAB);
         assert_eq!(z80_bus.read_byte(0x1FFF), 0xAB);
     }
-    
+
     #[test]
     fn test_bank_register() {
         let mut z80_bus = create_test_z80_bus();
@@ -202,7 +202,7 @@ mod tests {
         z80_bus.write_byte(0x6000, 0x01);  // Shift in 1
         assert_ne!(z80_bus.bus.bus.borrow().z80_bank_addr, 0);
     }
-    
+
     #[test]
     fn test_reserved_reads_ff() {
         let mut z80_bus = create_test_z80_bus();
