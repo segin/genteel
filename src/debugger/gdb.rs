@@ -55,7 +55,7 @@ impl GdbServer {
         let listener = TcpListener::bind(format!("127.0.0.1:{}", port))?;
         listener.set_nonblocking(true)?;
         
-        println!("GDB server listening on port {}", port);
+        eprintln!("⚠️  SECURITY WARNING: GDB Server listening on 127.0.0.1:{}. This port is accessible to all local users. Only use this on a trusted single-user machine.", port);
         
         Ok(Self {
             listener,
@@ -74,7 +74,13 @@ impl GdbServer {
         
         match self.listener.accept() {
             Ok((stream, addr)) => {
-                println!("GDB client connected from {}", addr);
+                // Security check: Only allow loopback connections
+                if !addr.ip().is_loopback() {
+                    eprintln!("⚠️  SECURITY ALERT: Rejected GDB connection from non-loopback address: {}", addr);
+                    return false;
+                }
+
+                eprintln!("ℹ️  Accepted GDB connection from {}", addr);
                 stream.set_nonblocking(true).ok();
                 self.client = Some(stream);
                 true
@@ -576,5 +582,22 @@ mod tests {
         let result = server.remove_breakpoint("0,1000,4");
         assert_eq!(result, "OK");
         assert!(!server.is_breakpoint(0x1000));
+    }
+
+    #[test]
+    fn test_security_loopback_accepted() {
+        // Bind to random port
+        let mut server = GdbServer::new(0).expect("Failed to create GDB server");
+        let port = server.listener.local_addr().expect("Failed to get local addr").port();
+
+        // Connect via loopback
+        let _stream = TcpStream::connect(format!("127.0.0.1:{}", port)).expect("Failed to connect");
+
+        // Accept connection
+        assert!(server.accept(), "Server should accept loopback connection");
+        assert!(server.is_connected(), "Server should be connected");
+
+        // Disconnect
+        drop(_stream);
     }
 }
