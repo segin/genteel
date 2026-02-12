@@ -307,4 +307,47 @@ mod tests {
         let input = manager.advance_frame(); // Frame 1 - should hold A
         assert!(input.p1.a);
     }
+
+    #[test]
+    fn test_recording_functionality() {
+        let mut manager = InputManager::new();
+
+        // Start recording
+        manager.start_recording();
+
+        // Frame 0: Press A
+        let mut input0 = FrameInput::default();
+        input0.p1.a = true;
+        manager.record(input0.clone());
+        manager.advance_frame();
+
+        // Frame 1: Press B
+        let mut input1 = FrameInput::default();
+        input1.p1.b = true;
+        manager.record(input1.clone());
+        manager.advance_frame();
+
+        // Frame 2: Press Start
+        let mut input2 = FrameInput::default();
+        input2.p1.start = true;
+        manager.record(input2.clone());
+        // Don't advance frame after last record
+
+        // Stop recording
+        let script = manager.stop_recording();
+
+        // Verify script content
+        assert_eq!(script.max_frame, 2);
+
+        let f0 = script.get(0).unwrap();
+        assert!(f0.p1.a);
+        assert!(!f0.p1.b);
+
+        let f1 = script.get(1).unwrap();
+        assert!(f1.p1.b);
+        assert!(!f1.p1.a);
+
+        let f2 = script.get(2).unwrap();
+        assert!(f2.p1.start);
+    }
 }
