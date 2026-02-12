@@ -201,7 +201,18 @@ void VDP_Reset(void)
 
 uint8_t VDP_Int_Ack(void)
 {
-	if ((VDP_Reg.m5.Set2 & 0x20) && (VDP_Int & 0x08))
+	if ((VDP_Reg.m5.Set1 & 0x10) && (VDP_Int & 0x04))
+	{
+		// HBlank interrupt acknowledge.
+		VDP_Int &= ~0x04;
+
+		uint8_t rval_mask = VDP_Reg.m5.Set2;
+		rval_mask &= 0x20;
+		rval_mask >>= 2;
+
+		return ((VDP_Int) & rval_mask);
+	}
+	else if ((VDP_Reg.m5.Set2 & 0x20) && (VDP_Int & 0x08))
 	{
 		// VBlank interrupt acknowledge.
 		VDP_Int &= ~0x08;
@@ -221,17 +232,17 @@ uint8_t VDP_Int_Ack(void)
 
 void VDP_Update_IRQ_Line(void)
 {
-	// TODO: HBlank interrupt should take priority over VBlank interrupt.
-	if ((VDP_Reg.m5.Set2 & 0x20) && (VDP_Int & 0x08))
-	{
-		// VBlank interrupt.
-		main68k_interrupt(6, -1);
-		return;
-	}
-	else if ((VDP_Reg.m5.Set1 & 0x10) && (VDP_Int & 0x04))
+	// HBlank interrupt should take priority over VBlank interrupt.
+	if ((VDP_Reg.m5.Set1 & 0x10) && (VDP_Int & 0x04))
 	{
 		// HBlank interrupt.
 		main68k_interrupt(4, -1);
+		return;
+	}
+	else if ((VDP_Reg.m5.Set2 & 0x20) && (VDP_Int & 0x08))
+	{
+		// VBlank interrupt.
+		main68k_interrupt(6, -1);
 		return;
 	}
 	
@@ -349,6 +360,7 @@ void VDP_Check_NTSC_V30_VBlank(void)
  */
 static inline void VDP_Update_Mode(void)
 {
+	unsigned int old_mode = VDP_Mode;
 	const register uint8_t Set1 = VDP_Reg.m5.Set1;
 	const register uint8_t Set2 = VDP_Reg.m5.Set2;
 	VDP_Mode = ((Set2 & 0x10) >> 4) |	// M1
@@ -358,8 +370,8 @@ static inline void VDP_Update_Mode(void)
 		   ((Set2 & 0x04) << 2);	// M5
 	
 	// CRam needs to be updated.
-	// TODO: Only update if VDP_Mode is changed.
-	VDP_Flags.CRam = 1;
+	if (VDP_Mode != old_mode)
+		VDP_Flags.CRam = 1;
 }
 
 

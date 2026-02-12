@@ -27,7 +27,6 @@ use memory::bus::Bus;
 use memory::{SharedBus, Z80Bus};
 use apu::Apu;
 use input::InputManager;
-// use frontend::Frontend;
 use debugger::{GdbServer, GdbRegisters, GdbMemory, StopReason};
 
 pub struct Emulator {
@@ -39,21 +38,20 @@ pub struct Emulator {
     pub audio_buffer: Vec<i16>,
     pub apu_accumulator: f32,
     pub internal_frame_count: u64,
-    // Debug state (replaces unsafe static mut)
-    pub last_z80_req: bool,
+    pub last_z80_bus_req: bool,
     pub z80_trace_count: u32,
 }
 
 impl Emulator {
     pub fn new() -> Self {
         let bus = Rc::new(RefCell::new(Bus::new()));
-        
+
         // M68k uses SharedBus wrapper for main Genesis bus access
         let cpu = Cpu::new(Box::new(SharedBus::new(bus.clone())));
-        
+
         // Z80 uses Z80Bus which routes to sound chips and banked 68k memory
         let z80_bus = Z80Bus::new(SharedBus::new(bus.clone()));
-        
+
         // Temporary null I/O implementation for Z80 ports
         #[derive(Debug)]
         struct NullIo;
@@ -61,7 +59,7 @@ impl Emulator {
             fn read_port(&mut self, _port: u16) -> u8 { 0xFF }
             fn write_port(&mut self, _port: u16, _value: u8) {}
         }
-        
+
         let z80 = Z80::new(Box::new(z80_bus), Box::new(NullIo));
 
         let mut emulator = Self {
@@ -73,13 +71,13 @@ impl Emulator {
             audio_buffer: Vec::with_capacity(735 * 2), // Pre-allocate approx 1 frame
             apu_accumulator: 0.0,
             internal_frame_count: 0,
-            last_z80_req: false,
+            last_z80_bus_req: false,
             z80_trace_count: 0,
         };
-        
+
         emulator.cpu.reset();
         emulator.z80.reset();
-        
+
         emulator
     }
 
@@ -229,10 +227,10 @@ impl Emulator {
                 // Z80 execution
                 let (z80_can_run, z80_is_reset) = {
                     let bus = self.bus.borrow();
-                    let prev = self.last_z80_req;
+                    let prev = self.last_z80_bus_req;
                     if bus.z80_bus_request != prev {
                          eprintln!("DEBUG: Bus Req Changed: {} -> {} at 68k PC={:06X}", prev, bus.z80_bus_request, self.cpu.pc);
-                         self.last_z80_req = bus.z80_bus_request;
+                         self.last_z80_bus_req = bus.z80_bus_request;
                     }
                     (!bus.z80_reset && !bus.z80_bus_request, bus.z80_reset)
                 };
