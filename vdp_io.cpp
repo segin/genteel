@@ -1304,7 +1304,10 @@ void VDP_Do_DMA_COPY_asm(unsigned int src_address, unsigned int dest_address, in
  */
 void VDP_Write_Ctrl(uint16_t data)
 {
-	// TODO: Check endianness with regards to the control words. (Wordswapping!)
+	// Note: Control words are processed as individual 16-bit writes (w[0] then w[1]).
+	// While VDP_Ctrl.Data.d would be word-swapped on little-endian hosts,
+	// the logic below explicitly uses w[0] and w[1] to reconstruct the command,
+	// ensuring correct behavior regardless of host endianness.
 	
 	// Check if this is the first or second control word.
 	if (!VDP_Ctrl.Flag)
