@@ -91,16 +91,18 @@ impl InputScript {
         let chars: Vec<char> = s.chars().collect();
 
         // Minimum 8 chars for 3-button, 12 for 6-button
-        if chars.len() >= 8 {
-            state.up    = chars[0] == 'U';
-            state.down  = chars[1] == 'D';
-            state.left  = chars[2] == 'L';
-            state.right = chars[3] == 'R';
-            state.a     = chars[4] == 'A';
-            state.b     = chars[5] == 'B';
-            state.c     = chars[6] == 'C';
-            state.start = chars[7] == 'S';
+        if chars.len() < 8 {
+            return Err(format!("Invalid button string length: expected at least 8 chars, got {}", chars.len()));
         }
+
+        state.up    = chars[0] == 'U';
+        state.down  = chars[1] == 'D';
+        state.left  = chars[2] == 'L';
+        state.right = chars[3] == 'R';
+        state.a     = chars[4] == 'A';
+        state.b     = chars[5] == 'B';
+        state.c     = chars[6] == 'C';
+        state.start = chars[7] == 'S';
 
         // 6-button extension
         if chars.len() >= 12 {
@@ -306,5 +308,11 @@ mod tests {
         manager.advance_frame(); // Frame 0 - A pressed
         let input = manager.advance_frame(); // Frame 1 - should hold A
         assert!(input.p1.a);
+    }
+
+    #[test]
+    fn test_parse_buttons_short() {
+        let result = InputScript::parse_buttons("short");
+        assert!(result.is_err(), "Expected error for short input string");
     }
 }
