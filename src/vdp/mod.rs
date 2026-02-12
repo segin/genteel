@@ -12,7 +12,7 @@
 //! |:-----------------|:-------------------------------|
 //! | 0xC00000-0xC00003| Data Port (read/write VRAM)    |
 //! | 0xC00004-0xC00007| Control Port (commands/status) |
-//! | 0xC00008-0xC0000F| H/V Counter                |
+//! | 0xC00008-0xC0000F| H/V Counter                    |
 use crate::debugger::Debuggable;
 use serde_json::{json, Value};
 
