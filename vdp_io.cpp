@@ -1128,7 +1128,9 @@ static inline void T_DMA_Loop(unsigned int src_address, unsigned int dest_addres
 			break;
 		
 		case DMA_SRC_WORD_RAM_2M:
-			src_address -= 2;	// TODO: What is this for?
+			// Sega CD Word RAM DMA transfers require a source address adjustment of -2 bytes.
+			// This compensates for hardware behavior where the first word read is effectively offset by one word.
+			src_address -= 2;
 			src_address &= 0x3FFFE;
 			break;
 		
@@ -1136,7 +1138,9 @@ static inline void T_DMA_Loop(unsigned int src_address, unsigned int dest_addres
 		case DMA_SRC_WORD_RAM_1M_1:
 		case DMA_SRC_WORD_RAM_CELL_1M_0:
 		case DMA_SRC_WORD_RAM_CELL_1M_1:
-			src_address -= 2;	// TODO: What is this for?
+			// Sega CD Word RAM DMA transfers require a source address adjustment of -2 bytes.
+			// This compensates for hardware behavior where the first word read is effectively offset by one word.
+			src_address -= 2;
 			src_address &= 0x1FFFE;
 			break;
 		
