@@ -433,10 +433,11 @@ impl Vdp {
         } else {
             // Second word of command
             self.control_address = (self.control_address & 0x3FFF) | ((value & 0x0003) << 14);
+            
+            // Command bits CD5..CD2 are in bits 7..4 of the second word
 
-            // Command bits CD5..CD2 are in bits 13..10 of the second word
             // Extract them and place them in bits 5..2 of control_code
-            let cd_upper = ((value >> 8) & 0x3C) as u8;
+            let cd_upper = ((value >> 2) & 0x3C) as u8;
             self.control_code = (self.control_code & 0x03) | cd_upper;
 
             self.control_pending = false;
@@ -1158,5 +1159,111 @@ impl Debuggable for Vdp {
 
     fn write_state(&mut self, _state: &Value) {
         // VDP state write not fully supported yet
+    }
+}
+
+#[cfg(test)]
+mod state_machine_tests {
+    use super::*;
+
+    #[test]
+    fn test_register_write_clears_pending() {
+        // Scenario: Sending a register write when NOT pending.
+        let mut vdp = Vdp::new();
+        vdp.write_control(0x8144); // Write Reg 1
+        // control_pending is not public, so we infer it by sending a command next
+        // If pending was true, next command would be corrupted
+
+        // We can also check register state
+        assert_eq!(vdp.registers[1], 0x44);
+
+        // Start a fresh command - should work as word 1
+        vdp.write_control(0x4000);
+        // This sets pending. If it was already pending, it would be word 2.
+
+        // We can verify by sending word 2 and checking address
+        vdp.write_control(0x0003);
+        assert_eq!(vdp.get_control_address(), 0xC000);
+    }
+
+    #[test]
+    fn test_command_normal_flow() {
+        let mut vdp = Vdp::new();
+        // VRAM Write to 0xC000 (CD=1)
+        // Word 1: 0100 0000 0000 0000 + 0 (A13-0 of 0xC000 is 0) = 0x4000
+
+        vdp.write_control(0x4000);
+
+        // Word 2:
+        // A15-14 of 0xC000 is 11 (3).
+        // CD5-2 = 0.
+        // Word 2 = 0000 0000 0000 0011 = 0x0003.
+        vdp.write_control(0x0003);
+
+        assert_eq!(vdp.get_control_address(), 0xC000);
+        assert_eq!(vdp.control_code() & 0x0F, 0x01); // Mask to check lower bits if full code is not available
+    }
+
+    #[test]
+    fn test_interrupted_command() {
+        // Scenario: Word 1 -> Register Write (interpreted as Word 2)
+        let mut vdp = Vdp::new();
+
+        // Word 1: 0x4000 (Start VRAM write)
+        vdp.write_control(0x4000);
+
+        // Send what looks like a register write: 0x8144
+        // But since pending is true, it is treated as Word 2.
+        // 0x8144: 1000 0001 0100 0100
+        // A15-14 = bits 1-0 shifted 14 = 00 -> 0x0000
+        // CD5-2 = bits 13-10 = 0000 -> 0
+        // So control_address will be (0x0000 | 0) = 0x0000.
+        // control_code will be (01 | 0) = 01.
+
+        vdp.write_control(0x8144);
+
+        assert_eq!(vdp.registers[1], 0x00); // Should NOT have written to register
+        assert_eq!(vdp.get_control_address(), 0x0000); // Resulting address
+    }
+
+    #[test]
+    fn test_dma_trigger() {
+        let mut vdp = Vdp::new();
+        // Enable DMA in Reg 1
+        vdp.write_control(0x8114); // 0x14 = DMA enabled | Display Enabled? No just set bit 4.
+        // Reg 1 bit 4 is DMA enable. 0x10.
+        // Reg 1 default is usually 0.
+
+        // DMA Command: VRAM Fill (CD=100001 = 0x21)
+        // Word 1: CD1-0 = 01. Addr=0. -> 0x4000.
+        vdp.write_control(0x4000);
+
+        // Word 2: CD5-2 = 1000 (8).
+        // 1000 -> bits 7-4.
+        // 0000 0000 1000 0000 -> 0x0080.
+
+        vdp.write_control(0x0080);
+
+        // Code should be 100001 = 0x21.
+        assert_eq!(vdp.control_code(), 0x21);
+        assert!(vdp.dma_pending);
+    }
+
+    #[test]
+    fn test_vsram_write_mode_endian() {
+        // VSRAM Write: CD5-CD0 = 000101 (0x05)
+        // Word 1: CD1-CD0 = 01. Addr(13-0) = 0. -> 0x4000.
+        // Word 2: CD5-CD2 = 0001 (1). A15-A14 = 00.
+        // If CD5-CD2 are at bits 7-4:
+        // 0000 0000 0001 0000 -> 0x0010.
+
+        let mut vdp = Vdp::new();
+        vdp.write_control(0x4000);
+        vdp.write_control(0x0010);
+
+        // Expect code 0x05.
+        // Current implementation expects bits 13-10, so 0x0010 (bit 4) is ignored.
+        // Result would be 0x01 (VRAM Write) instead of 0x05.
+        assert_eq!(vdp.control_code(), 0x05, "Expected VSRAM Write (0x05), got 0x{:02X}", vdp.control_code());
     }
 }

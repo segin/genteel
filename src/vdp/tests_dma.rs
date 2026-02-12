@@ -51,21 +51,11 @@ fn test_dma_fill_vram() {
     // Command: VRAM Write (0x1) + DMA (0x20) = 0x21.
     // Addr 0x0000.
     // Word 1: 0x4000.
-    // Word 2: 0x0080? No, we established 0x2000 sets bit 5.
-    // 0x2000 corresponds to 0x20 (bit 13 set).
-    // Let's re-verify `write_control` logic:
-    // `let cd_upper = ((value >> 8) & 0x3C) as u8;`
-    // `value` = 0x2000. `value >> 8` = 0x20. `0x20 & 0x3C` = 0x20.
-    // `control_code` (which was 0x01 from first word?)
-    // First word 0x4000 -> `01 00...`. `control_code` bits 1,0 are 01.
-    // `self.control_code` initialized to `(value >> 14) & 0x03`.
-    // 0x4000 >> 14 = 1. So code is 01.
-    // Second word 0x2000. `cd_upper` is 0x20.
-    // `control_code` = `(0x01 & 0x03) | 0x20` = 0x21.
-    // Correct.
+    // Word 2: Need bit 7 set for DMA flag (0x0080).
+    // (0x0080 >> 2) & 0x3C = 0x20.
 
     vdp.write_control(0x4000);
-    vdp.write_control(0x2000); // DMA bit set
+    vdp.write_control(0x0080); // DMA bit set
 
     // Check if dma_pending is set
     // In `write_control`: "if self.dma_enabled() && (self.control_code & 0x20) != 0 { ... self.dma_pending = true; }"
@@ -143,7 +133,7 @@ fn test_dma_copy_vram() {
     // 6. Setup Destination (0x0000)
     // Command 0x21 (DMA VRAM Write) at 0x0000.
     vdp.write_control(0x4000);
-    vdp.write_control(0x2000);
+    vdp.write_control(0x0080);
 
     assert!(vdp.dma_pending);
 

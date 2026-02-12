@@ -38,7 +38,8 @@ fn test_control_state_machine() {
     assert_eq!(vdp.registers[1], 0x00, "Register 1 should not be updated");
 
     // Verify address/code updated based on this 2nd word.
-    assert_eq!(vdp.get_control_code(), 0x01, "Control code should be 0x01");
+    // 0x8144 -> 0x11
+    assert_eq!(vdp.get_control_code(), 0x11, "Control code should be 0x11 (0x01 | 0x10)");
 
     // 5. Test data write clears pending
     vdp.reset();
