@@ -4,7 +4,6 @@ use proptest::prelude::*;
 use super::*;
 use super::test_utils::TestIo;
 use crate::memory::Memory;
-use super::test_utils::TestIo;
 
 fn z80_prog(program: &[u8]) -> Z80 {
     let mut m = Memory::new(0x10000);
