@@ -333,7 +333,7 @@ void VDP_Check_NTSC_V30_VBlank(void)
 	
 	if (Video.ntscV30rolling)
 	{
-		VDP_Lines.NTSC_V30.Offset += 11;	// TODO: Figure out a good offset increment.
+		VDP_Lines.NTSC_V30.Offset += 22;	// NTSC (262 lines) % V30 (240 lines) = 22 lines/frame.
 		VDP_Lines.NTSC_V30.Offset %= 240;	// Prevent overflow.
 	}
 	else
