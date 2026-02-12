@@ -4,7 +4,7 @@
 //! Uses a ring buffer to transfer samples from emulation thread to audio callback.
 
 use std::sync::{Arc, Mutex};
-#[cfg(not(test))]
+#[cfg(feature = "gui")]
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 /// Sample rate for audio output
@@ -61,7 +61,7 @@ impl AudioBuffer {
             }
         }
     }
-    
+
     /// Pop samples as f32 (for cpal)
     pub fn pop_f32(&mut self, dest: &mut [f32]) {
         for sample in dest.iter_mut() {
@@ -99,28 +99,28 @@ pub fn create_audio_buffer() -> SharedAudioBuffer {
 }
 
 /// Audio output stream wrapper
-#[cfg(not(test))]
+#[cfg(feature = "gui")]
 pub struct AudioOutput {
     _stream: cpal::Stream,
 }
 
-#[cfg(not(test))]
+#[cfg(feature = "gui")]
 impl AudioOutput {
     /// Create a new audio output using cpal
     pub fn new(buffer: SharedAudioBuffer) -> Result<Self, String> {
         let host = cpal::default_host();
-        
+
         let device = host.default_output_device()
             .ok_or("No audio output device found")?;
-        
+
         let config = cpal::StreamConfig {
             channels: 2,
             sample_rate: cpal::SampleRate(SAMPLE_RATE),
             buffer_size: cpal::BufferSize::Default,
         };
-        
+
         let buffer_clone = buffer.clone();
-        
+
         let stream = device.build_output_stream(
             &config,
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
@@ -136,9 +136,9 @@ impl AudioOutput {
             |err| eprintln!("Audio stream error: {}", err),
             None,
         ).map_err(|e| e.to_string())?;
-        
+
         stream.play().map_err(|e| e.to_string())?;
-        
+
         Ok(Self { _stream: stream })
     }
 }
@@ -162,15 +162,15 @@ mod tests {
     #[test]
     fn test_audio_buffer_push_pop() {
         let mut buf = AudioBuffer::new(64);
-        
+
         let samples = [100i16, 200, 300, 400];
         buf.push(&samples);
-        
+
         assert_eq!(buf.available(), 4);
-        
+
         let mut out = [0i16; 4];
         buf.pop(&mut out);
-        
+
         assert_eq!(out, samples);
         assert_eq!(buf.available(), 0);
     }
@@ -178,14 +178,14 @@ mod tests {
     #[test]
     fn test_audio_buffer_underrun() {
         let mut buf = AudioBuffer::new(64);
-        
+
         // Push only 2 samples
         buf.push(&[100i16, 200]);
-        
+
         // Try to pop 4
         let mut out = [0i16; 4];
         buf.pop(&mut out);
-        
+
         // First two should be valid, rest should be 0 (silence)
         assert_eq!(out[0], 100);
         assert_eq!(out[1], 200);
@@ -196,21 +196,21 @@ mod tests {
     #[test]
     fn test_audio_buffer_wrap() {
         let mut buf = AudioBuffer::new(4); // 8 samples total (stereo)
-        
+
         // Fill most of it
         buf.push(&[1i16, 2, 3, 4, 5, 6]);
-        
+
         // Pop some
         let mut out = [0i16; 4];
         buf.pop(&mut out);
-        
+
         // Push more (should wrap)
         buf.push(&[7i16, 8, 9, 10]);
-        
+
         // Pop all
         let mut out2 = [0i16; 6];
         buf.pop(&mut out2);
-        
+
         assert_eq!(out2[0], 5);
         assert_eq!(out2[1], 6);
         assert_eq!(out2[2], 7);
@@ -224,15 +224,15 @@ mod tests {
         let spf = samples_per_frame();
         assert_eq!(spf, 735); // 44100 / 60 = 735
     }
-    
+
     #[test]
     fn test_pop_f32() {
         let mut buf = AudioBuffer::new(64);
         buf.push(&[16384i16, -16384]); // Half max positive/negative
-        
+
         let mut out = [0.0f32; 2];
         buf.pop_f32(&mut out);
-        
+
         assert!((out[0] - 0.5).abs() < 0.001);
         assert!((out[1] + 0.5).abs() < 0.001);
     }
