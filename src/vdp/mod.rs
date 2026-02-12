@@ -245,21 +245,22 @@ impl Vdp {
         let addr = self.control_address;
         let data = match self.control_code & 0x0F {
             0x00 => {
-                // VRAM read
-                let hi = self.vram[addr as usize] as u16;
-                let lo = self.vram[(addr.wrapping_add(1)) as usize] as u16;
+                // VRAM read - always word aligned
+                let aligned_addr = addr & 0xFFFE;
+                let hi = self.vram[aligned_addr as usize] as u16;
+                let lo = self.vram[(aligned_addr.wrapping_add(1)) as usize] as u16;
                 (hi << 8) | lo
             }
             0x08 => {
-                // CRAM read
-                let cram_addr = (addr & 0x7F) as usize;
+                // CRAM read - always word aligned
+                let cram_addr = (addr & 0x7E) as usize;
                 let hi = self.cram[cram_addr] as u16;
                 let lo = self.cram[cram_addr | 1] as u16;
                 (hi << 8) | lo
             }
             0x04 => {
-                // VSRAM read
-                let vsram_addr = (addr & 0x7F) as usize;
+                // VSRAM read - always word aligned
+                let vsram_addr = (addr & 0x7E) as usize;
                 if vsram_addr < 80 {
                     let hi = self.vsram[vsram_addr] as u16;
                     let lo = self.vsram[(vsram_addr + 1).min(79)] as u16;
@@ -902,6 +903,55 @@ mod tests {
         
         // Pixel at (10, 10) should be Blue (0x001F in RGB565)
         assert_eq!(vdp.framebuffer[320 * 10 + 10], 0x001F);
+    }
+
+    #[test]
+    fn test_read_data_alignment() {
+        let mut vdp = Vdp::new();
+        vdp.write_control(0x8F02); // Auto-inc = 2
+
+        // --- VRAM Test ---
+        // Setup VRAM read at 0x0000 (Even)
+        vdp.write_control(0x0000); vdp.write_control(0x0000);
+        // Write data
+        vdp.write_control(0x4000); vdp.write_control(0x0000);
+        vdp.write_data(0xAAAA); // at 0x0000
+        vdp.write_data(0xBBBB); // at 0x0002
+
+        // Read back from 0x0000 (Even)
+        vdp.write_control(0x0000); vdp.write_control(0x0000);
+        assert_eq!(vdp.read_data(), 0xAAAA, "VRAM Even Read Failed");
+
+        // Read back from 0x0001 (Odd) - Should be aligned to 0x0000
+        vdp.write_control(0x0001); vdp.write_control(0x0000);
+        assert_eq!(vdp.read_data(), 0xAAAA, "VRAM Odd Read Failed");
+
+        // --- CRAM Test ---
+        // CRAM Write at 0x0000
+        vdp.write_control(0xC000); vdp.write_control(0x0000);
+        vdp.write_data(0x0111); // at 0x0000
+
+        // CRAM Read at 0x0000 (Even)
+        // CRAM Read cmd: CD=001000 (0x08). Word 2 (CD5..2=0010): 0x0800
+        vdp.write_control(0x0000); vdp.write_control(0x0800);
+        assert_eq!(vdp.read_data(), 0x0111, "CRAM Even Read Failed");
+
+        // CRAM Read at 0x0001 (Odd)
+        vdp.write_control(0x0001); vdp.write_control(0x0800);
+        assert_eq!(vdp.read_data(), 0x0111, "CRAM Odd Read Failed");
+
+        // --- VSRAM Test ---
+        // VSRAM Write at 0x0000
+        vdp.write_control(0x4000); vdp.write_control(0x0400);
+        vdp.write_data(0x0222);
+
+        // VSRAM Read at 0x0000 (Even)
+        vdp.write_control(0x0000); vdp.write_control(0x0400);
+        assert_eq!(vdp.read_data(), 0x0222, "VSRAM Even Read Failed");
+
+        // VSRAM Read at 0x0001 (Odd)
+        vdp.write_control(0x0001); vdp.write_control(0x0400);
+        assert_eq!(vdp.read_data(), 0x0222, "VSRAM Odd Read Failed");
     }
 }
 
