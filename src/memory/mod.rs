@@ -165,6 +165,7 @@ impl MemoryInterface for Memory {
 
 impl Memory {
 
+    #[cfg(test)]
     pub fn hex_dump(&self, start: u32, end: u32) -> String {
         let mut output = String::new();
         for i in (start..=end).step_by(16) {
