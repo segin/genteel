@@ -89,7 +89,7 @@ impl Vdp {
             control_code: 0,
             control_address: 0,
             dma_pending: false,
-            status: 0x3400, // FIFO empty
+            status: 0x3600, // FIFO empty
             h_counter: 0,
             v_counter: 0,
             line_counter: 0,
@@ -183,14 +183,15 @@ impl Vdp {
 
     pub fn write_control(&mut self, value: u16) {
         if self.control_pending {
-            self.control_code = ((value >> 8) & 0x3F) as u8;
+            // Second word of command
+            let high = ((value >> 2) & 0x3C) as u8;
+            self.control_code = (self.control_code & 0x03) | high;
             self.control_address = (self.control_address & 0x3FFF) | ((value & 0x3) << 14);
             self.control_pending = false;
 
             // DMA initiation check
             if (self.control_code & 0x20) != 0 {
                 // DMA requested
-                // Check registers for details
                 self.dma_pending = true;
             }
         } else {
@@ -202,7 +203,8 @@ impl Vdp {
                     self.registers[reg] = val;
                 }
             } else {
-                self.control_code = ((value >> 8) & 0x03) as u8;
+                // First word of command
+                self.control_code = ((value >> 14) & 0x03) as u8;
                 self.control_address = (value & 0x3FFF) as u16;
                 self.control_pending = true;
             }
