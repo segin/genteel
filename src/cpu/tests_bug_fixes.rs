@@ -3,12 +3,12 @@ mod tests {
     use crate::cpu::Cpu;
     use crate::memory::{Memory, MemoryInterface};
 
-    fn create_test_cpu() -> Cpu {
+    fn create_test_cpu() -> Cpu<Memory> {
         let mut memory = Memory::new(0x10000);
         // Initial SP and PC
         memory.write_long(0, 0x1000); // SP
         memory.write_long(4, 0x100);  // PC
-        Cpu::new(Box::new(memory))
+        Cpu::new(memory)
     }
 
     #[test]

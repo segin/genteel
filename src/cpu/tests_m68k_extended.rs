@@ -8,12 +8,12 @@ use proptest::prelude::*;
 use super::*;
 use crate::memory::{Memory, MemoryInterface};
 
-fn create_test_cpu() -> Cpu {
+fn create_test_cpu() -> Cpu<Memory> {
     let mut memory = Memory::new(0x10000);
     // Set up minimal vector table
     memory.write_long(0, 0x1000);  // SSP
     memory.write_long(4, 0x100);   // Reset vector PC
-    Cpu::new(Box::new(memory))
+    Cpu::new(memory)
 }
 
 // ============ CHK Tests ============

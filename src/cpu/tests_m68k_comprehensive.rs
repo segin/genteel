@@ -10,21 +10,21 @@ use proptest::prelude::*;
 
 // === Test Utilities ===
 
-fn create_test_cpu() -> Cpu {
+fn create_test_cpu() -> Cpu<Memory> {
     let mut memory = Memory::new(0x10000);
     memory.write_long(0, 0x1000); // SP
     memory.write_long(4, 0x100);  // PC
-    Cpu::new(Box::new(memory))
+    Cpu::new(memory)
 }
 
-fn _create_cpu_with_program(opcodes: &[u16]) -> Cpu {
+fn _create_cpu_with_program(opcodes: &[u16]) -> Cpu<Memory> {
     let mut memory = Memory::new(0x10000);
     memory.write_long(0, 0x1000); // SP
     memory.write_long(4, 0x100);  // PC
     for (i, &opcode) in opcodes.iter().enumerate() {
         memory.write_word(0x100 + (i * 2) as u32, opcode);
     }
-    Cpu::new(Box::new(memory))
+    Cpu::new(memory)
 }
 
 // === Data Movement Tests ===

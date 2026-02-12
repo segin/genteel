@@ -9,8 +9,8 @@ use crate::cpu::flags;
 use crate::cpu::Cpu;
 use crate::memory::{Memory, MemoryInterface};
 
-fn create_cpu() -> Cpu {
-    let memory = Box::new(Memory::new(0x100000));
+fn create_cpu() -> Cpu<Memory> {
+    let memory = Memory::new(0x100000);
     let mut cpu = Cpu::new(memory);
     cpu.pc = 0x1000;
     cpu.a[7] = 0x8000;
@@ -18,7 +18,7 @@ fn create_cpu() -> Cpu {
     cpu
 }
 
-fn write_op(cpu: &mut Cpu, opcodes: &[u16]) {
+fn write_op(cpu: &mut Cpu<Memory>, opcodes: &[u16]) {
     let mut addr = 0x1000u32;
     for &op in opcodes { cpu.memory.write_word(addr, op); addr += 2; }
 }

@@ -31,7 +31,7 @@ use input::InputManager;
 use debugger::{GdbServer, GdbRegisters, GdbMemory, StopReason};
 
 pub struct Emulator {
-    pub cpu: Cpu,
+    pub cpu: Cpu<SharedBus>,
     pub z80: Z80,
     pub apu: Apu,
     pub bus: Rc<RefCell<Bus>>,
@@ -46,7 +46,7 @@ impl Emulator {
         let bus = Rc::new(RefCell::new(Bus::new()));
         
         // M68k uses SharedBus wrapper for main Genesis bus access
-        let cpu = Cpu::new(Box::new(SharedBus::new(bus.clone())));
+        let cpu = Cpu::new(SharedBus::new(bus.clone()));
         
         // Z80 uses Z80Bus which routes to sound chips and banked 68k memory
         let z80_bus = Z80Bus::new(SharedBus::new(bus.clone()));

@@ -40,7 +40,7 @@ pub mod flags {
 
 /// Motorola 68000 Central Processing Unit
 #[derive(Debug)]
-pub struct Cpu {
+pub struct Cpu<M: MemoryInterface> {
     // Registers
     pub d: [u32; 8], // Data registers D0-D7
     pub a: [u32; 8], // Address registers A0-A7 (A7 is SP)
@@ -52,7 +52,7 @@ pub struct Cpu {
     pub ssp: u32,    // Supervisor stack pointer (saved when in user mode)
 
     // Memory interface
-    pub memory: Box<dyn MemoryInterface>,
+    pub memory: M,
 
     // Cycle counter for timing
     pub cycles: u64,
@@ -68,8 +68,8 @@ pub struct Cpu {
     pub interrupt_pending_mask: u8,
 }
 
-impl Cpu {
-    pub fn new(memory: Box<dyn MemoryInterface>) -> Self {
+impl<M: MemoryInterface> Cpu<M> {
+    pub fn new(memory: M) -> Self {
         let mut cpu = Self {
             d: [0; 8],
             a: [0; 8],
@@ -2399,12 +2399,12 @@ mod tests {
     use crate::memory::Memory;
     use proptest::prelude::*;
 
-    fn create_test_cpu() -> Cpu {
+    fn create_test_cpu() -> Cpu<Memory> {
         let mut memory = Memory::new(0x10000);
         // Initial SP and PC
         memory.write_long(0, 0x1000); // SP
         memory.write_long(4, 0x100);  // PC
-        Cpu::new(Box::new(memory))
+        Cpu::new(memory)
     }
 
     #[test]
@@ -2419,7 +2419,7 @@ mod tests {
         memory.data[6] = 0x56;
         memory.data[7] = 0x78;
 
-        let cpu = Cpu::new(Box::new(memory));
+        let cpu = Cpu::new(memory);
 
         assert_eq!(cpu.a[7], 0x1234);
         assert_eq!(cpu.pc, 0x5678);
@@ -2435,7 +2435,7 @@ mod tests {
         memory.data[0] = 0x00; memory.data[1] = 0x00; memory.data[2] = 0x00; memory.data[3] = 0x00;
         memory.data[4] = 0x00; memory.data[5] = 0x00; memory.data[6] = 0x00; memory.data[7] = 0x08;
 
-        let mut cpu = Cpu::new(Box::new(memory));
+        let mut cpu = Cpu::new(memory);
         cpu.d[1] = 0xABCD1234;
 
         assert_eq!(cpu.d[0], 0);
@@ -2777,7 +2777,7 @@ mod tests {
             memory.data[0] = 0x00; memory.data[1] = 0x00; memory.data[2] = 0x00; memory.data[3] = 0x00;
             memory.data[4] = 0x00; memory.data[5] = 0x00; memory.data[6] = 0x00; memory.data[7] = 0x08;
 
-            let mut cpu = Cpu::new(Box::new(memory));
+            let mut cpu = Cpu::new(memory);
             cpu.d[1] = val;
 
             cpu.step_instruction();

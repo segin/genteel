@@ -9,8 +9,8 @@ use crate::cpu::flags;
 use crate::cpu::Cpu;
 use crate::memory::{Memory, MemoryInterface};
 
-fn create_test_cpu() -> Cpu {
-    let memory = Box::new(Memory::new(0x100000));
+fn create_test_cpu() -> Cpu<Memory> {
+    let memory = Memory::new(0x100000);
     let mut cpu = Cpu::new(memory);
     cpu.pc = 0x1000;
     cpu.a[7] = 0x8000; // Stack
