@@ -364,9 +364,9 @@ impl Vdp {
             // Second word of command
             self.control_address = (self.control_address & 0x3FFF) | ((value & 0x0003) << 14);
             
-            // Command bits CD5..CD2 are in bits 13..10 of the second word
+            // Command bits CD5..CD2 are in bits 7..4 of the second word
             // Extract them and place them in bits 5..2 of control_code
-            let cd_upper = ((value >> 8) & 0x3C) as u8;
+            let cd_upper = ((value >> 2) & 0x3C) as u8;
             self.control_code = (self.control_code & 0x03) | cd_upper;
             
             self.control_pending = false;
@@ -1004,13 +1004,31 @@ mod state_machine_tests {
         vdp.write_control(0x4000);
 
         // Word 2: CD5-2 = 1000 (8).
-        // 1000 -> bits 13-10.
-        // 0010 0000 ... -> 0x2000.
+        // 1000 -> bits 7-4.
+        // 0000 0000 1000 0000 -> 0x0080.
 
-        vdp.write_control(0x2000);
+        vdp.write_control(0x0080);
 
         // Code should be 100001 = 0x21.
         assert_eq!(vdp.control_code(), 0x21);
         assert!(vdp.dma_pending);
+    }
+
+    #[test]
+    fn test_vsram_write_mode_endian() {
+        // VSRAM Write: CD5-CD0 = 000101 (0x05)
+        // Word 1: CD1-CD0 = 01. Addr(13-0) = 0. -> 0x4000.
+        // Word 2: CD5-CD2 = 0001 (1). A15-A14 = 00.
+        // If CD5-CD2 are at bits 7-4:
+        // 0000 0000 0001 0000 -> 0x0010.
+
+        let mut vdp = Vdp::new();
+        vdp.write_control(0x4000);
+        vdp.write_control(0x0010);
+
+        // Expect code 0x05.
+        // Current implementation expects bits 13-10, so 0x0010 (bit 4) is ignored.
+        // Result would be 0x01 (VRAM Write) instead of 0x05.
+        assert_eq!(vdp.control_code(), 0x05, "Expected VSRAM Write (0x05), got 0x{:02X}", vdp.control_code());
     }
 }
