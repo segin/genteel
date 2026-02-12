@@ -1,6 +1,7 @@
 #![deny(warnings)]
 
 /// Graceful println that ignores broken pipe errors (for `| head` usage)
+#[allow(unused_macros)]
 macro_rules! println_safe {
     ($($arg:tt)*) => {{
         use std::io::Write;
@@ -133,6 +134,7 @@ impl Emulator {
     /// Load ROM from a zip file (finds first .bin, .md, .gen, or .smd file)
     fn load_rom_from_zip(path: &str) -> std::io::Result<Vec<u8>> {
 
+
         let file = std::fs::File::open(path)?;
         let mut archive = zip::ZipArchive::new(file)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
@@ -144,7 +146,6 @@ impl Emulator {
         for i in 0..archive.len() {
             let mut entry = archive.by_index(i)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-
             let name = entry.name().to_lowercase();
             if rom_extensions.iter().any(|ext| name.ends_with(ext)) {
                 let size = entry.size();
@@ -443,6 +444,7 @@ impl Emulator {
     }
 
     /// Run with winit window (interactive play mode)
+    #[cfg(feature = "gui")]
     pub fn run_with_frontend(mut self) -> Result<(), String> {
         use winit::event::{Event, WindowEvent, ElementState, KeyEvent};
         use winit::event_loop::{ControlFlow, EventLoop};
@@ -741,8 +743,54 @@ fn main() {
         emulator.run(frames);
     } else {
         // Interactive mode with SDL2 window
+        #[cfg(feature = "gui")]
         if let Err(e) = emulator.run_with_frontend() {
             eprintln!("Frontend error: {}", e);
         }
+
+        #[cfg(not(feature = "gui"))]
+        {
+            eprintln!("Interactive mode requires 'gui' feature.");
+            eprintln!("Use --headless <N> or --gdb <PORT> instead.");
+        }
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn test_zip_bomb_prevention() {
+        let path = "test_bomb.zip";
+        let mut zip_data = Vec::new();
+
+        {
+            let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut zip_data));
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+
+            // Generate 33MB of dummy data
+            zip.start_file("large.bin", options).unwrap();
+            let chunk = vec![0u8; 1024 * 1024]; // 1MB
+            for _ in 0..33 {
+                zip.write_all(&chunk).unwrap();
+            }
+            zip.finish().unwrap();
+        }
+
+        std::fs::write(path, &zip_data).unwrap();
+
+        // Attempt to load - should fail after fix
+        let result = Emulator::load_rom_from_zip(path);
+
+        // Cleanup
+        let _ = std::fs::remove_file(path);
+
+        // Before fix: This assertion will fail (because result.is_ok() is likely true)
+        // After fix: This assertion will pass
+        assert!(result.is_err(), "Should reject large ROM file (>32MB)");
     }
 }

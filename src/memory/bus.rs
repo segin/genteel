@@ -362,6 +362,7 @@ impl Bus {
             }
         }
 
+
         // Optimize Work RAM access
         if addr >= 0xE00000 {
             let r_addr = (addr & 0xFFFF) as usize;
