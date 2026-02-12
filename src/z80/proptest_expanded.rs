@@ -2,7 +2,14 @@
 
 use proptest::prelude::*;
 use super::*;
-use crate::memory::Memory;
+use crate::memory::{Memory, IoInterface};
+
+#[derive(Debug)]
+struct DummyIo;
+impl IoInterface for DummyIo {
+    fn read_port(&mut self, _port: u16) -> u8 { 0xFF }
+    fn write_port(&mut self, _port: u16, _value: u8) {}
+}
 
 fn z80_prog(program: &[u8]) -> Z80 {
     let mut m = Memory::new(0x10000);
