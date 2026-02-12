@@ -349,6 +349,7 @@ void VDP_Check_NTSC_V30_VBlank(void)
  */
 static inline void VDP_Update_Mode(void)
 {
+	const unsigned int Old_VDP_Mode = VDP_Mode;
 	const register uint8_t Set1 = VDP_Reg.m5.Set1;
 	const register uint8_t Set2 = VDP_Reg.m5.Set2;
 	VDP_Mode = ((Set2 & 0x10) >> 4) |	// M1
@@ -358,8 +359,8 @@ static inline void VDP_Update_Mode(void)
 		   ((Set2 & 0x04) << 2);	// M5
 	
 	// CRam needs to be updated.
-	// TODO: Only update if VDP_Mode is changed.
-	VDP_Flags.CRam = 1;
+	if (VDP_Mode != Old_VDP_Mode)
+		VDP_Flags.CRam = 1;
 }
 
 
