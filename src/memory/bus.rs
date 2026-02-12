@@ -280,18 +280,6 @@ impl Bus {
             return self.vdp.read_hv_counter();
         }
 
-        // Optimization: Fast path for ROM
-        if addr <= 0x3FFFFF {
-            let rom_addr = addr as usize;
-            // Bounds check: ensure we can read 2 bytes from ROM
-            if rom_addr.checked_add(1).map_or(false, |end| end < self.rom.len()) {
-                // Safe to read 2 bytes directly
-                let high = self.rom[rom_addr] as u16;
-                let low = self.rom[rom_addr + 1] as u16;
-                return (high << 8) | low;
-            }
-        }
-
         let high = self.read_byte(address) as u16;
         let low = self.read_byte(address.wrapping_add(1)) as u16;
         (high << 8) | low
