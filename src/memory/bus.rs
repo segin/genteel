@@ -267,6 +267,24 @@ impl Bus {
     pub fn read_word(&mut self, address: u32) -> u16 {
         let addr = address & 0xFFFFFF;
         
+        // ROM Fast Path
+        if addr <= 0x3FFFFF {
+            let idx = addr as usize;
+            if idx + 1 < self.rom.len() {
+                // SAFETY: We checked bounds above
+                let high = unsafe { *self.rom.get_unchecked(idx) } as u16;
+                let low = unsafe { *self.rom.get_unchecked(idx + 1) } as u16;
+                return (high << 8) | low;
+            } else if idx < self.rom.len() {
+                // Partial read at end of ROM
+                let high = self.rom[idx] as u16;
+                let low = 0xFF; // Unmapped
+                return (high << 8) | low;
+            } else {
+                return 0xFFFF; // Unmapped
+            }
+        }
+
         // VDP Data Port (Word access)
         if addr >= 0xC00000 && addr <= 0xC00003 {
             return self.vdp.read_data();
@@ -284,7 +302,7 @@ impl Bus {
         if addr <= 0x3FFFFE {
             let rom_addr = addr as usize;
             if rom_addr + 1 < self.rom.len() {
-                return (self.rom[rom_addr] as u16 << 8) | (self.rom[rom_addr + 1] as u16);
+                return ((self.rom[rom_addr] as u16) << 8) | (self.rom[rom_addr + 1] as u16);
             }
         }
 
@@ -292,7 +310,7 @@ impl Bus {
         if addr >= 0xE00000 {
             let r_addr = (addr & 0xFFFF) as usize;
             if r_addr < 0xFFFF {
-                return (self.work_ram[r_addr] as u16 << 8) | (self.work_ram[r_addr + 1] as u16);
+                return ((self.work_ram[r_addr] as u16) << 8) | (self.work_ram[r_addr + 1] as u16);
             }
         }
 
@@ -337,14 +355,16 @@ impl Bus {
     pub fn read_long(&mut self, address: u32) -> u32 {
         let addr = address & 0xFFFFFF;
 
-        // Optimize ROM access
-        if addr <= 0x3FFFFC {
-            let rom_addr = addr as usize;
-            if rom_addr + 3 < self.rom.len() {
-                return (self.rom[rom_addr] as u32 << 24) |
-                       (self.rom[rom_addr + 1] as u32 << 16) |
-                       (self.rom[rom_addr + 2] as u32 << 8) |
-                       (self.rom[rom_addr + 3] as u32);
+        // ROM Fast Path
+        if addr <= 0x3FFFFF {
+            let idx = addr as usize;
+            if idx + 3 < self.rom.len() {
+                // SAFETY: We checked bounds above
+                let b0 = unsafe { *self.rom.get_unchecked(idx) } as u32;
+                let b1 = unsafe { *self.rom.get_unchecked(idx + 1) } as u32;
+                let b2 = unsafe { *self.rom.get_unchecked(idx + 2) } as u32;
+                let b3 = unsafe { *self.rom.get_unchecked(idx + 3) } as u32;
+                return (b0 << 24) | (b1 << 16) | (b2 << 8) | b3;
             }
         }
 
@@ -352,9 +372,9 @@ impl Bus {
         if addr >= 0xE00000 {
             let r_addr = (addr & 0xFFFF) as usize;
             if r_addr <= 0xFFFC {
-                return (self.work_ram[r_addr] as u32 << 24) |
-                       (self.work_ram[r_addr + 1] as u32 << 16) |
-                       (self.work_ram[r_addr + 2] as u32 << 8) |
+                return ((self.work_ram[r_addr] as u32) << 24) |
+                       ((self.work_ram[r_addr + 1] as u32) << 16) |
+                       ((self.work_ram[r_addr + 2] as u32) << 8) |
                        (self.work_ram[r_addr + 3] as u32);
             }
         }

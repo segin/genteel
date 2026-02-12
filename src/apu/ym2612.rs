@@ -14,6 +14,7 @@
 //! - Envelope Generator (Attack, Decay, Sustain, Release)
 //! - LFO
 //! - Feedback/Algorithm
+//!
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Bank {
