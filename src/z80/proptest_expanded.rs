@@ -2,19 +2,13 @@
 
 use proptest::prelude::*;
 use super::*;
-use crate::memory::{Memory, IoInterface};
-
-#[derive(Debug)]
-struct DummyIo;
-impl IoInterface for DummyIo {
-    fn read_port(&mut self, _port: u16) -> u8 { 0xFF }
-    fn write_port(&mut self, _port: u16, _value: u8) {}
-}
+use crate::memory::Memory;
+use super::test_utils::TestIo;
 
 fn z80_prog(program: &[u8]) -> Z80 {
     let mut m = Memory::new(0x10000);
     for (i, &b) in program.iter().enumerate() { m.data[i] = b; }
-    Z80::new(Box::new(m), Box::new(DummyIo))
+    Z80::new(Box::new(m), Box::new(TestIo::default()))
 }
 
 proptest! {
