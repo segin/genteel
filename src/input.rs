@@ -69,9 +69,9 @@ impl InputScript {
             let frame: u64 = parts[0].trim().parse()
                 .map_err(|_| format!("Line {}: invalid frame number", line_num + 1))?;
 
-            let p1 = Self::parse_buttons(parts[1].trim())?;
+            let p1 = Self::parse_buttons(parts[1].trim());
             let p2 = if parts.len() > 2 {
-                Self::parse_buttons(parts[2].trim())?
+                Self::parse_buttons(parts[2].trim())
             } else {
                 ControllerState::default()
             };
@@ -86,33 +86,26 @@ impl InputScript {
     /// Parse button string to ControllerState
     /// Format: UDLRABCS for 3-button, UDLRABCSXYZM for 6-button
     /// Use '.' for released buttons
-    fn parse_buttons(s: &str) -> Result<ControllerState, String> {
+    fn parse_buttons(s: &str) -> ControllerState {
         let mut state = ControllerState::default();
-        let chars: Vec<char> = s.chars().collect();
+        let mut chars = s.chars();
 
-        // Minimum 8 chars for 3-button, 12 for 6-button
-        if chars.len() < 8 {
-            return Err(format!("Invalid button string length: expected at least 8 chars, got {}", chars.len()));
-        }
-
-        state.up    = chars[0] == 'U';
-        state.down  = chars[1] == 'D';
-        state.left  = chars[2] == 'L';
-        state.right = chars[3] == 'R';
-        state.a     = chars[4] == 'A';
-        state.b     = chars[5] == 'B';
-        state.c     = chars[6] == 'C';
-        state.start = chars[7] == 'S';
+        state.up    = chars.next() == Some('U');
+        state.down  = chars.next() == Some('D');
+        state.left  = chars.next() == Some('L');
+        state.right = chars.next() == Some('R');
+        state.a     = chars.next() == Some('A');
+        state.b     = chars.next() == Some('B');
+        state.c     = chars.next() == Some('C');
+        state.start = chars.next() == Some('S');
 
         // 6-button extension
-        if chars.len() >= 12 {
-            state.x    = chars[8] == 'X';
-            state.y    = chars[9] == 'Y';
-            state.z    = chars[10] == 'Z';
-            state.mode = chars[11] == 'M';
-        }
+        state.x    = chars.next() == Some('X');
+        state.y    = chars.next() == Some('Y');
+        state.z    = chars.next() == Some('Z');
+        state.mode = chars.next() == Some('M');
 
-        Ok(state)
+        state
     }
 
     /// Get input for a specific frame
@@ -239,7 +232,7 @@ mod tests {
 
     #[test]
     fn test_parse_buttons_basic() {
-        let state = InputScript::parse_buttons("....A...").unwrap();
+        let state = InputScript::parse_buttons("....A...");
         assert!(state.a);
         assert!(!state.b);
         assert!(!state.up);
@@ -247,7 +240,7 @@ mod tests {
 
     #[test]
     fn test_parse_buttons_multiple() {
-        let state = InputScript::parse_buttons("U..RAB..").unwrap();
+        let state = InputScript::parse_buttons("U..RAB..");
         assert!(state.up);
         assert!(state.right);
         assert!(state.a);
@@ -258,7 +251,7 @@ mod tests {
 
     #[test]
     fn test_parse_buttons_6button() {
-        let state = InputScript::parse_buttons("........XYZ.").unwrap();
+        let state = InputScript::parse_buttons("........XYZ.");
         assert!(state.x);
         assert!(state.y);
         assert!(state.z);
@@ -312,8 +305,18 @@ mod tests {
 
     #[test]
     fn test_parse_buttons_short() {
-        let result = InputScript::parse_buttons("short");
-        assert!(result.is_err(), "Expected error for short input string");
+        let state = InputScript::parse_buttons("short");
+        // "short" has 5 chars.
+        // U='s', D='h', L='o', R='r', A='t' -> None match UDLRABCSXYZM
+        // So all should be false
+        assert!(!state.up);
+        assert!(!state.down);
+        assert!(!state.left);
+        assert!(!state.right);
+        assert!(!state.a);
+        assert!(!state.b);
+        assert!(!state.c);
+        assert!(!state.start);
     }
 
     #[test]
