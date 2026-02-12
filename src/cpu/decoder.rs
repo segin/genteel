@@ -1111,4 +1111,27 @@ mod tests {
         assert_eq!(format!("{}", AddressingMode::AddressPostIncrement(2)), "(A2)+");
         assert_eq!(format!("{}", AddressingMode::AddressPreDecrement(7)), "-(A7)");
     }
+
+    #[test]
+    fn test_decode_div() {
+        // DIVU.W D1, D0
+        let instr_divu = decode(0x80C1);
+        assert_eq!(
+            instr_divu,
+            Instruction::DivU {
+                src: AddressingMode::DataRegister(1),
+                dst_reg: 0,
+            }
+        );
+
+        // DIVS.W D1, D0
+        let instr_divs = decode(0x81C1);
+        assert_eq!(
+            instr_divs,
+            Instruction::DivS {
+                src: AddressingMode::DataRegister(1),
+                dst_reg: 0,
+            }
+        );
+    }
 }
