@@ -194,22 +194,29 @@ mod tests {
     #[test]
     fn test_bank_register() {
         let mut z80_bus = create_test_z80_bus();
-        
+
         // Initially bank is 0
-        assert_eq!(z80_bus.bank_register, 0);
-        
+        assert_eq!(z80_bus.bus.bus.borrow().z80_bank_addr, 0);
+
         // Write to bank register (bit-by-bit shifting)
         z80_bus.write_byte(0x6000, 0x01);  // Shift in 1
-        assert_ne!(z80_bus.bank_register, 0);
+
+        // Note: bank register implementation in Bus handles the bit shifting logic
+        // We just verify it changed
+        assert_ne!(z80_bus.bus.bus.borrow().z80_bank_addr, 0);
     }
-    
+
     #[test]
     fn test_reserved_reads_ff() {
         let mut z80_bus = create_test_z80_bus();
-        
-        // Reserved areas should return 0xFF
-        assert_eq!(z80_bus.read_byte(0x2000), 0xFF);
-        assert_eq!(z80_bus.read_byte(0x3FFF), 0xFF);
+
+        // Z80 RAM is mirrored at 0x2000-0x3FFF, so reading 0x2000 reads 0x0000 (initially 0)
+        assert_eq!(z80_bus.read_byte(0x2000), 0x00);
+        assert_eq!(z80_bus.read_byte(0x3FFF), 0x00);
+
+        // Reserved areas (like PSG read) should return 0xFF
+        assert_eq!(z80_bus.read_byte(0x4004), 0xFF); // FM Mirror
+        assert_eq!(z80_bus.read_byte(0x6000), 0xFF); // Bank register is write-only
         assert_eq!(z80_bus.read_byte(0x7F11), 0xFF);  // PSG is write-only
     }
 }
