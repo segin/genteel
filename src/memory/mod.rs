@@ -165,6 +165,7 @@ impl MemoryInterface for Memory {
 
 impl Memory {
 
+    #[cfg(test)]
     pub fn hex_dump(&self, start: u32, end: u32) -> String {
         let mut output = String::new();
         for i in (start..=end).step_by(16) {
@@ -218,5 +219,42 @@ mod tests {
         for (i, actual_line) in actual_lines.iter().enumerate() {
             assert_eq!(*actual_line, expected_lines[i]);
         }
+    }
+
+    #[test]
+    fn test_memory_endianness() {
+        let mut mem = Memory::new(1024);
+        let addr = 0x100;
+        let val: u32 = 0x12345678;
+
+        // Write Long
+        mem.write_long(addr, val);
+
+        // Verify underlying bytes (Big Endian)
+        assert_eq!(mem.data[addr as usize], 0x12, "Byte 0 mismatch");
+        assert_eq!(mem.data[addr as usize + 1], 0x34, "Byte 1 mismatch");
+        assert_eq!(mem.data[addr as usize + 2], 0x56, "Byte 2 mismatch");
+        assert_eq!(mem.data[addr as usize + 3], 0x78, "Byte 3 mismatch");
+
+        // Read Long
+        assert_eq!(mem.read_long(addr), val, "Read long mismatch");
+
+        // Read Word (High)
+        assert_eq!(mem.read_word(addr), 0x1234, "Read high word mismatch");
+        // Read Word (Low)
+        assert_eq!(mem.read_word(addr + 2), 0x5678, "Read low word mismatch");
+
+        // Read Byte
+        assert_eq!(mem.read_byte(addr), 0x12, "Read byte 0 mismatch");
+        assert_eq!(mem.read_byte(addr + 1), 0x34, "Read byte 1 mismatch");
+        assert_eq!(mem.read_byte(addr + 2), 0x56, "Read byte 2 mismatch");
+        assert_eq!(mem.read_byte(addr + 3), 0x78, "Read byte 3 mismatch");
+
+        // Write Word and verify
+        let word_val: u16 = 0xAABB;
+        mem.write_word(addr + 4, word_val);
+        assert_eq!(mem.data[addr as usize + 4], 0xAA, "Word write byte 0 mismatch");
+        assert_eq!(mem.data[addr as usize + 5], 0xBB, "Word write byte 1 mismatch");
+        assert_eq!(mem.read_word(addr + 4), word_val, "Read word mismatch");
     }
 }
