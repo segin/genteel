@@ -235,6 +235,11 @@ impl Emulator {
                     (!bus.z80_reset && !bus.z80_bus_request, bus.z80_reset)
                 };
 
+                // Ensure Z80 is held in reset (PC=0) while reset line is active
+                if z80_is_reset {
+                    self.z80.reset();
+                }
+
                 if z80_can_run && self.internal_frame_count > 0 {
                      static mut Z80_TRACE_COUNT: u32 = 0;
                      unsafe {
