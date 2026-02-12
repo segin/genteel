@@ -1,9 +1,9 @@
 [
   {
     "id": "F-001",
-    "title": "False Positive: Audit Tool Secret Pattern",
-    "severity": "Info",
-    "description": "The audit tool detected its own regex pattern.",
+    "title": "Potential Secret: Private Key",
+    "severity": "Critical",
+    "description": "Found pattern matching Private Key",
     "file": "audit_tool.py",
     "line": 167,
     "remediation": "Rotate secret and remove from history."
@@ -102,67 +102,31 @@
     "id": "F-012",
     "title": "Technical Debt (TODO/FIXME)",
     "severity": "Info",
-    "description": "// Execute any pending DMA (TODO: proper cycle-accurate DMA)",
-    "file": "src/main.rs",
-    "line": 179,
+    "description": "// TODO: Proper timer implementation.",
+    "file": "src/apu/ym2612.rs",
+    "line": 72,
     "remediation": "Address the comment."
   },
   {
     "id": "F-013",
-    "title": "Technical Debt (TODO/FIXME)",
-    "severity": "Info",
-    "description": "// TODO: I/O implementation",
-    "file": "src/z80/mod.rs",
-    "line": 873,
-    "remediation": "Address the comment."
+    "title": "Unsafe Rust Code",
+    "severity": "Medium",
+    "description": "Usage of `unsafe` block detected. Verify memory safety manually.",
+    "file": "src/main.rs",
+    "line": 228,
+    "remediation": "Audit unsafe block for soundness."
   },
   {
     "id": "F-014",
-    "title": "Technical Debt (TODO/FIXME)",
-    "severity": "Info",
-    "description": "// TODO: I/O implementation",
-    "file": "src/z80/mod.rs",
-    "line": 878,
-    "remediation": "Address the comment."
+    "title": "Unsafe Rust Code",
+    "severity": "Medium",
+    "description": "Usage of `unsafe` block detected. Verify memory safety manually.",
+    "file": "src/main.rs",
+    "line": 240,
+    "remediation": "Audit unsafe block for soundness."
   },
   {
     "id": "F-015",
-    "title": "Technical Debt (TODO/FIXME)",
-    "severity": "Info",
-    "description": "// TODO: I/O implementation",
-    "file": "src/z80/mod.rs",
-    "line": 1082,
-    "remediation": "Address the comment."
-  },
-  {
-    "id": "F-016",
-    "title": "Technical Debt (TODO/FIXME)",
-    "severity": "Info",
-    "description": "// TODO: I/O implementation",
-    "file": "src/z80/mod.rs",
-    "line": 1094,
-    "remediation": "Address the comment."
-  },
-  {
-    "id": "F-017",
-    "title": "Technical Debt (TODO/FIXME)",
-    "severity": "Info",
-    "description": "let io_val = 0xFF; // TODO: Real IO",
-    "file": "src/z80/mod.rs",
-    "line": 1357,
-    "remediation": "Address the comment."
-  },
-  {
-    "id": "F-018",
-    "title": "Technical Debt (TODO/FIXME)",
-    "severity": "Info",
-    "description": "// TODO: Real IO",
-    "file": "src/z80/mod.rs",
-    "line": 1393,
-    "remediation": "Address the comment."
-  },
-  {
-    "id": "F-019",
     "title": "Technical Debt (TODO/FIXME)",
     "severity": "Info",
     "description": "// Miscellaneous. (TODO: Determine if these should be signed or unsigned.)",
@@ -171,7 +135,7 @@
     "remediation": "Address the comment."
   },
   {
-    "id": "F-020",
+    "id": "F-016",
     "title": "Technical Debt (TODO/FIXME)",
     "severity": "Info",
     "description": "// TODO: HBlank interrupt should take priority over VBlank interrupt.",
@@ -180,228 +144,264 @@
     "remediation": "Address the comment."
   },
   {
-    "id": "F-021",
+    "id": "F-017",
+    "title": "Technical Debt (TODO/FIXME)",
+    "severity": "Info",
+    "description": "// TODO: Don't rerun the VDP drawing functions when paused!",
+    "file": "vdp_io.cpp",
+    "line": 248,
+    "remediation": "Address the comment."
+  },
+  {
+    "id": "F-018",
     "title": "Technical Debt (TODO/FIXME)",
     "severity": "Info",
     "description": "// TODO: If emulating SMS1, disable 224-line and 240-line modes.",
     "file": "vdp_io.cpp",
-    "line": 277,
+    "line": 281,
+    "remediation": "Address the comment."
+  },
+  {
+    "id": "F-019",
+    "title": "Technical Debt (TODO/FIXME)",
+    "severity": "Info",
+    "description": "VDP_Lines.NTSC_V30.Offset += 11;\t// TODO: Figure out a good offset increment.",
+    "file": "vdp_io.cpp",
+    "line": 339,
+    "remediation": "Address the comment."
+  },
+  {
+    "id": "F-020",
+    "title": "Technical Debt (TODO/FIXME)",
+    "severity": "Info",
+    "description": "// TODO: Only update if VDP_Mode is changed.",
+    "file": "vdp_io.cpp",
+    "line": 364,
+    "remediation": "Address the comment."
+  },
+  {
+    "id": "F-021",
+    "title": "Technical Debt (TODO/FIXME)",
+    "severity": "Info",
+    "description": "if (VDP_Reg.m5.Set4 & 0x01)\t// Check for H40 mode. (TODO: Test 0x81 instead?)",
+    "file": "vdp_io.cpp",
+    "line": 430,
     "remediation": "Address the comment."
   },
   {
     "id": "F-022",
     "title": "Technical Debt (TODO/FIXME)",
     "severity": "Info",
-    "description": "// TODO: Don't rerun the VDP drawing functions when paused!",
+    "description": "if (VDP_Reg.m5.Set4 & 0x01)\t// Check for H40 mode. (TODO: Test 0x81 instead?)",
     "file": "vdp_io.cpp",
-    "line": 308,
+    "line": 446,
     "remediation": "Address the comment."
   },
   {
     "id": "F-023",
     "title": "Technical Debt (TODO/FIXME)",
     "severity": "Info",
-    "description": "VDP_Lines.NTSC_V30.Offset += 11;\t// TODO: Figure out a good offset increment.",
+    "description": "// TODO: Only set this if the actual value has changed.",
     "file": "vdp_io.cpp",
-    "line": 336,
+    "line": 454,
     "remediation": "Address the comment."
   },
   {
     "id": "F-024",
     "title": "Technical Debt (TODO/FIXME)",
     "severity": "Info",
-    "description": "// TODO: Only update if VDP_Mode is changed.",
+    "description": "// TODO: Only set this if the actual value has changed.",
     "file": "vdp_io.cpp",
-    "line": 361,
+    "line": 460,
     "remediation": "Address the comment."
   },
   {
     "id": "F-025",
     "title": "Technical Debt (TODO/FIXME)",
     "severity": "Info",
-    "description": "if (VDP_Reg.m5.Set4 & 0x01)\t// Check for H40 mode. (TODO: Test 0x81 instead?)",
+    "description": "// TODO: Only set this if the actual value has changed.",
     "file": "vdp_io.cpp",
-    "line": 427,
+    "line": 486,
     "remediation": "Address the comment."
   },
   {
     "id": "F-026",
     "title": "Technical Debt (TODO/FIXME)",
     "severity": "Info",
-    "description": "if (VDP_Reg.m5.Set4 & 0x01)\t// Check for H40 mode. (TODO: Test 0x81 instead?)",
+    "description": "if (val & 0x81)\t\t// TODO: Original asm tests 0x81. Should this be done for other H40 tests?",
     "file": "vdp_io.cpp",
-    "line": 443,
+    "line": 489,
     "remediation": "Address the comment."
   },
   {
     "id": "F-027",
     "title": "Technical Debt (TODO/FIXME)",
     "severity": "Info",
-    "description": "// TODO: Only set this if the actual value has changed.",
+    "description": "// TODO: We're checking both RS0 and RS1 here. Others only check one.",
     "file": "vdp_io.cpp",
-    "line": 451,
+    "line": 663,
     "remediation": "Address the comment."
   },
   {
     "id": "F-028",
     "title": "Technical Debt (TODO/FIXME)",
     "severity": "Info",
-    "description": "// TODO: Only set this if the actual value has changed.",
+    "description": "uint8_t bl, bh;\t\t// TODO: Figure out what this actually means.",
     "file": "vdp_io.cpp",
-    "line": 457,
+    "line": 682,
     "remediation": "Address the comment."
   },
   {
     "id": "F-029",
     "title": "Technical Debt (TODO/FIXME)",
     "severity": "Info",
-    "description": "// TODO: Only set this if the actual value has changed.",
+    "description": "// TODO: Some of these values are wrong.",
     "file": "vdp_io.cpp",
-    "line": 483,
+    "line": 706,
     "remediation": "Address the comment."
   },
   {
     "id": "F-030",
     "title": "Technical Debt (TODO/FIXME)",
     "severity": "Info",
-    "description": "if (val & 0x81)\t\t// TODO: Original asm tests 0x81. Should this be done for other H40 tests?",
+    "description": "// Toggle the upper 8 bits of VDP_Status. (TODO: Is this correct?)",
     "file": "vdp_io.cpp",
-    "line": 486,
+    "line": 750,
     "remediation": "Address the comment."
   },
   {
     "id": "F-031",
     "title": "Technical Debt (TODO/FIXME)",
     "severity": "Info",
-    "description": "// TODO: We're checking both RS0 and RS1 here. Others only check one.",
+    "description": "// TODO: Should these be masked? This might be why some games are broken...",
     "file": "vdp_io.cpp",
-    "line": 660,
+    "line": 754,
     "remediation": "Address the comment."
   },
   {
     "id": "F-032",
     "title": "Technical Debt (TODO/FIXME)",
     "severity": "Info",
-    "description": "uint8_t bl, bh;\t\t// TODO: Figure out what this actually means.",
+    "description": "// TODO: Test this function.",
     "file": "vdp_io.cpp",
-    "line": 679,
+    "line": 778,
     "remediation": "Address the comment."
   },
   {
     "id": "F-033",
     "title": "Technical Debt (TODO/FIXME)",
     "severity": "Info",
-    "description": "// TODO: Some of these values are wrong.",
+    "description": "// TODO: Report this as a bug to the gcc developers.",
     "file": "vdp_io.cpp",
-    "line": 703,
+    "line": 792,
     "remediation": "Address the comment."
   },
   {
     "id": "F-034",
     "title": "Technical Debt (TODO/FIXME)",
     "severity": "Info",
-    "description": "// Toggle the upper 8 bits of VDP_Status. (TODO: Is this correct?)",
+    "description": "// TODO: Use both RS0/RS1, not just RS1.",
     "file": "vdp_io.cpp",
-    "line": 747,
+    "line": 841,
     "remediation": "Address the comment."
   },
   {
     "id": "F-035",
     "title": "Technical Debt (TODO/FIXME)",
     "severity": "Info",
-    "description": "// TODO: Should these be masked? This might be why some games are broken...",
+    "description": "// TODO: This was actually not working in the asm,",
     "file": "vdp_io.cpp",
-    "line": 751,
+    "line": 936,
     "remediation": "Address the comment."
   },
   {
     "id": "F-036",
     "title": "Technical Debt (TODO/FIXME)",
     "severity": "Info",
-    "description": "// TODO: Test this function.",
+    "description": "// TODO: Although we decrement DMAT_Length correctly based on",
     "file": "vdp_io.cpp",
-    "line": 775,
+    "line": 946,
     "remediation": "Address the comment."
   },
   {
     "id": "F-037",
     "title": "Technical Debt (TODO/FIXME)",
     "severity": "Info",
-    "description": "// TODO: Report this as a bug to the gcc developers.",
+    "description": "// TODO: According to the Genesis Software Manual, writing at",
     "file": "vdp_io.cpp",
-    "line": 789,
+    "line": 1043,
     "remediation": "Address the comment."
   },
   {
     "id": "F-038",
     "title": "Technical Debt (TODO/FIXME)",
     "severity": "Info",
-    "description": "// TODO: Use both RS0/RS1, not just RS1.",
+    "description": "// TODO: The Genesis Software Manual doesn't mention what happens",
     "file": "vdp_io.cpp",
-    "line": 838,
+    "line": 1059,
     "remediation": "Address the comment."
   },
   {
     "id": "F-039",
     "title": "Technical Debt (TODO/FIXME)",
     "severity": "Info",
-    "description": "// TODO: This was actually not working in the asm,",
+    "description": "// TODO: VSRam is 80 bytes, but we're allowing a maximum of 128 bytes here...",
     "file": "vdp_io.cpp",
-    "line": 933,
+    "line": 1061,
     "remediation": "Address the comment."
   },
   {
     "id": "F-040",
     "title": "Technical Debt (TODO/FIXME)",
     "severity": "Info",
-    "description": "// TODO: Although we decrement DMAT_Length correctly based on",
+    "description": "src_address -= 2;\t// TODO: What is this for?",
     "file": "vdp_io.cpp",
-    "line": 943,
+    "line": 1134,
     "remediation": "Address the comment."
   },
   {
     "id": "F-041",
     "title": "Technical Debt (TODO/FIXME)",
     "severity": "Info",
-    "description": "// TODO: According to the Genesis Software Manual, writing at",
+    "description": "src_address -= 2;\t// TODO: What is this for?",
     "file": "vdp_io.cpp",
-    "line": 1040,
+    "line": 1142,
     "remediation": "Address the comment."
   },
   {
     "id": "F-042",
     "title": "Technical Debt (TODO/FIXME)",
     "severity": "Info",
-    "description": "// TODO: The Genesis Software Manual doesn't mention what happens",
+    "description": "// TODO: This is untested!",
     "file": "vdp_io.cpp",
-    "line": 1056,
+    "line": 1193,
     "remediation": "Address the comment."
   },
   {
     "id": "F-043",
     "title": "Technical Debt (TODO/FIXME)",
     "severity": "Info",
-    "description": "// TODO: VSRam is 80 bytes, but we're allowing a maximum of 128 bytes here...",
+    "description": "// TODO: This is untested!",
     "file": "vdp_io.cpp",
-    "line": 1058,
+    "line": 1202,
     "remediation": "Address the comment."
   },
   {
     "id": "F-044",
     "title": "Technical Debt (TODO/FIXME)",
     "severity": "Info",
-    "description": "src_address -= 2;\t// TODO: What is this for?",
+    "description": "// TODO: This is untested!",
     "file": "vdp_io.cpp",
-    "line": 1131,
+    "line": 1207,
     "remediation": "Address the comment."
   },
   {
     "id": "F-045",
     "title": "Technical Debt (TODO/FIXME)",
     "severity": "Info",
-    "description": "src_address -= 2;\t// TODO: What is this for?",
+    "description": "// TODO: This is untested!",
     "file": "vdp_io.cpp",
-    "line": 1139,
+    "line": 1212,
     "remediation": "Address the comment."
   },
   {
@@ -410,115 +410,115 @@
     "severity": "Info",
     "description": "// TODO: This is untested!",
     "file": "vdp_io.cpp",
-    "line": 1190,
+    "line": 1219,
     "remediation": "Address the comment."
   },
   {
     "id": "F-047",
     "title": "Technical Debt (TODO/FIXME)",
     "severity": "Info",
-    "description": "// TODO: This is untested!",
+    "description": "// TODO: The 128 KB wrapping causes garbage on TmEE's mmf.bin (correct),",
     "file": "vdp_io.cpp",
-    "line": 1199,
+    "line": 1230,
     "remediation": "Address the comment."
   },
   {
     "id": "F-048",
     "title": "Technical Debt (TODO/FIXME)",
     "severity": "Info",
-    "description": "// TODO: This is untested!",
+    "description": "// TODO: Check endianness with regards to the control words. (Wordswapping!)",
     "file": "vdp_io.cpp",
-    "line": 1204,
+    "line": 1310,
     "remediation": "Address the comment."
   },
   {
     "id": "F-049",
     "title": "Technical Debt (TODO/FIXME)",
     "severity": "Info",
-    "description": "// TODO: This is untested!",
+    "description": "VDP_Ctrl.Access = 5;\t// TODO: What does this mean?",
     "file": "vdp_io.cpp",
-    "line": 1209,
+    "line": 1320,
     "remediation": "Address the comment."
   },
   {
     "id": "F-050",
     "title": "Technical Debt (TODO/FIXME)",
     "severity": "Info",
-    "description": "// TODO: This is untested!",
+    "description": "// TODO: Is this correct with regards to endianness?",
     "file": "vdp_io.cpp",
-    "line": 1216,
+    "line": 1433,
     "remediation": "Address the comment."
   },
   {
     "id": "F-051",
     "title": "Technical Debt (TODO/FIXME)",
     "severity": "Info",
-    "description": "// TODO: The 128 KB wrapping causes garbage on TmEE's mmf.bin (correct),",
+    "description": "// TODO: What does this mean?",
     "file": "vdp_io.cpp",
-    "line": 1227,
+    "line": 1452,
     "remediation": "Address the comment."
   },
   {
     "id": "F-052",
     "title": "Technical Debt (TODO/FIXME)",
     "severity": "Info",
-    "description": "// TODO: Check endianness with regards to the control words. (Wordswapping!)",
+    "description": "// TODO: This includes invalid addresses!",
     "file": "vdp_io.cpp",
-    "line": 1307,
+    "line": 1472,
     "remediation": "Address the comment."
   },
   {
     "id": "F-053",
     "title": "Technical Debt (TODO/FIXME)",
     "severity": "Info",
-    "description": "VDP_Ctrl.Access = 5;\t// TODO: What does this mean?",
+    "description": "// TODO: This includes invalid addresses!",
     "file": "vdp_io.cpp",
-    "line": 1317,
+    "line": 1481,
     "remediation": "Address the comment."
   },
   {
     "id": "F-054",
     "title": "Technical Debt (TODO/FIXME)",
     "severity": "Info",
-    "description": "// TODO: Is this correct with regards to endianness?",
+    "description": "// TODO: Determine how this works.",
     "file": "vdp_io.cpp",
-    "line": 1430,
+    "line": 1493,
     "remediation": "Address the comment."
   },
   {
     "id": "F-055",
     "title": "Technical Debt (TODO/FIXME)",
     "severity": "Info",
-    "description": "// TODO: What does this mean?",
+    "description": "// TODO: This is untested!",
     "file": "vdp_io.cpp",
-    "line": 1449,
+    "line": 1534,
     "remediation": "Address the comment."
   },
   {
     "id": "F-056",
     "title": "Technical Debt (TODO/FIXME)",
     "severity": "Info",
-    "description": "// TODO: This includes invalid addresses!",
+    "description": "// TODO: This is untested!",
     "file": "vdp_io.cpp",
-    "line": 1469,
+    "line": 1539,
     "remediation": "Address the comment."
   },
   {
     "id": "F-057",
     "title": "Technical Debt (TODO/FIXME)",
     "severity": "Info",
-    "description": "// TODO: This includes invalid addresses!",
+    "description": "// TODO: This is untested!",
     "file": "vdp_io.cpp",
-    "line": 1478,
+    "line": 1544,
     "remediation": "Address the comment."
   },
   {
     "id": "F-058",
     "title": "Technical Debt (TODO/FIXME)",
     "severity": "Info",
-    "description": "// TODO: Determine how this works.",
+    "description": "// TODO: This is untested!",
     "file": "vdp_io.cpp",
-    "line": 1490,
+    "line": 1561,
     "remediation": "Address the comment."
   },
   {
@@ -527,7 +527,7 @@
     "severity": "Info",
     "description": "// TODO: This is untested!",
     "file": "vdp_io.cpp",
-    "line": 1531,
+    "line": 1566,
     "remediation": "Address the comment."
   },
   {
@@ -536,7 +536,7 @@
     "severity": "Info",
     "description": "// TODO: This is untested!",
     "file": "vdp_io.cpp",
-    "line": 1536,
+    "line": 1571,
     "remediation": "Address the comment."
   },
   {
@@ -545,7 +545,7 @@
     "severity": "Info",
     "description": "// TODO: This is untested!",
     "file": "vdp_io.cpp",
-    "line": 1541,
+    "line": 1576,
     "remediation": "Address the comment."
   },
   {
@@ -554,7 +554,7 @@
     "severity": "Info",
     "description": "// TODO: This is untested!",
     "file": "vdp_io.cpp",
-    "line": 1558,
+    "line": 1581,
     "remediation": "Address the comment."
   },
   {
@@ -563,7 +563,7 @@
     "severity": "Info",
     "description": "// TODO: This is untested!",
     "file": "vdp_io.cpp",
-    "line": 1563,
+    "line": 1586,
     "remediation": "Address the comment."
   },
   {
@@ -572,7 +572,7 @@
     "severity": "Info",
     "description": "// TODO: This is untested!",
     "file": "vdp_io.cpp",
-    "line": 1568,
+    "line": 1591,
     "remediation": "Address the comment."
   },
   {
@@ -581,7 +581,7 @@
     "severity": "Info",
     "description": "// TODO: This is untested!",
     "file": "vdp_io.cpp",
-    "line": 1573,
+    "line": 1596,
     "remediation": "Address the comment."
   },
   {
@@ -590,7 +590,7 @@
     "severity": "Info",
     "description": "// TODO: This is untested!",
     "file": "vdp_io.cpp",
-    "line": 1578,
+    "line": 1601,
     "remediation": "Address the comment."
   },
   {
@@ -599,7 +599,7 @@
     "severity": "Info",
     "description": "// TODO: This is untested!",
     "file": "vdp_io.cpp",
-    "line": 1583,
+    "line": 1606,
     "remediation": "Address the comment."
   },
   {
@@ -608,7 +608,7 @@
     "severity": "Info",
     "description": "// TODO: This is untested!",
     "file": "vdp_io.cpp",
-    "line": 1588,
+    "line": 1611,
     "remediation": "Address the comment."
   },
   {
@@ -617,79 +617,16 @@
     "severity": "Info",
     "description": "// TODO: This is untested!",
     "file": "vdp_io.cpp",
-    "line": 1593,
+    "line": 1616,
     "remediation": "Address the comment."
   },
   {
     "id": "F-070",
-    "title": "Technical Debt (TODO/FIXME)",
-    "severity": "Info",
-    "description": "// TODO: This is untested!",
-    "file": "vdp_io.cpp",
-    "line": 1598,
-    "remediation": "Address the comment."
-  },
-  {
-    "id": "F-071",
-    "title": "Technical Debt (TODO/FIXME)",
-    "severity": "Info",
-    "description": "// TODO: This is untested!",
-    "file": "vdp_io.cpp",
-    "line": 1603,
-    "remediation": "Address the comment."
-  },
-  {
-    "id": "F-072",
-    "title": "Technical Debt (TODO/FIXME)",
-    "severity": "Info",
-    "description": "// TODO: This is untested!",
-    "file": "vdp_io.cpp",
-    "line": 1608,
-    "remediation": "Address the comment."
-  },
-  {
-    "id": "F-073",
-    "title": "Technical Debt (TODO/FIXME)",
-    "severity": "Info",
-    "description": "// TODO: This is untested!",
-    "file": "vdp_io.cpp",
-    "line": 1613,
-    "remediation": "Address the comment."
-  },
-  {
-    "id": "F-074",
     "title": "Test Failure",
     "severity": "High",
     "description": "Run `cargo test` to see failures.",
     "file": null,
     "line": null,
     "remediation": "Fix failing tests."
-  },
-  {
-    "id": "F-075",
-    "title": "Dead Code",
-    "severity": "Low",
-    "description": "File `vdp_io.cpp` appears to be an unused C++ artifact in a Rust project. It contains many TODOs and is not linked.",
-    "file": "vdp_io.cpp",
-    "line": null,
-    "remediation": "Remove the file."
-  },
-  {
-    "id": "F-076",
-    "title": "Operational Risk: Missing System Dependency",
-    "severity": "Medium",
-    "description": "Runtime tests fail because `libasound2-dev` (ALSA) is required by `cpal` but not documented or present in the environment.",
-    "file": "Cargo.toml",
-    "line": null,
-    "remediation": "Update README.md to list system requirements or make audio optional."
-  },
-  {
-    "id": "F-077",
-    "title": "Maintainability: Build Artifacts in Version Control",
-    "severity": "Medium",
-    "description": "The directory `fuzz/target/` is tracked in git, bloating the repository and causing false positives in analysis.",
-    "file": "fuzz/target/",
-    "line": null,
-    "remediation": "Remove `fuzz/target` from git and add to `.gitignore`."
   }
 ]

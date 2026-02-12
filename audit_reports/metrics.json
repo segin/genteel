@@ -4,19 +4,19 @@
     "Markdown": 1151,
     "TOML": 82,
     "Python": 492,
-    "Rust": 20239,
+    "Rust": 20492,
     "JSON": 41,
-    "C/C++": 1624
+    "C/C++": 1627
   },
-  "file_count": 399,
+  "file_count": 400,
   "languages": [
     "Rust",
+    "Markdown",
     "Python",
     "JSON",
+    "TOML",
     "C/C++",
-    "Unknown",
-    "Markdown",
-    "TOML"
+    "Unknown"
   ],
   "dependency_count": 322,
   "vulnerabilities": 0,

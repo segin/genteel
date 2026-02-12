@@ -245,6 +245,10 @@ void VDP_Update_IRQ_Line(void)
  */
 void VDP_Set_Visible_Lines(void)
 {
+	// Don't rerun the VDP drawing functions when paused!
+	if (Settings.Paused)
+		return;
+
 	// Arrays of values.
 	// Indexes: 0 == 192 lines; 1 == 224 lines; 2 == 240 lines.
 	static const int VisLines_Total[3] = {192, 224, 240};
@@ -305,8 +309,7 @@ void VDP_Set_Visible_Lines(void)
 	// HACK: There's a minor issue with the SegaCD firmware.
 	// The firmware turns off the VDP after the last line,
 	// which causes the entire screen to disappear if paused.
-	// TODO: Don't rerun the VDP drawing functions when paused!
-	if (Settings.Active && !Settings.Paused)
+	if (Settings.Active)
 		VDP_Reg.HasVisibleLines = 0;
 }
 
