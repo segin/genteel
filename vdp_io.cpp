@@ -424,7 +424,7 @@ void VDP_Set_Reg(int reg_num, uint8_t val)
 		
 		case 3:
 			// Window base address.
-			if (VDP_Reg.m5.Set4 & 0x01)	// Check for H40 mode. (TODO: Test 0x81 instead?)
+			if (VDP_Reg.m5.Set4 & 0x80)	// Check for H40 mode.
 				tmp = (val & 0x3C) << 10;	// H40.
 			else
 				tmp = (val & 0x3E) << 10;	// H32.
@@ -440,7 +440,7 @@ void VDP_Set_Reg(int reg_num, uint8_t val)
 		
 		case 5:
 			// Sprite Attribute Table base address.
-			if (VDP_Reg.m5.Set4 & 0x01)	// Check for H40 mode. (TODO: Test 0x81 instead?)
+			if (VDP_Reg.m5.Set4 & 0x80)	// Check for H40 mode.
 				tmp = (val & 0x7E) << 9;
 			else
 				tmp = (val & 0x7F) << 9;
@@ -483,7 +483,7 @@ void VDP_Set_Reg(int reg_num, uint8_t val)
 			// TODO: Only set this if the actual value has changed.
 			VDP_Flags.CRam = 1;
 			
-			if (val & 0x81)		// TODO: Original asm tests 0x81. Should this be done for other H40 tests?
+			if (val & 0x80)		// Check for H40 mode. (Bit 7)
 			{
 				// H40 mode.
 				VDP_Reg.H_Cell = 40;
@@ -657,8 +657,7 @@ uint8_t VDP_Read_H_Counter(void)
 	// H_Counter_Table[][0] == H32.
 	// H_Counter_Table[][1] == H40.
 	
-	// TODO: We're checking both RS0 and RS1 here. Others only check one.
-	if (VDP_Reg.m5.Set4 & 0x81)
+	if (VDP_Reg.m5.Set4 & 0x80)
 		return H_Counter_Table[odo_68K][1];
 	else
 		return H_Counter_Table[odo_68K][0];
@@ -678,7 +677,7 @@ uint8_t VDP_Read_V_Counter(void)
 	unsigned int H_Counter;
 	uint8_t bl, bh;		// TODO: Figure out what this actually means.
 	
-	if (VDP_Reg.m5.Set4 & 0x81)
+	if (VDP_Reg.m5.Set4 & 0x80)
 	{
 		// H40
 		H_Counter = H_Counter_Table[odo_68K][0];
