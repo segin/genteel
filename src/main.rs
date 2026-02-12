@@ -451,7 +451,7 @@ impl Emulator {
         use winit::keyboard::{KeyCode, PhysicalKey};
         use winit::window::WindowBuilder;
         use pixels::{Pixels, SurfaceTexture};
-        // use std::sync::Arc;
+        
 
         println!("Controls: Arrow keys=D-pad, Z=A, X=B, C=C, Enter=Start");
         println!("Press Escape to quit.");
