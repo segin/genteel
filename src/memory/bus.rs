@@ -614,7 +614,7 @@ mod tests {
         // Word 1: VRAM Write (CD=1) -> 0x4000
         bus.write_word(0xC00004, 0x4000);
         // Word 2: CD5=1 -> 0x2000.
-        bus.write_word(0xC00004, 0x2000);
+        bus.write_word(0xC00004, 0x0080);
 
         // 4. Assert VRAM content
         assert_eq!(bus.vdp.vram[0], 0x12);

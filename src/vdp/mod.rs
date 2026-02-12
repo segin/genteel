@@ -1056,7 +1056,7 @@ mod tests {
         // Word 1: 0x4000 (CD1-0=01 -> 1)
         // Word 2: 0x0400 (CD5-2=0100 -> 4) -> Total CD=5
         vdp.write_control(0x4000);
-        vdp.write_control(0x0400);
+        vdp.write_control(0x0010);
         vdp.write_data(0x1234);
         assert_eq!(vdp.vsram[0], 0x12);
         assert_eq!(vdp.vsram[1], 0x34);
@@ -1067,7 +1067,7 @@ mod tests {
         // Word 1: 0x4050.
         // Word 2: 0x0400.
         vdp.write_control(0x4050);
-        vdp.write_control(0x0400);
+        vdp.write_control(0x0010);
         vdp.write_data(0xDEAD);
 
         // Verify that VSRAM size is strictly 80 bytes
@@ -1083,7 +1083,7 @@ mod tests {
         // Word 1: 0x0000 | 0x0050 = 0x0050.
         // Word 2: 0x0400 (CD5-2=0100 -> 4).
         vdp.write_control(0x0050);
-        vdp.write_control(0x0400);
+        vdp.write_control(0x0010);
         let val = vdp.read_data();
         assert_eq!(val, 0);
     }
@@ -1116,24 +1116,24 @@ mod tests {
 
         // CRAM Read at 0x0000 (Even)
         // CRAM Read cmd: CD=001000 (0x08). Word 2 (CD5..2=0010): 0x0800
-        vdp.write_control(0x0000); vdp.write_control(0x0800);
+        vdp.write_control(0x0000); vdp.write_control(0x0020);
         assert_eq!(vdp.read_data(), 0x0111, "CRAM Even Read Failed");
 
         // CRAM Read at 0x0001 (Odd)
-        vdp.write_control(0x0001); vdp.write_control(0x0800);
+        vdp.write_control(0x0001); vdp.write_control(0x0020);
         assert_eq!(vdp.read_data(), 0x0111, "CRAM Odd Read Failed");
 
         // --- VSRAM Test ---
         // VSRAM Write at 0x0000
-        vdp.write_control(0x4000); vdp.write_control(0x0400);
+        vdp.write_control(0x4000); vdp.write_control(0x0010);
         vdp.write_data(0x0222);
 
         // VSRAM Read at 0x0000 (Even)
-        vdp.write_control(0x0000); vdp.write_control(0x0400);
+        vdp.write_control(0x0000); vdp.write_control(0x0010);
         assert_eq!(vdp.read_data(), 0x0222, "VSRAM Even Read Failed");
 
         // VSRAM Read at 0x0001 (Odd)
-        vdp.write_control(0x0001); vdp.write_control(0x0400);
+        vdp.write_control(0x0001); vdp.write_control(0x0010);
         assert_eq!(vdp.read_data(), 0x0222, "VSRAM Odd Read Failed");
     }
 }

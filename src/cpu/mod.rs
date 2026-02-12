@@ -586,6 +586,11 @@ impl Cpu {
     // === System / Program Control ===
 
     pub(crate) fn process_exception<M: MemoryInterface>(&mut self, vector: u32, memory: &mut M) -> u32 {
+        if self.pending_exception {
+            eprintln!("Double fault detected at PC={:X}. Halting.", self.pc);
+            self.halted = true;
+            return 0;
+        }
         self.pending_exception = true;
         // Save old SR for pushing
         let old_sr = self.sr_value();
