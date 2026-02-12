@@ -38,18 +38,20 @@ pub struct Emulator {
     pub audio_buffer: Vec<i16>,
     pub apu_accumulator: f32,
     pub internal_frame_count: u64,
+    pub last_z80_bus_req: bool,
+    pub z80_trace_count: u32,
 }
 
 impl Emulator {
     pub fn new() -> Self {
         let bus = Rc::new(RefCell::new(Bus::new()));
-        
+
         // M68k uses SharedBus wrapper for main Genesis bus access
         let cpu = Cpu::new(Box::new(SharedBus::new(bus.clone())));
-        
+
         // Z80 uses Z80Bus which routes to sound chips and banked 68k memory
         let z80_bus = Z80Bus::new(SharedBus::new(bus.clone()));
-        
+
         // Temporary null I/O implementation for Z80 ports
         #[derive(Debug)]
         struct NullIo;
@@ -57,7 +59,7 @@ impl Emulator {
             fn read_port(&mut self, _port: u16) -> u8 { 0xFF }
             fn write_port(&mut self, _port: u16, _value: u8) {}
         }
-        
+
         let z80 = Z80::new(Box::new(z80_bus), Box::new(NullIo));
 
         let mut emulator = Self {
@@ -69,11 +71,13 @@ impl Emulator {
             audio_buffer: Vec::with_capacity(735 * 2), // Pre-allocate approx 1 frame
             apu_accumulator: 0.0,
             internal_frame_count: 0,
+            last_z80_bus_req: false,
+            z80_trace_count: 0,
         };
-        
+
         emulator.cpu.reset();
         emulator.z80.reset();
-        
+
         emulator
     }
 
@@ -94,10 +98,41 @@ impl Emulator {
         Ok(())
     }
     
+    fn read_rom_with_limit<R: std::io::Read>(reader: &mut R, size: u64) -> std::io::Result<Vec<u8>> {
+        use std::io::Read;
+        const MAX_ROM_SIZE: u64 = 32 * 1024 * 1024; // 32 MB
+
+        if size > MAX_ROM_SIZE {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("ROM size {} exceeds limit of {} bytes", size, MAX_ROM_SIZE)
+            ));
+        }
+
+        // Check if size fits in usize (for 32-bit/16-bit systems)
+        if size > usize::MAX as u64 {
+             return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "ROM size too large for memory address space"
+            ));
+        }
+
+        let mut data = Vec::with_capacity(size as usize);
+        reader.take(MAX_ROM_SIZE + 1).read_to_end(&mut data)?;
+
+        if data.len() as u64 > MAX_ROM_SIZE {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Decompressed ROM size exceeds limit"
+            ));
+        }
+
+        Ok(data)
+    }
+
     /// Load ROM from a zip file (finds first .bin, .md, .gen, or .smd file)
     fn load_rom_from_zip(path: &str) -> std::io::Result<Vec<u8>> {
-        use std::io::Read;
-        
+
         let file = std::fs::File::open(path)?;
         let mut archive = zip::ZipArchive::new(file)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
@@ -112,8 +147,8 @@ impl Emulator {
             
             let name = entry.name().to_lowercase();
             if rom_extensions.iter().any(|ext| name.ends_with(ext)) {
-                let mut data = Vec::new();
-                entry.read_to_end(&mut data)?;
+                let size = entry.size();
+                let data = Self::read_rom_with_limit(&mut entry, size)?;
                 println!("Extracted ROM: {} ({} bytes)", entry.name(), data.len());
                 return Ok(data);
             }
@@ -223,26 +258,20 @@ impl Emulator {
                 // Z80 execution
                 let (z80_can_run, z80_is_reset) = {
                     let bus = self.bus.borrow();
-                    static mut LAST_REQ: bool = false;
-                    unsafe {
-                        let prev = LAST_REQ;
-                        if bus.z80_bus_request != prev {
-                             eprintln!("DEBUG: Bus Req Changed: {} -> {} at 68k PC={:06X}", prev, bus.z80_bus_request, self.cpu.pc);
-                             LAST_REQ = bus.z80_bus_request;
-                        }
+                    let prev = self.last_z80_bus_req;
+                    if bus.z80_bus_request != prev {
+                         eprintln!("DEBUG: Bus Req Changed: {} -> {} at 68k PC={:06X}", prev, bus.z80_bus_request, self.cpu.pc);
+                         self.last_z80_bus_req = bus.z80_bus_request;
                     }
                     (!bus.z80_reset && !bus.z80_bus_request, bus.z80_reset)
                 };
 
                 if z80_can_run && self.internal_frame_count > 0 {
-                     static mut Z80_TRACE_COUNT: u32 = 0;
-                     unsafe {
-                         if Z80_TRACE_COUNT < 5000 {
-                             self.z80.debug = true;
-                             Z80_TRACE_COUNT += 1; // Logic slightly wrong here (step count vs frame), but enables flag
-                         } else {
-                             self.z80.debug = false;
-                         }
+                     if self.z80_trace_count < 5000 {
+                         self.z80.debug = true;
+                         self.z80_trace_count += 1; // Logic slightly wrong here (step count vs frame), but enables flag
+                     } else {
+                         self.z80.debug = false;
                      }
                 } else {
                      self.z80.debug = false;
