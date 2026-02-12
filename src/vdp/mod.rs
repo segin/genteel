@@ -228,7 +228,7 @@ impl Vdp {
 
     /// H40 mode (40 columns instead of 32)?
     pub fn h40_mode(&self) -> bool {
-        (self.registers[12] & 0x81) == 0x81
+        (self.registers[12] & 0x80) != 0
     }
 
     /// Screen height in pixels

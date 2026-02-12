@@ -2,6 +2,7 @@
 
 use proptest::prelude::*;
 use super::*;
+use super::test_utils::TestIo;
 use crate::memory::Memory;
 use super::test_utils::TestIo;
 
