@@ -8,7 +8,7 @@ use winit::keyboard::KeyCode;
 
 /// Genesis display dimensions
 pub const GENESIS_WIDTH: u32 = 320;
-pub const GENESIS_HEIGHT: u32 = 224;
+pub const GENESIS_HEIGHT: u32 = 240;
 
 /// Key mapping for player 1
 #[cfg(feature = "gui")]

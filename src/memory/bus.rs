@@ -118,13 +118,7 @@ impl Bus {
             // Z80 Address Space: 0xA00000-0xA0FFFF
             0xA00000..=0xA01FFF => {
                 // Z80 RAM (8KB)
-                // Hack: Sonic 1 waits for 0xA01FFD to be 0x80 to indicate Z80 ready.
-                // Our Z80 emulation isn't setting this fast enough or correctly.
-                if addr == 0xA01FFD {
-                     0x80
-                } else {
-                     self.z80_ram[(addr & 0x1FFF) as usize]
-                }
+                self.z80_ram[(addr & 0x1FFF) as usize]
             }
             // YM2612 from 68k: 0xA04000-0xA04003
             0xA04000..=0xA04003 => {
@@ -267,6 +261,24 @@ impl Bus {
     pub fn read_word(&mut self, address: u32) -> u16 {
         let addr = address & 0xFFFFFF;
         
+        // ROM Fast Path
+        if addr <= 0x3FFFFF {
+            let idx = addr as usize;
+            if idx + 1 < self.rom.len() {
+                // SAFETY: We checked bounds above
+                let high = unsafe { *self.rom.get_unchecked(idx) } as u16;
+                let low = unsafe { *self.rom.get_unchecked(idx + 1) } as u16;
+                return (high << 8) | low;
+            } else if idx < self.rom.len() {
+                // Partial read at end of ROM
+                let high = self.rom[idx] as u16;
+                let low = 0xFF; // Unmapped
+                return (high << 8) | low;
+            } else {
+                return 0xFFFF; // Unmapped
+            }
+        }
+
         // VDP Data Port (Word access)
         if addr >= 0xC00000 && addr <= 0xC00003 {
             return self.vdp.read_data();
@@ -337,16 +349,19 @@ impl Bus {
     pub fn read_long(&mut self, address: u32) -> u32 {
         let addr = address & 0xFFFFFF;
 
-        // Optimize ROM access
-        if addr <= 0x3FFFFC {
-            let rom_addr = addr as usize;
-            if rom_addr + 3 < self.rom.len() {
-                return ((self.rom[rom_addr] as u32) << 24) |
-                       ((self.rom[rom_addr + 1] as u32) << 16) |
-                       ((self.rom[rom_addr + 2] as u32) << 8) |
-                       (self.rom[rom_addr + 3] as u32);
+        // ROM Fast Path
+        if addr <= 0x3FFFFF {
+            let idx = addr as usize;
+            if idx + 3 < self.rom.len() {
+                // SAFETY: We checked bounds above
+                let b0 = unsafe { *self.rom.get_unchecked(idx) } as u32;
+                let b1 = unsafe { *self.rom.get_unchecked(idx + 1) } as u32;
+                let b2 = unsafe { *self.rom.get_unchecked(idx + 2) } as u32;
+                let b3 = unsafe { *self.rom.get_unchecked(idx + 3) } as u32;
+                return (b0 << 24) | (b1 << 16) | (b2 << 8) | b3;
             }
         }
+
 
         // Optimize Work RAM access
         if addr >= 0xE00000 {
@@ -386,24 +401,19 @@ impl Bus {
     // === DMA ===
 
     fn run_dma(&mut self) {
-        // VDP registers:
-        // 0x13/0x14: DMA Length (low/high)
-        // 0x15/0x16/0x17: DMA Source (low/mid/high)
-        
-        let mode = self.vdp.dma_mode();
-        let length = {
-            let l = ((self.vdp.registers[0x14] as u32) << 8) | (self.vdp.registers[0x13] as u32);
-            if l == 0 { 0x10000 } else { l }
-        };
-        let mut source = ((self.vdp.registers[0x17] as u32 & 0x3F) << 17)
-                   | ((self.vdp.registers[0x16] as u32) << 9)
-                   | ((self.vdp.registers[0x15] as u32) << 1);
-        
-        if mode >= 2 {
+        if !self.vdp.dma_pending {
+            return;
+        }
+
+        if !self.vdp.is_dma_transfer() {
             self.vdp.execute_dma();
             self.vdp.dma_pending = false;
             return;
         }
+
+        // 68k Transfer (Mode 0 or 1)
+        let length = self.vdp.dma_length();
+        let mut source = self.vdp.dma_source_transfer();
 
         // If it's a 68k transfer (mode bit 7=0), bit 22 decides if it's ROM or RAM
         // Register 23 bit 6 MUST be 0 for 68k DMA.
