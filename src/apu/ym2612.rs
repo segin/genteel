@@ -203,4 +203,50 @@ mod tests {
         assert_eq!(block, 4);
         assert_eq!(f_num, 0x255); // 0x200 | 0x55
     }
+
+    #[test]
+    fn test_timer_a_increment() {
+        let mut ym = Ym2612::new();
+
+        // Enable Timer A (Reg 0x27 bit 0)
+        ym.write_addr0(0x27);
+        ym.write_data0(0x01);
+
+        assert_eq!(ym.timer_a_counter, 0, "Timer A counter should start at 0");
+
+        ym.step(10);
+
+        assert_eq!(ym.timer_a_counter, 1, "Timer A counter should increment after step");
+        assert_eq!(ym.status & 0x01, 0, "Timer A overflow flag should not be set yet");
+    }
+
+    #[test]
+    fn test_timer_a_overflow() {
+        let mut ym = Ym2612::new();
+
+        // Enable Timer A
+        ym.write_addr0(0x27);
+        ym.write_data0(0x01);
+
+        // Step enough times to overflow (threshold is > 100)
+        for _ in 0..101 {
+            ym.step(10);
+        }
+
+        assert_eq!(ym.status & 0x01, 0x01, "Timer A overflow flag should be set");
+        assert_eq!(ym.timer_a_counter, 0, "Timer A counter should reset after overflow");
+    }
+
+    #[test]
+    fn test_timer_b_basic() {
+        let mut ym = Ym2612::new();
+
+        // Enable Timer B (Reg 0x27 bit 1)
+        ym.write_addr0(0x27);
+        ym.write_data0(0x02);
+
+        ym.step(10);
+
+        assert_eq!(ym.status & 0x02, 0x02, "Timer B overflow flag should be set immediately");
+    }
 }
