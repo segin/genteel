@@ -1,7 +1,6 @@
 use crate::cpu::Cpu;
 use crate::cpu::decoder::{Size, AddressingMode, Condition};
-use crate::cpu::addressing::{calculate_ea, read_ea, write_ea, EffectiveAddress};
-use crate::cpu::flags;
+use crate::cpu::addressing::{calculate_ea, EffectiveAddress};
 
 pub fn exec_bra(cpu: &mut Cpu, displacement: i16) -> u32 {
     if displacement == 0 {

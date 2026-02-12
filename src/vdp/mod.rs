@@ -249,7 +249,6 @@ impl Vdp {
         if self.h40_mode() { 320 } else { 256 }
     }
 
-<<<<<<< HEAD
     // === DMA Helpers ===
 
     /// Calculate DMA length from registers 19 and 20
@@ -269,7 +268,8 @@ impl Vdp {
     /// Check if DMA mode is 0 or 1 (68k Transfer)
     pub fn is_dma_transfer(&self) -> bool {
         self.dma_mode() <= 1
-=======
+    }
+
     /// Set the region (PAL=true, NTSC=false)
     pub fn set_region(&mut self, is_pal: bool) {
         self.is_pal = is_pal;
@@ -283,7 +283,6 @@ impl Vdp {
             // This simulates the drift of a 50Hz signal on a 60Hz display.
             self.v30_offset = (self.v30_offset + 22) % 240;
         }
->>>>>>> origin/main
     }
 
     // === Port I/O ===
@@ -723,14 +722,7 @@ impl Vdp {
         let dma_type = (self.registers[23] >> 6) & 0x03;
 
         // DMA length from registers 19-20 (in words for most modes)
-<<<<<<< HEAD
         let dma_length = self.dma_length();
-        
-=======
-        let mut dma_length = ((self.registers[20] as u32) << 8) | (self.registers[19] as u32);
-        if dma_length == 0 { dma_length = 0x10000; }
-
->>>>>>> origin/main
         // DMA source from registers 21-23 (bits 0-5 of reg 23)
         // Note: Registers store A23-A1, so we shift left by 1 to get byte address
         let dma_source = (((self.registers[23] as u32 & 0x3F) << 16)
@@ -1027,6 +1019,46 @@ mod tests {
 
         // Pixel at (10, 10) should be Blue (0x001F in RGB565)
         assert_eq!(vdp.framebuffer[320 * 10 + 10], 0x001F);
+    }
+
+    #[test]
+    fn test_vsram_limits() {
+        let mut vdp = Vdp::new();
+
+        // Test 1: Valid Write to Address 0 (VSRAM Write CD=5)
+        // Word 1: 0x4000 (CD1-0=01 -> 1)
+        // Word 2: 0x0400 (CD5-2=0100 -> 4) -> Total CD=5
+        vdp.write_control(0x4000);
+        vdp.write_control(0x0400);
+        vdp.write_data(0x1234);
+        assert_eq!(vdp.vsram[0], 0x12);
+        assert_eq!(vdp.vsram[1], 0x34);
+
+        // Test 2: Invalid Write to Address 80
+        vdp.vsram[0] = 0; vdp.vsram[1] = 0;
+        // Address 80 = 0x50.
+        // Word 1: 0x4050.
+        // Word 2: 0x0400.
+        vdp.write_control(0x4050);
+        vdp.write_control(0x0400);
+        vdp.write_data(0xDEAD);
+
+        // Verify that VSRAM size is strictly 80 bytes
+        assert_eq!(vdp.vsram.len(), 80);
+
+        // Verify no write happened to any part of VSRAM
+        for i in 0..80 {
+            assert_eq!(vdp.vsram[i], 0, "VSRAM byte {} was modified", i);
+        }
+
+        // Test 3: Read from Address 80
+        // VSRAM Read CD=4 (000100)
+        // Word 1: 0x0000 | 0x0050 = 0x0050.
+        // Word 2: 0x0400 (CD5-2=0100 -> 4).
+        vdp.write_control(0x0050);
+        vdp.write_control(0x0400);
+        let val = vdp.read_data();
+        assert_eq!(val, 0);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use crate::cpu::Cpu;
 use crate::cpu::decoder::{Size, AddressingMode};
-use crate::cpu::addressing::{calculate_ea, read_ea, write_ea, EffectiveAddress};
+use crate::cpu::addressing::{calculate_ea, read_ea, write_ea};
 use crate::cpu::flags;
 
 pub fn exec_add(cpu: &mut Cpu, size: Size, src: AddressingMode, dst: AddressingMode, direction: bool) -> u32 {
