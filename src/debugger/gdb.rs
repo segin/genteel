@@ -298,19 +298,19 @@ impl GdbServer {
         
         // D0-D7
         for &d in &registers.d {
-            result.push_str(&format!("{:08x}", d.swap_bytes()));
+            result.push_str(&format!("{:08x}", d));
         }
         
         // A0-A7
         for &a in &registers.a {
-            result.push_str(&format!("{:08x}", a.swap_bytes()));
+            result.push_str(&format!("{:08x}", a));
         }
         
         // SR
-        result.push_str(&format!("{:08x}", (registers.sr as u32).swap_bytes()));
+        result.push_str(&format!("{:08x}", registers.sr as u32));
         
         // PC
-        result.push_str(&format!("{:08x}", registers.pc.swap_bytes()));
+        result.push_str(&format!("{:08x}", registers.pc));
         
         result
     }
@@ -325,7 +325,7 @@ impl GdbServer {
         // D0-D7
         for i in 0..8 {
             if let Ok(v) = u32::from_str_radix(&data[pos..pos+8], 16) {
-                registers.d[i] = v.swap_bytes();
+                registers.d[i] = v;
             }
             pos += 8;
         }
@@ -333,21 +333,21 @@ impl GdbServer {
         // A0-A7
         for i in 0..8 {
             if let Ok(v) = u32::from_str_radix(&data[pos..pos+8], 16) {
-                registers.a[i] = v.swap_bytes();
+                registers.a[i] = v;
             }
             pos += 8;
         }
         
         // SR
         if let Ok(v) = u32::from_str_radix(&data[pos..pos+8], 16) {
-            registers.sr = v.swap_bytes() as u16;
+            registers.sr = v as u16;
         }
         pos += 8;
         
         // PC
         if pos + 8 <= data.len() {
             if let Ok(v) = u32::from_str_radix(&data[pos..pos+8], 16) {
-                registers.pc = v.swap_bytes();
+                registers.pc = v;
             }
         }
         
@@ -356,10 +356,10 @@ impl GdbServer {
     
     fn read_register(&self, reg_num: u32, registers: &GdbRegisters) -> String {
         match reg_num {
-            0..=7 => format!("{:08x}", registers.d[reg_num as usize].swap_bytes()),
-            8..=15 => format!("{:08x}", registers.a[(reg_num - 8) as usize].swap_bytes()),
-            16 => format!("{:08x}", (registers.sr as u32).swap_bytes()),
-            17 => format!("{:08x}", registers.pc.swap_bytes()),
+            0..=7 => format!("{:08x}", registers.d[reg_num as usize]),
+            8..=15 => format!("{:08x}", registers.a[(reg_num - 8) as usize]),
+            16 => format!("{:08x}", registers.sr as u32),
+            17 => format!("{:08x}", registers.pc),
             _ => "E01".to_string(),
         }
     }
@@ -376,7 +376,7 @@ impl GdbServer {
         };
         
         let value = match u32::from_str_radix(parts[1], 16) {
-            Ok(v) => v.swap_bytes(),
+            Ok(v) => v,
             Err(_) => return "E01".to_string(),
         };
         
@@ -541,7 +541,29 @@ pub trait GdbMemory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+    use std::collections::HashMap;
+
+    struct MockMemory {
+        pub data: HashMap<u32, u8>,
+    }
+
+    impl MockMemory {
+        fn new() -> Self {
+            Self {
+                data: HashMap::new(),
+            }
+        }
+    }
+
+    impl GdbMemory for MockMemory {
+        fn read_byte(&mut self, addr: u32) -> u8 {
+            *self.data.get(&addr).unwrap_or(&0)
+        }
+        fn write_byte(&mut self, addr: u32, value: u8) {
+            self.data.insert(addr, value);
+        }
+    }
+
     #[test]
     fn test_checksum() {
         let data = "OK";
@@ -599,5 +621,126 @@ mod tests {
 
         // Disconnect
         drop(_stream);
+    }
+
+    #[test]
+    fn test_process_command_basic() {
+        let mut server = GdbServer {
+            listener: TcpListener::bind("127.0.0.1:0").unwrap(),
+            client: None,
+            breakpoints: HashSet::new(),
+            stop_reason: StopReason::Halted,
+            no_ack_mode: false,
+        };
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+
+        // Test ? command
+        assert_eq!(server.process_command("?", &mut regs, &mut mem), "S05");
+
+        // Test custom INTERRUPT
+        assert_eq!(server.process_command("INTERRUPT", &mut regs, &mut mem), "S02");
+
+        // Test continue and step
+        assert_eq!(server.process_command("c", &mut regs, &mut mem), "CONTINUE");
+        assert_eq!(server.process_command("s", &mut regs, &mut mem), "STEP");
+
+        // Test unknown command
+        assert_eq!(server.process_command("X", &mut regs, &mut mem), "");
+    }
+
+    #[test]
+    fn test_process_command_memory() {
+        let mut server = GdbServer {
+            listener: TcpListener::bind("127.0.0.1:0").unwrap(),
+            client: None,
+            breakpoints: HashSet::new(),
+            stop_reason: StopReason::Halted,
+            no_ack_mode: false,
+        };
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+
+        // Write memory: M1000,4:deadbeef
+        let resp = server.process_command("M1000,4:deadbeef", &mut regs, &mut mem);
+        assert_eq!(resp, "OK");
+        assert_eq!(mem.read_byte(0x1000), 0xde);
+        assert_eq!(mem.read_byte(0x1001), 0xad);
+        assert_eq!(mem.read_byte(0x1002), 0xbe);
+        assert_eq!(mem.read_byte(0x1003), 0xef);
+
+        // Read memory: m1000,4
+        let resp = server.process_command("m1000,4", &mut regs, &mut mem);
+        assert_eq!(resp, "deadbeef");
+
+        // Test malformed memory commands
+        assert_eq!(server.process_command("m1000", &mut regs, &mut mem), "E01");
+        assert_eq!(server.process_command("M1000,4", &mut regs, &mut mem), "E01");
+    }
+
+    #[test]
+    fn test_process_command_registers() {
+        let mut server = GdbServer {
+            listener: TcpListener::bind("127.0.0.1:0").unwrap(),
+            client: None,
+            breakpoints: HashSet::new(),
+            stop_reason: StopReason::Halted,
+            no_ack_mode: false,
+        };
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+
+        // Set single register: P0b=12345678 (A3)
+        let resp = server.process_command("P0b=12345678", &mut regs, &mut mem);
+        assert_eq!(resp, "OK");
+        assert_eq!(regs.a[3], 0x12345678);
+
+        // Read single register: p0b
+        let resp = server.process_command("p0b", &mut regs, &mut mem);
+        assert_eq!(resp, "12345678");
+
+        // Test g and G commands
+        let g_resp = server.process_command("g", &mut regs, &mut mem);
+        assert_eq!(g_resp.len(), (8 + 8 + 1 + 1) * 8);
+
+        // G command (just test it doesn't crash with correct length)
+        let g_data = "0".repeat((8 + 8 + 1 + 1) * 8);
+        let resp = server.process_command(&format!("G{}", g_data), &mut regs, &mut mem);
+        assert_eq!(resp, "OK");
+    }
+
+    #[test]
+    fn test_process_command_queries() {
+        let mut server = GdbServer {
+            listener: TcpListener::bind("127.0.0.1:0").unwrap(),
+            client: None,
+            breakpoints: HashSet::new(),
+            stop_reason: StopReason::Halted,
+            no_ack_mode: false,
+        };
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+
+        assert!(server.process_command("qSupported", &mut regs, &mut mem).contains("PacketSize"));
+        assert_eq!(server.process_command("qC", &mut regs, &mut mem), "QC1");
+        assert_eq!(server.process_command("QStartNoAckMode", &mut regs, &mut mem), "OK");
+        assert!(server.no_ack_mode);
+    }
+
+    #[test]
+    fn test_process_command_connection() {
+        let mut server = GdbServer {
+            listener: TcpListener::bind("127.0.0.1:0").unwrap(),
+            client: None,
+            breakpoints: HashSet::new(),
+            stop_reason: StopReason::Halted,
+            no_ack_mode: false,
+        };
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+
+        assert_eq!(server.process_command("H", &mut regs, &mut mem), "OK");
+        assert_eq!(server.process_command("D", &mut regs, &mut mem), "OK");
+        assert_eq!(server.process_command("k", &mut regs, &mut mem), "");
     }
 }

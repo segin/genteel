@@ -5,12 +5,9 @@
 
 use winit::keyboard::KeyCode;
 
-// use crate::io::ControllerState;
-// use crate::input::FrameInput;
-
 /// Genesis display dimensions
 pub const GENESIS_WIDTH: u32 = 320;
-pub const GENESIS_HEIGHT: u32 = 224;
+pub const GENESIS_HEIGHT: u32 = 240;
 
 /// Key mapping for player 1
 pub fn keycode_to_button(keycode: KeyCode) -> Option<(&'static str, bool)> {
