@@ -46,7 +46,10 @@ impl Emulator {
         let bus = Rc::new(RefCell::new(Bus::new()));
         
         // M68k uses SharedBus wrapper for main Genesis bus access
-        let cpu = Cpu::new(Box::new(SharedBus::new(bus.clone())));
+        // let cpu = Cpu::new(Box::new(SharedBus::new(bus.clone())));
+        let mut bus_ref = bus.borrow_mut();
+        let cpu = Cpu::new(&mut *bus_ref);
+        drop(bus_ref);
         
         // Z80 uses Z80Bus which routes to sound chips and banked 68k memory
         let z80_bus = Z80Bus::new(SharedBus::new(bus.clone()));
@@ -86,10 +89,11 @@ impl Emulator {
             std::fs::read(path)?
         };
         
-        self.bus.borrow_mut().load_rom(&data);
+        let mut bus = self.bus.borrow_mut();
+        bus.load_rom(&data);
         
         // Reset again to load initial PC/SP from ROM vectors
-        self.cpu.reset();
+        self.cpu.reset(&mut *bus);
         self.z80.reset();
         
         Ok(())
@@ -212,14 +216,15 @@ impl Emulator {
             // === CPU execution for this scanline ===
             let mut cycles_scanline: u32 = 0;
             while cycles_scanline < CYCLES_PER_LINE {
-                let m68k_cycles = self.cpu.step_instruction();
-                cycles_scanline += m68k_cycles as u32;
+                // Borrow bus for CPU execution
+                let mut bus = self.bus.borrow_mut();
+                let m68k_cycles = self.cpu.step_instruction(&mut *bus);
 
                 // Step APU with cycles to update timers
-                {
-                    let mut bus = self.bus.borrow_mut();
-                    bus.apu.fm.step(m68k_cycles as u32);
-                }
+                bus.apu.fm.step(m68k_cycles as u32);
+                drop(bus); // Release bus for Z80/etc checks if they need it (Z80 needs read only access usually but check implementation)
+
+                cycles_scanline += m68k_cycles as u32;
                 
                 // Z80 execution
                 let (z80_can_run, z80_is_reset) = {
@@ -378,7 +383,9 @@ impl Emulator {
             // Execute if running
             if running {
                 // Step one instruction
-                self.cpu.step_instruction();
+                let mut bus = self.bus.borrow_mut();
+                self.cpu.step_instruction(&mut *bus);
+                drop(bus);
                 
                 // Check for breakpoint
                 if gdb.is_breakpoint(self.cpu.pc) {

@@ -23,8 +23,8 @@ mod tests_m68k_control;
 mod tests_bug_fixes;
 
 use crate::memory::MemoryInterface;
-use decoder::{decode, Instruction, Size, AddressingMode, Condition, ShiftCount, BitSource};
-use addressing::{calculate_ea, read_ea, write_ea, EffectiveAddress};
+use self::decoder::{decode, Instruction, Size, AddressingMode, Condition, ShiftCount, BitSource};
+use self::addressing::{calculate_ea, read_ea, write_ea, EffectiveAddress};
 
 /// Status Register flags
 pub mod flags {
@@ -51,9 +51,6 @@ pub struct Cpu {
     pub usp: u32,    // User stack pointer (saved when in supervisor mode)
     pub ssp: u32,    // Supervisor stack pointer (saved when in user mode)
 
-    // Memory interface
-    pub memory: Box<dyn MemoryInterface>,
-
     // Cycle counter for timing
     pub cycles: u64,
 
@@ -69,7 +66,7 @@ pub struct Cpu {
 }
 
 impl Cpu {
-    pub fn new(memory: Box<dyn MemoryInterface>) -> Self {
+    pub fn new(memory: &mut dyn MemoryInterface) -> Self {
         let mut cpu = Self {
             d: [0; 8],
             a: [0; 8],
@@ -77,7 +74,6 @@ impl Cpu {
             sr: 0x2700, // Supervisor mode, interrupts disabled
             usp: 0,
             ssp: 0,
-            memory,
             cycles: 0,
             halted: false,
             pending_interrupt: 0,
@@ -87,21 +83,21 @@ impl Cpu {
 
         // At startup, the supervisor stack pointer is read from address 0x00000000
         // and the program counter is read from 0x00000004.
-        cpu.a[7] = cpu.memory.read_long(0x0);
+        cpu.a[7] = memory.read_long(0x0);
         cpu.ssp = cpu.a[7];
-        cpu.pc = cpu.memory.read_long(0x4);
+        cpu.pc = memory.read_long(0x4);
 
         cpu
     }
 
     /// Reset the CPU to initial state
-    pub fn reset(&mut self) {
+    pub fn reset(&mut self, memory: &mut dyn MemoryInterface) {
         self.d = [0; 8];
         self.a = [0; 8];
         self.sr = 0x2700;
-        self.a[7] = self.memory.read_long(0x0);
+        self.a[7] = memory.read_long(0x0);
         self.ssp = self.a[7];
-        self.pc = self.memory.read_long(0x4);
+        self.pc = memory.read_long(0x4);
         self.cycles = 0;
         self.halted = false;
         self.pending_interrupt = 0;
@@ -140,11 +136,11 @@ impl Cpu {
     }
 
     /// Execute a single instruction
-    pub fn step_instruction(&mut self) -> u32 {
+    pub fn step_instruction(&mut self, memory: &mut dyn MemoryInterface) -> u32 {
         self.pending_exception = false;
 
         // Handle interrupts before fetching next instruction
-        let int_cycles = self.check_interrupts();
+        let int_cycles = self.check_interrupts(memory);
         if int_cycles > 0 {
             self.cycles += int_cycles as u64;
             return int_cycles;
@@ -155,7 +151,7 @@ impl Cpu {
         }
 
         let pc = self.pc;
-        let opcode = self.read_instruction_word(pc);
+        let opcode = self.read_instruction_word(pc, memory);
         if self.pending_exception {
             // Address Error during fetch
             self.cycles += 34;
@@ -165,7 +161,7 @@ impl Cpu {
         self.pc = self.pc.wrapping_add(2);
 
         let instruction = decode(opcode);
-        let mut cycles = self.execute(instruction);
+        let mut cycles = self.execute(instruction, memory);
 
         if self.pending_exception {
             // Instruction was aborted due to an exception (e.g. Address Error)
@@ -179,82 +175,82 @@ impl Cpu {
     }
 
     /// Execute a decoded instruction
-    fn execute(&mut self, instruction: Instruction) -> u32 {
+    fn execute(&mut self, instruction: Instruction, memory: &mut dyn MemoryInterface) -> u32 {
         match instruction {
             // === Data Movement ===
-            Instruction::Move { size, src, dst } => self.exec_move(size, src, dst),
-            Instruction::MoveA { size, src, dst_reg } => self.exec_movea(size, src, dst_reg),
+            Instruction::Move { size, src, dst } => self.exec_move(size, src, dst, memory),
+            Instruction::MoveA { size, src, dst_reg } => self.exec_movea(size, src, dst_reg, memory),
             Instruction::MoveQ { dst_reg, data } => self.exec_moveq(dst_reg, data),
-            Instruction::Lea { src, dst_reg } => self.exec_lea(src, dst_reg),
+            Instruction::Lea { src, dst_reg } => self.exec_lea(src, dst_reg, memory),
             Instruction::Exg { rx, ry, mode } => self.exec_exg(rx, ry, mode),
-            Instruction::Clr { size, dst } => self.exec_clr(size, dst),
-            Instruction::Movep { size, reg, an, direction } => self.exec_movep(size, reg, an, direction),
+            Instruction::Clr { size, dst } => self.exec_clr(size, dst, memory),
+            Instruction::Movep { size, reg, an, direction } => self.exec_movep(size, reg, an, direction, memory),
 
             // === Arithmetic ===
-            Instruction::Add { size, src, dst, direction } => self.exec_add(size, src, dst, direction),
-            Instruction::AddA { size, src, dst_reg } => self.exec_adda(size, src, dst_reg),
-            Instruction::AddI { size, dst } => self.exec_addi(size, dst),
-            Instruction::AddQ { size, dst, data } => self.exec_addq(size, dst, data),
-            Instruction::Sub { size, src, dst, direction } => self.exec_sub(size, src, dst, direction),
-            Instruction::SubA { size, src, dst_reg } => self.exec_suba(size, src, dst_reg),
-            Instruction::SubI { size, dst } => self.exec_subi(size, dst),
-            Instruction::SubQ { size, dst, data } => self.exec_subq(size, dst, data),
+            Instruction::Add { size, src, dst, direction } => self.exec_add(size, src, dst, direction, memory),
+            Instruction::AddA { size, src, dst_reg } => self.exec_adda(size, src, dst_reg, memory),
+            Instruction::AddI { size, dst } => self.exec_addi(size, dst, memory),
+            Instruction::AddQ { size, dst, data } => self.exec_addq(size, dst, data, memory),
+            Instruction::Sub { size, src, dst, direction } => self.exec_sub(size, src, dst, direction, memory),
+            Instruction::SubA { size, src, dst_reg } => self.exec_suba(size, src, dst_reg, memory),
+            Instruction::SubI { size, dst } => self.exec_subi(size, dst, memory),
+            Instruction::SubQ { size, dst, data } => self.exec_subq(size, dst, data, memory),
 
-            Instruction::Neg { size, dst } => self.exec_neg(size, dst),
-            Instruction::NegX { size, dst } => self.exec_negx(size, dst),
-            Instruction::AddX { size, src_reg, dst_reg, memory_mode } => self.exec_addx(size, src_reg, dst_reg, memory_mode),
-            Instruction::SubX { size, src_reg, dst_reg, memory_mode } => self.exec_subx(size, src_reg, dst_reg, memory_mode),
-            Instruction::MulU { src, dst_reg } => self.exec_mulu(src, dst_reg),
-            Instruction::MulS { src, dst_reg } => self.exec_muls(src, dst_reg),
-            Instruction::DivU { src, dst_reg } => self.exec_divu(src, dst_reg),
-            Instruction::DivS { src, dst_reg } => self.exec_divs(src, dst_reg),
-            Instruction::Abcd { src_reg, dst_reg, memory_mode } => self.exec_abcd(src_reg, dst_reg, memory_mode),
-            Instruction::Sbcd { src_reg, dst_reg, memory_mode } => self.exec_sbcd(src_reg, dst_reg, memory_mode),
-            Instruction::Nbcd { dst } => self.exec_nbcd(dst),
+            Instruction::Neg { size, dst } => self.exec_neg(size, dst, memory),
+            Instruction::NegX { size, dst } => self.exec_negx(size, dst, memory),
+            Instruction::AddX { size, src_reg, dst_reg, memory_mode } => self.exec_addx(size, src_reg, dst_reg, memory_mode, memory),
+            Instruction::SubX { size, src_reg, dst_reg, memory_mode } => self.exec_subx(size, src_reg, dst_reg, memory_mode, memory),
+            Instruction::MulU { src, dst_reg } => self.exec_mulu(src, dst_reg, memory),
+            Instruction::MulS { src, dst_reg } => self.exec_muls(src, dst_reg, memory),
+            Instruction::DivU { src, dst_reg } => self.exec_divu(src, dst_reg, memory),
+            Instruction::DivS { src, dst_reg } => self.exec_divs(src, dst_reg, memory),
+            Instruction::Abcd { src_reg, dst_reg, memory_mode } => self.exec_abcd(src_reg, dst_reg, memory_mode, memory),
+            Instruction::Sbcd { src_reg, dst_reg, memory_mode } => self.exec_sbcd(src_reg, dst_reg, memory_mode, memory),
+            Instruction::Nbcd { dst } => self.exec_nbcd(dst, memory),
 
             // === Logical ===
-            Instruction::And { size, src, dst, direction } => self.exec_and(size, src, dst, direction),
-            Instruction::AndI { size, dst } => self.exec_andi(size, dst),
-            Instruction::Or { size, src, dst, direction } => self.exec_or(size, src, dst, direction),
-            Instruction::OrI { size, dst } => self.exec_ori(size, dst),
-            Instruction::Eor { size, src_reg, dst } => self.exec_eor(size, src_reg, dst),
-            Instruction::EorI { size, dst } => self.exec_eori(size, dst),
-            Instruction::Not { size, dst } => self.exec_not(size, dst),
+            Instruction::And { size, src, dst, direction } => self.exec_and(size, src, dst, direction, memory),
+            Instruction::AndI { size, dst } => self.exec_andi(size, dst, memory),
+            Instruction::Or { size, src, dst, direction } => self.exec_or(size, src, dst, direction, memory),
+            Instruction::OrI { size, dst } => self.exec_ori(size, dst, memory),
+            Instruction::Eor { size, src_reg, dst } => self.exec_eor(size, src_reg, dst, memory),
+            Instruction::EorI { size, dst } => self.exec_eori(size, dst, memory),
+            Instruction::Not { size, dst } => self.exec_not(size, dst, memory),
 
 
             // === Shifts ===
-            Instruction::Lsl { size, dst, count } => self.exec_shift(size, dst, count, true, false),
-            Instruction::Lsr { size, dst, count } => self.exec_shift(size, dst, count, false, false),
-            Instruction::Asl { size, dst, count } => self.exec_shift(size, dst, count, true, true),
-            Instruction::Asr { size, dst, count } => self.exec_shift(size, dst, count, false, true),
-            Instruction::Rol { size, dst, count } => self.exec_rotate(size, dst, count, true, false),
-            Instruction::Ror { size, dst, count } => self.exec_rotate(size, dst, count, false, false),
-            Instruction::Roxl { size, dst, count } => self.exec_roxl(size, dst, count), // Assuming existed or I should verify?
-            Instruction::Roxr { size, dst, count } => self.exec_roxr(size, dst, count),
+            Instruction::Lsl { size, dst, count } => self.exec_shift(size, dst, count, true, false, memory),
+            Instruction::Lsr { size, dst, count } => self.exec_shift(size, dst, count, false, false, memory),
+            Instruction::Asl { size, dst, count } => self.exec_shift(size, dst, count, true, true, memory),
+            Instruction::Asr { size, dst, count } => self.exec_shift(size, dst, count, false, true, memory),
+            Instruction::Rol { size, dst, count } => self.exec_rotate(size, dst, count, true, false, memory),
+            Instruction::Ror { size, dst, count } => self.exec_rotate(size, dst, count, false, false, memory),
+            Instruction::Roxl { size, dst, count } => self.exec_roxl(size, dst, count, memory),
+            Instruction::Roxr { size, dst, count } => self.exec_roxr(size, dst, count, memory),
 
             // === Bit Manipulation ===
-            Instruction::Btst { bit, dst } => self.exec_btst(bit, dst),
-            Instruction::Bset { bit, dst } => self.exec_bset(bit, dst),
-            Instruction::Bclr { bit, dst } => self.exec_bclr(bit, dst),
-            Instruction::Bchg { bit, dst } => self.exec_bchg(bit, dst),
+            Instruction::Btst { bit, dst } => self.exec_btst(bit, dst, memory),
+            Instruction::Bset { bit, dst } => self.exec_bset(bit, dst, memory),
+            Instruction::Bclr { bit, dst } => self.exec_bclr(bit, dst, memory),
+            Instruction::Bchg { bit, dst } => self.exec_bchg(bit, dst, memory),
 
             // === Compare and Test ===
-            Instruction::Cmp { size, src, dst_reg } => self.exec_cmp(size, src, dst_reg),
-            Instruction::CmpA { size, src, dst_reg } => self.exec_cmpa(size, src, dst_reg),
-            Instruction::CmpI { size, dst } => self.exec_cmpi(size, dst),
-            Instruction::CmpM { size, ax, ay } => self.exec_cmpm(size, ax, ay),
-            Instruction::Tst { size, dst } => self.exec_tst(size, dst),
+            Instruction::Cmp { size, src, dst_reg } => self.exec_cmp(size, src, dst_reg, memory),
+            Instruction::CmpA { size, src, dst_reg } => self.exec_cmpa(size, src, dst_reg, memory),
+            Instruction::CmpI { size, dst } => self.exec_cmpi(size, dst, memory),
+            Instruction::CmpM { size, ax, ay } => self.exec_cmpm(size, ax, ay, memory),
+            Instruction::Tst { size, dst } => self.exec_tst(size, dst, memory),
 
 
             // === Branch and Jump ===
-            Instruction::Bra { displacement } => self.exec_bra(displacement),
-            Instruction::Bsr { displacement } => self.exec_bsr(displacement),
-            Instruction::Bcc { condition, displacement } => self.exec_bcc(condition, displacement),
-            Instruction::Scc { condition, dst } => self.exec_scc(condition, dst),
-            Instruction::DBcc { condition, reg } => self.exec_dbcc(condition, reg),
-            Instruction::Jmp { dst } => self.exec_jmp(dst),
-            Instruction::Jsr { dst } => self.exec_jsr(dst),
-            Instruction::Rts => self.exec_rts(),
+            Instruction::Bra { displacement } => self.exec_bra(displacement, memory),
+            Instruction::Bsr { displacement } => self.exec_bsr(displacement, memory),
+            Instruction::Bcc { condition, displacement } => self.exec_bcc(condition, displacement, memory),
+            Instruction::Scc { condition, dst } => self.exec_scc(condition, dst, memory),
+            Instruction::DBcc { condition, reg } => self.exec_dbcc(condition, reg, memory),
+            Instruction::Jmp { dst } => self.exec_jmp(dst, memory),
+            Instruction::Jsr { dst } => self.exec_jsr(dst, memory),
+            Instruction::Rts => self.exec_rts(memory),
 
             // === Misc ===
             Instruction::Nop => 4,
@@ -263,48 +259,48 @@ impl Cpu {
             
             // === System Control ===
             Instruction::Link { reg } => {
-                let displacement = self.memory.read_word(self.pc) as i16;
+                let displacement = memory.read_word(self.pc) as i16;
                 self.pc = self.pc.wrapping_add(2);
-                self.exec_link(reg, displacement)
+                self.exec_link(reg, displacement, memory)
             },
-            Instruction::Unlk { reg } => self.exec_unlk(reg),
-            Instruction::MoveUsp { reg, to_usp } => self.exec_move_usp(reg, to_usp),
-            Instruction::Trap { vector } => self.exec_trap(vector),
-            Instruction::Rte => self.exec_rte(),
-            Instruction::Stop => self.exec_stop(),
+            Instruction::Unlk { reg } => self.exec_unlk(reg, memory),
+            Instruction::MoveUsp { reg, to_usp } => self.exec_move_usp(reg, to_usp, memory),
+            Instruction::Trap { vector } => self.exec_trap(vector, memory),
+            Instruction::Rte => self.exec_rte(memory),
+            Instruction::Stop => self.exec_stop(memory),
             Instruction::Reset => 132, // Reset external devices, internal state unaffected.
             Instruction::TrapV => {
                 if self.get_flag(flags::OVERFLOW) {
-                    self.process_exception(7)
+                    self.process_exception(7, memory)
                 } else {
                     4
                 }
             },
-            Instruction::Rtr => self.exec_rtr(),
+            Instruction::Rtr => self.exec_rtr(memory),
             
             // === Bounds and Atomic ===
-            Instruction::Chk { src, dst_reg } => self.exec_chk(src, dst_reg),
-            Instruction::Tas { dst } => self.exec_tas(dst),
-            Instruction::Movem { size, direction, mask: _, ea } => self.exec_movem(size, direction, ea),
-            Instruction::Pea { src } => self.exec_pea(src),
+            Instruction::Chk { src, dst_reg } => self.exec_chk(src, dst_reg, memory),
+            Instruction::Tas { dst } => self.exec_tas(dst, memory),
+            Instruction::Movem { size, direction, mask: _, ea } => self.exec_movem(size, direction, ea, memory),
+            Instruction::Pea { src } => self.exec_pea(src, memory),
             
             // === Status Register Operations ===
-            Instruction::MoveToSr { src } => self.exec_move_to_sr(src),
-            Instruction::MoveFromSr { dst } => self.exec_move_from_sr(dst),
-            Instruction::MoveToCcr { src } => self.exec_move_to_ccr(src),
-            Instruction::AndiToCcr => self.exec_andi_to_ccr(),
-            Instruction::AndiToSr => self.exec_andi_to_sr(),
-            Instruction::OriToCcr => self.exec_ori_to_ccr(),
-            Instruction::OriToSr => self.exec_ori_to_sr(),
-            Instruction::EoriToCcr => self.exec_eori_to_ccr(),
-            Instruction::EoriToSr => self.exec_eori_to_sr(),
+            Instruction::MoveToSr { src } => self.exec_move_to_sr(src, memory),
+            Instruction::MoveFromSr { dst } => self.exec_move_from_sr(dst, memory),
+            Instruction::MoveToCcr { src } => self.exec_move_to_ccr(src, memory),
+            Instruction::AndiToCcr => self.exec_andi_to_ccr(memory),
+            Instruction::AndiToSr => self.exec_andi_to_sr(memory),
+            Instruction::OriToCcr => self.exec_ori_to_ccr(memory),
+            Instruction::OriToSr => self.exec_ori_to_sr(memory),
+            Instruction::EoriToCcr => self.exec_eori_to_ccr(memory),
+            Instruction::EoriToSr => self.exec_eori_to_sr(memory),
 
             // === Illegal/Unimplemented ===
-            Instruction::Illegal => self.process_exception(4),
-            Instruction::LineA { opcode: _ } => self.process_exception(10),
-            Instruction::LineF { opcode: _ } => self.process_exception(11),
+            Instruction::Illegal => self.process_exception(4, memory),
+            Instruction::LineA { opcode: _ } => self.process_exception(10, memory),
+            Instruction::LineF { opcode: _ } => self.process_exception(11, memory),
             Instruction::Unimplemented { opcode: _ } => {
-                self.process_exception(4)
+                self.process_exception(4, memory)
             }
         }
     }
@@ -361,25 +357,25 @@ impl Cpu {
 
     // === Instruction implementations ===
 
-    fn exec_move(&mut self, size: Size, src: AddressingMode, dst: AddressingMode) -> u32 {
+    fn exec_move(&mut self, size: Size, src: AddressingMode, dst: AddressingMode, memory: &mut dyn MemoryInterface) -> u32 {
         let mut cycles = 4u32;
 
         // Calculate source EA
-        let (src_ea, src_cycles) = calculate_ea(src, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
+        let (src_ea, src_cycles) = calculate_ea(src, size, &mut self.d, &mut self.a, &mut self.pc, memory);
         cycles += src_cycles;
         if self.pending_exception { return cycles; }
 
         // Read source value
-        let value = self.cpu_read_ea(src_ea, size);
+        let value = self.cpu_read_ea(src_ea, size, memory);
         if self.pending_exception { return cycles; }
 
         // Calculate destination EA
-        let (dst_ea, dst_cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
+        let (dst_ea, dst_cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, memory);
         cycles += dst_cycles;
         if self.pending_exception { return cycles; }
 
         // Write to destination
-        self.cpu_write_ea(dst_ea, size, value);
+        self.cpu_write_ea(dst_ea, size, value, memory);
 
         // Update flags
         self.update_nz_flags(value, size);
@@ -389,13 +385,13 @@ impl Cpu {
         cycles
     }
 
-    fn exec_movea(&mut self, size: Size, src: AddressingMode, dst_reg: u8) -> u32 {
+    fn exec_movea(&mut self, size: Size, src: AddressingMode, dst_reg: u8, memory: &mut dyn MemoryInterface) -> u32 {
         let mut cycles = 4u32;
 
-        let (src_ea, src_cycles) = calculate_ea(src, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
+        let (src_ea, src_cycles) = calculate_ea(src, size, &mut self.d, &mut self.a, &mut self.pc, memory);
         cycles += src_cycles;
 
-        let value = self.cpu_read_ea(src_ea, size);
+        let value = self.cpu_read_ea(src_ea, size, memory);
 
         // Sign-extend to 32 bits for word size
         let value = match size {
@@ -421,8 +417,8 @@ impl Cpu {
         4
     }
 
-    fn exec_lea(&mut self, src: AddressingMode, dst_reg: u8) -> u32 {
-        let (ea, cycles) = calculate_ea(src, Size::Long, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
+    fn exec_lea(&mut self, src: AddressingMode, dst_reg: u8, memory: &mut dyn MemoryInterface) -> u32 {
+        let (ea, cycles) = calculate_ea(src, Size::Long, &mut self.d, &mut self.a, &mut self.pc, memory);
 
         if let EffectiveAddress::Memory(addr) = ea {
             self.a[dst_reg as usize] = addr;
@@ -431,10 +427,10 @@ impl Cpu {
         4 + cycles
     }
 
-    fn exec_clr(&mut self, size: Size, dst: AddressingMode) -> u32 {
-        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
+    fn exec_clr(&mut self, size: Size, dst: AddressingMode, memory: &mut dyn MemoryInterface) -> u32 {
+        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, memory);
 
-        self.cpu_write_ea(dst_ea, size, 0);
+        self.cpu_write_ea(dst_ea, size, 0, memory);
 
         // CLR always sets Z=1, N=0, V=0, C=0
         self.sr = (self.sr & !0x000F) | flags::ZERO;
@@ -442,7 +438,7 @@ impl Cpu {
         4 + cycles
     }
 
-    fn exec_add(&mut self, size: Size, src: AddressingMode, dst: AddressingMode, direction: bool) -> u32 {
+    fn exec_add(&mut self, size: Size, src: AddressingMode, dst: AddressingMode, direction: bool, memory: &mut dyn MemoryInterface) -> u32 {
         let mut cycles = 4u32;
 
         // Source is always the EA when direction=false, Dn when direction=true
@@ -452,17 +448,17 @@ impl Cpu {
             (src, dst)
         };
 
-        let (src_ea, src_cycles) = calculate_ea(src_mode, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
+        let (src_ea, src_cycles) = calculate_ea(src_mode, size, &mut self.d, &mut self.a, &mut self.pc, memory);
         cycles += src_cycles;
-        let src_val = self.cpu_read_ea(src_ea, size);
+        let src_val = self.cpu_read_ea(src_ea, size, memory);
 
-        let (dst_ea, dst_cycles) = calculate_ea(dst_mode, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
+        let (dst_ea, dst_cycles) = calculate_ea(dst_mode, size, &mut self.d, &mut self.a, &mut self.pc, memory);
         cycles += dst_cycles;
-        let dst_val = self.cpu_read_ea(dst_ea, size);
+        let dst_val = self.cpu_read_ea(dst_ea, size, memory);
 
         let (result, carry, overflow) = self.add_with_flags(src_val, dst_val, size);
 
-        self.cpu_write_ea(dst_ea, size, result);
+        self.cpu_write_ea(dst_ea, size, result, memory);
 
         self.update_nz_flags(result, size);
         self.set_flag(flags::CARRY, carry);
@@ -493,13 +489,13 @@ impl Cpu {
         (result_masked, carry, overflow)
     }
 
-    fn exec_adda(&mut self, size: Size, src: AddressingMode, dst_reg: u8) -> u32 {
+    fn exec_adda(&mut self, size: Size, src: AddressingMode, dst_reg: u8, memory: &mut dyn MemoryInterface) -> u32 {
         let mut cycles = 4u32;
 
-        let (src_ea, src_cycles) = calculate_ea(src, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
+        let (src_ea, src_cycles) = calculate_ea(src, size, &mut self.d, &mut self.a, &mut self.pc, memory);
         cycles += src_cycles;
 
-        let src_val = self.cpu_read_ea(src_ea, size);
+        let src_val = self.cpu_read_ea(src_ea, size, memory);
 
         // Sign-extend source to 32 bits
         let src_val = match size {
@@ -514,13 +510,13 @@ impl Cpu {
         cycles + if size == Size::Long { 4 } else { 0 }
     }
 
-    fn exec_addq(&mut self, size: Size, dst: AddressingMode, data: u8) -> u32 {
-        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
-        let dst_val = self.cpu_read_ea(dst_ea, size);
+    fn exec_addq(&mut self, size: Size, dst: AddressingMode, data: u8, memory: &mut dyn MemoryInterface) -> u32 {
+        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, memory);
+        let dst_val = self.cpu_read_ea(dst_ea, size, memory);
 
         let (result, carry, overflow) = self.add_with_flags(data as u32, dst_val, size);
 
-        write_ea(dst_ea, size, result, &mut self.d, &mut self.a, &mut self.memory);
+        write_ea(dst_ea, size, result, &mut self.d, &mut self.a, memory);
 
         // ADDQ to An does not affect flags
         if !matches!(dst, AddressingMode::AddressRegister(_)) {
@@ -533,20 +529,20 @@ impl Cpu {
         4 + cycles
     }
 
-    fn exec_addi(&mut self, size: Size, dst: AddressingMode) -> u32 {
+    fn exec_addi(&mut self, size: Size, dst: AddressingMode, memory: &mut dyn MemoryInterface) -> u32 {
         // Read immediate value from extension word(s)
         let imm = match size {
-            Size::Byte => (self.memory.read_word(self.pc) & 0xFF) as u32,
-            Size::Word => self.memory.read_word(self.pc) as u32,
-            Size::Long => self.memory.read_long(self.pc),
+            Size::Byte => (memory.read_word(self.pc) & 0xFF) as u32,
+            Size::Word => memory.read_word(self.pc) as u32,
+            Size::Long => memory.read_long(self.pc),
         };
         self.pc = self.pc.wrapping_add(if size == Size::Long { 4 } else { 2 });
 
-        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
-        let dst_val = self.cpu_read_ea(dst_ea, size);
+        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, memory);
+        let dst_val = self.cpu_read_ea(dst_ea, size, memory);
 
         let (result, carry, overflow) = self.add_with_flags(imm, dst_val, size);
-        write_ea(dst_ea, size, result, &mut self.d, &mut self.a, &mut self.memory);
+        write_ea(dst_ea, size, result, &mut self.d, &mut self.a, memory);
 
         self.update_nz_flags(result, size);
         self.set_flag(flags::CARRY, carry);
@@ -556,19 +552,19 @@ impl Cpu {
         8 + cycles
     }
 
-    fn exec_subi(&mut self, size: Size, dst: AddressingMode) -> u32 {
+    fn exec_subi(&mut self, size: Size, dst: AddressingMode, memory: &mut dyn MemoryInterface) -> u32 {
         let imm = match size {
-            Size::Byte => (self.memory.read_word(self.pc) & 0xFF) as u32,
-            Size::Word => self.memory.read_word(self.pc) as u32,
-            Size::Long => self.memory.read_long(self.pc),
+            Size::Byte => (memory.read_word(self.pc) & 0xFF) as u32,
+            Size::Word => memory.read_word(self.pc) as u32,
+            Size::Long => memory.read_long(self.pc),
         };
         self.pc = self.pc.wrapping_add(if size == Size::Long { 4 } else { 2 });
 
-        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
-        let dst_val = self.cpu_read_ea(dst_ea, size);
+        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, memory);
+        let dst_val = self.cpu_read_ea(dst_ea, size, memory);
 
         let (result, borrow, overflow) = self.sub_with_flags(dst_val, imm, size);
-        write_ea(dst_ea, size, result, &mut self.d, &mut self.a, &mut self.memory);
+        write_ea(dst_ea, size, result, &mut self.d, &mut self.a, memory);
 
         self.update_nz_flags(result, size);
         self.set_flag(flags::CARRY, borrow);
@@ -578,16 +574,16 @@ impl Cpu {
         8 + cycles
     }
 
-    fn exec_cmpi(&mut self, size: Size, dst: AddressingMode) -> u32 {
+    fn exec_cmpi(&mut self, size: Size, dst: AddressingMode, memory: &mut dyn MemoryInterface) -> u32 {
         let imm = match size {
-            Size::Byte => (self.memory.read_word(self.pc) & 0xFF) as u32,
-            Size::Word => self.memory.read_word(self.pc) as u32,
-            Size::Long => self.memory.read_long(self.pc),
+            Size::Byte => (memory.read_word(self.pc) & 0xFF) as u32,
+            Size::Word => memory.read_word(self.pc) as u32,
+            Size::Long => memory.read_long(self.pc),
         };
         self.pc = self.pc.wrapping_add(if size == Size::Long { 4 } else { 2 });
 
-        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
-        let dst_val = self.cpu_read_ea(dst_ea, size);
+        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, memory);
+        let dst_val = self.cpu_read_ea(dst_ea, size, memory);
 
         let (result, borrow, overflow) = self.sub_with_flags(dst_val, imm, size);
 
@@ -599,19 +595,19 @@ impl Cpu {
         8 + cycles
     }
 
-    fn exec_andi(&mut self, size: Size, dst: AddressingMode) -> u32 {
+    fn exec_andi(&mut self, size: Size, dst: AddressingMode, memory: &mut dyn MemoryInterface) -> u32 {
         let imm = match size {
-            Size::Byte => (self.memory.read_word(self.pc) & 0xFF) as u32,
-            Size::Word => self.memory.read_word(self.pc) as u32,
-            Size::Long => self.memory.read_long(self.pc),
+            Size::Byte => (memory.read_word(self.pc) & 0xFF) as u32,
+            Size::Word => memory.read_word(self.pc) as u32,
+            Size::Long => memory.read_long(self.pc),
         };
         self.pc = self.pc.wrapping_add(if size == Size::Long { 4 } else { 2 });
 
-        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
-        let dst_val = self.cpu_read_ea(dst_ea, size);
+        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, memory);
+        let dst_val = self.cpu_read_ea(dst_ea, size, memory);
 
         let result = dst_val & imm;
-        write_ea(dst_ea, size, result, &mut self.d, &mut self.a, &mut self.memory);
+        write_ea(dst_ea, size, result, &mut self.d, &mut self.a, memory);
 
         self.update_nz_flags(result, size);
         self.set_flag(flags::CARRY, false);
@@ -620,19 +616,19 @@ impl Cpu {
         8 + cycles
     }
 
-    fn exec_ori(&mut self, size: Size, dst: AddressingMode) -> u32 {
+    fn exec_ori(&mut self, size: Size, dst: AddressingMode, memory: &mut dyn MemoryInterface) -> u32 {
         let imm = match size {
-            Size::Byte => (self.memory.read_word(self.pc) & 0xFF) as u32,
-            Size::Word => self.memory.read_word(self.pc) as u32,
-            Size::Long => self.memory.read_long(self.pc),
+            Size::Byte => (memory.read_word(self.pc) & 0xFF) as u32,
+            Size::Word => memory.read_word(self.pc) as u32,
+            Size::Long => memory.read_long(self.pc),
         };
         self.pc = self.pc.wrapping_add(if size == Size::Long { 4 } else { 2 });
 
-        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
-        let dst_val = self.cpu_read_ea(dst_ea, size);
+        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, memory);
+        let dst_val = self.cpu_read_ea(dst_ea, size, memory);
 
         let result = dst_val | imm;
-        write_ea(dst_ea, size, result, &mut self.d, &mut self.a, &mut self.memory);
+        write_ea(dst_ea, size, result, &mut self.d, &mut self.a, memory);
 
         self.update_nz_flags(result, size);
         self.set_flag(flags::CARRY, false);
@@ -641,19 +637,19 @@ impl Cpu {
         8 + cycles
     }
 
-    fn exec_eori(&mut self, size: Size, dst: AddressingMode) -> u32 {
+    fn exec_eori(&mut self, size: Size, dst: AddressingMode, memory: &mut dyn MemoryInterface) -> u32 {
         let imm = match size {
-            Size::Byte => (self.memory.read_word(self.pc) & 0xFF) as u32,
-            Size::Word => self.memory.read_word(self.pc) as u32,
-            Size::Long => self.memory.read_long(self.pc),
+            Size::Byte => (memory.read_word(self.pc) & 0xFF) as u32,
+            Size::Word => memory.read_word(self.pc) as u32,
+            Size::Long => memory.read_long(self.pc),
         };
         self.pc = self.pc.wrapping_add(if size == Size::Long { 4 } else { 2 });
 
-        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
-        let dst_val = self.cpu_read_ea(dst_ea, size);
+        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, memory);
+        let dst_val = self.cpu_read_ea(dst_ea, size, memory);
 
         let result = dst_val ^ imm;
-        write_ea(dst_ea, size, result, &mut self.d, &mut self.a, &mut self.memory);
+        write_ea(dst_ea, size, result, &mut self.d, &mut self.a, memory);
 
         self.update_nz_flags(result, size);
         self.set_flag(flags::CARRY, false);
@@ -662,7 +658,7 @@ impl Cpu {
         8 + cycles
     }
 
-    fn exec_sub(&mut self, size: Size, src: AddressingMode, dst: AddressingMode, direction: bool) -> u32 {
+    fn exec_sub(&mut self, size: Size, src: AddressingMode, dst: AddressingMode, direction: bool, memory: &mut dyn MemoryInterface) -> u32 {
 
         let mut cycles = 4u32;
 
@@ -672,17 +668,17 @@ impl Cpu {
             (src, dst)
         };
 
-        let (src_ea, src_cycles) = calculate_ea(src_mode, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
+        let (src_ea, src_cycles) = calculate_ea(src_mode, size, &mut self.d, &mut self.a, &mut self.pc, memory);
         cycles += src_cycles;
-        let src_val = self.cpu_read_ea(src_ea, size);
+        let src_val = self.cpu_read_ea(src_ea, size, memory);
 
-        let (dst_ea, dst_cycles) = calculate_ea(dst_mode, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
+        let (dst_ea, dst_cycles) = calculate_ea(dst_mode, size, &mut self.d, &mut self.a, &mut self.pc, memory);
         cycles += dst_cycles;
-        let dst_val = self.cpu_read_ea(dst_ea, size);
+        let dst_val = self.cpu_read_ea(dst_ea, size, memory);
 
         let (result, borrow, overflow) = self.sub_with_flags(dst_val, src_val, size);
 
-        self.cpu_write_ea(dst_ea, size, result);
+        self.cpu_write_ea(dst_ea, size, result, memory);
 
         self.update_nz_flags(result, size);
         self.set_flag(flags::CARRY, borrow);
@@ -713,7 +709,7 @@ impl Cpu {
         (result_masked, borrow, overflow)
     }
 
-    fn exec_addx(&mut self, size: Size, src_reg: u8, dst_reg: u8, memory_mode: bool) -> u32 {
+    fn exec_addx(&mut self, size: Size, src_reg: u8, dst_reg: u8, memory_mode: bool, memory: &mut dyn MemoryInterface) -> u32 {
         let mut cycles = match size {
             Size::Byte | Size::Word => 4,
             Size::Long => 8,
@@ -722,11 +718,11 @@ impl Cpu {
         let (src_val, dst_val, dst_addr) = if memory_mode {
             let src_addr = self.a[src_reg as usize].wrapping_sub(size.bytes());
             self.a[src_reg as usize] = src_addr;
-            let src = self.cpu_read_memory(src_addr, size);
+            let src = self.cpu_read_memory(src_addr, size, memory);
             
             let dst_addr = self.a[dst_reg as usize].wrapping_sub(size.bytes());
             self.a[dst_reg as usize] = dst_addr;
-            let dst = self.cpu_read_memory(dst_addr, size);
+            let dst = self.cpu_read_memory(dst_addr, size, memory);
             
             cycles = match size {
                 Size::Byte | Size::Word => 18,
@@ -743,7 +739,7 @@ impl Cpu {
         let (result, carry, overflow) = self.addx_with_flags(src_val, dst_val, x, size);
 
         if let Some(addr) = dst_addr {
-            self.cpu_write_memory(addr, size, result);
+            self.cpu_write_memory(addr, size, result, memory);
         } else {
             self.write_data_reg(dst_reg, size, result);
         }
@@ -791,7 +787,7 @@ impl Cpu {
         (res_masked, carry, overflow)
     }
 
-    fn exec_subx(&mut self, size: Size, src_reg: u8, dst_reg: u8, memory_mode: bool) -> u32 {
+    fn exec_subx(&mut self, size: Size, src_reg: u8, dst_reg: u8, memory_mode: bool, memory: &mut dyn MemoryInterface) -> u32 {
         let mut cycles = match size {
             Size::Byte | Size::Word => 4,
             Size::Long => 8,
@@ -800,11 +796,11 @@ impl Cpu {
         let (src_val, dst_val, dst_addr) = if memory_mode {
             let src_addr = self.a[src_reg as usize].wrapping_sub(size.bytes());
             self.a[src_reg as usize] = src_addr;
-            let src = self.cpu_read_memory(src_addr, size);
+            let src = self.cpu_read_memory(src_addr, size, memory);
             
             let dst_addr = self.a[dst_reg as usize].wrapping_sub(size.bytes());
             self.a[dst_reg as usize] = dst_addr;
-            let dst = self.cpu_read_memory(dst_addr, size);
+            let dst = self.cpu_read_memory(dst_addr, size, memory);
             
             cycles = match size {
                 Size::Byte | Size::Word => 18,
@@ -821,7 +817,7 @@ impl Cpu {
         let (result, borrow, overflow) = self.subx_with_flags(dst_val, src_val, x, size);
 
         if let Some(addr) = dst_addr {
-            self.cpu_write_memory(addr, size, result);
+            self.cpu_write_memory(addr, size, result, memory);
         } else {
             self.write_data_reg(dst_reg, size, result);
         }
@@ -869,14 +865,14 @@ impl Cpu {
         (res_masked, borrow, overflow)
     }
 
-    fn exec_negx(&mut self, size: Size, dst: AddressingMode) -> u32 {
-        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
-        let dst_val = self.cpu_read_ea(dst_ea, size);
+    fn exec_negx(&mut self, size: Size, dst: AddressingMode, memory: &mut dyn MemoryInterface) -> u32 {
+        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, memory);
+        let dst_val = self.cpu_read_ea(dst_ea, size, memory);
 
         let x = if self.get_flag(flags::EXTEND) { 1 } else { 0 };
         let (result, borrow, overflow) = self.subx_with_flags(0, dst_val, x, size);
 
-        self.cpu_write_ea(dst_ea, size, result);
+        self.cpu_write_ea(dst_ea, size, result, memory);
 
         let msb = match size {
             Size::Byte => 0x80,
@@ -898,13 +894,13 @@ impl Cpu {
         }
     }
 
-    fn exec_cmpm(&mut self, size: Size, ax: u8, ay: u8) -> u32 {
+    fn exec_cmpm(&mut self, size: Size, ax: u8, ay: u8, memory: &mut dyn MemoryInterface) -> u32 {
         let ay_addr = self.a[ay as usize];
-        let src_val = self.cpu_read_memory(ay_addr, size);
+        let src_val = self.cpu_read_memory(ay_addr, size, memory);
         self.a[ay as usize] = ay_addr.wrapping_add(size.bytes());
 
         let ax_addr = self.a[ax as usize];
-        let dst_val = self.cpu_read_memory(ax_addr, size);
+        let dst_val = self.cpu_read_memory(ax_addr, size, memory);
         self.a[ax as usize] = ax_addr.wrapping_add(size.bytes());
 
         let (_, borrow, overflow) = self.sub_with_flags(dst_val, src_val, size);
@@ -920,13 +916,13 @@ impl Cpu {
         }
     }
 
-    fn exec_suba(&mut self, size: Size, src: AddressingMode, dst_reg: u8) -> u32 {
+    fn exec_suba(&mut self, size: Size, src: AddressingMode, dst_reg: u8, memory: &mut dyn MemoryInterface) -> u32 {
         let mut cycles = 4u32;
 
-        let (src_ea, src_cycles) = calculate_ea(src, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
+        let (src_ea, src_cycles) = calculate_ea(src, size, &mut self.d, &mut self.a, &mut self.pc, memory);
         cycles += src_cycles;
 
-        let src_val = read_ea(src_ea, size, &self.d, &self.a, &mut self.memory);
+        let src_val = read_ea(src_ea, size, &self.d, &self.a, memory);
 
         let src_val = match size {
             Size::Word => (src_val as i16) as i32 as u32,
@@ -939,13 +935,13 @@ impl Cpu {
         cycles + if size == Size::Long { 4 } else { 0 }
     }
 
-    fn exec_subq(&mut self, size: Size, dst: AddressingMode, data: u8) -> u32 {
-        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
-        let dst_val = self.cpu_read_ea(dst_ea, size);
+    fn exec_subq(&mut self, size: Size, dst: AddressingMode, data: u8, memory: &mut dyn MemoryInterface) -> u32 {
+        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, memory);
+        let dst_val = self.cpu_read_ea(dst_ea, size, memory);
 
         let (result, borrow, overflow) = self.sub_with_flags(dst_val, data as u32, size);
 
-        self.cpu_write_ea(dst_ea, size, result);
+        self.cpu_write_ea(dst_ea, size, result, memory);
 
         if !matches!(dst, AddressingMode::AddressRegister(_)) {
             self.update_nz_flags(result, size);
@@ -957,13 +953,13 @@ impl Cpu {
         4 + cycles
     }
 
-    fn exec_neg(&mut self, size: Size, dst: AddressingMode) -> u32 {
-        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
-        let val = self.cpu_read_ea(dst_ea, size);
+    fn exec_neg(&mut self, size: Size, dst: AddressingMode, memory: &mut dyn MemoryInterface) -> u32 {
+        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, memory);
+        let val = self.cpu_read_ea(dst_ea, size, memory);
 
         let (result, _borrow, overflow) = self.sub_with_flags(0, val, size);
 
-        write_ea(dst_ea, size, result, &mut self.d, &mut self.a, &mut self.memory);
+        write_ea(dst_ea, size, result, &mut self.d, &mut self.a, memory);
 
         self.update_nz_flags(result, size);
         self.set_flag(flags::CARRY, val != 0);
@@ -973,20 +969,20 @@ impl Cpu {
         4 + cycles
     }
 
-    fn exec_and(&mut self, size: Size, src: AddressingMode, dst: AddressingMode, _direction: bool) -> u32 {
+    fn exec_and(&mut self, size: Size, src: AddressingMode, dst: AddressingMode, _direction: bool, memory: &mut dyn MemoryInterface) -> u32 {
         let mut cycles = 4u32;
 
-        let (src_ea, src_cycles) = calculate_ea(src, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
+        let (src_ea, src_cycles) = calculate_ea(src, size, &mut self.d, &mut self.a, &mut self.pc, memory);
         cycles += src_cycles;
-        let src_val = self.cpu_read_ea(src_ea, size);
+        let src_val = self.cpu_read_ea(src_ea, size, memory);
 
-        let (dst_ea, dst_cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
+        let (dst_ea, dst_cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, memory);
         cycles += dst_cycles;
-        let dst_val = self.cpu_read_ea(dst_ea, size);
+        let dst_val = self.cpu_read_ea(dst_ea, size, memory);
 
         let result = src_val & dst_val;
 
-        self.cpu_write_ea(dst_ea, size, result);
+        self.cpu_write_ea(dst_ea, size, result, memory);
 
         self.update_nz_flags(result, size);
         self.set_flag(flags::OVERFLOW, false);
@@ -995,20 +991,20 @@ impl Cpu {
         cycles
     }
 
-    fn exec_or(&mut self, size: Size, src: AddressingMode, dst: AddressingMode, _direction: bool) -> u32 {
+    fn exec_or(&mut self, size: Size, src: AddressingMode, dst: AddressingMode, _direction: bool, memory: &mut dyn MemoryInterface) -> u32 {
         let mut cycles = 4u32;
 
-        let (src_ea, src_cycles) = calculate_ea(src, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
+        let (src_ea, src_cycles) = calculate_ea(src, size, &mut self.d, &mut self.a, &mut self.pc, memory);
         cycles += src_cycles;
-        let src_val = self.cpu_read_ea(src_ea, size);
+        let src_val = self.cpu_read_ea(src_ea, size, memory);
 
-        let (dst_ea, dst_cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
+        let (dst_ea, dst_cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, memory);
         cycles += dst_cycles;
-        let dst_val = self.cpu_read_ea(dst_ea, size);
+        let dst_val = self.cpu_read_ea(dst_ea, size, memory);
 
         let result = src_val | dst_val;
 
-        self.cpu_write_ea(dst_ea, size, result);
+        self.cpu_write_ea(dst_ea, size, result, memory);
 
         self.update_nz_flags(result, size);
         self.set_flag(flags::OVERFLOW, false);
@@ -1017,19 +1013,19 @@ impl Cpu {
         cycles
     }
 
-    fn exec_eor(&mut self, size: Size, src_reg: u8, dst: AddressingMode) -> u32 {
+    fn exec_eor(&mut self, size: Size, src_reg: u8, dst: AddressingMode, memory: &mut dyn MemoryInterface) -> u32 {
         let src_val = match size {
             Size::Byte => self.d[src_reg as usize] & 0xFF,
             Size::Word => self.d[src_reg as usize] & 0xFFFF,
             Size::Long => self.d[src_reg as usize],
         };
 
-        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
-        let dst_val = self.cpu_read_ea(dst_ea, size);
+        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, memory);
+        let dst_val = self.cpu_read_ea(dst_ea, size, memory);
 
         let result = src_val ^ dst_val;
 
-        self.cpu_write_ea(dst_ea, size, result);
+        self.cpu_write_ea(dst_ea, size, result, memory);
 
         self.update_nz_flags(result, size);
         self.set_flag(flags::OVERFLOW, false);
@@ -1038,13 +1034,13 @@ impl Cpu {
         4 + cycles
     }
 
-    fn exec_not(&mut self, size: Size, dst: AddressingMode) -> u32 {
-        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
-        let val = read_ea(dst_ea, size, &self.d, &self.a, &mut self.memory);
+    fn exec_not(&mut self, size: Size, dst: AddressingMode, memory: &mut dyn MemoryInterface) -> u32 {
+        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, memory);
+        let val = read_ea(dst_ea, size, &self.d, &self.a, memory);
 
         let result = !val;
 
-        write_ea(dst_ea, size, result, &mut self.d, &mut self.a, &mut self.memory);
+        write_ea(dst_ea, size, result, &mut self.d, &mut self.a, memory);
 
         self.update_nz_flags(result, size);
         self.set_flag(flags::OVERFLOW, false);
@@ -1053,14 +1049,14 @@ impl Cpu {
         4 + cycles
     }
 
-    fn exec_shift(&mut self, size: Size, dst: AddressingMode, count: ShiftCount, left: bool, arithmetic: bool) -> u32 {
+    fn exec_shift(&mut self, size: Size, dst: AddressingMode, count: ShiftCount, left: bool, arithmetic: bool, memory: &mut dyn MemoryInterface) -> u32 {
         let count_val = match count {
             ShiftCount::Immediate(n) => n as u32,
             ShiftCount::Register(r) => self.d[r as usize] & 63,
         };
 
-        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
-        let val = read_ea(dst_ea, size, &self.d, &self.a, &mut self.memory);
+        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, memory);
+        let val = read_ea(dst_ea, size, &self.d, &self.a, memory);
 
         let (mask, sign_bit) = match size {
             Size::Byte => (0xFFu32, 0x80u32),
@@ -1092,7 +1088,7 @@ impl Cpu {
             }
         }
 
-        write_ea(dst_ea, size, result, &mut self.d, &mut self.a, &mut self.memory);
+        write_ea(dst_ea, size, result, &mut self.d, &mut self.a, memory);
 
         self.update_nz_flags(result, size);
         if count_val > 0 {
@@ -1106,14 +1102,14 @@ impl Cpu {
         6 + cycles + 2 * count_val
     }
 
-    fn exec_rotate(&mut self, size: Size, dst: AddressingMode, count: ShiftCount, left: bool, _extend: bool) -> u32 {
+    fn exec_rotate(&mut self, size: Size, dst: AddressingMode, count: ShiftCount, left: bool, _extend: bool, memory: &mut dyn MemoryInterface) -> u32 {
         let count_val = match count {
             ShiftCount::Immediate(n) => n as u32,
             ShiftCount::Register(r) => self.d[r as usize] & 63,
         };
 
-        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
-        let val = read_ea(dst_ea, size, &self.d, &self.a, &mut self.memory);
+        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, memory);
+        let val = read_ea(dst_ea, size, &self.d, &self.a, memory);
 
         let (mask, bits) = match size {
             Size::Byte => (0xFFu32, 8u32),
@@ -1149,7 +1145,7 @@ impl Cpu {
             }
         }
 
-        write_ea(dst_ea, size, result, &mut self.d, &mut self.a, &mut self.memory);
+        write_ea(dst_ea, size, result, &mut self.d, &mut self.a, memory);
 
         self.update_nz_flags(result, size);
         self.set_flag(flags::CARRY, carry);
@@ -1158,9 +1154,9 @@ impl Cpu {
         6 + cycles + 2 * count_val
     }
 
-    fn exec_cmp(&mut self, size: Size, src: AddressingMode, dst_reg: u8) -> u32 {
-        let (src_ea, cycles) = calculate_ea(src, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
-        let src_val = self.cpu_read_ea(src_ea, size);
+    fn exec_cmp(&mut self, size: Size, src: AddressingMode, dst_reg: u8, memory: &mut dyn MemoryInterface) -> u32 {
+        let (src_ea, cycles) = calculate_ea(src, size, &mut self.d, &mut self.a, &mut self.pc, memory);
+        let src_val = self.cpu_read_ea(src_ea, size, memory);
 
         let dst_val = match size {
             Size::Byte => self.d[dst_reg as usize] & 0xFF,
@@ -1177,9 +1173,9 @@ impl Cpu {
         4 + cycles
     }
 
-    fn exec_cmpa(&mut self, size: Size, src: AddressingMode, dst_reg: u8) -> u32 {
-        let (src_ea, cycles) = calculate_ea(src, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
-        let src_val = read_ea(src_ea, size, &self.d, &self.a, &mut self.memory);
+    fn exec_cmpa(&mut self, size: Size, src: AddressingMode, dst_reg: u8, memory: &mut dyn MemoryInterface) -> u32 {
+        let (src_ea, cycles) = calculate_ea(src, size, &mut self.d, &mut self.a, &mut self.pc, memory);
+        let src_val = read_ea(src_ea, size, &self.d, &self.a, memory);
 
         // Sign-extend source to 32 bits
         let src_val = match size {
@@ -1199,9 +1195,9 @@ impl Cpu {
         6 + cycles
     }
 
-    fn exec_tst(&mut self, size: Size, dst: AddressingMode) -> u32 {
-        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
-        let val = self.cpu_read_ea(dst_ea, size);
+    fn exec_tst(&mut self, size: Size, dst: AddressingMode, memory: &mut dyn MemoryInterface) -> u32 {
+        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, memory);
+        let val = self.cpu_read_ea(dst_ea, size, memory);
 
         self.update_nz_flags(val, size);
         self.set_flag(flags::OVERFLOW, false);
@@ -1210,10 +1206,10 @@ impl Cpu {
         4 + cycles
     }
 
-    fn exec_bra(&mut self, displacement: i16) -> u32 {
+    fn exec_bra(&mut self, displacement: i16, memory: &mut dyn MemoryInterface) -> u32 {
         if displacement == 0 {
             // 16-bit displacement follows
-            let disp = self.memory.read_word(self.pc) as i16;
+            let disp = memory.read_word(self.pc) as i16;
             self.pc = (self.pc as i32 + disp as i32) as u32;
             10
         } else {
@@ -1222,7 +1218,7 @@ impl Cpu {
         }
     }
 
-    fn exec_bsr(&mut self, displacement: i16) -> u32 {
+    fn exec_bsr(&mut self, displacement: i16, memory: &mut dyn MemoryInterface) -> u32 {
         let return_addr = if displacement == 0 {
             self.pc + 2
         } else {
@@ -1231,10 +1227,10 @@ impl Cpu {
 
         // Push return address
         self.a[7] = self.a[7].wrapping_sub(4);
-        self.memory.write_long(self.a[7], return_addr);
+        memory.write_long(self.a[7], return_addr);
 
         if displacement == 0 {
-            let disp = self.memory.read_word(self.pc) as i16;
+            let disp = memory.read_word(self.pc) as i16;
             self.pc = (self.pc as i32 + disp as i32) as u32;
             18
         } else {
@@ -1243,10 +1239,10 @@ impl Cpu {
         }
     }
 
-    fn exec_bcc(&mut self, condition: Condition, displacement: i16) -> u32 {
+    fn exec_bcc(&mut self, condition: Condition, displacement: i16, memory: &mut dyn MemoryInterface) -> u32 {
         if self.test_condition(condition) {
             if displacement == 0 {
-                let disp = self.memory.read_word(self.pc) as i16;
+                let disp = memory.read_word(self.pc) as i16;
                 self.pc = (self.pc as i32 + disp as i32) as u32;
                 10
             } else {
@@ -1261,18 +1257,18 @@ impl Cpu {
         }
     }
 
-    fn exec_scc(&mut self, condition: Condition, dst: AddressingMode) -> u32 {
+    fn exec_scc(&mut self, condition: Condition, dst: AddressingMode, memory: &mut dyn MemoryInterface) -> u32 {
         let mut cycles = 4u32;
-        let (dst_ea, dst_cycles) = calculate_ea(dst, Size::Byte, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
+        let (dst_ea, dst_cycles) = calculate_ea(dst, Size::Byte, &mut self.d, &mut self.a, &mut self.pc, memory);
         cycles += dst_cycles;
         
         let val = if self.test_condition(condition) { 0xFF } else { 0x00 };
-        self.cpu_write_ea(dst_ea, Size::Byte, val);
+        self.cpu_write_ea(dst_ea, Size::Byte, val, memory);
         
         cycles + if matches!(dst, AddressingMode::DataRegister(_)) { 0 } else { 4 }
     }
 
-    fn exec_dbcc(&mut self, condition: Condition, reg: u8) -> u32 {
+    fn exec_dbcc(&mut self, condition: Condition, reg: u8, memory: &mut dyn MemoryInterface) -> u32 {
         if self.test_condition(condition) {
             self.pc = self.pc.wrapping_add(2); // Skip displacement word
             12
@@ -1284,15 +1280,15 @@ impl Cpu {
                 self.pc = self.pc.wrapping_add(2);
                 14
             } else {
-                let disp = self.memory.read_word(self.pc) as i16;
+                let disp = memory.read_word(self.pc) as i16;
                 self.pc = (self.pc as i32 + disp as i32) as u32;
                 10
             }
         }
     }
 
-    fn exec_jmp(&mut self, dst: AddressingMode) -> u32 {
-        let (ea, cycles) = calculate_ea(dst, Size::Long, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
+    fn exec_jmp(&mut self, dst: AddressingMode, memory: &mut dyn MemoryInterface) -> u32 {
+        let (ea, cycles) = calculate_ea(dst, Size::Long, &mut self.d, &mut self.a, &mut self.pc, memory);
 
         if let EffectiveAddress::Memory(addr) = ea {
             self.pc = addr;
@@ -1301,21 +1297,21 @@ impl Cpu {
         4 + cycles
     }
 
-    fn exec_jsr(&mut self, dst: AddressingMode) -> u32 {
-        let (ea, cycles) = calculate_ea(dst, Size::Long, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
+    fn exec_jsr(&mut self, dst: AddressingMode, memory: &mut dyn MemoryInterface) -> u32 {
+        let (ea, cycles) = calculate_ea(dst, Size::Long, &mut self.d, &mut self.a, &mut self.pc, memory);
 
         if let EffectiveAddress::Memory(addr) = ea {
             // Push return address
             self.a[7] = self.a[7].wrapping_sub(4);
-            self.memory.write_long(self.a[7], self.pc);
+            memory.write_long(self.a[7], self.pc);
             self.pc = addr;
         }
 
         12 + cycles
     }
 
-    fn exec_rts(&mut self) -> u32 {
-        self.pc = self.memory.read_long(self.a[7]);
+    fn exec_rts(&mut self, memory: &mut dyn MemoryInterface) -> u32 {
+        self.pc = memory.read_long(self.a[7]);
         self.a[7] = self.a[7].wrapping_add(4);
         16
     }
@@ -1348,12 +1344,12 @@ impl Cpu {
         4
     }
 
-    fn exec_mulu(&mut self, src: AddressingMode, dst_reg: u8) -> u32 {
+    fn exec_mulu(&mut self, src: AddressingMode, dst_reg: u8, memory: &mut dyn MemoryInterface) -> u32 {
         let mut cycles = 4u32;
-        let (src_ea, src_cycles) = calculate_ea(src, Size::Word, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
+        let (src_ea, src_cycles) = calculate_ea(src, Size::Word, &mut self.d, &mut self.a, &mut self.pc, memory);
         cycles += src_cycles;
 
-        let src_val = self.cpu_read_ea(src_ea, Size::Word) as u16;
+        let src_val = self.cpu_read_ea(src_ea, Size::Word, memory) as u16;
         let dst_val = self.d[dst_reg as usize] as u16;
 
         let result = (src_val as u32) * (dst_val as u32);
@@ -1366,12 +1362,12 @@ impl Cpu {
         cycles + 70
     }
 
-    fn exec_muls(&mut self, src: AddressingMode, dst_reg: u8) -> u32 {
+    fn exec_muls(&mut self, src: AddressingMode, dst_reg: u8, memory: &mut dyn MemoryInterface) -> u32 {
         let mut cycles = 4u32;
-        let (src_ea, src_cycles) = calculate_ea(src, Size::Word, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
+        let (src_ea, src_cycles) = calculate_ea(src, Size::Word, &mut self.d, &mut self.a, &mut self.pc, memory);
         cycles += src_cycles;
 
-        let src_val = read_ea(src_ea, Size::Word, &self.d, &self.a, &mut self.memory) as i16;
+        let src_val = read_ea(src_ea, Size::Word, &self.d, &self.a, memory) as i16;
         let dst_val = self.d[dst_reg as usize] as i16;
 
         let result = (src_val as i32) * (dst_val as i32);
@@ -1384,12 +1380,12 @@ impl Cpu {
         cycles + 70
     }
 
-    fn exec_divu(&mut self, src: AddressingMode, dst_reg: u8) -> u32 {
+    fn exec_divu(&mut self, src: AddressingMode, dst_reg: u8, memory: &mut dyn MemoryInterface) -> u32 {
         let mut cycles = 4u32;
-        let (src_ea, src_cycles) = calculate_ea(src, Size::Word, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
+        let (src_ea, src_cycles) = calculate_ea(src, Size::Word, &mut self.d, &mut self.a, &mut self.pc, memory);
         cycles += src_cycles;
 
-        let src_val = self.cpu_read_ea(src_ea, Size::Word) as u16;
+        let src_val = self.cpu_read_ea(src_ea, Size::Word, memory) as u16;
         
         if src_val == 0 {
             // Divide by zero trap
@@ -1420,12 +1416,12 @@ impl Cpu {
         cycles + 140
     }
 
-    fn exec_divs(&mut self, src: AddressingMode, dst_reg: u8) -> u32 {
+    fn exec_divs(&mut self, src: AddressingMode, dst_reg: u8, memory: &mut dyn MemoryInterface) -> u32 {
         let mut cycles = 4u32;
-        let (src_ea, src_cycles) = calculate_ea(src, Size::Word, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
+        let (src_ea, src_cycles) = calculate_ea(src, Size::Word, &mut self.d, &mut self.a, &mut self.pc, memory);
         cycles += src_cycles;
 
-        let src_val = read_ea(src_ea, Size::Word, &self.d, &self.a, &mut self.memory) as i16;
+        let src_val = read_ea(src_ea, Size::Word, &self.d, &self.a, memory) as i16;
         
         if src_val == 0 {
             #[cfg(debug_assertions)]
@@ -1454,17 +1450,17 @@ impl Cpu {
         cycles + 158
     }
 
-    fn exec_abcd(&mut self, src_reg: u8, dst_reg: u8, memory_mode: bool) -> u32 {
+    fn exec_abcd(&mut self, src_reg: u8, dst_reg: u8, memory_mode: bool, memory: &mut dyn MemoryInterface) -> u32 {
         let mut cycles = 6u32;
         
         let (src_val, dst_val, dst_addr) = if memory_mode {
             let src_addr = self.a[src_reg as usize].wrapping_sub(1);
             self.a[src_reg as usize] = src_addr;
-            let src = self.memory.read_byte(src_addr);
+            let src = memory.read_byte(src_addr);
             
             let dst_addr = self.a[dst_reg as usize].wrapping_sub(1);
             self.a[dst_reg as usize] = dst_addr;
-            let dst = self.memory.read_byte(dst_addr);
+            let dst = memory.read_byte(dst_addr);
             
             cycles += 12;
             (src, dst, Some(dst_addr))
@@ -1484,7 +1480,7 @@ impl Cpu {
         let res = (tmp & 0xFF) as u8;
 
         if let Some(addr) = dst_addr {
-            self.memory.write_byte(addr, res);
+            memory.write_byte(addr, res);
         } else {
             self.d[dst_reg as usize] = (self.d[dst_reg as usize] & 0xFFFFFF00) | res as u32;
         }
@@ -1500,17 +1496,17 @@ impl Cpu {
         cycles
     }
 
-    fn exec_sbcd(&mut self, src_reg: u8, dst_reg: u8, memory_mode: bool) -> u32 {
+    fn exec_sbcd(&mut self, src_reg: u8, dst_reg: u8, memory_mode: bool, memory: &mut dyn MemoryInterface) -> u32 {
         let mut cycles = 6u32;
         
         let (src_val, dst_val, dst_addr) = if memory_mode {
             let src_addr = self.a[src_reg as usize].wrapping_sub(1);
             self.a[src_reg as usize] = src_addr;
-            let src = self.memory.read_byte(src_addr);
+            let src = memory.read_byte(src_addr);
             
             let dst_addr = self.a[dst_reg as usize].wrapping_sub(1);
             self.a[dst_reg as usize] = dst_addr;
-            let dst = self.memory.read_byte(dst_addr);
+            let dst = memory.read_byte(dst_addr);
             
             cycles += 12;
             (src, dst, Some(dst_addr))
@@ -1530,7 +1526,7 @@ impl Cpu {
         let res = (tmp & 0xFF) as u8;
 
         if let Some(addr) = dst_addr {
-            self.memory.write_byte(addr, res);
+            memory.write_byte(addr, res);
         } else {
             self.d[dst_reg as usize] = (self.d[dst_reg as usize] & 0xFFFFFF00) | res as u32;
         }
@@ -1546,12 +1542,12 @@ impl Cpu {
         cycles
     }
 
-    fn exec_nbcd(&mut self, dst: AddressingMode) -> u32 {
+    fn exec_nbcd(&mut self, dst: AddressingMode, memory: &mut dyn MemoryInterface) -> u32 {
         let mut cycles = 6u32;
-        let (dst_ea, dst_cycles) = calculate_ea(dst, Size::Byte, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
+        let (dst_ea, dst_cycles) = calculate_ea(dst, Size::Byte, &mut self.d, &mut self.a, &mut self.pc, memory);
         cycles += dst_cycles;
         
-        let dst_val = self.cpu_read_ea(dst_ea, Size::Byte) as u8;
+        let dst_val = self.cpu_read_ea(dst_ea, Size::Byte, memory) as u8;
         let x = if self.get_flag(flags::EXTEND) { 1 } else { 0 };
         
         let mut tmp = 0 - (dst_val & 0x0F) as i16 - x as i16;
@@ -1563,7 +1559,7 @@ impl Cpu {
         
         let res = (tmp & 0xFF) as u8;
         
-        self.cpu_write_ea(dst_ea, Size::Byte, res as u32);
+        self.cpu_write_ea(dst_ea, Size::Byte, res as u32, memory);
         
         if res != 0 {
             self.set_flag(flags::ZERO, false);
@@ -1616,10 +1612,10 @@ impl Cpu {
         }
     }
 
-    fn fetch_bit_num(&mut self, bit: BitSource) -> u8 {
+    fn fetch_bit_num(&mut self, bit: BitSource, memory: &mut dyn MemoryInterface) -> u8 {
         match bit {
             BitSource::Immediate => {
-                let val = self.memory.read_word(self.pc);
+                let val = memory.read_word(self.pc);
                 self.pc = self.pc.wrapping_add(2);
                 (val & 0xFF) as u8
             }
@@ -1627,22 +1623,22 @@ impl Cpu {
         }
     }
 
-    fn exec_btst(&mut self, bit: BitSource, dst: AddressingMode) -> u32 {
-        let bit_num = self.fetch_bit_num(bit);
+    fn exec_btst(&mut self, bit: BitSource, dst: AddressingMode, memory: &mut dyn MemoryInterface) -> u32 {
+        let bit_num = self.fetch_bit_num(bit, memory);
         let is_memory = !matches!(dst, AddressingMode::DataRegister(_));
         let size = if is_memory { Size::Byte } else { Size::Long };
         
         let mut cycles = 4u32;
-        let (dst_ea, dst_cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
+        let (dst_ea, dst_cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, memory);
         cycles += dst_cycles;
         
         let val = if matches!(dst, AddressingMode::Immediate) {
             // Immediate data for BTST is valid? No, destination EA.
             // BTST #n, #m is not valid.
             // But BTST #n, (xxx) is.
-            self.cpu_read_ea(dst_ea, size)
+            self.cpu_read_ea(dst_ea, size, memory)
         } else {
-             self.cpu_read_ea(dst_ea, size)
+             self.cpu_read_ea(dst_ea, size, memory)
         };
         
         // Immediate allowed for BTST?
@@ -1660,78 +1656,78 @@ impl Cpu {
         cycles
     }
 
-    fn exec_bset(&mut self, bit: BitSource, dst: AddressingMode) -> u32 {
-        let bit_num = self.fetch_bit_num(bit);
+    fn exec_bset(&mut self, bit: BitSource, dst: AddressingMode, memory: &mut dyn MemoryInterface) -> u32 {
+        let bit_num = self.fetch_bit_num(bit, memory);
         let is_memory = !matches!(dst, AddressingMode::DataRegister(_));
         let size = if is_memory { Size::Byte } else { Size::Long };
         
         let mut cycles = 8u32;
-        let (dst_ea, dst_cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
+        let (dst_ea, dst_cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, memory);
         cycles += dst_cycles;
         
-        let val = self.cpu_read_ea(dst_ea, size);
+        let val = self.cpu_read_ea(dst_ea, size, memory);
         let bit_idx = self.resolve_bit_index(bit_num, is_memory);
         let bit_val = (val >> bit_idx) & 1;
         
         self.set_flag(flags::ZERO, bit_val == 0);
         
         let new_val = val | (1 << bit_idx);
-        self.cpu_write_ea(dst_ea, size, new_val);
+        self.cpu_write_ea(dst_ea, size, new_val, memory);
         
         cycles
     }
 
-    fn exec_bclr(&mut self, bit: BitSource, dst: AddressingMode) -> u32 {
-        let bit_num = self.fetch_bit_num(bit);
+    fn exec_bclr(&mut self, bit: BitSource, dst: AddressingMode, memory: &mut dyn MemoryInterface) -> u32 {
+        let bit_num = self.fetch_bit_num(bit, memory);
         let is_memory = !matches!(dst, AddressingMode::DataRegister(_));
         let size = if is_memory { Size::Byte } else { Size::Long };
 
         let mut cycles = 8u32;
-        let (dst_ea, dst_cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
+        let (dst_ea, dst_cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, memory);
         cycles += dst_cycles;
 
-        let val = self.cpu_read_ea(dst_ea, size);
+        let val = self.cpu_read_ea(dst_ea, size, memory);
         let bit_idx = self.resolve_bit_index(bit_num, is_memory);
         let bit_val = (val >> bit_idx) & 1;
 
         self.set_flag(flags::ZERO, bit_val == 0);
 
         let new_val = val & !(1 << bit_idx);
-        self.cpu_write_ea(dst_ea, size, new_val);
+        self.cpu_write_ea(dst_ea, size, new_val, memory);
 
         cycles
     }
 
-    fn exec_bchg(&mut self, bit: BitSource, dst: AddressingMode) -> u32 {
-        let bit_num = self.fetch_bit_num(bit);
+    fn exec_bchg(&mut self, bit: BitSource, dst: AddressingMode, memory: &mut dyn MemoryInterface) -> u32 {
+        let bit_num = self.fetch_bit_num(bit, memory);
         let is_memory = !matches!(dst, AddressingMode::DataRegister(_));
         let size = if is_memory { Size::Byte } else { Size::Long };
 
         let mut cycles = 8u32;
-        let (dst_ea, dst_cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
+        let (dst_ea, dst_cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, memory);
         cycles += dst_cycles;
 
-        let val = self.cpu_read_ea(dst_ea, size);
+        let val = self.cpu_read_ea(dst_ea, size, memory);
         let bit_idx = self.resolve_bit_index(bit_num, is_memory);
         let bit_val = (val >> bit_idx) & 1;
 
         self.set_flag(flags::ZERO, bit_val == 0);
 
         let new_val = val ^ (1 << bit_idx);
-        self.cpu_write_ea(dst_ea, size, new_val);
+        self.cpu_write_ea(dst_ea, size, new_val, memory);
 
         cycles
     }
     
     // Missing ROXL/ROXR stubs to satisfy match arms if I added them
-    fn exec_roxl(&mut self, size: Size, dst: AddressingMode, count: ShiftCount) -> u32 {
+    fn exec_roxl(&mut self, size: Size, dst: AddressingMode, count: ShiftCount, memory: &mut dyn MemoryInterface) -> u32 {
         let count_val = match count {
             ShiftCount::Immediate(n) => n as u32,
             ShiftCount::Register(r) => self.d[r as usize] & 63,
         };
 
-        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
-        let val = self.cpu_read_ea(dst_ea, size);
+        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, memory);
+        let val = self.cpu_read_ea(dst_ea, size, memory);
 
         let (mask, msb) = match size {
             Size::Byte => (0xFFu32, 0x80u32),
@@ -1750,7 +1746,7 @@ impl Cpu {
             last_carry = x;
         }
 
-        self.cpu_write_ea(dst_ea, size, res);
+        self.cpu_write_ea(dst_ea, size, res, memory);
         self.update_nz_flags(res, size);
         self.set_flag(flags::OVERFLOW, false);
         if count_val > 0 {
@@ -1763,14 +1759,14 @@ impl Cpu {
         cycles + 6 + 2 * count_val
     }
 
-    fn exec_roxr(&mut self, size: Size, dst: AddressingMode, count: ShiftCount) -> u32 {
+    fn exec_roxr(&mut self, size: Size, dst: AddressingMode, count: ShiftCount, memory: &mut dyn MemoryInterface) -> u32 {
         let count_val = match count {
             ShiftCount::Immediate(n) => n as u32,
             ShiftCount::Register(r) => self.d[r as usize] & 63,
         };
 
-        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
-        let val = self.cpu_read_ea(dst_ea, size);
+        let (dst_ea, cycles) = calculate_ea(dst, size, &mut self.d, &mut self.a, &mut self.pc, memory);
+        let val = self.cpu_read_ea(dst_ea, size, memory);
 
         let (mask, msb) = match size {
             Size::Byte => (0xFFu32, 0x80u32),
@@ -1789,7 +1785,7 @@ impl Cpu {
             last_carry = x;
         }
 
-        self.cpu_write_ea(dst_ea, size, res);
+        self.cpu_write_ea(dst_ea, size, res, memory);
         self.update_nz_flags(res, size);
         self.set_flag(flags::OVERFLOW, false);
         if count_val > 0 {
@@ -1804,89 +1800,89 @@ impl Cpu {
 
 
     // === Stack Helpers ===
-    fn push_long(&mut self, val: u32) {
+    fn push_long(&mut self, val: u32, memory: &mut dyn MemoryInterface) {
         let addr = self.a[7].wrapping_sub(4);
         self.a[7] = addr;
-        self.write_long(addr, val);
+        self.write_long(addr, val, memory);
     }
     
-    fn push_word(&mut self, val: u16) {
+    fn push_word(&mut self, val: u16, memory: &mut dyn MemoryInterface) {
         let addr = self.a[7].wrapping_sub(2);
         self.a[7] = addr;
-        self.write_word(addr, val);
+        self.write_word(addr, val, memory);
     }
     
-    fn pop_long(&mut self) -> u32 {
+    fn pop_long(&mut self, memory: &mut dyn MemoryInterface) -> u32 {
         let addr = self.a[7];
-        let val = self.read_long(addr);
+        let val = self.read_long(addr, memory);
         self.a[7] = self.a[7].wrapping_add(4);
         val
     }
 
-    fn pop_word(&mut self) -> u16 {
+    fn pop_word(&mut self, memory: &mut dyn MemoryInterface) -> u16 {
         let addr = self.a[7];
-        let val = self.read_word(addr);
+        let val = self.read_word(addr, memory);
         self.a[7] = self.a[7].wrapping_add(2);
         val
     }
 
     // === Centralized Memory Access with Alignment Checks ===
     
-    fn read_instruction_word(&mut self, addr: u32) -> u16 {
+    fn read_instruction_word(&mut self, addr: u32, memory: &mut dyn MemoryInterface) -> u16 {
         if addr % 2 != 0 {
-            self.process_exception(3); // Address Error
+            self.process_exception(3, memory); // Address Error
             return 0;
         }
-        self.memory.read_word(addr)
+        memory.read_word(addr)
     }
 
-    fn read_word(&mut self, addr: u32) -> u16 {
+    fn read_word(&mut self, addr: u32, memory: &mut dyn MemoryInterface) -> u16 {
         if addr % 2 != 0 {
-            self.process_exception(3); // Address Error
+            self.process_exception(3, memory); // Address Error
             return 0;
         }
-        self.memory.read_word(addr)
+        memory.read_word(addr)
     }
 
-    fn read_long(&mut self, addr: u32) -> u32 {
+    fn read_long(&mut self, addr: u32, memory: &mut dyn MemoryInterface) -> u32 {
         if addr % 2 != 0 {
-            self.process_exception(3); // Address Error
+            self.process_exception(3, memory); // Address Error
             return 0;
         }
-        self.memory.read_long(addr)
+        memory.read_long(addr)
     }
 
-    fn write_word(&mut self, addr: u32, val: u16) {
+    fn write_word(&mut self, addr: u32, val: u16, memory: &mut dyn MemoryInterface) {
         if addr % 2 != 0 {
-            self.process_exception(3); // Address Error
+            self.process_exception(3, memory); // Address Error
             return;
         }
-        self.memory.write_word(addr, val);
+        memory.write_word(addr, val);
     }
 
-    fn write_long(&mut self, addr: u32, val: u32) {
+    fn write_long(&mut self, addr: u32, val: u32, memory: &mut dyn MemoryInterface) {
         if addr % 2 != 0 {
-            self.process_exception(3); // Address Error
+            self.process_exception(3, memory); // Address Error
             return;
         }
-        self.memory.write_long(addr, val);
+        memory.write_long(addr, val);
     }
 
     // === Centralized Memory and Register Access Helpers ===
 
-    fn cpu_read_memory(&mut self, addr: u32, size: Size) -> u32 {
+    fn cpu_read_memory(&mut self, addr: u32, size: Size, memory: &mut dyn MemoryInterface) -> u32 {
         match size {
-            Size::Byte => self.memory.read_byte(addr) as u32,
-            Size::Word => self.read_word(addr) as u32,
-            Size::Long => self.read_long(addr),
+            Size::Byte => memory.read_byte(addr) as u32,
+            Size::Word => self.read_word(addr, memory) as u32,
+            Size::Long => self.read_long(addr, memory),
         }
     }
 
-    fn cpu_write_memory(&mut self, addr: u32, size: Size, val: u32) {
+    fn cpu_write_memory(&mut self, addr: u32, size: Size, val: u32, memory: &mut dyn MemoryInterface) {
         match size {
-            Size::Byte => self.memory.write_byte(addr, val as u8),
-            Size::Word => self.write_word(addr, val as u16),
-            Size::Long => self.write_long(addr, val),
+            Size::Byte => memory.write_byte(addr, val as u8),
+            Size::Word => self.write_word(addr, val as u16, memory),
+            Size::Long => self.write_long(addr, val, memory),
         }
     }
 
@@ -1898,56 +1894,56 @@ impl Cpu {
         }
     }
 
-    fn cpu_read_ea(&mut self, ea: EffectiveAddress, size: Size) -> u32 {
+    fn cpu_read_ea(&mut self, ea: EffectiveAddress, size: Size, memory: &mut dyn MemoryInterface) -> u32 {
         if let EffectiveAddress::Memory(addr) = ea {
             if size != Size::Byte && addr % 2 != 0 {
-                self.process_exception(3);
+                self.process_exception(3, memory);
                 return 0;
             }
         }
-        read_ea(ea, size, &self.d, &self.a, &mut self.memory)
+        read_ea(ea, size, &self.d, &self.a, memory)
     }
 
-    fn cpu_write_ea(&mut self, ea: EffectiveAddress, size: Size, val: u32) {
+    fn cpu_write_ea(&mut self, ea: EffectiveAddress, size: Size, val: u32, memory: &mut dyn MemoryInterface) {
         if let EffectiveAddress::Memory(addr) = ea {
             if size != Size::Byte && addr % 2 != 0 {
-                self.process_exception(3);
+                self.process_exception(3, memory);
                 return;
             }
         }
-        write_ea(ea, size, val, &mut self.d, &mut self.a, &mut self.memory);
+        write_ea(ea, size, val, &mut self.d, &mut self.a, memory);
     }
     
     // === System / Program Control ===
     
-    fn exec_link(&mut self, reg: u8, displacement: i16) -> u32 {
+    fn exec_link(&mut self, reg: u8, displacement: i16, memory: &mut dyn MemoryInterface) -> u32 {
         let old_an = self.a[reg as usize];
-        self.push_long(old_an);
+        self.push_long(old_an, memory);
         self.a[reg as usize] = self.a[7];
         self.a[7] = self.a[7].wrapping_add(displacement as u32);
         16
     }
     
-    fn exec_unlk(&mut self, reg: u8) -> u32 {
+    fn exec_unlk(&mut self, reg: u8, memory: &mut dyn MemoryInterface) -> u32 {
         self.a[7] = self.a[reg as usize];
-        let old_an = self.pop_long();
+        let old_an = self.pop_long(memory);
         self.a[reg as usize] = old_an;
         12
     }
     
-    fn exec_trap(&mut self, vector: u8) -> u32 {
+    fn exec_trap(&mut self, vector: u8, memory: &mut dyn MemoryInterface) -> u32 {
         // TRAP #n uses vectors 32-47 (0x20-0x2F).
-        self.process_exception(32 + vector as u32)
+        self.process_exception(32 + vector as u32, memory)
     }
     
-    fn exec_rte(&mut self) -> u32 {
+    fn exec_rte(&mut self, memory: &mut dyn MemoryInterface) -> u32 {
         if (self.sr & 0x2000) == 0 {
             // Not supervisor
-            return self.process_exception(8); // Privilege Violation
+            return self.process_exception(8, memory); // Privilege Violation
         }
         
-        let new_sr = self.pop_word();
-        let new_pc = self.pop_long();
+        let new_sr = self.pop_word(memory);
+        let new_pc = self.pop_long(memory);
         
         self.set_sr(new_sr);
         self.pc = new_pc;
@@ -1955,12 +1951,12 @@ impl Cpu {
         20 
     }
     
-    fn exec_stop(&mut self) -> u32 {
+    fn exec_stop(&mut self, memory: &mut dyn MemoryInterface) -> u32 {
         if (self.sr & 0x2000) == 0 {
-            return self.process_exception(8);
+            return self.process_exception(8, memory);
         }
         
-        let imm = self.memory.read_word(self.pc);
+        let imm = memory.read_word(self.pc);
         self.pc = self.pc.wrapping_add(2);
         self.set_sr(imm);
         self.halted = true; // STOP stops the processor until interrupt/reset.
@@ -1970,9 +1966,9 @@ impl Cpu {
         4
     }
 
-    fn exec_move_usp(&mut self, reg: u8, to_usp: bool) -> u32 {
+    fn exec_move_usp(&mut self, reg: u8, to_usp: bool, memory: &mut dyn MemoryInterface) -> u32 {
         if (self.sr & 0x2000) == 0 {
-            return self.process_exception(8); // Privilege violation
+            return self.process_exception(8, memory); // Privilege violation
         }
         if to_usp {
             self.usp = self.a[reg as usize];
@@ -1982,7 +1978,7 @@ impl Cpu {
         4
     }
     
-    fn process_exception(&mut self, vector: u32) -> u32 {
+    fn process_exception(&mut self, vector: u32, memory: &mut dyn MemoryInterface) -> u32 {
         self.pending_exception = true;
         // Save old SR for pushing
         let old_sr = self.sr_value();
@@ -1997,20 +1993,20 @@ impl Cpu {
         self.set_sr(new_sr);
         
         // 3. Push PC
-        self.push_long(self.pc);
+        self.push_long(self.pc, memory);
         
         // 4. Push SR
-        self.push_word(old_sr);
+        self.push_word(old_sr, memory);
         
         // 5. Fetch vector
         let vector_addr = vector * 4;
-        self.pc = self.memory.read_long(vector_addr);
+        self.pc = memory.read_long(vector_addr);
         
         // Standard exception processing takes 34+ cycles
         34
     }
 
-    fn check_interrupts(&mut self) -> u32 {
+    fn check_interrupts(&mut self, memory: &mut dyn MemoryInterface) -> u32 {
         if self.pending_interrupt == 0 {
             return 0;
         }
@@ -2020,8 +2016,8 @@ impl Cpu {
         if self.pending_interrupt > current_mask as u8 || self.pending_interrupt == 7 {
             let level = self.pending_interrupt;
             if level == 6 {
-                let f62a = self.memory.read_byte(0xFFF62A);
-                let f605 = self.memory.read_byte(0xFFF605);
+                let f62a = memory.read_byte(0xFFF62A);
+                let f605 = memory.read_byte(0xFFF605);
                 eprintln!("DEBUG: VInt triggered! PC={:06X} F62A={:02X} F605={:02X}", self.pc, f62a, f605);
             }
             self.acknowledge_interrupt(level); // Use new queuing system
@@ -2041,15 +2037,15 @@ impl Cpu {
             self.set_sr(new_sr);
             
             // 4. Push PC
-            self.push_long(self.pc);
+            self.push_long(self.pc, memory);
             
             // 5. Push old SR
-            self.push_word(old_sr);
+            self.push_word(old_sr, memory);
             
             // 6. Fetch vector (Autovectoring: Vector 24+level)
             let vector = 24 + level as u32;
             let vector_addr = vector * 4;
-            let handler_pc = self.memory.read_long(vector_addr);
+            let handler_pc = memory.read_long(vector_addr);
             eprintln!("DEBUG: Interrupt Level {} Vector {} -> PC={:06X}", level, vector, handler_pc);
             self.pc = handler_pc;
             
@@ -2092,33 +2088,33 @@ impl Cpu {
     }
 
     // === CHK - Check Register Against Bounds ===
-    fn exec_chk(&mut self, src: AddressingMode, dst_reg: u8) -> u32 {
+    fn exec_chk(&mut self, src: AddressingMode, dst_reg: u8, memory: &mut dyn MemoryInterface) -> u32 {
         let mut cycles = 10u32;
-        let (src_ea, src_cycles) = calculate_ea(src, Size::Word, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
+        let (src_ea, src_cycles) = calculate_ea(src, Size::Word, &mut self.d, &mut self.a, &mut self.pc, memory);
         cycles += src_cycles;
         
-        let bound = self.cpu_read_ea(src_ea, Size::Word) as i16;
+        let bound = self.cpu_read_ea(src_ea, Size::Word, memory) as i16;
         let dn = (self.d[dst_reg as usize] & 0xFFFF) as i16;
         
         if dn < 0 {
             self.set_flag(flags::NEGATIVE, true);
-            return self.process_exception(6); // CHK exception
+            return self.process_exception(6, memory); // CHK exception
         }
         if dn > bound {
             self.set_flag(flags::NEGATIVE, false);
-            return self.process_exception(6);
+            return self.process_exception(6, memory);
         }
         
         cycles
     }
 
     // === TAS - Test and Set (Atomic) ===
-    fn exec_tas(&mut self, dst: AddressingMode) -> u32 {
+    fn exec_tas(&mut self, dst: AddressingMode, memory: &mut dyn MemoryInterface) -> u32 {
         let mut cycles = 4u32;
-        let (dst_ea, dst_cycles) = calculate_ea(dst, Size::Byte, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
+        let (dst_ea, dst_cycles) = calculate_ea(dst, Size::Byte, &mut self.d, &mut self.a, &mut self.pc, memory);
         cycles += dst_cycles;
         
-        let val = self.cpu_read_ea(dst_ea, Size::Byte) as u8;
+        let val = self.cpu_read_ea(dst_ea, Size::Byte, memory) as u8;
         
         // Set flags based on original value
         self.set_flag(flags::NEGATIVE, (val & 0x80) != 0);
@@ -2128,14 +2124,14 @@ impl Cpu {
         
         // Set high bit (atomically on real hardware)
         let new_val = val | 0x80;
-        self.cpu_write_ea(dst_ea, Size::Byte, new_val as u32);
+        self.cpu_write_ea(dst_ea, Size::Byte, new_val as u32, memory);
         
         cycles + 4
     }
 
     // === MOVEM - Move Multiple Registers ===
-    fn exec_movem(&mut self, size: Size, to_memory: bool, ea: AddressingMode) -> u32 {
-        let mask = self.read_word(self.pc);
+    fn exec_movem(&mut self, size: Size, to_memory: bool, ea: AddressingMode, memory: &mut dyn MemoryInterface) -> u32 {
+        let mask = self.read_word(self.pc, memory);
         self.pc = self.pc.wrapping_add(2);
         
         let reg_size: u32 = if size == Size::Word { 2 } else { 4 };
@@ -2153,7 +2149,7 @@ impl Cpu {
                 addr
             }
             _ => {
-                let (ea_result, ea_cycles) = calculate_ea(ea, size, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
+                let (ea_result, ea_cycles) = calculate_ea(ea, size, &mut self.d, &mut self.a, &mut self.pc, memory);
                 cycles += ea_cycles;
                 match ea_result {
                     EffectiveAddress::Memory(addr) => addr,
@@ -2174,9 +2170,9 @@ impl Cpu {
                         addr = addr.wrapping_sub(reg_size);
                         let val = if i < 8 { self.d[i] } else { self.a[i - 8] };
                         if size == Size::Word {
-                            self.write_word(addr, val as u16);
+                            self.write_word(addr, val as u16, memory);
                         } else {
-                            self.write_long(addr, val);
+                            self.write_long(addr, val, memory);
                         }
                         cycles += if size == Size::Word { 4 } else { 8 };
                     }
@@ -2191,9 +2187,9 @@ impl Cpu {
                     if (mask & (1 << i)) != 0 {
                         let val = if i < 8 { self.d[i] } else { self.a[i - 8] };
                         if size == Size::Word {
-                            self.write_word(addr, val as u16);
+                            self.write_word(addr, val as u16, memory);
                         } else {
-                            self.write_long(addr, val);
+                            self.write_long(addr, val, memory);
                         }
                         addr = addr.wrapping_add(reg_size);
                         cycles += if size == Size::Word { 4 } else { 8 };
@@ -2209,17 +2205,17 @@ impl Cpu {
                     if i < 8 {
                         // Data register: Word load affects only lower 16 bits, Long load affects all
                         if size == Size::Word {
-                            let val = self.read_word(addr);
+                            let val = self.read_word(addr, memory);
                             self.d[i] = (self.d[i] & 0xFFFF0000) | (val as u32);
                         } else {
-                            self.d[i] = self.read_long(addr);
+                            self.d[i] = self.read_long(addr, memory);
                         }
                     } else {
                         // Address register: Word load is sign-extended, Long load is normal
                         if size == Size::Word {
-                            self.a[i - 8] = self.read_word(addr) as i16 as i32 as u32;
+                            self.a[i - 8] = self.read_word(addr, memory) as i16 as i32 as u32;
                         } else {
-                            self.a[i - 8] = self.read_long(addr);
+                            self.a[i - 8] = self.read_long(addr, memory);
                         }
                     }
                     addr = addr.wrapping_add(reg_size);
@@ -2237,9 +2233,9 @@ impl Cpu {
     }
 
     // === PEA - Push Effective Address ===
-    fn exec_pea(&mut self, src: AddressingMode) -> u32 {
+    fn exec_pea(&mut self, src: AddressingMode, memory: &mut dyn MemoryInterface) -> u32 {
         let mut cycles = 12u32;
-        let (src_ea, src_cycles) = calculate_ea(src, Size::Long, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
+        let (src_ea, src_cycles) = calculate_ea(src, Size::Long, &mut self.d, &mut self.a, &mut self.pc, memory);
         cycles += src_cycles;
         
         let addr = match src_ea {
@@ -2247,14 +2243,14 @@ impl Cpu {
             _ => 0, // Should not happen for control addressing modes
         };
         
-        self.push_long(addr);
+        self.push_long(addr, memory);
         cycles
     }
 
     // === RTR - Return and Restore CCR ===
-    fn exec_rtr(&mut self) -> u32 {
-        let ccr = self.pop_word();
-        let new_pc = self.pop_long();
+    fn exec_rtr(&mut self, memory: &mut dyn MemoryInterface) -> u32 {
+        let ccr = self.pop_word(memory);
+        let new_pc = self.pop_long(memory);
         
         // Only restore lower 5 bits (CCR portion)
         self.sr = (self.sr & 0xFF00) | (ccr & 0x00FF);
@@ -2265,62 +2261,64 @@ impl Cpu {
 
     // === Status Register Operations ===
     
-    fn exec_move_to_sr(&mut self, src: AddressingMode) -> u32 {
+    fn exec_move_to_sr(&mut self, src: AddressingMode, memory: &mut dyn MemoryInterface) -> u32 {
         if (self.sr & 0x2000) == 0 {
-            return self.process_exception(8); // Privilege violation
+            return self.process_exception(8, memory); // Privilege violation
         }
         
         let mut cycles = 12u32;
-        let (src_ea, src_cycles) = calculate_ea(src, Size::Word, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
+        let (src_ea, src_cycles) = calculate_ea(src, Size::Word, &mut self.d, &mut self.a, &mut self.pc, memory);
         cycles += src_cycles;
         
-        let val = self.cpu_read_ea(src_ea, Size::Word) as u16;
-        self.set_sr(val);
+        let val = self.cpu_read_ea(src_ea, Size::Word, memory);
+        self.set_sr(val as u16);
         cycles
     }
 
-    fn exec_move_from_sr(&mut self, dst: AddressingMode) -> u32 {
+    fn exec_move_from_sr(&mut self, dst: AddressingMode, memory: &mut dyn MemoryInterface) -> u32 {
         // On 68000, this is not privileged. On 68010+, it is.
         let mut cycles = 6u32;
-        let (dst_ea, dst_cycles) = calculate_ea(dst, Size::Word, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
+        let (dst_ea, dst_cycles) = calculate_ea(dst, Size::Word, &mut self.d, &mut self.a, &mut self.pc, memory);
         cycles += dst_cycles;
         
-        self.cpu_write_ea(dst_ea, Size::Word, self.sr as u32);
+        self.cpu_write_ea(dst_ea, Size::Word, self.sr as u32, memory);
         cycles
     }
 
-    fn exec_movep(&mut self, size: Size, reg: u8, an: u8, reg_to_mem: bool) -> u32 {
-        let disp = self.read_word(self.pc) as i16;
+    fn exec_movep(&mut self, size: Size, reg: u8, an: u8, direction: bool, memory: &mut dyn MemoryInterface) -> u32 {
+        let disp = self.read_word(self.pc, memory) as i16;
         self.pc = self.pc.wrapping_add(2);
         
         let addr = self.a[an as usize].wrapping_add(disp as u32);
         
         match size {
             Size::Word => {
-                if reg_to_mem {
+                if direction {
+                    // Reg to Mem
                     let val = self.d[reg as usize] as u16;
-                    self.memory.write_byte(addr, (val >> 8) as u8);
-                    self.memory.write_byte(addr.wrapping_add(2), val as u8);
+                    memory.write_byte(addr, (val >> 8) as u8);
+                    memory.write_byte(addr.wrapping_add(2), val as u8);
                 } else {
-                    let hi = self.memory.read_byte(addr);
-                    let lo = self.memory.read_byte(addr.wrapping_add(2));
+                    // Mem to Reg
+                    let hi = memory.read_byte(addr);
+                    let lo = memory.read_byte(addr.wrapping_add(2));
                     let val = ((hi as u16) << 8) | (lo as u16);
                     self.d[reg as usize] = (self.d[reg as usize] & 0xFFFF0000) | (val as u32);
                 }
                 16
             }
             Size::Long => {
-                if reg_to_mem {
+                if direction {
                     let val = self.d[reg as usize];
-                    self.memory.write_byte(addr, (val >> 24) as u8);
-                    self.memory.write_byte(addr.wrapping_add(2), (val >> 16) as u8);
-                    self.memory.write_byte(addr.wrapping_add(4), (val >> 8) as u8);
-                    self.memory.write_byte(addr.wrapping_add(6), val as u8);
+                    memory.write_byte(addr, (val >> 24) as u8);
+                    memory.write_byte(addr.wrapping_add(2), (val >> 16) as u8);
+                    memory.write_byte(addr.wrapping_add(4), (val >> 8) as u8);
+                    memory.write_byte(addr.wrapping_add(6), val as u8);
                 } else {
-                    let b3 = self.memory.read_byte(addr);
-                    let b2 = self.memory.read_byte(addr.wrapping_add(2));
-                    let b1 = self.memory.read_byte(addr.wrapping_add(4));
-                    let b0 = self.memory.read_byte(addr.wrapping_add(6));
+                    let b3 = memory.read_byte(addr);
+                    let b2 = memory.read_byte(addr.wrapping_add(2));
+                    let b1 = memory.read_byte(addr.wrapping_add(4));
+                    let b0 = memory.read_byte(addr.wrapping_add(6));
                     self.d[reg as usize] = ((b3 as u32) << 24) | ((b2 as u32) << 16) | ((b1 as u32) << 8) | (b0 as u32);
                 }
                 24
@@ -2329,62 +2327,62 @@ impl Cpu {
         }
     }
 
-    fn exec_move_to_ccr(&mut self, src: AddressingMode) -> u32 {
+    fn exec_move_to_ccr(&mut self, src: AddressingMode, memory: &mut dyn MemoryInterface) -> u32 {
         let mut cycles = 12u32;
-        let (src_ea, src_cycles) = calculate_ea(src, Size::Word, &mut self.d, &mut self.a, &mut self.pc, &mut self.memory);
+        let (src_ea, src_cycles) = calculate_ea(src, Size::Word, &mut self.d, &mut self.a, &mut self.pc, memory);
         cycles += src_cycles;
         
-        let val = self.cpu_read_ea(src_ea, Size::Word) as u16;
-        self.sr = (self.sr & 0xFF00) | (val & 0x00FF);
+        let val = self.cpu_read_ea(src_ea, Size::Word, memory);
+        self.sr = (self.sr & 0xFF00) | (val as u16 & 0x00FF);
         cycles
     }
 
-    fn exec_andi_to_ccr(&mut self) -> u32 {
-        let imm = self.memory.read_word(self.pc) & 0x00FF;
+    fn exec_andi_to_ccr(&mut self, memory: &mut dyn MemoryInterface) -> u32 {
+        let imm = memory.read_word(self.pc) & 0x00FF;
         self.pc = self.pc.wrapping_add(2);
         self.sr = (self.sr & 0xFF00) | ((self.sr & imm) & 0x00FF);
         20
     }
 
-    fn exec_andi_to_sr(&mut self) -> u32 {
+    fn exec_andi_to_sr(&mut self, memory: &mut dyn MemoryInterface) -> u32 {
         if (self.sr & 0x2000) == 0 {
-            return self.process_exception(8);
+            return self.process_exception(8, memory);
         }
-        let imm = self.memory.read_word(self.pc);
+        let imm = memory.read_word(self.pc);
         self.pc = self.pc.wrapping_add(2);
         self.set_sr(self.sr & imm);
         20
     }
 
-    fn exec_ori_to_ccr(&mut self) -> u32 {
-        let imm = self.memory.read_word(self.pc) & 0x00FF;
+    fn exec_ori_to_ccr(&mut self, memory: &mut dyn MemoryInterface) -> u32 {
+        let imm = memory.read_word(self.pc) & 0x00FF;
         self.pc = self.pc.wrapping_add(2);
         self.sr = (self.sr & 0xFF00) | ((self.sr | imm) & 0x00FF);
         20
     }
 
-    fn exec_ori_to_sr(&mut self) -> u32 {
+    fn exec_ori_to_sr(&mut self, memory: &mut dyn MemoryInterface) -> u32 {
         if (self.sr & 0x2000) == 0 {
-            return self.process_exception(8);
+            return self.process_exception(8, memory);
         }
-        let imm = self.memory.read_word(self.pc);
+        let imm = memory.read_word(self.pc);
         self.pc = self.pc.wrapping_add(2);
         self.set_sr(self.sr | imm);
         20
     }
 
-    fn exec_eori_to_ccr(&mut self) -> u32 {
-        let imm = self.memory.read_word(self.pc) & 0x00FF;
+    fn exec_eori_to_ccr(&mut self, memory: &mut dyn MemoryInterface) -> u32 {
+        let imm = memory.read_word(self.pc) & 0x00FF;
         self.pc = self.pc.wrapping_add(2);
         self.sr = (self.sr & 0xFF00) | ((self.sr ^ imm) & 0x00FF);
         20
     }
 
-    fn exec_eori_to_sr(&mut self) -> u32 {
+    fn exec_eori_to_sr(&mut self, memory: &mut dyn MemoryInterface) -> u32 {
         if (self.sr & 0x2000) == 0 {
-            return self.process_exception(8);
+            return self.process_exception(8, memory);
         }
-        let imm = self.memory.read_word(self.pc);
+        let imm = memory.read_word(self.pc);
         self.pc = self.pc.wrapping_add(2);
         self.set_sr(self.sr ^ imm);
         20
@@ -2399,12 +2397,13 @@ mod tests {
     use crate::memory::Memory;
     use proptest::prelude::*;
 
-    fn create_test_cpu() -> Cpu {
+    fn create_test_cpu() -> (Cpu, Memory) {
         let mut memory = Memory::new(0x10000);
         // Initial SP and PC
         memory.write_long(0, 0x1000); // SP
         memory.write_long(4, 0x100);  // PC
-        Cpu::new(Box::new(memory))
+        let cpu = Cpu::new(&mut memory);
+        (cpu, memory)
     }
 
     #[test]
@@ -2419,7 +2418,7 @@ mod tests {
         memory.data[6] = 0x56;
         memory.data[7] = 0x78;
 
-        let cpu = Cpu::new(Box::new(memory));
+        let cpu = Cpu::new(&mut memory);
 
         assert_eq!(cpu.a[7], 0x1234);
         assert_eq!(cpu.pc, 0x5678);
@@ -2435,13 +2434,13 @@ mod tests {
         memory.data[0] = 0x00; memory.data[1] = 0x00; memory.data[2] = 0x00; memory.data[3] = 0x00;
         memory.data[4] = 0x00; memory.data[5] = 0x00; memory.data[6] = 0x00; memory.data[7] = 0x08;
 
-        let mut cpu = Cpu::new(Box::new(memory));
+        let mut cpu = Cpu::new(&mut memory);
         cpu.d[1] = 0xABCD1234;
 
         assert_eq!(cpu.d[0], 0);
         assert_eq!(cpu.pc, 0x00000008);
 
-        cpu.step_instruction();
+        cpu.step_instruction(&mut memory);
 
         assert_eq!(cpu.d[0], 0xABCD1234);
         assert_eq!(cpu.pc, 0x0000000A);
@@ -2449,11 +2448,11 @@ mod tests {
 
     #[test]
     fn test_moveq() {
-        let mut cpu = create_test_cpu();
+        let (mut cpu, mut memory) = create_test_cpu();
         // MOVEQ #42, D3 = 0x762A
-        cpu.memory.write_word(0x100, 0x762A);
+        memory.write_word(0x100, 0x762A);
 
-        cpu.step_instruction();
+        cpu.step_instruction(&mut memory);
 
         assert_eq!(cpu.d[3], 42);
         assert!(!cpu.get_flag(flags::NEGATIVE));
@@ -2462,11 +2461,11 @@ mod tests {
 
     #[test]
     fn test_moveq_negative() {
-        let mut cpu = create_test_cpu();
+        let (mut cpu, mut memory) = create_test_cpu();
         // MOVEQ #-1, D0 = 0x70FF
-        cpu.memory.write_word(0x100, 0x70FF);
+        memory.write_word(0x100, 0x70FF);
 
-        cpu.step_instruction();
+        cpu.step_instruction(&mut memory);
 
         assert_eq!(cpu.d[0], 0xFFFFFFFF);
         assert!(cpu.get_flag(flags::NEGATIVE));
@@ -2475,51 +2474,51 @@ mod tests {
 
     #[test]
     fn test_addq() {
-        let mut cpu = create_test_cpu();
+        let (mut cpu, mut memory) = create_test_cpu();
         // ADDQ.L #3, D0 = 0x5680
-        cpu.memory.write_word(0x100, 0x5680);
+        memory.write_word(0x100, 0x5680);
         cpu.d[0] = 10;
 
-        cpu.step_instruction();
+        cpu.step_instruction(&mut memory);
 
         assert_eq!(cpu.d[0], 13);
     }
 
     #[test]
     fn test_subq() {
-        let mut cpu = create_test_cpu();
+        let (mut cpu, mut memory) = create_test_cpu();
         // SUBQ.L #3, D0 = 0x5780
-        cpu.memory.write_word(0x100, 0x5780);
+        memory.write_word(0x100, 0x5780);
         cpu.d[0] = 10;
 
-        cpu.step_instruction();
+        cpu.step_instruction(&mut memory);
 
         assert_eq!(cpu.d[0], 7);
     }
 
     #[test]
     fn test_bra() {
-        let mut cpu = create_test_cpu();
+        let (mut cpu, mut memory) = create_test_cpu();
         // BRA.S $+10 = 0x6008
-        cpu.memory.write_word(0x100, 0x6008);
+        memory.write_word(0x100, 0x6008);
 
-        cpu.step_instruction();
+        cpu.step_instruction(&mut memory);
 
         assert_eq!(cpu.pc, 0x10A);
     }
 
     #[test]
     fn test_mul_div() {
-        let mut cpu = create_test_cpu();
+        let (mut cpu, mut memory) = create_test_cpu();
         
         // MULU D1, D0
         // D0 = 10, D1 = 20
         // Opcode: 1100 000 0 11 000 001 = 0xC0C1
-        cpu.memory.write_word(0x100, 0xC0C1);
+        memory.write_word(0x100, 0xC0C1);
         cpu.d[0] = 10;
         cpu.d[1] = 20;
         
-        cpu.step_instruction();
+        cpu.step_instruction(&mut memory);
         assert_eq!(cpu.d[0], 200);
         assert!(!cpu.get_flag(flags::NEGATIVE));
         assert!(!cpu.get_flag(flags::ZERO));
@@ -2528,11 +2527,11 @@ mod tests {
         // D0 = 10, D1 = -5 (0xFFFB)
         // Opcode: 1100 000 1 11 000 001 = 0xC1C1
         cpu.pc = 0x102;
-        cpu.memory.write_word(0x102, 0xC1C1);
+        memory.write_word(0x102, 0xC1C1);
         cpu.d[0] = 10;
         cpu.d[1] = 0xFFFB; // -5 as i16
         
-        cpu.step_instruction();
+        cpu.step_instruction(&mut memory);
         // Result: 10 * -5 = -50 (0xFFFFFFCE)
         assert_eq!(cpu.d[0], 0xFFFFFFCE);
         assert!(cpu.get_flag(flags::NEGATIVE));
@@ -2542,11 +2541,11 @@ mod tests {
         // D0 = 100, D1 = 10
         // Opcode: 1000 000 0 11 000 001 = 0x80C1 (Group 8)
         cpu.pc = 0x104;
-        cpu.memory.write_word(0x104, 0x80C1);
+        memory.write_word(0x104, 0x80C1);
         cpu.d[0] = 100;
         cpu.d[1] = 10;
         
-        cpu.step_instruction();
+        cpu.step_instruction(&mut memory);
         // Result: 100 / 10 = 10. Remainder 0.
         // Format: rem:quot = 0000:000A
         assert_eq!(cpu.d[0], 0x0000000A);
@@ -2554,19 +2553,19 @@ mod tests {
 
     #[test]
     fn test_bcd() {
-        let mut cpu = create_test_cpu();
+        let (mut cpu, mut memory) = create_test_cpu();
         
         // ABCD D0, D1
         // D0 = 0x45, D1 = 0x33
         // Result should be 0x78
         // Opcode: 1100 001 1 0000 0 000 = 0xC300
-        cpu.memory.write_word(0x100, 0xC300);
+        memory.write_word(0x100, 0xC300);
         cpu.d[0] = 0x45;
         cpu.d[1] = 0x33;
         cpu.set_flag(flags::ZERO, true); // Pre-set Z
         cpu.set_flag(flags::EXTEND, false);
         
-        cpu.step_instruction();
+        cpu.step_instruction(&mut memory);
         
         assert_eq!(cpu.d[1] & 0xFF, 0x78);
         assert!(!cpu.get_flag(flags::ZERO)); // Z cleared because result non-zero
@@ -2577,12 +2576,12 @@ mod tests {
         // Result 0x78 - 0x33 = 0x45
         // Opcode: 1000 001 1 0000 0 000 = 0x8300
         cpu.pc = 0x102;
-        cpu.memory.write_word(0x102, 0x8300);
+        memory.write_word(0x102, 0x8300);
         cpu.d[0] = 0x33;
         cpu.d[1] = 0x78;
         cpu.set_flag(flags::ZERO, true);
         
-        cpu.step_instruction();
+        cpu.step_instruction(&mut memory);
         
         assert_eq!(cpu.d[1] & 0xFF, 0x45);
         assert!(!cpu.get_flag(flags::ZERO));
@@ -2591,12 +2590,12 @@ mod tests {
         // D0 = 0x45. 100 - 45 = 55 (0x55).
         // Opcode: 0100 100 0 00 000 000 = 0x4800 (NBCD D0)
         cpu.pc = 0x104;
-        cpu.memory.write_word(0x104, 0x4800);
+        memory.write_word(0x104, 0x4800);
         cpu.d[0] = 0x45;
         cpu.set_flag(flags::ZERO, true);
         cpu.set_flag(flags::EXTEND, false);
         
-        cpu.step_instruction();
+        cpu.step_instruction(&mut memory);
         
         assert_eq!(cpu.d[0] & 0xFF, 0x55);
         assert!(!cpu.get_flag(flags::ZERO));
@@ -2605,16 +2604,16 @@ mod tests {
 
     #[test]
     fn test_exg() {
-        let mut cpu = create_test_cpu();
+        let (mut cpu, mut memory) = create_test_cpu();
         
         // EXG D0, D1
         // Opcode: 1100 000 1 01000 001 = 0xC141
         // Mode 8 (01000)
-        cpu.memory.write_word(0x100, 0xC141);
+        memory.write_word(0x100, 0xC141);
         cpu.d[0] = 0x11111111;
         cpu.d[1] = 0x22222222;
         
-        cpu.step_instruction();
+        cpu.step_instruction(&mut memory);
         
         assert_eq!(cpu.d[0], 0x22222222);
         assert_eq!(cpu.d[1], 0x11111111);
@@ -2623,11 +2622,11 @@ mod tests {
         // Opcode: 1100 001 1 0100 1 001 = 0xC149
         // Mode 9 (01001)
         cpu.pc = 0x102;
-        cpu.memory.write_word(0x102, 0xC149);
+        memory.write_word(0x102, 0xC149);
         cpu.a[0] = 0xAAAA5555;
         cpu.a[1] = 0x5555AAAA;
         
-        cpu.step_instruction();
+        cpu.step_instruction(&mut memory);
         
         assert_eq!(cpu.a[0], 0x5555AAAA);
         assert_eq!(cpu.a[1], 0xAAAA5555);
@@ -2639,46 +2638,46 @@ mod tests {
         // 1 1000 1 -> 1100 001 1 1000 1 000
         // Opcode: C188
         cpu.pc = 0x104;
-        cpu.memory.write_word(0x104, 0xC188);
+        memory.write_word(0x104, 0xC188);
         cpu.d[0] = 0xDEADBEEF;
         cpu.a[0] = 0xCAFEBABE;
         
-        cpu.step_instruction();
+        cpu.step_instruction(&mut memory);
         
         assert_eq!(cpu.d[0], 0xCAFEBABE);
         assert_eq!(cpu.a[0], 0xDEADBEEF);
     }
     #[test]
     fn test_beq_taken() {
-        let mut cpu = create_test_cpu();
+        let (mut cpu, mut memory) = create_test_cpu();
         cpu.set_flag(flags::ZERO, true);
         // BEQ.S $+6 = 0x6704
-        cpu.memory.write_word(0x100, 0x6704);
+        memory.write_word(0x100, 0x6704);
 
-        cpu.step_instruction();
+        cpu.step_instruction(&mut memory);
 
         assert_eq!(cpu.pc, 0x106);
     }
 
     #[test]
     fn test_beq_not_taken() {
-        let mut cpu = create_test_cpu();
+        let (mut cpu, mut memory) = create_test_cpu();
         cpu.set_flag(flags::ZERO, false);
         // BEQ.S $+6 = 0x6704
-        cpu.memory.write_word(0x100, 0x6704);
+        memory.write_word(0x100, 0x6704);
 
-        cpu.step_instruction();
+        cpu.step_instruction(&mut memory);
 
         assert_eq!(cpu.pc, 0x102);
     }
 
     #[test]
     fn test_nop() {
-        let mut cpu = create_test_cpu();
+        let (mut cpu, mut memory) = create_test_cpu();
         // NOP = 0x4E71
-        cpu.memory.write_word(0x100, 0x4E71);
+        memory.write_word(0x100, 0x4E71);
 
-        let cycles = cpu.step_instruction();
+        let cycles = cpu.step_instruction(&mut memory);
 
         assert_eq!(cpu.pc, 0x102);
         assert_eq!(cycles, 4);
@@ -2686,16 +2685,16 @@ mod tests {
 
     #[test]
     fn test_bit_ops() {
-        let mut cpu = create_test_cpu();
+        let (mut cpu, mut memory) = create_test_cpu();
         
         // BSET #2, D0
         // D0 = 0
         // Opcode: 0000 100 0 11 000 000 = 0x08C0 (Group 0, BSET immediate)
         // Immediate word: 0x0002
-        cpu.memory.write_word(0x100, 0x08C0);
-        cpu.memory.write_word(0x102, 0x0002);
+        memory.write_word(0x100, 0x08C0);
+        memory.write_word(0x102, 0x0002);
         
-        cpu.step_instruction();
+        cpu.step_instruction(&mut memory);
         
         assert_eq!(cpu.d[0], 0x00000004);
         assert!(cpu.get_flag(flags::ZERO)); // Tested bit 2 was 0
@@ -2705,10 +2704,10 @@ mod tests {
         // Opcode: 0000 100 0 10 000 000 = 0x0880 (BCLR immediate)
         // Imm: 0x0002
         cpu.pc = 0x104;
-        cpu.memory.write_word(0x104, 0x0880);
-        cpu.memory.write_word(0x106, 0x0002);
+        memory.write_word(0x104, 0x0880);
+        memory.write_word(0x106, 0x0002);
         
-        cpu.step_instruction();
+        cpu.step_instruction(&mut memory);
         
         assert_eq!(cpu.d[0], 0x00000000);
         assert!(!cpu.get_flag(flags::ZERO)); // Tested bit 2 was 1
@@ -2717,17 +2716,17 @@ mod tests {
         // D0 = 0
         // Opcode: 0000 100 0 01 000 000 = 0x0840
         cpu.pc = 0x108;
-        cpu.memory.write_word(0x108, 0x0840);
-        cpu.memory.write_word(0x10A, 0x0000);
+        memory.write_word(0x108, 0x0840);
+        memory.write_word(0x10A, 0x0000);
         
-        cpu.step_instruction();
+        cpu.step_instruction(&mut memory);
         assert_eq!(cpu.d[0], 0x00000001);
         
         // BCHG #0, D0
         cpu.pc = 0x10C;
-        cpu.memory.write_word(0x10C, 0x0840);
-        cpu.memory.write_word(0x10E, 0x0000);
-        cpu.step_instruction();
+        memory.write_word(0x10C, 0x0840);
+        memory.write_word(0x10E, 0x0000);
+        cpu.step_instruction(&mut memory);
         assert_eq!(cpu.d[0], 0x00000000);
         
         // BTST #5, D0
@@ -2735,22 +2734,22 @@ mod tests {
         cpu.d[0] = 0x20;
         // Opcode: 0000 100 0 00 000 000 = 0x0800
         cpu.pc = 0x110;
-        cpu.memory.write_word(0x110, 0x0800);
-        cpu.memory.write_word(0x112, 0x0005);
+        memory.write_word(0x110, 0x0800);
+        memory.write_word(0x112, 0x0005);
         
-        cpu.step_instruction();
+        cpu.step_instruction(&mut memory);
         assert!(!cpu.get_flag(flags::ZERO)); // Bit 5 is 1, so Z=0
     }
     #[test]
     fn test_rts() {
-        let mut cpu = create_test_cpu();
+        let (mut cpu, mut memory) = create_test_cpu();
         // Push return address on stack
         cpu.a[7] = 0x0FF0;
-        cpu.memory.write_long(0x0FF0, 0x200);
+        memory.write_long(0x0FF0, 0x200);
         // RTS = 0x4E75
-        cpu.memory.write_word(0x100, 0x4E75);
+        memory.write_word(0x100, 0x4E75);
 
-        cpu.step_instruction();
+        cpu.step_instruction(&mut memory);
 
         assert_eq!(cpu.pc, 0x200);
         assert_eq!(cpu.a[7], 0x0FF4);
@@ -2758,12 +2757,12 @@ mod tests {
 
     #[test]
     fn test_swap() {
-        let mut cpu = create_test_cpu();
+        let (mut cpu, mut memory) = create_test_cpu();
         // SWAP D0 = 0x4840
-        cpu.memory.write_word(0x100, 0x4840);
+        memory.write_word(0x100, 0x4840);
         cpu.d[0] = 0x12345678;
 
-        cpu.step_instruction();
+        cpu.step_instruction(&mut memory);
 
         assert_eq!(cpu.d[0], 0x56781234);
     }
@@ -2777,10 +2776,10 @@ mod tests {
             memory.data[0] = 0x00; memory.data[1] = 0x00; memory.data[2] = 0x00; memory.data[3] = 0x00;
             memory.data[4] = 0x00; memory.data[5] = 0x00; memory.data[6] = 0x00; memory.data[7] = 0x08;
 
-            let mut cpu = Cpu::new(Box::new(memory));
+            let mut cpu = Cpu::new(&mut memory);
             cpu.d[1] = val;
 
-            cpu.step_instruction();
+            cpu.step_instruction(&mut memory);
 
             assert_eq!(cpu.d[0], val);
         }
@@ -2788,35 +2787,35 @@ mod tests {
 
     #[test]
     fn test_link_unlk() {
-        let mut cpu = create_test_cpu();
+        let (mut cpu, mut memory) = create_test_cpu();
         
         // LINK A0, #-4
         // A0 = 0x2000. SP = 0x8000.
         // Opcode: 0100 111 0 01 010 000 = 0x4E50 (LINK A0)
         // Displacement: 0xFFFC (-4)
-        cpu.memory.write_word(0x100, 0x4E50);
-        cpu.memory.write_word(0x102, 0xFFFC);
+        memory.write_word(0x100, 0x4E50);
+        memory.write_word(0x102, 0xFFFC);
         
         cpu.a[0] = 0x2000;
         cpu.a[7] = 0x8000;
         
-        cpu.step_instruction();
+        cpu.step_instruction(&mut memory);
         
         // LINK action: 
         // 1. Push A0 -> SP=0x7FFC, Mem[0x7FFC]=0x2000
         // 2. SP -> A0 => A0=0x7FFC
         // 3. SP + Disp -> SP => 0x7FFC - 4 = 0x7FF8.
         
-        assert_eq!(cpu.memory.read_long(0x7FFC), 0x2000);
+        assert_eq!(memory.read_long(0x7FFC), 0x2000);
         assert_eq!(cpu.a[0], 0x7FFC);
         assert_eq!(cpu.a[7], 0x7FF8);
         assert_eq!(cpu.pc, 0x104);
         
         // UNLK A0
         // Opcode: 0100 111 0 01 011 000 = 0x4E58 (UNLK A0)
-        cpu.memory.write_word(0x104, 0x4E58);
+        memory.write_word(0x104, 0x4E58);
         
-        cpu.step_instruction();
+        cpu.step_instruction(&mut memory);
         
         // UNLK action:
         // 1. A0 -> SP => SP=0x7FFC
@@ -2829,11 +2828,11 @@ mod tests {
 
     #[test]
     fn test_trap() {
-        let mut cpu = create_test_cpu();
+        let (mut cpu, mut memory) = create_test_cpu();
         
         // TRAP #1
         // Opcode: 0100 111 0 01 000 001 = 0x4E41
-        cpu.memory.write_word(0x100, 0x4E41);
+        memory.write_word(0x100, 0x4E41);
         
         // Initial State
         cpu.pc = 0x100;
@@ -2842,9 +2841,9 @@ mod tests {
         cpu.sr = 0x0700; // Not supervisor
         
         // Set Trap Vector #33 (32+1) -> Address 33*4 = 132 (0x84)
-        cpu.memory.write_long(0x84, 0x00004000); // Exception handler address
+        memory.write_long(0x84, 0x00004000); // Exception handler address
         
-        cpu.step_instruction();
+        cpu.step_instruction(&mut memory);
         
         // TRAP action:
         // 1. SR pushed (0x0700)
@@ -2859,65 +2858,65 @@ mod tests {
         
         assert_eq!(cpu.pc, 0x4000);
         assert_eq!(cpu.a[7], 0x7FFA);
-        assert_eq!(cpu.memory.read_word(0x7FFA), 0x0700);
-        assert_eq!(cpu.memory.read_long(0x7FFC), 0x102);
+        assert_eq!(memory.read_word(0x7FFA), 0x0700);
+        assert_eq!(memory.read_long(0x7FFC), 0x102);
         assert_eq!(cpu.sr & 0x2000, 0x2000); // Supervisor Set
     }
 
     #[test]
     fn test_scc() {
-        let mut cpu = create_test_cpu();
+        let (mut cpu, mut memory) = create_test_cpu();
         
         // SEQ D0 (Set if Equal: sets D0 to 0xFF if Z=1)
         // Opcode: 0101 0111 11 000 000 = 0x57C0
-        cpu.memory.write_word(0x100, 0x57C0);
+        memory.write_word(0x100, 0x57C0);
         
         // SNE D1 (Set if Not Equal: sets D1 to 0xFF if Z=0)
         // Opcode: 0101 0110 11 000 001 = 0x56C1
-        cpu.memory.write_word(0x102, 0x56C1);
+        memory.write_word(0x102, 0x56C1);
         
         cpu.pc = 0x100;
         cpu.set_flag(flags::ZERO, true);
         cpu.d[0] = 0;
         cpu.d[1] = 0;
         
-        cpu.step_instruction(); // SEQ D0 -> D0 should be 0xFF
+        cpu.step_instruction(&mut memory); // SEQ D0 -> D0 should be 0xFF
         assert_eq!(cpu.d[0] & 0xFF, 0xFF);
         
-        cpu.step_instruction(); // SNE D1 -> D1 should be 0x00
+        cpu.step_instruction(&mut memory); // SNE D1 -> D1 should be 0x00
         assert_eq!(cpu.d[1] & 0xFF, 0x00);
     }
 
     #[test]
     fn test_movep() {
-        let mut cpu = create_test_cpu();
+        let (mut cpu, mut memory) = create_test_cpu();
         
         // MOVEP.W (A0), D0
         // Opcode: 0000 000 1 00 001 000 = 0x0108
         // Displacement: 0x0004
-        cpu.memory.write_word(0x100, 0x0108);
-        cpu.memory.write_word(0x102, 0x0004);
+        memory.write_word(0x100, 0x0108);
+        memory.write_word(0x102, 0x0004);
         
         // MOVEP.W D1, (A0)
         // Opcode: 0000 001 1 10 001 000 = 0x0388
         // Displacement: 0x0004
-        cpu.memory.write_word(0x104, 0x0388);
-        cpu.memory.write_word(0x106, 0x0004);
+        memory.write_word(0x104, 0x0388);
+        memory.write_word(0x106, 0x0004);
 
         cpu.pc = 0x100;
         cpu.a[0] = 0x2000;
         
         // Setup memory for first MOVEP (mem to reg)
-        cpu.memory.write_byte(0x2004, 0x12);
-        cpu.memory.write_byte(0x2006, 0x34);
+        memory.write_byte(0x2004, 0x12);
+        memory.write_byte(0x2006, 0x34);
         
-        cpu.step_instruction();
+        cpu.step_instruction(&mut memory);
         assert_eq!(cpu.d[0] & 0xFFFF, 0x1234);
         
         // Setup reg for second MOVEP (reg to mem)
         cpu.d[1] = 0x5678;
-        cpu.step_instruction();
-        assert_eq!(cpu.memory.read_byte(0x2004), 0x56);
-        assert_eq!(cpu.memory.read_byte(0x2006), 0x78);
+        cpu.step_instruction(&mut memory);
+        assert_eq!(memory.read_byte(0x2004), 0x56);
+        assert_eq!(memory.read_byte(0x2006), 0x78);
     }
 }
