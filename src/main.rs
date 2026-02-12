@@ -98,10 +98,41 @@ impl Emulator {
         Ok(())
     }
     
+    fn read_rom_with_limit<R: std::io::Read>(reader: &mut R, size: u64) -> std::io::Result<Vec<u8>> {
+        use std::io::Read;
+        const MAX_ROM_SIZE: u64 = 32 * 1024 * 1024; // 32 MB
+
+        if size > MAX_ROM_SIZE {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("ROM size {} exceeds limit of {} bytes", size, MAX_ROM_SIZE)
+            ));
+        }
+
+        // Check if size fits in usize (for 32-bit/16-bit systems)
+        if size > usize::MAX as u64 {
+             return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "ROM size too large for memory address space"
+            ));
+        }
+
+        let mut data = Vec::with_capacity(size as usize);
+        reader.take(MAX_ROM_SIZE + 1).read_to_end(&mut data)?;
+
+        if data.len() as u64 > MAX_ROM_SIZE {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Decompressed ROM size exceeds limit"
+            ));
+        }
+
+        Ok(data)
+    }
+
     /// Load ROM from a zip file (finds first .bin, .md, .gen, or .smd file)
     fn load_rom_from_zip(path: &str) -> std::io::Result<Vec<u8>> {
-        use std::io::Read;
-        
+
         let file = std::fs::File::open(path)?;
         let mut archive = zip::ZipArchive::new(file)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
@@ -116,8 +147,8 @@ impl Emulator {
             
             let name = entry.name().to_lowercase();
             if rom_extensions.iter().any(|ext| name.ends_with(ext)) {
-                let mut data = Vec::new();
-                entry.read_to_end(&mut data)?;
+                let size = entry.size();
+                let data = Self::read_rom_with_limit(&mut entry, size)?;
                 println!("Extracted ROM: {} ({} bytes)", entry.name(), data.len());
                 return Ok(data);
             }
