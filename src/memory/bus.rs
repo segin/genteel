@@ -400,24 +400,19 @@ impl Bus {
     // === DMA ===
 
     fn run_dma(&mut self) {
-        // VDP registers:
-        // 0x13/0x14: DMA Length (low/high)
-        // 0x15/0x16/0x17: DMA Source (low/mid/high)
-        
-        let mode = self.vdp.dma_mode();
-        let length = {
-            let l = ((self.vdp.registers[0x14] as u32) << 8) | (self.vdp.registers[0x13] as u32);
-            if l == 0 { 0x10000 } else { l }
-        };
-        let mut source = ((self.vdp.registers[0x17] as u32 & 0x3F) << 17)
-                   | ((self.vdp.registers[0x16] as u32) << 9)
-                   | ((self.vdp.registers[0x15] as u32) << 1);
-        
-        if mode >= 2 {
+        if !self.vdp.dma_pending {
+            return;
+        }
+
+        if !self.vdp.is_dma_transfer() {
             self.vdp.execute_dma();
             self.vdp.dma_pending = false;
             return;
         }
+
+        // 68k Transfer (Mode 0 or 1)
+        let length = self.vdp.dma_length();
+        let mut source = self.vdp.dma_source_transfer();
 
         // If it's a 68k transfer (mode bit 7=0), bit 22 decides if it's ROM or RAM
         // Register 23 bit 6 MUST be 0 for 68k DMA.
