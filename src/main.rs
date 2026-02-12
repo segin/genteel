@@ -402,7 +402,66 @@ impl Emulator {
         Ok(())
     }
 
-    /// Run with winit window (interactive play mode)
+    fn print_debug_info(&self, frame_count: u64) {
+        let mut bus = self.bus.borrow_mut();
+        let disp_en = bus.vdp.display_enabled();
+        let dma_en = bus.vdp.dma_enabled();
+        let cram_val = if bus.vdp.cram.len() >= 2 {
+            ((bus.vdp.cram[0] as u16) << 8) | (bus.vdp.cram[1] as u16)
+        } else {
+            0
+        };
+        let z80_pc = self.z80.pc;
+        let z80_reset = bus.z80_reset;
+        let z80_req = bus.z80_bus_request;
+        let z80_op = if (z80_pc as usize) < bus.z80_ram.len() {
+            bus.z80_ram[z80_pc as usize]
+        } else {
+            0
+        };
+
+        println_safe!(
+            "Frame {}: 68k={:06X} Disp={} DMA={} CRAM={:04X} IntMask={} | Z80={:04X} [{:02X}] Rst={} Req={}",
+            frame_count,
+            self.cpu.pc,
+            disp_en,
+            dma_en,
+            cram_val,
+            (self.cpu.sr >> 8) & 7,
+            z80_pc,
+            z80_op,
+            z80_reset,
+            z80_req
+        );
+
+        // One-shot opcode dump for hangs
+        if (self.cpu.pc == 0x072764 || self.cpu.pc == 0x002F06) && frame_count <= 121 {
+            let dump_start = (self.cpu.pc - 0x10) & !1;
+            let dump_end = self.cpu.pc + 0x20;
+            eprintln!("Dumping code around {:06X}:", self.cpu.pc);
+            for addr in (dump_start..dump_end).step_by(2) {
+                let val = bus.read_word(addr);
+                eprintln!("{:06X}: {:04X}", addr, val);
+            }
+        }
+    }
+
+    fn render_frame(&self, pixels: &mut pixels::Pixels) -> Result<(), String> {
+        let frame = pixels.frame_mut();
+        let bus = self.bus.borrow();
+        frontend::rgb565_to_rgba8(&bus.vdp.framebuffer, frame);
+        drop(bus);
+
+        pixels.render().map_err(|e| e.to_string())
+    }
+
+    fn process_audio(&mut self, audio_buffer: &audio::SharedAudioBuffer) {
+        if let Ok(mut buf) = audio_buffer.lock() {
+            buf.push(&self.audio_buffer);
+        }
+        self.audio_buffer.clear();
+    }
+
     /// Run with winit window (interactive play mode)
     pub fn run_with_frontend(mut self) -> Result<(), String> {
         use winit::event::{Event, WindowEvent, ElementState, KeyEvent};
@@ -449,8 +508,6 @@ impl Emulator {
         
         // Audio setup
         let audio_buffer = audio::create_audio_buffer();
-        let samples_per_frame = audio::samples_per_frame();
-        let mut audio_samples = vec![0i16; samples_per_frame * 2];
         let _audio_output = audio::AudioOutput::new(audio_buffer.clone()).ok();
         
         // Input state
@@ -499,59 +556,17 @@ impl Emulator {
                         
                         // Debug: Print every 60 frames (about once per second)
                         if frame_count % 60 == 1 {
-                            let mut bus = self.bus.borrow_mut();
-                            let disp_en = bus.vdp.display_enabled();
-                            let dma_en = bus.vdp.dma_enabled();
-                             let cram_val = if bus.vdp.cram.len() >= 2 {
-                                ((bus.vdp.cram[0] as u16) << 8) | (bus.vdp.cram[1] as u16)
-                            } else { 0 };
-                            let z80_pc = self.z80.pc;
-                            let z80_reset = bus.z80_reset;
-                            let z80_req = bus.z80_bus_request;
-                            let z80_op = if (z80_pc as usize) < bus.z80_ram.len() { bus.z80_ram[z80_pc as usize] } else { 0 };
-
-                            println_safe!("Frame {}: 68k={:06X} Disp={} DMA={} CRAM={:04X} IntMask={} | Z80={:04X} [{:02X}] Rst={} Req={}", 
-                                frame_count, self.cpu.pc, disp_en, dma_en, cram_val, 
-                                (self.cpu.sr >> 8) & 7,
-                                z80_pc, z80_op, z80_reset, z80_req);
-                                
-                            // One-shot opcode dump for hangs
-                            if (self.cpu.pc == 0x072764 || self.cpu.pc == 0x002F06) && frame_count <= 121 {
-                                let dump_start = (self.cpu.pc - 0x10) & !1;
-                                let dump_end = self.cpu.pc + 0x20;
-                                eprintln!("Dumping code around {:06X}:", self.cpu.pc);
-                                for addr in (dump_start..dump_end).step_by(2) {
-                                    let val = bus.read_word(addr);
-                                    eprintln!("{:06X}: {:04X}", addr, val);
-                                }
-                            }
+                            self.print_debug_info(frame_count);
                         }
                         
                         // Run one frame of emulation
                         self.step_frame_with_input(input.p1.clone(), input.p2.clone());
                         
-                        // Generate audio - already done in step_frame
-                        // Just move samples from accumulator to output buffer
-                        audio_samples.clear(); // Ensure clean start (though push appends)
-                        // Actually, audio_samples is a Vec usually managed by caller or capacity?
-                        // Let's check context.
-                        // audio_samples was passed to generate_samples.
-                        // Here we just extend audio_samples from self.audio_buffer
-                        audio_samples.extend_from_slice(&self.audio_buffer);
-                        self.audio_buffer.clear();
-                        
-                        // Push audio to buffer
-                        if let Ok(mut buf) = audio_buffer.lock() {
-                            buf.push(&audio_samples);
-                        }
+                        // Process audio
+                        self.process_audio(&audio_buffer);
                         
                         // Render
-                        let frame = pixels.frame_mut();
-                        let bus = self.bus.borrow();
-                        frontend::rgb565_to_rgba8(&bus.vdp.framebuffer, frame);
-                        drop(bus);
-                        
-                        if let Err(e) = pixels.render() {
+                        if let Err(e) = self.render_frame(&mut pixels) {
                             eprintln!("Render error: {}", e);
                             target.exit();
                         }
