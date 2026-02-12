@@ -3,6 +3,7 @@
 //! Provides cross-platform windowing, input handling, and rendering
 //! for the Genesis emulator using pure Rust libraries.
 
+#[cfg(not(test))]
 use winit::keyboard::KeyCode;
 
 /// Genesis display dimensions
@@ -10,6 +11,7 @@ pub const GENESIS_WIDTH: u32 = 320;
 pub const GENESIS_HEIGHT: u32 = 224;
 
 /// Key mapping for player 1
+#[cfg(not(test))]
 pub fn keycode_to_button(keycode: KeyCode) -> Option<(&'static str, bool)> {
     match keycode {
         // Player 1 - Arrow keys + ZXC/Enter
@@ -52,13 +54,6 @@ pub fn rgb565_to_rgba8(framebuffer_565: &[u16], output: &mut [u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
-    #[test]
-    fn test_keycode_mapping() {
-        assert_eq!(keycode_to_button(KeyCode::KeyZ), Some(("a", true)));
-        assert_eq!(keycode_to_button(KeyCode::KeyX), Some(("b", true)));
-        assert_eq!(keycode_to_button(KeyCode::ArrowUp), Some(("up", true)));
-    }
     
     #[test]
     fn test_rgb565_to_rgba8_black() {

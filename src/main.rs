@@ -39,6 +39,7 @@ pub struct Emulator {
     pub apu_accumulator: f32,
     pub internal_frame_count: u64,
     pub last_z80_bus_req: bool,
+    pub last_z80_reset: bool,
     pub z80_trace_count: u32,
 }
 
@@ -72,6 +73,7 @@ impl Emulator {
             apu_accumulator: 0.0,
             internal_frame_count: 0,
             last_z80_bus_req: false,
+            last_z80_reset: true,
             z80_trace_count: 0,
         };
         
@@ -234,6 +236,11 @@ impl Emulator {
                     }
                     (!bus.z80_reset && !bus.z80_bus_request, bus.z80_reset)
                 };
+
+                if z80_is_reset && !self.last_z80_reset {
+                    self.z80.reset();
+                }
+                self.last_z80_reset = z80_is_reset;
 
                 if z80_can_run && self.internal_frame_count > 0 {
                      if self.z80_trace_count < 5000 {
@@ -404,6 +411,7 @@ impl Emulator {
 
     /// Run with winit window (interactive play mode)
     /// Run with winit window (interactive play mode)
+    #[cfg(not(test))]
     pub fn run_with_frontend(mut self) -> Result<(), String> {
         use winit::event::{Event, WindowEvent, ElementState, KeyEvent};
         use winit::event_loop::{ControlFlow, EventLoop};
@@ -702,9 +710,73 @@ fn main() {
         emulator.run(frames);
     } else {
         // Interactive mode with SDL2 window
+        #[cfg(not(test))]
         if let Err(e) = emulator.run_with_frontend() {
             eprintln!("Frontend error: {}", e);
         }
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_z80_ready_flag_behavior() {
+        let mut emulator = Emulator::new();
+
+        // Z80 Program to write 0x80 to 0x1FFD
+        // LD A, 0x80      (3E 80)
+        // LD (0x1FFD), A  (32 FD 1F)
+        // HALT            (76)
+        let z80_code = vec![
+            0x3E, 0x80,
+            0x32, 0xFD, 0x1F,
+            0x76
+        ];
+
+        // Ensure Z80 RAM is clear initially (Emulator::new clears it)
+        // First, let Z80 run to dirty the PC (simulate running garbage or previous code)
+        // By default Z80 is in reset (from new()). We must release it to run.
+        emulator.bus.borrow_mut().write_word(0xA11200, 0x0100); // Release Reset
+        emulator.step_frame_internal();
+
+        // Check PC > 0 (it should be running NOPs/garbage from 0)
+        assert!(emulator.z80.pc > 0, "Z80 PC should have advanced");
+
+        // Sonic 1-like sequence:
+
+        // 1. Assert Z80 Reset (Write 0 to 0xA11200)
+        emulator.bus.borrow_mut().write_word(0xA11200, 0x0000);
+
+        // Crucial: Step frame to allow emulator to detect the reset assertion
+        emulator.step_frame_internal();
+        // At this point, Z80 PC should be 0 because reset was detected
+        assert_eq!(emulator.z80.pc, 0, "Z80 PC should be 0 after reset");
+
+        // 2. Request Bus (Write 0x100 to 0xA11100)
+        emulator.bus.borrow_mut().write_word(0xA11100, 0x0100);
+
+        // 3. Load Code to Z80 RAM (0xA00000)
+        for (i, byte) in z80_code.iter().enumerate() {
+            emulator.bus.borrow_mut().write_byte(0xA00000 + i as u32, *byte);
+        }
+
+        // 4. Release Bus (Write 0 to 0xA11100)
+        emulator.bus.borrow_mut().write_word(0xA11100, 0x0000);
+
+        // 5. Release Reset (Write 0x100 to 0xA11200)
+        emulator.bus.borrow_mut().write_word(0xA11200, 0x0100);
+
+        // Run for a few frames to let Z80 execute
+        emulator.step_frame_internal();
+        emulator.step_frame_internal();
+
+        // Check if 0xA01FFD is 0x80
+        // We use read_byte on bus.
+        // If hack is present, this passes trivially.
+        // If hack is removed, this passes ONLY if Z80 ran correctly (PC=0 at start).
+        let val = emulator.bus.borrow_mut().read_byte(0xA01FFD);
+        assert_eq!(val, 0x80, "Z80 should have written 0x80 to 0xA01FFD");
+    }
+}

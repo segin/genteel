@@ -118,13 +118,7 @@ impl Bus {
             // Z80 Address Space: 0xA00000-0xA0FFFF
             0xA00000..=0xA01FFF => {
                 // Z80 RAM (8KB)
-                // Hack: Sonic 1 waits for 0xA01FFD to be 0x80 to indicate Z80 ready.
-                // Our Z80 emulation isn't setting this fast enough or correctly.
-                if addr == 0xA01FFD {
-                     0x80
-                } else {
-                     self.z80_ram[(addr & 0x1FFF) as usize]
-                }
+                self.z80_ram[(addr & 0x1FFF) as usize]
             }
             // YM2612 from 68k: 0xA04000-0xA04003
             0xA04000..=0xA04003 => {
