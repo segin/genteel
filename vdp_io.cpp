@@ -445,11 +445,14 @@ void VDP_Set_Reg(int reg_num, uint8_t val)
 			else
 				tmp = (val & 0x7F) << 9;
 			
-			VDP_Reg.Spr_Addr = &VRam.u16[tmp>>1];
-			
-			// Update the Sprite Attribute Table.
-			// TODO: Only set this if the actual value has changed.
-			VDP_Flags.VRam_Spr = 1;
+			{
+				const uint16_t *old_addr = VDP_Reg.Spr_Addr;
+				VDP_Reg.Spr_Addr = &VRam.u16[tmp>>1];
+
+				// Update the Sprite Attribute Table.
+				if (VDP_Reg.Spr_Addr != old_addr)
+					VDP_Flags.VRam_Spr = 1;
+			}
 			break;
 		
 		case 7:
