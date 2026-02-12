@@ -129,8 +129,7 @@ impl Emulator {
 
     /// Load ROM from a zip file (finds first .bin, .md, .gen, or .smd file)
     fn load_rom_from_zip(path: &str) -> std::io::Result<Vec<u8>> {
-        use std::io::Read;
-        
+
         let file = std::fs::File::open(path)?;
         let mut archive = zip::ZipArchive::new(file)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
@@ -145,7 +144,8 @@ impl Emulator {
             
             let name = entry.name().to_lowercase();
             if rom_extensions.iter().any(|ext| name.ends_with(ext)) {
-                let data = Self::read_rom_with_limit(&mut entry, entry.size())?;
+                let size = entry.size();
+                let data = Self::read_rom_with_limit(&mut entry, size)?;
                 println!("Extracted ROM: {} ({} bytes)", entry.name(), data.len());
                 return Ok(data);
             }
