@@ -266,6 +266,14 @@ impl Bus {
     /// Read a word (16-bit, big-endian) from the memory map
     pub fn read_word(&mut self, address: u32) -> u16 {
         let addr = address & 0xFFFFFF;
+
+        // ROM Fast Path (0x000000 - 0x3FFFFF)
+        if addr <= 0x3FFFFF {
+            let rom_addr = addr as usize;
+            if rom_addr + 1 < self.rom.len() {
+                return ((self.rom[rom_addr] as u16) << 8) | (self.rom[rom_addr + 1] as u16);
+            }
+        }
         
         // VDP Data Port (Word access)
         if addr >= 0xC00000 && addr <= 0xC00003 {
@@ -309,6 +317,18 @@ impl Bus {
 
     /// Read a long word (32-bit, big-endian) from the memory map
     pub fn read_long(&mut self, address: u32) -> u32 {
+        // ROM Fast Path
+        let addr = address & 0xFFFFFF;
+        if addr <= 0x3FFFFF {
+            let rom_addr = addr as usize;
+            if rom_addr + 3 < self.rom.len() {
+                return ((self.rom[rom_addr] as u32) << 24)
+                    | ((self.rom[rom_addr + 1] as u32) << 16)
+                    | ((self.rom[rom_addr + 2] as u32) << 8)
+                    | (self.rom[rom_addr + 3] as u32);
+            }
+        }
+
         let high = self.read_word(address) as u32;
         let low = self.read_word(address.wrapping_add(2)) as u32;
         (high << 16) | low
