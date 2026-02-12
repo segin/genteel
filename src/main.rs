@@ -221,10 +221,11 @@ impl Emulator {
         // Cycles per scanline: ~488
 
         const LINES_PER_FRAME: u16 = 262;
-        const ACTIVE_LINES: u16 = 224;
         const CYCLES_PER_LINE: u32 = 488;
         const Z80_CYCLES_PER_M68K_CYCLE: f32 = 3.58 / 7.67;
 
+        // Active lines can be 224 or 240 (V30 mode)
+        let active_lines = self.bus.borrow().vdp.screen_height();
         // APU Timing
         let samples_per_frame = audio::samples_per_frame() as f32;
         let samples_per_line = samples_per_frame / (LINES_PER_FRAME as f32);
@@ -238,7 +239,7 @@ impl Emulator {
                 bus.vdp.set_v_counter(line);
 
                 // Render scanline if active
-                if line < ACTIVE_LINES {
+                if line < active_lines {
                     bus.vdp.render_line(line);
                 }
             }
@@ -283,7 +284,7 @@ impl Emulator {
                 }
 
                 // Trigger Z80 VInt at start of VBlank
-                if line == ACTIVE_LINES && cycles_scanline < m68k_cycles as u32 + 5 && !z80_is_reset {
+                if line == active_lines && cycles_scanline < m68k_cycles as u32 + 5 && !z80_is_reset {
                     self.z80.trigger_interrupt(0xFF);
                 }
 
@@ -315,8 +316,8 @@ impl Emulator {
             {
                 let mut bus = self.bus.borrow_mut();
 
-                // VBlank Interrupt (Level 6) - Triggered at start of VBlank (line 224)
-                if line == ACTIVE_LINES {
+                // VBlank Interrupt (Level 6) - Triggered at start of VBlank (line 224/240)
+                if line == active_lines {
                     bus.vdp.trigger_vint();
                     // Check if VInterrupt enabled (Reg 1, bit 5)
                     if (bus.vdp.mode2() & 0x20) != 0 {
@@ -325,7 +326,7 @@ impl Emulator {
                 }
 
                 // HBlank Interrupt (Level 4) - Proper counter logic
-                if line < ACTIVE_LINES {
+                if line < active_lines {
                     // Check if HInterrupt enabled (Reg 0, bit 4)
                     if (bus.vdp.mode1() & 0x10) != 0 {
                         // Decrement line counter
@@ -343,6 +344,9 @@ impl Emulator {
                 }
             }
         }
+
+        // Update V30 rolling offset
+        self.bus.borrow_mut().vdp.update_v30_offset();
     }
 
     /// Run headless for N frames (for TAS/testing)
