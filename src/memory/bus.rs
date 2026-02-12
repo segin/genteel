@@ -284,7 +284,7 @@ impl Bus {
         if addr <= 0x3FFFFE {
             let rom_addr = addr as usize;
             if rom_addr + 1 < self.rom.len() {
-                return (self.rom[rom_addr] as u16 << 8) | (self.rom[rom_addr + 1] as u16);
+                return ((self.rom[rom_addr] as u16) << 8) | (self.rom[rom_addr + 1] as u16);
             }
         }
 
@@ -292,7 +292,7 @@ impl Bus {
         if addr >= 0xE00000 {
             let r_addr = (addr & 0xFFFF) as usize;
             if r_addr < 0xFFFF {
-                return (self.work_ram[r_addr] as u16 << 8) | (self.work_ram[r_addr + 1] as u16);
+                return ((self.work_ram[r_addr] as u16) << 8) | (self.work_ram[r_addr + 1] as u16);
             }
         }
 
@@ -341,9 +341,9 @@ impl Bus {
         if addr <= 0x3FFFFC {
             let rom_addr = addr as usize;
             if rom_addr + 3 < self.rom.len() {
-                return (self.rom[rom_addr] as u32 << 24) |
-                       (self.rom[rom_addr + 1] as u32 << 16) |
-                       (self.rom[rom_addr + 2] as u32 << 8) |
+                return ((self.rom[rom_addr] as u32) << 24) |
+                       ((self.rom[rom_addr + 1] as u32) << 16) |
+                       ((self.rom[rom_addr + 2] as u32) << 8) |
                        (self.rom[rom_addr + 3] as u32);
             }
         }
@@ -352,9 +352,9 @@ impl Bus {
         if addr >= 0xE00000 {
             let r_addr = (addr & 0xFFFF) as usize;
             if r_addr <= 0xFFFC {
-                return (self.work_ram[r_addr] as u32 << 24) |
-                       (self.work_ram[r_addr + 1] as u32 << 16) |
-                       (self.work_ram[r_addr + 2] as u32 << 8) |
+                return ((self.work_ram[r_addr] as u32) << 24) |
+                       ((self.work_ram[r_addr + 1] as u32) << 16) |
+                       ((self.work_ram[r_addr + 2] as u32) << 8) |
                        (self.work_ram[r_addr + 3] as u32);
             }
         }

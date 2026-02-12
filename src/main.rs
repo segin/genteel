@@ -1,6 +1,7 @@
 #![deny(warnings)]
 
 /// Graceful println that ignores broken pipe errors (for `| head` usage)
+#[allow(unused_macros)]
 macro_rules! println_safe {
     ($($arg:tt)*) => {{
         use std::io::Write;
@@ -102,6 +103,9 @@ impl Emulator {
     fn load_rom_from_zip(path: &str) -> std::io::Result<Vec<u8>> {
         use std::io::Read;
         
+        // Max ROM size (32MB) to prevent zip bombs
+        const MAX_ROM_SIZE: u64 = 32 * 1024 * 1024;
+
         let file = std::fs::File::open(path)?;
         let mut archive = zip::ZipArchive::new(file)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
@@ -111,14 +115,32 @@ impl Emulator {
         
         // Find first ROM file in archive
         for i in 0..archive.len() {
-            let mut entry = archive.by_index(i)
+            let entry = archive.by_index(i)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
             
-            let name = entry.name().to_lowercase();
-            if rom_extensions.iter().any(|ext| name.ends_with(ext)) {
-                let mut data = Vec::new();
-                entry.read_to_end(&mut data)?;
-                println!("Extracted ROM: {} ({} bytes)", entry.name(), data.len());
+            // Security check: Check declared size
+            if entry.size() > MAX_ROM_SIZE {
+                continue; // Skip files that are too large
+            }
+
+            let entry_name = entry.name().to_string();
+            let name_lower = entry_name.to_lowercase();
+            if rom_extensions.iter().any(|ext| name_lower.ends_with(ext)) {
+                // Security check: Limit read size
+                let mut data = Vec::with_capacity(entry.size().min(MAX_ROM_SIZE) as usize);
+
+                // Use take() to strictly limit the read amount
+                let mut reader = entry.take(MAX_ROM_SIZE + 1);
+                reader.read_to_end(&mut data)?;
+
+                if data.len() as u64 > MAX_ROM_SIZE {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "ROM file too large (possible zip bomb)"
+                    ));
+                }
+
+                println!("Extracted ROM: {} ({} bytes)", entry_name, data.len());
                 return Ok(data);
             }
         }
@@ -403,7 +425,7 @@ impl Emulator {
     }
 
     /// Run with winit window (interactive play mode)
-    /// Run with winit window (interactive play mode)
+    #[cfg(feature = "gui")]
     pub fn run_with_frontend(mut self) -> Result<(), String> {
         use winit::event::{Event, WindowEvent, ElementState, KeyEvent};
         use winit::event_loop::{ControlFlow, EventLoop};
@@ -702,9 +724,54 @@ fn main() {
         emulator.run(frames);
     } else {
         // Interactive mode with SDL2 window
+        #[cfg(feature = "gui")]
         if let Err(e) = emulator.run_with_frontend() {
             eprintln!("Frontend error: {}", e);
+        }
+
+        #[cfg(not(feature = "gui"))]
+        {
+            eprintln!("Interactive mode requires 'gui' feature.");
+            eprintln!("Use --headless <N> or --gdb <PORT> instead.");
         }
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn test_zip_bomb_prevention() {
+        let path = "test_bomb.zip";
+        let mut zip_data = Vec::new();
+
+        {
+            let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut zip_data));
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+
+            // Generate 33MB of dummy data
+            zip.start_file("large.bin", options).unwrap();
+            let chunk = vec![0u8; 1024 * 1024]; // 1MB
+            for _ in 0..33 {
+                zip.write_all(&chunk).unwrap();
+            }
+            zip.finish().unwrap();
+        }
+
+        std::fs::write(path, &zip_data).unwrap();
+
+        // Attempt to load - should fail after fix
+        let result = Emulator::load_rom_from_zip(path);
+
+        // Cleanup
+        let _ = std::fs::remove_file(path);
+
+        // Before fix: This assertion will fail (because result.is_ok() is likely true)
+        // After fix: This assertion will pass
+        assert!(result.is_err(), "Should reject large ROM file (>32MB)");
+    }
+}
