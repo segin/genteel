@@ -440,16 +440,20 @@ void VDP_Set_Reg(int reg_num, uint8_t val)
 		
 		case 5:
 			// Sprite Attribute Table base address.
-			if (VDP_Reg.m5.Set4 & 0x01)	// Check for H40 mode. (TODO: Test 0x81 instead?)
-				tmp = (val & 0x7E) << 9;
-			else
-				tmp = (val & 0x7F) << 9;
-			
-			VDP_Reg.Spr_Addr = &VRam.u16[tmp>>1];
-			
-			// Update the Sprite Attribute Table.
-			// TODO: Only set this if the actual value has changed.
-			VDP_Flags.VRam_Spr = 1;
+			{
+				const uint16_t *old_addr = VDP_Reg.Spr_Addr;
+
+				if (VDP_Reg.m5.Set4 & 0x01)	// Check for H40 mode. (TODO: Test 0x81 instead?)
+					tmp = (val & 0x7E) << 9;
+				else
+					tmp = (val & 0x7F) << 9;
+
+				VDP_Reg.Spr_Addr = &VRam.u16[tmp>>1];
+
+				// Update the Sprite Attribute Table.
+				if (VDP_Reg.Spr_Addr != old_addr)
+					VDP_Flags.VRam_Spr = 1;
+			}
 			break;
 		
 		case 7:
