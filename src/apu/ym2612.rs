@@ -203,4 +203,41 @@ mod tests {
         assert_eq!(block, 4);
         assert_eq!(f_num, 0x255); // 0x200 | 0x55
     }
+
+    #[test]
+    fn test_timer_logic() {
+        let mut ym = Ym2612::new();
+
+        // Timer A disabled initially
+        ym.step(100);
+        assert_eq!(ym.status & 0x01, 0, "Timer A overflow should not be set initially");
+        assert_eq!(ym.timer_a_counter, 0, "Timer A counter should be 0 initially");
+
+        // Enable Timer A (Reg 0x27 Bit 0)
+        ym.write_addr0(0x27);
+        ym.write_data0(0x01);
+
+        // Step 100 times - counter should be 100, status still 0
+        for _ in 0..100 {
+            ym.step(100);
+        }
+        assert_eq!(ym.timer_a_counter, 100);
+        assert_eq!(ym.status & 0x01, 0);
+
+        // Step 101st time - counter resets, status sets
+        ym.step(100);
+        assert_eq!(ym.timer_a_counter, 0);
+        assert_eq!(ym.status & 0x01, 0x01, "Timer A overflow should be set");
+
+        // Clear status (manually for now as we don't have a clear method)
+        ym.status &= !0x01;
+
+        // Enable Timer B (Reg 0x27 Bit 1)
+        ym.write_addr0(0x27);
+        ym.write_data0(0x02);
+
+        // Timer B should set status bit 1 immediately
+        ym.step(100);
+        assert_eq!(ym.status & 0x02, 0x02, "Timer B overflow should be set");
+    }
 }
