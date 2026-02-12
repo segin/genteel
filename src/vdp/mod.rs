@@ -236,6 +236,27 @@ impl Vdp {
         if self.h40_mode() { 320 } else { 256 }
     }
 
+    // === DMA Helpers ===
+
+    /// Calculate DMA length from registers 19 and 20
+    pub fn dma_length(&self) -> u32 {
+        let len = ((self.registers[20] as u32) << 8) | (self.registers[19] as u32);
+        if len == 0 { 0x10000 } else { len }
+    }
+
+    /// Calculate DMA source address for 68k transfer (Mode 0/1)
+    /// This returns the byte address (shifted left by 1 from the register value)
+    pub fn dma_source_transfer(&self) -> u32 {
+        ((self.registers[23] as u32 & 0x3F) << 17)
+            | ((self.registers[22] as u32) << 9)
+            | ((self.registers[21] as u32) << 1)
+    }
+
+    /// Check if DMA mode is 0 or 1 (68k Transfer)
+    pub fn is_dma_transfer(&self) -> bool {
+        self.dma_mode() <= 1
+    }
+
     // === Port I/O ===
 
     /// Read from data port
@@ -632,8 +653,7 @@ impl Vdp {
         let dma_type = (self.registers[23] >> 6) & 0x03;
         
         // DMA length from registers 19-20 (in words for most modes)
-        let mut dma_length = ((self.registers[20] as u32) << 8) | (self.registers[19] as u32);
-        if dma_length == 0 { dma_length = 0x10000; }
+        let dma_length = self.dma_length();
         
         // DMA source from registers 21-23 (bits 0-5 of reg 23)
         let dma_source = ((self.registers[23] as u32 & 0x3F) << 16)
