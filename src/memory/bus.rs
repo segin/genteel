@@ -386,18 +386,10 @@ impl Bus {
     // === DMA ===
 
     fn run_dma(&mut self) {
-        // VDP registers:
-        // 0x13/0x14: DMA Length (low/high)
-        // 0x15/0x16/0x17: DMA Source (low/mid/high)
-        
         let mode = self.vdp.dma_mode();
-        let length = {
-            let l = ((self.vdp.registers[0x14] as u32) << 8) | (self.vdp.registers[0x13] as u32);
-            if l == 0 { 0x10000 } else { l }
-        };
-        let mut source = ((self.vdp.registers[0x17] as u32 & 0x3F) << 17)
-                   | ((self.vdp.registers[0x16] as u32) << 9)
-                   | ((self.vdp.registers[0x15] as u32) << 1);
+        let length = self.vdp.dma_length();
+        // 68k DMA source is shifted by 1 relative to VDP internal representation
+        let mut source = self.vdp.dma_source() << 1;
         
         if mode >= 2 {
             self.vdp.execute_dma();
@@ -574,5 +566,40 @@ mod tests {
         // Reserved area
         assert_eq!(bus.read_byte(0x800000), 0xFF);
     }
-}
 
+
+    #[test]
+    fn test_dma_transfer_ram_to_vram() {
+        let mut bus = Bus::new();
+        // 1. Write data to RAM at 0xFF0000 (mirrored at 0xE00000)
+        // 0xFF0000 = 0x12, 0xFF0001 = 0x34
+        bus.write_word(0xFF0000, 0x1234);
+
+        // 2. Configure VDP registers for DMA
+        // DMA Length: 1 word (Reg 19=1, Reg 20=0)
+        bus.vdp.registers[19] = 0x01;
+        bus.vdp.registers[20] = 0x00;
+
+        // DMA Source: 0xFF0000
+        // Bus logic: source = ((Reg23 & 0x3F) << 17) | (Reg22 << 9) | (Reg21 << 1).
+        // We set Reg 23 to 0x60 (Mode 1, Bit 22 set).
+        // (0x20 << 17) = 0x400000.
+        // Bus logic sees bit 22 set, ORs with 0xFF0000 -> 0xFF0000.
+        bus.vdp.registers[21] = 0x00;
+        bus.vdp.registers[22] = 0x00;
+        bus.vdp.registers[23] = 0x60;
+
+        // Enable DMA in Reg 1 (Bit 4)
+        bus.vdp.registers[1] |= 0x10;
+
+        // 3. Trigger DMA via Control Port
+        // Word 1: VRAM Write (CD=1) -> 0x4000
+        bus.write_word(0xC00004, 0x4000);
+        // Word 2: CD5=1 -> 0x2000.
+        bus.write_word(0xC00004, 0x2000);
+
+        // 4. Assert VRAM content
+        assert_eq!(bus.vdp.vram[0], 0x12);
+        assert_eq!(bus.vdp.vram[1], 0x34);
+    }
+}

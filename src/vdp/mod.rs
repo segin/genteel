@@ -211,6 +211,20 @@ impl Vdp {
         self.registers[23] >> 6
     }
 
+    /// Return the DMA length from registers 19 and 20
+    pub fn dma_length(&self) -> u32 {
+        let len = ((self.registers[20] as u32) << 8) | (self.registers[19] as u32);
+        if len == 0 { 0x10000 } else { len }
+    }
+
+    /// Return the DMA source address from registers 21-23
+    /// Note: This is the raw value from registers (effectively source >> 1 for 68k transfers)
+    pub fn dma_source(&self) -> u32 {
+        ((self.registers[23] as u32 & 0x3F) << 16)
+            | ((self.registers[22] as u32) << 8)
+            | (self.registers[21] as u32)
+    }
+
     /// Return the current control code (0-63)
     pub fn control_code(&self) -> u8 {
         self.control_code
@@ -628,17 +642,9 @@ impl Vdp {
             return 0;
         }
         
-        // DMA type is in register 23 bits 6-7
-        let dma_type = (self.registers[23] >> 6) & 0x03;
-        
-        // DMA length from registers 19-20 (in words for most modes)
-        let mut dma_length = ((self.registers[20] as u32) << 8) | (self.registers[19] as u32);
-        if dma_length == 0 { dma_length = 0x10000; }
-        
-        // DMA source from registers 21-23 (bits 0-5 of reg 23)
-        let dma_source = ((self.registers[23] as u32 & 0x3F) << 16)
-            | ((self.registers[22] as u32) << 8)
-            | (self.registers[21] as u32);
+        let dma_type = self.dma_mode() & 0x03;
+        let dma_length = self.dma_length();
+        let dma_source = self.dma_source();
         
         let bytes_transferred = match dma_type {
             0 | 1 => {
