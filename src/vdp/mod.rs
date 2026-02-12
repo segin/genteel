@@ -291,11 +291,16 @@ impl Vdp {
                 self.vram[(vram_addr + 1) & 0xFFFF] = value as u8;
             }
             0x03 => { // CRAM write
+                let mut write_value = value;
+                if (addr & 0x01) != 0 {
+                    // Odd address write: byte swap
+                    write_value = (value >> 8) | (value << 8);
+                }
                 let cram_addr = (addr & 0x7E) as usize; // Ensure word alignment
-                self.cram[cram_addr] = (value >> 8) as u8;
-                self.cram[cram_addr + 1] = (value & 0xFF) as u8;
-                if value != 0 {
-                    eprintln!("DEBUG: NON-ZERO CRAM WRITE: addr=0x{:02X} val=0x{:04X}", cram_addr, value);
+                self.cram[cram_addr] = (write_value >> 8) as u8;
+                self.cram[cram_addr + 1] = (write_value & 0xFF) as u8;
+                if write_value != 0 {
+                    eprintln!("DEBUG: NON-ZERO CRAM WRITE: addr=0x{:02X} val=0x{:04X}", cram_addr, write_value);
                 }
             }
             0x05 => {
@@ -782,6 +787,29 @@ mod tests {
 
         assert_eq!(vdp.cram[0], 0x0E);
         assert_eq!(vdp.cram[1], 0xEE);
+    }
+
+    #[test]
+    fn test_cram_odd_address_write() {
+        let mut vdp = Vdp::new();
+
+        // Set CRAM write mode to address 0x0001 (Odd address)
+        // Word 1: CD1-0 A13-0 (part)
+        // 11 00 0000 0000 0001 -> 0xC001
+        // Word 2: CD5-2 0000 00 A15-14
+        // 0000 0000 0000 0000 -> 0x0000
+        vdp.write_control(0xC001);
+        vdp.write_control(0x0000);
+
+        // Write data: 0xAABB
+        // Expected behavior: odd address write causes byte swap
+        // Resulting write to even address 0 should be 0xBBAA
+        vdp.write_data(0xAABB);
+
+        // CRAM[0] should be BB
+        // CRAM[1] should be AA
+        assert_eq!(vdp.cram[0], 0xBB);
+        assert_eq!(vdp.cram[1], 0xAA);
     }
 
     #[test]
