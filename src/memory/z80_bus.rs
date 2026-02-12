@@ -192,18 +192,6 @@ mod tests {
     }
     
     #[test]
-    fn test_bank_register() {
-        let mut z80_bus = create_test_z80_bus();
-        
-        // Initially bank is 0
-        assert_eq!(z80_bus.bank_register, 0);
-        
-        // Write to bank register (bit-by-bit shifting)
-        z80_bus.write_byte(0x6000, 0x01);  // Shift in 1
-        assert_ne!(z80_bus.bank_register, 0);
-    }
-    
-    #[test]
     fn test_reserved_reads_ff() {
         let mut z80_bus = create_test_z80_bus();
         

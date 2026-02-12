@@ -636,9 +636,10 @@ impl Vdp {
         if dma_length == 0 { dma_length = 0x10000; }
         
         // DMA source from registers 21-23 (bits 0-5 of reg 23)
-        let dma_source = ((self.registers[23] as u32 & 0x3F) << 16)
+        // Note: Registers store A23-A1, so we shift left by 1 to get byte address
+        let dma_source = (((self.registers[23] as u32 & 0x3F) << 16)
             | ((self.registers[22] as u32) << 8)
-            | (self.registers[21] as u32);
+            | (self.registers[21] as u32)) << 1;
         
         let bytes_transferred = match dma_type {
             0 | 1 => {
@@ -709,8 +710,11 @@ impl Default for Vdp {
     }
 }
 
+// #[cfg(test)]
 #[cfg(test)]
 mod tests_properties;
+#[cfg(test)]
+mod tests_dma;
 
 #[cfg(test)]
 mod tests {
