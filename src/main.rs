@@ -99,6 +99,9 @@ impl Emulator {
     fn load_rom_from_zip(path: &str) -> std::io::Result<Vec<u8>> {
         use std::io::Read;
         
+        // Define maximum supported ROM size (32 MB) to prevent zip bombs
+        const MAX_ROM_SIZE: u64 = 32 * 1024 * 1024;
+
         let file = std::fs::File::open(path)?;
         let mut archive = zip::ZipArchive::new(file)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
@@ -113,9 +116,29 @@ impl Emulator {
             
             let name = entry.name().to_lowercase();
             if rom_extensions.iter().any(|ext| name.ends_with(ext)) {
-                let mut data = Vec::new();
-                entry.read_to_end(&mut data)?;
-                println!("Extracted ROM: {} ({} bytes)", entry.name(), data.len());
+                // Check declared size first
+                if entry.size() > MAX_ROM_SIZE {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("ROM file in zip is too large (> {} bytes)", MAX_ROM_SIZE)
+                    ));
+                }
+
+                let entry_name = entry.name().to_string(); // Save name for logging
+                let mut data = Vec::with_capacity(entry.size() as usize);
+
+                // Read with a limit to prevent zip bomb attacks
+                // We read one byte more than the limit to detect if it exceeds it
+                entry.take(MAX_ROM_SIZE + 1).read_to_end(&mut data)?;
+
+                if data.len() as u64 > MAX_ROM_SIZE {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("ROM file in zip is too large (> {} bytes)", MAX_ROM_SIZE)
+                    ));
+                }
+
+                println!("Extracted ROM: {} ({} bytes)", entry_name, data.len());
                 return Ok(data);
             }
         }
