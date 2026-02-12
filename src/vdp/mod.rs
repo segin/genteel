@@ -350,8 +350,10 @@ impl Vdp {
                 let reg = ((value >> 8) & 0x1F) as usize;
                 let data = value as u8;
                 if reg < 24 {
-                    self.registers[reg] = data;
-                    eprintln!("DEBUG: VDP REG WRITE: Reg {} = 0x{:02X}", reg, data);
+                    if self.registers[reg] != data {
+                        self.registers[reg] = data;
+                        eprintln!("DEBUG: VDP REG WRITE: Reg {} = 0x{:02X}", reg, data);
+                    }
                 }
                 self.control_pending = false;
             } else {
@@ -902,6 +904,26 @@ mod tests {
         
         // Pixel at (10, 10) should be Blue (0x001F in RGB565)
         assert_eq!(vdp.framebuffer[320 * 10 + 10], 0x001F);
+    }
+
+    #[test]
+    fn test_register_update_idempotent() {
+        let mut vdp = Vdp::new();
+
+        // 1. Initial write to Register 5 (Sprite Attribute Table Base)
+        // Reg 5: 0x85xx. Let's write 0x68 (default in some docs)
+        vdp.write_control(0x8568);
+        assert_eq!(vdp.registers[5], 0x68);
+
+        // 2. Write same value again
+        // This should trigger the optimization (no write, no log)
+        vdp.write_control(0x8568);
+        assert_eq!(vdp.registers[5], 0x68);
+
+        // 3. Write different value
+        // Reg 5: 0x70
+        vdp.write_control(0x8570);
+        assert_eq!(vdp.registers[5], 0x70);
     }
 }
 
