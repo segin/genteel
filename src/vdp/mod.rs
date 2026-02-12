@@ -387,6 +387,18 @@ impl Vdp {
         self.control_address
     }
 
+    /// Get current control code (for testing)
+    #[cfg(test)]
+    pub fn get_control_code(&self) -> u8 {
+        self.control_code
+    }
+
+    /// Check if control is pending (for testing)
+    #[cfg(test)]
+    pub fn is_control_pending(&self) -> bool {
+        self.control_pending
+    }
+
     /// Read H/V counter
     pub fn read_hv_counter(&self) -> u16 {
         let h = (self.h_counter >> 1) as u8;
@@ -711,6 +723,9 @@ impl Default for Vdp {
 
 #[cfg(test)]
 mod tests_properties;
+
+#[cfg(test)]
+mod tests_control;
 
 #[cfg(test)]
 mod tests {
