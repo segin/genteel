@@ -92,7 +92,7 @@ impl InputScript {
 
         // Minimum 8 chars for 3-button, 12 for 6-button
         if chars.len() < 8 {
-            return Err(format!("Invalid button string length: expected at least 8 chars, got {}", chars.len()));
+            return Err(format!("Input string too short: expected at least 8 characters, got {}", chars.len()));
         }
 
         state.up    = chars[0] == 'U';
@@ -311,9 +311,9 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_buttons_short() {
-        let result = InputScript::parse_buttons("short");
-        assert!(result.is_err(), "Expected error for short input string");
+    fn test_parse_buttons_short_string() {
+        let result = InputScript::parse_buttons("ABC");
+        assert!(result.is_err(), "Expected error for short string, got {:?}", result);
     }
 
     #[test]
