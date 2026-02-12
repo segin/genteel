@@ -4,6 +4,7 @@
 //! Uses a ring buffer to transfer samples from emulation thread to audio callback.
 
 use std::sync::{Arc, Mutex};
+#[cfg(feature = "gui")]
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 /// Sample rate for audio output
@@ -98,10 +99,12 @@ pub fn create_audio_buffer() -> SharedAudioBuffer {
 }
 
 /// Audio output stream wrapper
+#[cfg(feature = "gui")]
 pub struct AudioOutput {
     _stream: cpal::Stream,
 }
 
+#[cfg(feature = "gui")]
 impl AudioOutput {
     /// Create a new audio output using cpal
     pub fn new(buffer: SharedAudioBuffer) -> Result<Self, String> {
