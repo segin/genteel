@@ -292,10 +292,18 @@ impl Vdp {
             }
             0x03 => { // CRAM write
                 let cram_addr = (addr & 0x7E) as usize; // Ensure word alignment
-                self.cram[cram_addr] = (value >> 8) as u8;
-                self.cram[cram_addr + 1] = (value & 0xFF) as u8;
-                if value != 0 {
-                    eprintln!("DEBUG: NON-ZERO CRAM WRITE: addr=0x{:02X} val=0x{:04X}", cram_addr, value);
+
+                // If writing to odd address, swap bytes ("interesting side effect")
+                let write_val = if addr & 1 != 0 {
+                    (value << 8) | (value >> 8)
+                } else {
+                    value
+                };
+
+                self.cram[cram_addr] = (write_val >> 8) as u8;
+                self.cram[cram_addr + 1] = (write_val & 0xFF) as u8;
+                if write_val != 0 {
+                    eprintln!("DEBUG: NON-ZERO CRAM WRITE: addr=0x{:02X} val=0x{:04X}", cram_addr, write_val);
                 }
             }
             0x05 => {
@@ -782,6 +790,26 @@ mod tests {
 
         assert_eq!(vdp.cram[0], 0x0E);
         assert_eq!(vdp.cram[1], 0xEE);
+    }
+
+    #[test]
+    fn test_cram_write_odd_address() {
+        let mut vdp = Vdp::new();
+
+        // Set CRAM write mode to address 0x0001 (odd)
+        vdp.write_control(0xC001);
+        vdp.write_control(0x0000);
+
+        // Write data 0x1234
+        vdp.write_data(0x1234);
+
+        // Expected behavior (LSB masked, byte swapped):
+        // address = 1 -> mask -> 0
+        // value = 0x1234 -> swap -> 0x3412
+        // cram[0] = 0x34 (High byte)
+        // cram[1] = 0x12 (Low byte)
+        assert_eq!(vdp.cram[0], 0x34);
+        assert_eq!(vdp.cram[1], 0x12);
     }
 
     #[test]
