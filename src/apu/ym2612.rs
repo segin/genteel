@@ -36,12 +36,14 @@ pub struct Ym2612 {
 
     /// Status register
     /// Bit 7: Busy
-    /// Bit 2: Timer B overflow
-    /// Bit 1: Timer A overflow
+    /// Bit 1: Timer B overflow
+    /// Bit 0: Timer A overflow
     pub status: u8,
 
-    /// Internal timer counter (skeletal)
-    timer_a_counter: u32,
+    /// Timer A counter (counts down)
+    timer_a_count: i32,
+    /// Timer B counter (counts down)
+    timer_b_count: i32,
 }
 
 impl Ym2612 {
@@ -51,7 +53,8 @@ impl Ym2612 {
             addr0: 0,
             addr1: 0,
             status: 0,
-            timer_a_counter: 0,
+            timer_a_count: 0,
+            timer_b_count: 0,
         }
     }
 
@@ -67,20 +70,55 @@ impl Ym2612 {
         self.status
     }
 
-    /// Update timers based on elapsed cycles (skeletal)
-    pub fn step(&mut self, _cycles: u32) {
-        // TODO: Proper timer implementation. 
-        // For now, we'll just toggle the timer A overflow bit occasionally 
-        // if it's enabled (Reg 0x27 bit 0) to keep drivers moving.
-        if (self.registers[0][0x27] & 0x01) != 0 {
-             self.timer_a_counter += 1;
-             if self.timer_a_counter > 100 {
-                 self.status |= 0x01; // Timer A overflow
-                 self.timer_a_counter = 0;
-             }
+    /// Update timers based on elapsed cycles
+    pub fn step(&mut self, cycles: u32) {
+        let cycles = cycles as i32;
+        let ctrl = self.registers[0][0x27];
+
+        // Timer A
+        // Bit 0: Load A (Enable Counting)
+        if (ctrl & 0x01) != 0 {
+            self.timer_a_count -= cycles;
+            if self.timer_a_count <= 0 {
+                // Calculate period: (1024 - N) * 144
+                // N = (Reg 0x24 << 2) | (Reg 0x25 & 0x03)
+                let n = ((self.registers[0][0x24] as u32) << 2) | (self.registers[0][0x25] as u32 & 0x03);
+                let period = (1024 - n as i32) * 144;
+
+                // If period is 0 or very small, force minimum to avoid infinite loops
+                let period = if period < 144 { 144 } else { period };
+
+                while self.timer_a_count <= 0 {
+                    self.timer_a_count += period;
+                    // Bit 2: Enable A (Flag)
+                    if (ctrl & 0x04) != 0 {
+                        self.status |= 0x01; // Set Timer A Overflow (Bit 0)
+                    }
+                }
+            }
         }
-        if (self.registers[0][0x27] & 0x02) != 0 {
-             self.status |= 0x02; // Timer B overflow
+
+        // Timer B
+        // Bit 1: Load B (Enable Counting)
+        if (ctrl & 0x02) != 0 {
+            self.timer_b_count -= cycles;
+            if self.timer_b_count <= 0 {
+                // Calculate period: (256 - N) * 2304
+                // N = Reg 0x26
+                let n = self.registers[0][0x26] as u32;
+                let period = (256 - n as i32) * 2304;
+
+                // Minimum period check
+                let period = if period < 2304 { 2304 } else { period };
+
+                while self.timer_b_count <= 0 {
+                    self.timer_b_count += period;
+                    // Bit 3: Enable B (Flag)
+                    if (ctrl & 0x08) != 0 {
+                        self.status |= 0x02; // Set Timer B Overflow (Bit 1)
+                    }
+                }
+            }
         }
     }
 
@@ -114,8 +152,38 @@ impl Ym2612 {
 
     /// Write to Data Port 0 (Part I)
     pub fn write_data0(&mut self, val: u8) {
-        self.registers[0][self.addr0 as usize] = val;
-        // Handle global registers or immediate actions if necessary
+        if self.addr0 == 0x27 {
+            let old_val = self.registers[0][0x27];
+
+            // Handle Reset Flags
+            // Bit 4: Reset A (Clear Timer A Overflow)
+            if (val & 0x10) != 0 {
+                self.status &= !0x01;
+            }
+            // Bit 5: Reset B (Clear Timer B Overflow)
+            if (val & 0x20) != 0 {
+                self.status &= !0x02;
+            }
+
+            // Handle Load Transitions (Reload Counters)
+            // Load A (Bit 0) 0->1
+            if (val & 0x01) != 0 && (old_val & 0x01) == 0 {
+                 let n = ((self.registers[0][0x24] as u32) << 2) | (self.registers[0][0x25] as u32 & 0x03);
+                 let period = (1024 - n as i32) * 144;
+                 self.timer_a_count = if period < 144 { 144 } else { period };
+            }
+
+            // Load B (Bit 1) 0->1
+            if (val & 0x02) != 0 && (old_val & 0x02) == 0 {
+                 let n = self.registers[0][0x26] as u32;
+                 let period = (256 - n as i32) * 2304;
+                 self.timer_b_count = if period < 2304 { 2304 } else { period };
+            }
+
+            self.registers[0][0x27] = val;
+        } else {
+            self.registers[0][self.addr0 as usize] = val;
+        }
     }
 
     /// Write to Address Port 1 (Part II)
@@ -202,5 +270,80 @@ mod tests {
         // Reg 0xA4 = 0x22 = 0010 0010. Bits 5-3 are Block (100 = 4). Bits 2-0 are F-High (010 = 2).
         assert_eq!(block, 4);
         assert_eq!(f_num, 0x255); // 0x200 | 0x55
+    }
+
+    #[test]
+    fn test_timer_a() {
+        let mut ym = Ym2612::new();
+
+        // Set Timer A period
+        // Reg 0x24 (MSB) = 0x00
+        // Reg 0x25 (LSB) = 0x00
+        // N = 0
+        // Period = (1024 - 0) * 144 = 147456 cycles
+        ym.write_addr0(0x24);
+        ym.write_data0(0x00);
+        ym.write_addr0(0x25);
+        ym.write_data0(0x00);
+
+        // Enable Timer A (Bit 2) and Load A (Bit 0) -> 0x05
+        ym.write_addr0(0x27);
+        ym.write_data0(0x05);
+
+        assert_eq!(ym.timer_a_count, 147456);
+
+        // Step less than period
+        ym.step(1000);
+        assert_eq!(ym.status & 0x01, 0);
+
+        // Step remaining
+        ym.step(147456 - 1000);
+        // Should overflow now
+        assert_eq!(ym.status & 0x01, 0x01);
+
+        // Timer should have reloaded
+        assert!(ym.timer_a_count > 0);
+    }
+
+    #[test]
+    fn test_timer_b() {
+        let mut ym = Ym2612::new();
+
+        // Set Timer B period
+        // Reg 0x26 = 0x00
+        // N = 0
+        // Period = (256 - 0) * 2304 = 589824 cycles
+        ym.write_addr0(0x26);
+        ym.write_data0(0x00);
+
+        // Enable Timer B (Bit 3) and Load B (Bit 1) -> 0x0A (0000 1010)
+        ym.write_addr0(0x27);
+        ym.write_data0(0x0A);
+
+        assert_eq!(ym.timer_b_count, 589824);
+
+        // Step
+        ym.step(589824);
+        assert_eq!(ym.status & 0x02, 0x02);
+    }
+
+    #[test]
+    fn test_timer_reset_flags() {
+        let mut ym = Ym2612::new();
+        ym.status = 0x03; // Both flags set
+
+        // Reset A (Bit 4) -> 0x10
+        // Preserve Load/Enable bits if we wanted, but writing 0x10 disables them unless we set them too.
+        // Actually writing 0x10 sets Load=0, Enable=0. So it stops timers too.
+        ym.write_addr0(0x27);
+        ym.write_data0(0x10);
+
+        assert_eq!(ym.status & 0x01, 0x00); // A cleared
+        assert_eq!(ym.status & 0x02, 0x02); // B stays
+
+        // Reset B (Bit 5) -> 0x20
+        ym.write_addr0(0x27);
+        ym.write_data0(0x20);
+        assert_eq!(ym.status & 0x02, 0x00); // B cleared
     }
 }
