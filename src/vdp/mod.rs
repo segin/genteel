@@ -17,6 +17,19 @@
 use crate::debugger::Debuggable;
 use serde_json::{json, Value};
 
+struct SpriteAttributes {
+    v_pos: u16,
+    h_pos: u16,
+    h_size: u8, // tiles
+    v_size: u8, // tiles
+    link: u8,
+    priority: bool,
+    palette: u8,
+    v_flip: bool,
+    h_flip: bool,
+    base_tile: u16,
+}
+
 /// Video Display Processor (VDP)
 #[derive(Debug)]
 pub struct Vdp {
@@ -447,6 +460,76 @@ impl Vdp {
         self.render_sprites(line, true);
     }
 
+    fn fetch_sprite_attributes(&self, sat_base: usize, index: u8) -> SpriteAttributes {
+        let addr = sat_base + (index as usize * 8);
+
+        let cur_v = (((self.vram[addr] as u16) << 8) | (self.vram[addr + 1] as u16)) & 0x03FF;
+        let v_pos = cur_v.wrapping_sub(128);
+
+        let size = self.vram[addr + 2];
+        let h_size = ((size >> 2) & 0x03) + 1;
+        let v_size = (size & 0x03) + 1;
+
+        let link = self.vram[addr + 3] & 0x7F;
+
+        let attr = ((self.vram[addr + 4] as u16) << 8) | (self.vram[addr + 5] as u16);
+        let priority = (attr & 0x8000) != 0;
+        let palette = ((attr >> 13) & 0x03) as u8;
+        let v_flip = (attr & 0x1000) != 0;
+        let h_flip = (attr & 0x0800) != 0;
+        let base_tile = attr & 0x07FF;
+
+        let cur_h = (((self.vram[addr + 6] as u16) << 8) | (self.vram[addr + 7] as u16)) & 0x03FF;
+        let h_pos = cur_h.wrapping_sub(128);
+
+        SpriteAttributes {
+            v_pos,
+            h_pos,
+            h_size,
+            v_size,
+            link,
+            priority,
+            palette,
+            v_flip,
+            h_flip,
+            base_tile,
+        }
+    }
+
+    fn render_sprite_scanline(&mut self, line: u16, attr: &SpriteAttributes, line_offset: usize, screen_width: u16) {
+        let sprite_h_px = (attr.h_size as u16) * 8;
+        let sprite_v_px = (attr.v_size as u16) * 8;
+
+        let py = line - attr.v_pos;
+        let fetch_py = if attr.v_flip { (sprite_v_px - 1) - py } else { py };
+
+        let tile_v_offset = fetch_py / 8;
+        let pixel_v = fetch_py % 8;
+
+        for px in 0..sprite_h_px {
+            let screen_x = attr.h_pos.wrapping_add(px);
+            if screen_x >= screen_width { continue; }
+
+            let fetch_px = if attr.h_flip { (sprite_h_px - 1) - px } else { px };
+            let tile_h_offset = fetch_px / 8;
+            let pixel_h = fetch_px % 8;
+
+            // In a multi-tile sprite, tiles are arranged vertically first
+            let tile_idx = attr.base_tile + (tile_h_offset * attr.v_size as u16) + tile_v_offset;
+
+            let pattern_addr = (tile_idx * 32) + (pixel_v * 4) + (pixel_h / 2);
+            if pattern_addr as usize + 4 > 0x10000 { continue; }
+
+            let byte = self.vram[pattern_addr as usize];
+            let color_idx = if pixel_h % 2 == 0 { byte >> 4 } else { byte & 0x0F };
+
+            if color_idx != 0 {
+                let color = self.get_cram_color(attr.palette, color_idx);
+                self.framebuffer[line_offset + screen_x as usize] = color;
+            }
+        }
+    }
+
     fn render_sprites(&mut self, line: u16, priority_filter: bool) {
         let sat_base = self.sprite_table_address() as usize;
         let mut sprite_idx = 0;
@@ -459,64 +542,19 @@ impl Vdp {
         // SAT structure is 8 bytes per sprite
         // We follow the 'link' pointer starting from sprite 0
         loop {
-            let addr = sat_base + (sprite_idx as usize * 8);
-            if addr + 8 > 0x10000 { break; }
+            // Check SAT boundary
+            if sat_base + (sprite_idx as usize * 8) + 8 > 0x10000 { break; }
 
-            let cur_v = (((self.vram[addr] as u16) << 8) | (self.vram[addr + 1] as u16)) & 0x03FF;
-            let v_pos = cur_v.wrapping_sub(128);
-            
-            let size = self.vram[addr + 2];
-            let sprite_h_tiles = ((size >> 2) & 0x03) + 1;
-            let sprite_v_tiles = (size & 0x03) + 1;
-            let sprite_h_px = sprite_h_tiles * 8;
-            let sprite_v_px = sprite_v_tiles * 8;
-            
-            let link = self.vram[addr + 3] & 0x7F;
-            
-            let attr = ((self.vram[addr + 4] as u16) << 8) | (self.vram[addr + 5] as u16);
-            let priority = (attr & 0x8000) != 0;
-            let palette = ((attr >> 13) & 0x03) as u8;
-            let v_flip = (attr & 0x1000) != 0;
-            let h_flip = (attr & 0x0800) != 0;
-            let base_tile = attr & 0x07FF;
-            
-            let cur_h = (((self.vram[addr + 6] as u16) << 8) | (self.vram[addr + 7] as u16)) & 0x03FF;
-            let h_pos = cur_h.wrapping_sub(128);
+            let attr = self.fetch_sprite_attributes(sat_base, sprite_idx as u8);
 
             // Check if sprite is visible on this line
-            if priority == priority_filter && line >= v_pos && line < v_pos + sprite_v_px as u16 {
-                let py = line - v_pos;
-                let fetch_py = if v_flip { (sprite_v_px as u16 - 1) - py } else { py };
-                
-                let tile_v_offset = fetch_py / 8;
-                let pixel_v = fetch_py % 8;
-                
-                for px in 0..sprite_h_px {
-                    let screen_x = h_pos + px as u16;
-                    if screen_x >= screen_width { continue; }
-                    
-                    let fetch_px = if h_flip { (sprite_h_px as u16 - 1) - px as u16 } else { px as u16 };
-                    let tile_h_offset = fetch_px / 8;
-                    let pixel_h = fetch_px % 8;
-                    
-                    // In a multi-tile sprite, tiles are arranged vertically first
-                    let tile_idx = base_tile + (tile_h_offset * sprite_v_tiles as u16) + tile_v_offset;
-                    
-                    let pattern_addr = (tile_idx * 32) + (pixel_v * 4) + (pixel_h / 2);
-                    if pattern_addr as usize + 4 > 0x10000 { continue; }
-
-                    let byte = self.vram[pattern_addr as usize];
-                    let color_idx = if pixel_h % 2 == 0 { byte >> 4 } else { byte & 0x0F };
-                    
-                    if color_idx != 0 {
-                        let color = self.get_cram_color(palette, color_idx);
-                        self.framebuffer[line_offset + screen_x as usize] = color;
-                    }
-                }
+            let sprite_v_px = (attr.v_size as u16) * 8;
+            if attr.priority == priority_filter && line >= attr.v_pos && line < attr.v_pos + sprite_v_px {
+                self.render_sprite_scanline(line, &attr, line_offset, screen_width);
             }
 
             sprite_count += 1;
-            sprite_idx = link;
+            sprite_idx = attr.link;
             if sprite_idx == 0 || sprite_count >= max_sprites {
                 break;
             }
