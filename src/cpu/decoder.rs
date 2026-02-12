@@ -1134,4 +1134,27 @@ mod tests {
             }
         );
     }
+
+    #[test]
+    fn test_decode_nbcd() {
+        // Valid NBCD modes
+        assert_eq!(decode(0x4800), Instruction::Nbcd { dst: AddressingMode::DataRegister(0) });
+        assert_eq!(decode(0x4810), Instruction::Nbcd { dst: AddressingMode::AddressIndirect(0) });
+        assert_eq!(decode(0x4818), Instruction::Nbcd { dst: AddressingMode::AddressPostIncrement(0) });
+        assert_eq!(decode(0x4820), Instruction::Nbcd { dst: AddressingMode::AddressPreDecrement(0) });
+        assert_eq!(decode(0x4828), Instruction::Nbcd { dst: AddressingMode::AddressDisplacement(0) });
+        assert_eq!(decode(0x4830), Instruction::Nbcd { dst: AddressingMode::AddressIndex(0) });
+        assert_eq!(decode(0x4838), Instruction::Nbcd { dst: AddressingMode::AbsoluteShort });
+        assert_eq!(decode(0x4839), Instruction::Nbcd { dst: AddressingMode::AbsoluteLong });
+
+        // Invalid NBCD modes
+        // NBCD A0 (0x4808)
+        assert_eq!(decode(0x4808), Instruction::Unimplemented { opcode: 0x4808 });
+        // NBCD #<data> (0x483C)
+        assert_eq!(decode(0x483C), Instruction::Unimplemented { opcode: 0x483C });
+        // NBCD d16(PC) (0x483A)
+        assert_eq!(decode(0x483A), Instruction::Unimplemented { opcode: 0x483A });
+        // NBCD d8(PC,Xn) (0x483B)
+        assert_eq!(decode(0x483B), Instruction::Unimplemented { opcode: 0x483B });
+    }
 }
