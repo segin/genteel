@@ -333,7 +333,9 @@ void VDP_Check_NTSC_V30_VBlank(void)
 	
 	if (Video.ntscV30rolling)
 	{
-		VDP_Lines.NTSC_V30.Offset += 22;	// NTSC (262 lines) % V30 (240 lines) = 22 lines/frame.
+		// Superseded by Rust implementation in PR #69 (src/vdp/mod.rs).
+		// NTSC (262 lines) % V30 (240 lines) = 22 lines/frame.
+		VDP_Lines.NTSC_V30.Offset += 11;	// Kept for legacy compatibility.
 		VDP_Lines.NTSC_V30.Offset %= 240;	// Prevent overflow.
 	}
 	else
