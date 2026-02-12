@@ -14,6 +14,7 @@
 //! - Envelope Generator (Attack, Decay, Sustain, Release)
 //! - LFO
 //! - Feedback/Algorithm
+//!
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Bank {
@@ -40,9 +41,9 @@ pub struct Ym2612 {
     /// Bit 0: Timer A overflow
     pub status: u8,
 
-    /// Timer A counter (counts down)
+    /// Timer A counter (counts down, Master Cycles)
     timer_a_count: i32,
-    /// Timer B counter (counts down)
+    /// Timer B counter (counts down, Master Cycles)
     timer_b_count: i32,
 }
 
@@ -70,9 +71,10 @@ impl Ym2612 {
         self.status
     }
 
-    /// Update timers based on elapsed cycles
+    /// Update timers based on elapsed M68k cycles
     pub fn step(&mut self, cycles: u32) {
-        let cycles = cycles as i32;
+        // Convert M68k cycles to Master Cycles (x7)
+        let cycles = (cycles * 7) as i32;
         let ctrl = self.registers[0][0x27];
 
         // Timer A
@@ -276,55 +278,70 @@ mod tests {
     fn test_timer_a() {
         let mut ym = Ym2612::new();
 
-        // Set Timer A period
-        // Reg 0x24 (MSB) = 0x00
-        // Reg 0x25 (LSB) = 0x00
-        // N = 0
-        // Period = (1024 - 0) * 144 = 147456 cycles
+        // Configure Timer A
+        // N = 1000. Period = (1024 - 1000) * 144 = 24 * 144 = 3456 Master Cycles.
+        // Reg 0x24 (High 8 bits) = 1000 >> 2 = 250 (0xFA)
+        // Reg 0x25 (Low 2 bits) = 1000 & 3 = 0
         ym.write_addr0(0x24);
-        ym.write_data0(0x00);
+        ym.write_data0(0xFA);
         ym.write_addr0(0x25);
         ym.write_data0(0x00);
 
-        // Enable Timer A (Bit 2) and Load A (Bit 0) -> 0x05
+        // Enable Timer A (Bit 0) and Enable Flag (Bit 2) -> 0x05
         ym.write_addr0(0x27);
         ym.write_data0(0x05);
 
-        assert_eq!(ym.timer_a_count, 147456);
+        assert_eq!(ym.timer_a_count, 3456);
 
-        // Step less than period
-        ym.step(1000);
-        assert_eq!(ym.status & 0x01, 0);
+        // Step. Need 3456 Master Cycles.
+        // Step takes 68k cycles. 1 68k = 7 Master.
+        // Need 3456 / 7 = 493.7 68k cycles.
 
-        // Step remaining
-        ym.step(147456 - 1000);
-        // Should overflow now
-        assert_eq!(ym.status & 0x01, 0x01);
+        ym.step(493);
+        assert_eq!(ym.status & 0x01, 0, "Timer A should not have fired yet");
 
-        // Timer should have reloaded
-        assert!(ym.timer_a_count > 0);
+        ym.step(1); // Total 494 * 7 = 3458 > 3456
+        assert_eq!(ym.status & 0x01, 0x01, "Timer A should have fired");
+
+        // Reset Flag
+        // Write 0x05 | 0x10 (Reset Flag A) = 0x15
+        ym.write_addr0(0x27);
+        ym.write_data0(0x15);
+        assert_eq!(ym.status & 0x01, 0, "Timer A flag should be cleared");
+
+        // Wait for next overflow
+        ym.step(494);
+        assert_eq!(ym.status & 0x01, 0x01, "Timer A should fire again");
     }
 
     #[test]
     fn test_timer_b() {
         let mut ym = Ym2612::new();
 
-        // Set Timer B period
-        // Reg 0x26 = 0x00
-        // N = 0
-        // Period = (256 - 0) * 2304 = 589824 cycles
+        // Configure Timer B
+        // N = 200. Period = (256 - 200) * 2304 = 56 * 2304 = 129024 Master Cycles.
+        // Reg 0x26 = 200 (0xC8)
         ym.write_addr0(0x26);
-        ym.write_data0(0x00);
+        ym.write_data0(0xC8);
 
-        // Enable Timer B (Bit 3) and Load B (Bit 1) -> 0x0A (0000 1010)
+        // Enable Timer B (Bit 1) and Enable Flag (Bit 3) -> 0x0A
         ym.write_addr0(0x27);
         ym.write_data0(0x0A);
 
-        assert_eq!(ym.timer_b_count, 589824);
+        assert_eq!(ym.timer_b_count, 129024);
 
-        // Step
-        ym.step(589824);
-        assert_eq!(ym.status & 0x02, 0x02);
+        // Need 129024 / 7 = 18432.
+
+        ym.step(18431);
+        assert_eq!(ym.status & 0x02, 0, "Timer B should not have fired yet");
+
+        ym.step(2);
+        assert_eq!(ym.status & 0x02, 0x02, "Timer B should have fired");
+
+        // Reset Flag
+        ym.write_addr0(0x27);
+        ym.write_data0(0x0A | 0x20); // 0x2A
+        assert_eq!(ym.status & 0x02, 0, "Timer B flag should be cleared");
     }
 
     #[test]
@@ -345,5 +362,37 @@ mod tests {
         ym.write_addr0(0x27);
         ym.write_data0(0x20);
         assert_eq!(ym.status & 0x02, 0x00); // B cleared
+    }
+
+    #[test]
+    fn test_timer_load_restart() {
+        let mut ym = Ym2612::new();
+
+        // N = 1023. Period 144. (20.5 68k cycles)
+        ym.write_addr0(0x24);
+        ym.write_data0(0xFF);
+        ym.write_addr0(0x25);
+        ym.write_data0(0x03);
+
+        // Enable Timer A with Flag (0x05)
+        ym.write_addr0(0x27);
+        ym.write_data0(0x05);
+
+        ym.step(15); // 105 master cycles.
+
+        // Stop (0x04 - keep flag enabled but stop timer? or 0x00)
+        // Write 0x04 (Flag enable only, Load=0).
+        ym.write_addr0(0x27);
+        ym.write_data0(0x04);
+
+        // Start (0x05). 0->1 transition on Bit 0. Reloads.
+        ym.write_addr0(0x27);
+        ym.write_data0(0x05);
+
+        ym.step(15); // 105 master. Total 105 (if reloaded).
+        assert_eq!(ym.status & 0x01, 0, "Should have reloaded and not fired");
+
+        ym.step(10); // +70 = 175. Fire.
+        assert_eq!(ym.status & 0x01, 0x01);
     }
 }

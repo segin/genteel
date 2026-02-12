@@ -192,38 +192,57 @@ impl ControllerPort {
     /// Read 6-button controller data
     fn read_6button(&self) -> u8 {
         match self.th_counter {
-            0 | 2 | 4 => self.read_3button(), // Same as 3-button TH=1/0
-
-            3 => {
-                // Fourth cycle: TH=0 returns low nibble = 0000
-                if !self.th_state {
-                    let mut data = 0x00;
-                    if !self.state.up   { data |= 0x01; } else { data &= !0x01; }
-                    if !self.state.down { data |= 0x02; } else { data &= !0x02; }
-                    !data & 0x0F
-                } else {
-                    self.read_3button()
-                }
-            }
-
-            5 => {
-                // Sixth cycle: TH=0 returns X, Y, Z, Mode
-                if !self.th_state {
-                    let mut data = 0x0F; // High nibble
-
-                    if !self.state.z    { data |= 0x01; } else { data &= !0x01; }
-                    if !self.state.y    { data |= 0x02; } else { data &= !0x02; }
-                    if !self.state.x    { data |= 0x04; } else { data &= !0x04; }
-                    if !self.state.mode { data |= 0x08; } else { data &= !0x08; }
-
-                    !data & 0x0F | 0x70
-                } else {
-                    self.read_3button()
-                }
-            }
-
+            3 => self.read_cycle3(),
+            5 => self.read_extra_buttons(),
+            // Cycles 0, 1, 2, 4 and others use standard 3-button logic
             _ => self.read_3button(),
         }
+    }
+
+    /// Read data for cycle 3 (controller identification)
+    fn read_cycle3(&self) -> u8 {
+        // If TH=1, standard 3-button logic applies
+        if self.th_state {
+            return self.read_3button();
+        }
+
+        // Fourth cycle: TH=0 returns controller ID in low nibble
+        // Note: Original implementation returns Active High (1=Pressed) for Up/Down
+        // and sets bits 2-3 to 1. This behavior is preserved here.
+        let mut data = 0x0C; // Bits 2 and 3 set
+        if self.state.up {
+            data |= 0x01;
+        }
+        if self.state.down {
+            data |= 0x02;
+        }
+        data
+    }
+
+    /// Read data for cycle 5 (extra buttons X, Y, Z, Mode)
+    fn read_extra_buttons(&self) -> u8 {
+        // If TH=1, standard 3-button logic applies
+        if self.th_state {
+            return self.read_3button();
+        }
+
+        // Sixth cycle: TH=0 returns X, Y, Z, Mode
+        // Note: Original implementation returns Active High (1=Pressed) for these buttons.
+        // This behavior is preserved here.
+        let mut data = 0x70; // High nibble bits 4-6 set
+        if self.state.z {
+            data |= 0x01;
+        }
+        if self.state.y {
+            data |= 0x02;
+        }
+        if self.state.x {
+            data |= 0x04;
+        }
+        if self.state.mode {
+            data |= 0x08;
+        }
+        data
     }
 
     /// Write to the data port (sets TH)
@@ -421,5 +440,69 @@ mod tests {
         }
 
         assert!(io.port1.state.a);
+    }
+
+    #[test]
+    fn test_6button_cycles() {
+        let mut port = ControllerPort::new(ControllerType::SixButton);
+
+        // Set state: Up=Pressed, Down=Released, Z=Pressed, Y=Released
+        port.state.up = true;
+        port.state.down = false;
+        port.state.z = true;
+        port.state.y = false;
+        port.state.x = false;
+        port.state.mode = false;
+
+        // Cycle 0 Start: TH=1, Cnt=0
+        // Verify TH=1 read
+        // read_3button: 0x7F & !0x01 = 0x7E
+        assert_eq!(port.read_data(), 0x7E, "Start (TH=1)");
+
+        // Pulse 1 (Fall -> Cnt=1)
+        port.write_data(0x00);
+        // read_3button(TH=0): 0x33. Up=Pressed -> 0x33 & !0x01 = 0x32.
+        assert_eq!(port.read_data(), 0x32, "Pulse 1 Fall (TH=0)");
+
+        // Pulse 1 (Rise)
+        port.write_data(0x40);
+        assert_eq!(port.read_data(), 0x7E, "Pulse 1 Rise (TH=1)");
+
+        // Pulse 2 (Fall -> Cnt=2)
+        port.write_data(0x00);
+        assert_eq!(port.read_data(), 0x32, "Pulse 2 Fall (TH=0)");
+
+        // Pulse 2 (Rise)
+        port.write_data(0x40);
+        assert_eq!(port.read_data(), 0x7E, "Pulse 2 Rise (TH=1)");
+
+        // Pulse 3 (Fall -> Cnt=3) ** ID Check **
+        port.write_data(0x00);
+        // Logic: Bits 2-3 set (0x0C).
+        // Up=Pressed (Active High) -> Bit 0 set.
+        // Down=Released (Active High) -> Bit 1 clear.
+        // Expected: 0x0C | 0x01 = 0x0D.
+        assert_eq!(port.read_data(), 0x0D, "Pulse 3 Fall (ID Check)");
+
+        // Pulse 3 (Rise)
+        port.write_data(0x40);
+        assert_eq!(port.read_data(), 0x7E, "Pulse 3 Rise (TH=1)");
+
+        // Pulse 4 (Fall -> Cnt=4)
+        port.write_data(0x00);
+        assert_eq!(port.read_data(), 0x32, "Pulse 4 Fall (TH=0)");
+
+        // Pulse 4 (Rise)
+        port.write_data(0x40);
+        assert_eq!(port.read_data(), 0x7E, "Pulse 4 Rise (TH=1)");
+
+        // Pulse 5 (Fall -> Cnt=5) ** Extra Buttons **
+        port.write_data(0x00);
+        // Logic: Bits 4-6 set (0x70).
+        // Z=Pressed (Active High) -> Bit 0 set.
+        // Y=Released -> Bit 1 clear.
+        // X, Mode Released -> Bits 2, 3 clear.
+        // Expected: 0x70 | 0x01 = 0x71.
+        assert_eq!(port.read_data(), 0x71, "Pulse 5 Fall (Extra Buttons)");
     }
 }
