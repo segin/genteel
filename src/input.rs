@@ -92,7 +92,7 @@ impl InputScript {
 
         // Minimum 8 chars for 3-button, 12 for 6-button
         if chars.len() < 8 {
-            return Err(format!("Invalid button string length: expected at least 8 chars, got {}", chars.len()));
+            return Err(format!("Input string too short: expected at least 8 characters, got {}", chars.len()));
         }
 
         state.up    = chars[0] == 'U';
@@ -311,15 +311,16 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_buttons_short() {
-        let result = InputScript::parse_buttons("short");
-        assert!(result.is_err(), "Expected error for short input string");
+    fn test_parse_buttons_short_string() {
+        let result = InputScript::parse_buttons("ABC");
+        assert!(result.is_err(), "Expected error for short string, got {:?}", result);
     }
 
     #[test]
-    fn test_input_recording() {
+    fn test_recording_functionality() {
         let mut manager = InputManager::new();
 
+        // Start recording
         manager.start_recording();
         assert!(manager.recording);
         assert!(manager.recorded.is_empty());
@@ -327,26 +328,37 @@ mod tests {
         // Frame 0: Press A
         let mut input0 = FrameInput::default();
         input0.p1.a = true;
-        manager.record(input0);
+        manager.record(input0.clone());
         manager.advance_frame();
 
         // Frame 1: Press B
         let mut input1 = FrameInput::default();
         input1.p1.b = true;
-        manager.record(input1);
+        manager.record(input1.clone());
         manager.advance_frame();
 
+        // Frame 2: Press Start
+        let mut input2 = FrameInput::default();
+        input2.p1.start = true;
+        manager.record(input2.clone());
+        // Don't advance frame after last record
+
+        // Stop recording
         let script = manager.stop_recording();
         assert!(!manager.recording);
 
-        assert_eq!(script.max_frame, 1);
+        // Verify script content
+        assert_eq!(script.max_frame, 2);
 
-        let f0 = script.get(0).expect("Frame 0 missing");
+        let f0 = script.get(0).unwrap();
         assert!(f0.p1.a);
         assert!(!f0.p1.b);
 
-        let f1 = script.get(1).expect("Frame 1 missing");
-        assert!(!f1.p1.a);
+        let f1 = script.get(1).unwrap();
         assert!(f1.p1.b);
+        assert!(!f1.p1.a);
+
+        let f2 = script.get(2).unwrap();
+        assert!(f2.p1.start);
     }
 }
