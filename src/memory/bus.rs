@@ -118,13 +118,7 @@ impl Bus {
             // Z80 Address Space: 0xA00000-0xA0FFFF
             0xA00000..=0xA01FFF => {
                 // Z80 RAM (8KB)
-                // Hack: Sonic 1 waits for 0xA01FFD to be 0x80 to indicate Z80 ready.
-                // Our Z80 emulation isn't setting this fast enough or correctly.
-                if addr == 0xA01FFD {
-                     0x80
-                } else {
-                     self.z80_ram[(addr & 0x1FFF) as usize]
-                }
+                self.z80_ram[(addr & 0x1FFF) as usize]
             }
             // YM2612 from 68k: 0xA04000-0xA04003
             0xA04000..=0xA04003 => {
@@ -267,6 +261,24 @@ impl Bus {
     pub fn read_word(&mut self, address: u32) -> u16 {
         let addr = address & 0xFFFFFF;
         
+        // ROM Fast Path
+        if addr <= 0x3FFFFF {
+            let idx = addr as usize;
+            if idx + 1 < self.rom.len() {
+                // SAFETY: We checked bounds above
+                let high = unsafe { *self.rom.get_unchecked(idx) } as u16;
+                let low = unsafe { *self.rom.get_unchecked(idx + 1) } as u16;
+                return (high << 8) | low;
+            } else if idx < self.rom.len() {
+                // Partial read at end of ROM
+                let high = self.rom[idx] as u16;
+                let low = 0xFF; // Unmapped
+                return (high << 8) | low;
+            } else {
+                return 0xFFFF; // Unmapped
+            }
+        }
+
         // VDP Data Port (Word access)
         if addr >= 0xC00000 && addr <= 0xC00003 {
             return self.vdp.read_data();
@@ -278,6 +290,22 @@ impl Bus {
         // VDP H/V Counter
         if addr >= 0xC00008 && addr <= 0xC0000F {
             return self.vdp.read_hv_counter();
+        }
+
+        // Optimize ROM access (0x000000-0x3FFFFF)
+        if addr <= 0x3FFFFE {
+            let rom_addr = addr as usize;
+            if rom_addr + 1 < self.rom.len() {
+                return ((self.rom[rom_addr] as u16) << 8) | (self.rom[rom_addr + 1] as u16);
+            }
+        }
+
+        // Optimize Work RAM access (0xE00000-0xFFFFFF, 64KB mirrored)
+        if addr >= 0xE00000 {
+            let r_addr = (addr & 0xFFFF) as usize;
+            if r_addr < 0xFFFF {
+                return ((self.work_ram[r_addr] as u16) << 8) | (self.work_ram[r_addr + 1] as u16);
+            }
         }
 
         let high = self.read_byte(address) as u16;
@@ -303,12 +331,49 @@ impl Bus {
             return;
         }
 
+        // Optimize Work RAM access
+        if addr >= 0xE00000 {
+            let r_addr = (addr & 0xFFFF) as usize;
+            if r_addr < 0xFFFF {
+                self.work_ram[r_addr] = (value >> 8) as u8;
+                self.work_ram[r_addr + 1] = value as u8;
+                return;
+            }
+        }
+
         self.write_byte(address, (value >> 8) as u8);
         self.write_byte(address.wrapping_add(1), value as u8);
     }
 
     /// Read a long word (32-bit, big-endian) from the memory map
     pub fn read_long(&mut self, address: u32) -> u32 {
+        let addr = address & 0xFFFFFF;
+
+        // ROM Fast Path
+        if addr <= 0x3FFFFF {
+            let idx = addr as usize;
+            if idx + 3 < self.rom.len() {
+                // SAFETY: We checked bounds above
+                let b0 = unsafe { *self.rom.get_unchecked(idx) } as u32;
+                let b1 = unsafe { *self.rom.get_unchecked(idx + 1) } as u32;
+                let b2 = unsafe { *self.rom.get_unchecked(idx + 2) } as u32;
+                let b3 = unsafe { *self.rom.get_unchecked(idx + 3) } as u32;
+                return (b0 << 24) | (b1 << 16) | (b2 << 8) | b3;
+            }
+        }
+
+
+        // Optimize Work RAM access
+        if addr >= 0xE00000 {
+            let r_addr = (addr & 0xFFFF) as usize;
+            if r_addr <= 0xFFFC {
+                return ((self.work_ram[r_addr] as u32) << 24) |
+                       ((self.work_ram[r_addr + 1] as u32) << 16) |
+                       ((self.work_ram[r_addr + 2] as u32) << 8) |
+                       (self.work_ram[r_addr + 3] as u32);
+            }
+        }
+
         let high = self.read_word(address) as u32;
         let low = self.read_word(address.wrapping_add(2)) as u32;
         (high << 16) | low
@@ -316,30 +381,39 @@ impl Bus {
 
     /// Write a long word (32-bit, big-endian) to the memory map
     pub fn write_long(&mut self, address: u32, value: u32) {
+        let addr = address & 0xFFFFFF;
+
+        // Optimize Work RAM access
+        if addr >= 0xE00000 {
+            let r_addr = (addr & 0xFFFF) as usize;
+            if r_addr <= 0xFFFC {
+                self.work_ram[r_addr] = (value >> 24) as u8;
+                self.work_ram[r_addr + 1] = (value >> 16) as u8;
+                self.work_ram[r_addr + 2] = (value >> 8) as u8;
+                self.work_ram[r_addr + 3] = value as u8;
+                return;
+            }
+        }
+
         self.write_word(address, (value >> 16) as u16);
         self.write_word(address.wrapping_add(2), value as u16);
     }
     // === DMA ===
 
     fn run_dma(&mut self) {
-        // VDP registers:
-        // 0x13/0x14: DMA Length (low/high)
-        // 0x15/0x16/0x17: DMA Source (low/mid/high)
-        
-        let mode = self.vdp.dma_mode();
-        let length = {
-            let l = ((self.vdp.registers[0x14] as u32) << 8) | (self.vdp.registers[0x13] as u32);
-            if l == 0 { 0x10000 } else { l }
-        };
-        let mut source = ((self.vdp.registers[0x17] as u32 & 0x3F) << 17)
-                   | ((self.vdp.registers[0x16] as u32) << 9)
-                   | ((self.vdp.registers[0x15] as u32) << 1);
-        
-        if mode >= 2 {
+        if !self.vdp.dma_pending {
+            return;
+        }
+
+        if !self.vdp.is_dma_transfer() {
             self.vdp.execute_dma();
             self.vdp.dma_pending = false;
             return;
         }
+
+        // 68k Transfer (Mode 0 or 1)
+        let length = self.vdp.dma_length();
+        let mut source = self.vdp.dma_source_transfer();
 
         // If it's a 68k transfer (mode bit 7=0), bit 22 decides if it's ROM or RAM
         // Register 23 bit 6 MUST be 0 for 68k DMA.
@@ -510,5 +584,40 @@ mod tests {
         // Reserved area
         assert_eq!(bus.read_byte(0x800000), 0xFF);
     }
-}
 
+
+    #[test]
+    fn test_dma_transfer_ram_to_vram() {
+        let mut bus = Bus::new();
+        // 1. Write data to RAM at 0xFF0000 (mirrored at 0xE00000)
+        // 0xFF0000 = 0x12, 0xFF0001 = 0x34
+        bus.write_word(0xFF0000, 0x1234);
+
+        // 2. Configure VDP registers for DMA
+        // DMA Length: 1 word (Reg 19=1, Reg 20=0)
+        bus.vdp.registers[19] = 0x01;
+        bus.vdp.registers[20] = 0x00;
+
+        // DMA Source: 0xFF0000
+        // Bus logic: source = ((Reg23 & 0x3F) << 17) | (Reg22 << 9) | (Reg21 << 1).
+        // We set Reg 23 to 0x60 (Mode 1, Bit 22 set).
+        // (0x20 << 17) = 0x400000.
+        // Bus logic sees bit 22 set, ORs with 0xFF0000 -> 0xFF0000.
+        bus.vdp.registers[21] = 0x00;
+        bus.vdp.registers[22] = 0x00;
+        bus.vdp.registers[23] = 0x60;
+
+        // Enable DMA in Reg 1 (Bit 4)
+        bus.vdp.registers[1] |= 0x10;
+
+        // 3. Trigger DMA via Control Port
+        // Word 1: VRAM Write (CD=1) -> 0x4000
+        bus.write_word(0xC00004, 0x4000);
+        // Word 2: CD5=1 -> 0x2000.
+        bus.write_word(0xC00004, 0x0080);
+
+        // 4. Assert VRAM content
+        assert_eq!(bus.vdp.vram[0], 0x12);
+        assert_eq!(bus.vdp.vram[1], 0x34);
+    }
+}
