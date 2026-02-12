@@ -39,6 +39,8 @@ pub struct Emulator {
     pub audio_buffer: Vec<i16>,
     pub apu_accumulator: f32,
     pub internal_frame_count: u64,
+    pub last_z80_req: bool,
+    pub z80_trace_count: u32,
 }
 
 impl Emulator {
@@ -70,6 +72,8 @@ impl Emulator {
             audio_buffer: Vec::with_capacity(735 * 2), // Pre-allocate approx 1 frame
             apu_accumulator: 0.0,
             internal_frame_count: 0,
+            last_z80_req: false,
+            z80_trace_count: 0,
         };
         
         emulator.cpu.reset();
@@ -224,26 +228,20 @@ impl Emulator {
                 // Z80 execution
                 let (z80_can_run, z80_is_reset) = {
                     let bus = self.bus.borrow();
-                    static mut LAST_REQ: bool = false;
-                    unsafe {
-                        let prev = LAST_REQ;
-                        if bus.z80_bus_request != prev {
-                             eprintln!("DEBUG: Bus Req Changed: {} -> {} at 68k PC={:06X}", prev, bus.z80_bus_request, self.cpu.pc);
-                             LAST_REQ = bus.z80_bus_request;
-                        }
+                    let prev = self.last_z80_req;
+                    if bus.z80_bus_request != prev {
+                         eprintln!("DEBUG: Bus Req Changed: {} -> {} at 68k PC={:06X}", prev, bus.z80_bus_request, self.cpu.pc);
+                         self.last_z80_req = bus.z80_bus_request;
                     }
                     (!bus.z80_reset && !bus.z80_bus_request, bus.z80_reset)
                 };
 
                 if z80_can_run && self.internal_frame_count > 0 {
-                     static mut Z80_TRACE_COUNT: u32 = 0;
-                     unsafe {
-                         if Z80_TRACE_COUNT < 5000 {
-                             self.z80.debug = true;
-                             Z80_TRACE_COUNT += 1; // Logic slightly wrong here (step count vs frame), but enables flag
-                         } else {
-                             self.z80.debug = false;
-                         }
+                     if self.z80_trace_count < 5000 {
+                         self.z80.debug = true;
+                         self.z80_trace_count += 1; // Logic slightly wrong here (step count vs frame), but enables flag
+                     } else {
+                         self.z80.debug = false;
                      }
                 } else {
                      self.z80.debug = false;
