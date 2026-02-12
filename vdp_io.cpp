@@ -804,7 +804,10 @@ uint16_t VDP_Read_Data(void)
 		
 		case 7:
 			// VSRam Read.
-			data = VSRam.u16[(VDP_Ctrl.Address & 0x7E) >> 1];
+			if ((VDP_Ctrl.Address & 0x7E) < 80)
+				data = VSRam.u16[(VDP_Ctrl.Address & 0x7E) >> 1];
+			else
+				data = 0;
 			break;
 		
 		default:
@@ -1055,12 +1058,12 @@ void VDP_Write_Data_Word(uint16_t data)
 			// VSRam Write.
 			// TODO: The Genesis Software Manual doesn't mention what happens
 			// with regards to odd address writes for VSRam.
-			// TODO: VSRam is 80 bytes, but we're allowing a maximum of 128 bytes here...
 			VDP_Flags.CRam = 1;
 			address &= 0x7E;	// VSRam is 80 bytes. (40 words)
 			
 			// Write the word to VSRam.
-			VSRam.u16[address>>1] = data;
+			if (address < 80)
+				VSRam.u16[address>>1] = data;
 			
 			// Increment the address register.
 			VDP_Ctrl.Address += VDP_Reg.m5.Auto_Inc;
@@ -1245,7 +1248,8 @@ static inline void T_DMA_Loop(unsigned int src_address, unsigned int dest_addres
 				break;
 			
 			case DMA_DEST_VSRAM:
-				VSRam.u16[dest_address >> 1] = w;
+				if (dest_address < 80)
+					VSRam.u16[dest_address >> 1] = w;
 				break;
 			
 			default:	// to make gcc shut up
@@ -1255,12 +1259,20 @@ static inline void T_DMA_Loop(unsigned int src_address, unsigned int dest_addres
 		dest_address = ((dest_address + VDP_Reg.m5.Auto_Inc) & 0xFFFF);
 		
 		// Check for CRam or VSRam destination overflow.
-		if (dest_component == DMA_DEST_CRAM ||
-		    dest_component == DMA_DEST_VSRAM)
+		if (dest_component == DMA_DEST_CRAM)
 		{
 			if (dest_address >= 0x80)
 			{
-				// CRam/VSRam overflow!
+				// CRam overflow!
+				length--;	// for this word
+				break;
+			}
+		}
+		else if (dest_component == DMA_DEST_VSRAM)
+		{
+			if (dest_address >= 80)
+			{
+				// VSRam overflow!
 				length--;	// for this word
 				break;
 			}
@@ -1386,12 +1398,20 @@ void VDP_Write_Ctrl(uint16_t data)
 	unsigned int dest_address = (VDP_Ctrl.Address & 0xFFFF);	// Dest Address
 	
 	// Check for CRam or VSRam destination overflow.
-	if (dest_component == DMA_DEST_CRAM ||
-	    dest_component == DMA_DEST_VSRAM)
+	if (dest_component == DMA_DEST_CRAM)
 	{
 		if (dest_address >= 0x80)
 		{
-			// CRam/VSRam overflow! Don't do anything.
+			// CRam overflow! Don't do anything.
+			VDP_Ctrl.DMA = 0;
+			return;
+		}
+	}
+	else if (dest_component == DMA_DEST_VSRAM)
+	{
+		if (dest_address >= 80)
+		{
+			// VSRam overflow! Don't do anything.
 			VDP_Ctrl.DMA = 0;
 			return;
 		}
