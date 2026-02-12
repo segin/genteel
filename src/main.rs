@@ -45,13 +45,13 @@ pub struct Emulator {
 impl Emulator {
     pub fn new() -> Self {
         let bus = Rc::new(RefCell::new(Bus::new()));
-        
+
         // M68k uses SharedBus wrapper for main Genesis bus access
         let cpu = Cpu::new(Box::new(SharedBus::new(bus.clone())));
-        
+
         // Z80 uses Z80Bus which routes to sound chips and banked 68k memory
         let z80_bus = Z80Bus::new(SharedBus::new(bus.clone()));
-        
+
         // Temporary null I/O implementation for Z80 ports
         #[derive(Debug)]
         struct NullIo;
@@ -59,7 +59,7 @@ impl Emulator {
             fn read_port(&mut self, _port: u16) -> u8 { 0xFF }
             fn write_port(&mut self, _port: u16, _value: u8) {}
         }
-        
+
         let z80 = Z80::new(Box::new(z80_bus), Box::new(NullIo));
 
         let mut emulator = Self {
@@ -74,10 +74,10 @@ impl Emulator {
             last_z80_bus_req: false,
             z80_trace_count: 0,
         };
-        
+
         emulator.cpu.reset();
         emulator.z80.reset();
-        
+
         emulator
     }
 
