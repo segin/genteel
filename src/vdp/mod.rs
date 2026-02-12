@@ -711,6 +711,8 @@ impl Default for Vdp {
 
 #[cfg(test)]
 mod tests_properties;
+#[cfg(test)]
+mod test_command;
 
 #[cfg(test)]
 mod tests {
