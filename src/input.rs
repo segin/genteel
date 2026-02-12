@@ -55,7 +55,7 @@ impl InputScript {
 
         for (line_num, line) in content.lines().enumerate() {
             let line = line.trim();
-            
+
             // Skip empty lines and comments
             if line.is_empty() || line.starts_with('#') {
                 continue;
@@ -69,9 +69,9 @@ impl InputScript {
             let frame: u64 = parts[0].trim().parse()
                 .map_err(|_| format!("Line {}: invalid frame number", line_num + 1))?;
 
-            let p1 = Self::parse_buttons(parts[1].trim())?;
+            let p1 = Self::parse_buttons(parts[1].trim());
             let p2 = if parts.len() > 2 {
-                Self::parse_buttons(parts[2].trim())?
+                Self::parse_buttons(parts[2].trim())
             } else {
                 ControllerState::default()
             };
@@ -86,31 +86,26 @@ impl InputScript {
     /// Parse button string to ControllerState
     /// Format: UDLRABCS for 3-button, UDLRABCSXYZM for 6-button
     /// Use '.' for released buttons
-    fn parse_buttons(s: &str) -> Result<ControllerState, String> {
+    fn parse_buttons(s: &str) -> ControllerState {
         let mut state = ControllerState::default();
-        let chars: Vec<char> = s.chars().collect();
+        let mut chars = s.chars();
 
-        // Minimum 8 chars for 3-button, 12 for 6-button
-        if chars.len() >= 8 {
-            state.up    = chars[0] == 'U';
-            state.down  = chars[1] == 'D';
-            state.left  = chars[2] == 'L';
-            state.right = chars[3] == 'R';
-            state.a     = chars[4] == 'A';
-            state.b     = chars[5] == 'B';
-            state.c     = chars[6] == 'C';
-            state.start = chars[7] == 'S';
-        }
+        state.up    = chars.next() == Some('U');
+        state.down  = chars.next() == Some('D');
+        state.left  = chars.next() == Some('L');
+        state.right = chars.next() == Some('R');
+        state.a     = chars.next() == Some('A');
+        state.b     = chars.next() == Some('B');
+        state.c     = chars.next() == Some('C');
+        state.start = chars.next() == Some('S');
 
         // 6-button extension
-        if chars.len() >= 12 {
-            state.x    = chars[8] == 'X';
-            state.y    = chars[9] == 'Y';
-            state.z    = chars[10] == 'Z';
-            state.mode = chars[11] == 'M';
-        }
+        state.x    = chars.next() == Some('X');
+        state.y    = chars.next() == Some('Y');
+        state.z    = chars.next() == Some('Z');
+        state.mode = chars.next() == Some('M');
 
-        Ok(state)
+        state
     }
 
     /// Get input for a specific frame
@@ -237,7 +232,7 @@ mod tests {
 
     #[test]
     fn test_parse_buttons_basic() {
-        let state = InputScript::parse_buttons("....A...").unwrap();
+        let state = InputScript::parse_buttons("....A...");
         assert!(state.a);
         assert!(!state.b);
         assert!(!state.up);
@@ -245,7 +240,7 @@ mod tests {
 
     #[test]
     fn test_parse_buttons_multiple() {
-        let state = InputScript::parse_buttons("U..RAB..").unwrap();
+        let state = InputScript::parse_buttons("U..RAB..");
         assert!(state.up);
         assert!(state.right);
         assert!(state.a);
@@ -256,7 +251,7 @@ mod tests {
 
     #[test]
     fn test_parse_buttons_6button() {
-        let state = InputScript::parse_buttons("........XYZ.").unwrap();
+        let state = InputScript::parse_buttons("........XYZ.");
         assert!(state.x);
         assert!(state.y);
         assert!(state.z);
@@ -273,14 +268,14 @@ mod tests {
 "#).unwrap();
 
         assert_eq!(script.max_frame, 120);
-        
+
         let f0 = script.get(0).unwrap();
         assert!(!f0.p1.a);
-        
+
         let f60 = script.get(60).unwrap();
         assert!(f60.p1.a);
         assert!(!f60.p2.a);
-        
+
         let f120 = script.get(120).unwrap();
         assert!(f120.p1.b);
         assert!(f120.p2.a);
@@ -306,5 +301,67 @@ mod tests {
         manager.advance_frame(); // Frame 0 - A pressed
         let input = manager.advance_frame(); // Frame 1 - should hold A
         assert!(input.p1.a);
+    }
+
+    #[test]
+    fn test_parse_buttons_short() {
+        let state = InputScript::parse_buttons("short");
+        // "short" has 5 chars.
+        // U='s', D='h', L='o', R='r', A='t' -> None match UDLRABCSXYZM
+        // So all should be false
+        assert!(!state.up);
+        assert!(!state.down);
+        assert!(!state.left);
+        assert!(!state.right);
+        assert!(!state.a);
+        assert!(!state.b);
+        assert!(!state.c);
+        assert!(!state.start);
+    }
+
+    #[test]
+    fn test_recording_functionality() {
+        let mut manager = InputManager::new();
+
+        // Start recording
+        manager.start_recording();
+        assert!(manager.recording);
+        assert!(manager.recorded.is_empty());
+
+        // Frame 0: Press A
+        let mut input0 = FrameInput::default();
+        input0.p1.a = true;
+        manager.record(input0.clone());
+        manager.advance_frame();
+
+        // Frame 1: Press B
+        let mut input1 = FrameInput::default();
+        input1.p1.b = true;
+        manager.record(input1.clone());
+        manager.advance_frame();
+
+        // Frame 2: Press Start
+        let mut input2 = FrameInput::default();
+        input2.p1.start = true;
+        manager.record(input2.clone());
+        // Don't advance frame after last record
+
+        // Stop recording
+        let script = manager.stop_recording();
+        assert!(!manager.recording);
+
+        // Verify script content
+        assert_eq!(script.max_frame, 2);
+
+        let f0 = script.get(0).unwrap();
+        assert!(f0.p1.a);
+        assert!(!f0.p1.b);
+
+        let f1 = script.get(1).unwrap();
+        assert!(f1.p1.b);
+        assert!(!f1.p1.a);
+
+        let f2 = script.get(2).unwrap();
+        assert!(f2.p1.start);
     }
 }
