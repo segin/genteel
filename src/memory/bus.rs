@@ -267,16 +267,6 @@ impl Bus {
     pub fn read_word(&mut self, address: u32) -> u16 {
         let addr = address & 0xFFFFFF;
         
-        // ROM Optimization
-        if addr <= 0x3FFFFE {
-            let rom_addr = addr as usize;
-            if rom_addr + 1 < self.rom.len() {
-                let high = self.rom[rom_addr] as u16;
-                let low = self.rom[rom_addr + 1] as u16;
-                return (high << 8) | low;
-            }
-        }
-
         // VDP Data Port (Word access)
         if addr >= 0xC00000 && addr <= 0xC00003 {
             return self.vdp.read_data();
@@ -288,6 +278,22 @@ impl Bus {
         // VDP H/V Counter
         if addr >= 0xC00008 && addr <= 0xC0000F {
             return self.vdp.read_hv_counter();
+        }
+
+        // Optimize ROM access (0x000000-0x3FFFFF)
+        if addr <= 0x3FFFFE {
+            let rom_addr = addr as usize;
+            if rom_addr + 1 < self.rom.len() {
+                return (self.rom[rom_addr] as u16 << 8) | (self.rom[rom_addr + 1] as u16);
+            }
+        }
+
+        // Optimize Work RAM access (0xE00000-0xFFFFFF, 64KB mirrored)
+        if addr >= 0xE00000 {
+            let r_addr = (addr & 0xFFFF) as usize;
+            if r_addr < 0xFFFF {
+                return (self.work_ram[r_addr] as u16 << 8) | (self.work_ram[r_addr + 1] as u16);
+            }
         }
 
         let high = self.read_byte(address) as u16;
@@ -313,6 +319,16 @@ impl Bus {
             return;
         }
 
+        // Optimize Work RAM access
+        if addr >= 0xE00000 {
+            let r_addr = (addr & 0xFFFF) as usize;
+            if r_addr < 0xFFFF {
+                self.work_ram[r_addr] = (value >> 8) as u8;
+                self.work_ram[r_addr + 1] = value as u8;
+                return;
+            }
+        }
+
         self.write_byte(address, (value >> 8) as u8);
         self.write_byte(address.wrapping_add(1), value as u8);
     }
@@ -321,15 +337,25 @@ impl Bus {
     pub fn read_long(&mut self, address: u32) -> u32 {
         let addr = address & 0xFFFFFF;
 
-        // ROM Optimization
+        // Optimize ROM access
         if addr <= 0x3FFFFC {
             let rom_addr = addr as usize;
             if rom_addr + 3 < self.rom.len() {
-                let b0 = self.rom[rom_addr] as u32;
-                let b1 = self.rom[rom_addr + 1] as u32;
-                let b2 = self.rom[rom_addr + 2] as u32;
-                let b3 = self.rom[rom_addr + 3] as u32;
-                return (b0 << 24) | (b1 << 16) | (b2 << 8) | b3;
+                return (self.rom[rom_addr] as u32 << 24) |
+                       (self.rom[rom_addr + 1] as u32 << 16) |
+                       (self.rom[rom_addr + 2] as u32 << 8) |
+                       (self.rom[rom_addr + 3] as u32);
+            }
+        }
+
+        // Optimize Work RAM access
+        if addr >= 0xE00000 {
+            let r_addr = (addr & 0xFFFF) as usize;
+            if r_addr <= 0xFFFC {
+                return (self.work_ram[r_addr] as u32 << 24) |
+                       (self.work_ram[r_addr + 1] as u32 << 16) |
+                       (self.work_ram[r_addr + 2] as u32 << 8) |
+                       (self.work_ram[r_addr + 3] as u32);
             }
         }
 
@@ -340,6 +366,20 @@ impl Bus {
 
     /// Write a long word (32-bit, big-endian) to the memory map
     pub fn write_long(&mut self, address: u32, value: u32) {
+        let addr = address & 0xFFFFFF;
+
+        // Optimize Work RAM access
+        if addr >= 0xE00000 {
+            let r_addr = (addr & 0xFFFF) as usize;
+            if r_addr <= 0xFFFC {
+                self.work_ram[r_addr] = (value >> 24) as u8;
+                self.work_ram[r_addr + 1] = (value >> 16) as u8;
+                self.work_ram[r_addr + 2] = (value >> 8) as u8;
+                self.work_ram[r_addr + 3] = value as u8;
+                return;
+            }
+        }
+
         self.write_word(address, (value >> 16) as u16);
         self.write_word(address.wrapping_add(2), value as u16);
     }
