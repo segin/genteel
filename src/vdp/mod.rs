@@ -903,6 +903,46 @@ mod tests {
         // Pixel at (10, 10) should be Blue (0x001F in RGB565)
         assert_eq!(vdp.framebuffer[320 * 10 + 10], 0x001F);
     }
+
+    #[test]
+    fn test_vsram_limits() {
+        let mut vdp = Vdp::new();
+
+        // Test 1: Valid Write to Address 0 (VSRAM Write CD=5)
+        // Word 1: 0x4000 (CD1-0=01 -> 1)
+        // Word 2: 0x0400 (CD5-2=0100 -> 4) -> Total CD=5
+        vdp.write_control(0x4000);
+        vdp.write_control(0x0400);
+        vdp.write_data(0x1234);
+        assert_eq!(vdp.vsram[0], 0x12);
+        assert_eq!(vdp.vsram[1], 0x34);
+
+        // Test 2: Invalid Write to Address 80
+        vdp.vsram[0] = 0; vdp.vsram[1] = 0;
+        // Address 80 = 0x50.
+        // Word 1: 0x4050.
+        // Word 2: 0x0400.
+        vdp.write_control(0x4050);
+        vdp.write_control(0x0400);
+        vdp.write_data(0xDEAD);
+
+        // Verify that VSRAM size is strictly 80 bytes
+        assert_eq!(vdp.vsram.len(), 80);
+
+        // Verify no write happened to any part of VSRAM
+        for i in 0..80 {
+            assert_eq!(vdp.vsram[i], 0, "VSRAM byte {} was modified", i);
+        }
+
+        // Test 3: Read from Address 80
+        // VSRAM Read CD=4 (000100)
+        // Word 1: 0x0000 | 0x0050 = 0x0050.
+        // Word 2: 0x0400 (CD5-2=0100 -> 4).
+        vdp.write_control(0x0050);
+        vdp.write_control(0x0400);
+        let val = vdp.read_data();
+        assert_eq!(val, 0);
+    }
 }
 
 impl Debuggable for Vdp {
