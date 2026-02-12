@@ -307,4 +307,38 @@ mod tests {
         let input = manager.advance_frame(); // Frame 1 - should hold A
         assert!(input.p1.a);
     }
+
+    #[test]
+    fn test_input_recording() {
+        let mut manager = InputManager::new();
+
+        manager.start_recording();
+        assert!(manager.recording);
+        assert!(manager.recorded.is_empty());
+
+        // Frame 0: Press A
+        let mut input0 = FrameInput::default();
+        input0.p1.a = true;
+        manager.record(input0);
+        manager.advance_frame();
+
+        // Frame 1: Press B
+        let mut input1 = FrameInput::default();
+        input1.p1.b = true;
+        manager.record(input1);
+        manager.advance_frame();
+
+        let script = manager.stop_recording();
+        assert!(!manager.recording);
+
+        assert_eq!(script.max_frame, 1);
+
+        let f0 = script.get(0).expect("Frame 0 missing");
+        assert!(f0.p1.a);
+        assert!(!f0.p1.b);
+
+        let f1 = script.get(1).expect("Frame 1 missing");
+        assert!(!f1.p1.a);
+        assert!(f1.p1.b);
+    }
 }
