@@ -5,18 +5,16 @@
     "TOML": 82,
     "Python": 492,
     "Rust": 20492,
-    "JSON": 41,
-    "C/C++": 1627
+    "JSON": 41
   },
-  "file_count": 400,
+  "file_count": 399,
   "languages": [
-    "Rust",
-    "Markdown",
-    "Python",
     "JSON",
+    "Markdown",
     "TOML",
-    "C/C++",
-    "Unknown"
+    "Python",
+    "Unknown",
+    "Rust"
   ],
   "dependency_count": 322,
   "vulnerabilities": 0,
