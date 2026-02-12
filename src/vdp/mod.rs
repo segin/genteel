@@ -27,7 +27,7 @@ pub struct Vdp {
     /// Format: ----BBB-GGG-RRR- (each component 0-7)
     pub cram: [u8; 128],
 
-    /// Cached RGB565 colors (64 entries)
+    /// Cached RGB565 colors for faster lookup
     pub cram_cache: [u16; 64],
 
     /// Vertical Scroll RAM (80 bytes) - 40 columns × 2 bytes
@@ -233,20 +233,12 @@ impl Vdp {
 
     /// Screen height in pixels
     pub fn screen_height(&self) -> u16 {
-        if self.v30_mode() {
-            240
-        } else {
-            224
-        }
+        if self.v30_mode() { 240 } else { 224 }
     }
 
     /// Screen width in pixels
     pub fn screen_width(&self) -> u16 {
-        if self.h40_mode() {
-            320
-        } else {
-            256
-        }
+        if self.h40_mode() { 320 } else { 256 }
     }
 
     // === Port I/O ===
@@ -285,9 +277,7 @@ impl Vdp {
         };
 
         // Auto-increment address
-        self.control_address = self
-            .control_address
-            .wrapping_add(self.auto_increment() as u16);
+        self.control_address = self.control_address.wrapping_add(self.auto_increment() as u16);
 
         data
     }
@@ -305,17 +295,14 @@ impl Vdp {
                 self.vram[vram_addr] = (value >> 8) as u8;
                 self.vram[(vram_addr + 1) & 0xFFFF] = value as u8;
             }
-            0x03 => {
-                // CRAM write
+            0x03 => { // CRAM write
                 let cram_addr = (addr & 0x7E) as usize; // Ensure word alignment
                 self.cram[cram_addr] = (value >> 8) as u8;
                 self.cram[cram_addr + 1] = (value & 0xFF) as u8;
                 self.update_cram_cache(cram_addr >> 1);
+
                 if value != 0 {
-                    eprintln!(
-                        "DEBUG: NON-ZERO CRAM WRITE: addr=0x{:02X} val=0x{:04X}",
-                        cram_addr, value
-                    );
+                    eprintln!("DEBUG: NON-ZERO CRAM WRITE: addr=0x{:02X} val=0x{:04X}", cram_addr, value);
                 }
             }
             0x05 => {
@@ -330,9 +317,7 @@ impl Vdp {
         }
 
         // Auto-increment address
-        self.control_address = self
-            .control_address
-            .wrapping_add(self.auto_increment() as u16);
+        self.control_address = self.control_address.wrapping_add(self.auto_increment() as u16);
     }
 
     /// Read Status Register
@@ -393,10 +378,7 @@ impl Vdp {
 
             self.control_pending = false;
 
-            eprintln!(
-                "DEBUG: VDP COMMAND: addr=0x{:04X} code=0x{:02X}",
-                self.control_address, self.control_code
-            );
+            eprintln!("DEBUG: VDP COMMAND: addr=0x{:04X} code=0x{:02X}", self.control_address, self.control_code);
 
             // Check for DMA
             if self.dma_enabled() && (self.control_code & 0x20) != 0 {
@@ -459,14 +441,14 @@ impl Vdp {
 
         // Plane rendering (Low priority)
         self.render_plane(false, line, false); // Plane B low
-        self.render_plane(true, line, false); // Plane A low
+        self.render_plane(true, line, false);  // Plane A low
 
         // Sprites low priority
         self.render_sprites(line, false);
 
         // Plane rendering (High priority)
         self.render_plane(false, line, true); // Plane B high
-        self.render_plane(true, line, true); // Plane A high
+        self.render_plane(true, line, true);  // Plane A high
 
         // Sprites high priority
         self.render_sprites(line, true);
@@ -485,9 +467,7 @@ impl Vdp {
         // We follow the 'link' pointer starting from sprite 0
         loop {
             let addr = sat_base + (sprite_idx as usize * 8);
-            if addr + 8 > 0x10000 {
-                break;
-            }
+            if addr + 8 > 0x10000 { break; }
 
             let cur_v = (((self.vram[addr] as u16) << 8) | (self.vram[addr + 1] as u16)) & 0x03FF;
             let v_pos = cur_v.wrapping_sub(128);
@@ -507,51 +487,33 @@ impl Vdp {
             let h_flip = (attr & 0x0800) != 0;
             let base_tile = attr & 0x07FF;
 
-            let cur_h =
-                (((self.vram[addr + 6] as u16) << 8) | (self.vram[addr + 7] as u16)) & 0x03FF;
+            let cur_h = (((self.vram[addr + 6] as u16) << 8) | (self.vram[addr + 7] as u16)) & 0x03FF;
             let h_pos = cur_h.wrapping_sub(128);
 
             // Check if sprite is visible on this line
             if priority == priority_filter && line >= v_pos && line < v_pos + sprite_v_px as u16 {
                 let py = line - v_pos;
-                let fetch_py = if v_flip {
-                    (sprite_v_px as u16 - 1) - py
-                } else {
-                    py
-                };
+                let fetch_py = if v_flip { (sprite_v_px as u16 - 1) - py } else { py };
 
                 let tile_v_offset = fetch_py / 8;
                 let pixel_v = fetch_py % 8;
 
                 for px in 0..sprite_h_px {
                     let screen_x = h_pos + px as u16;
-                    if screen_x >= screen_width {
-                        continue;
-                    }
+                    if screen_x >= screen_width { continue; }
 
-                    let fetch_px = if h_flip {
-                        (sprite_h_px as u16 - 1) - px as u16
-                    } else {
-                        px as u16
-                    };
+                    let fetch_px = if h_flip { (sprite_h_px as u16 - 1) - px as u16 } else { px as u16 };
                     let tile_h_offset = fetch_px / 8;
                     let pixel_h = fetch_px % 8;
 
                     // In a multi-tile sprite, tiles are arranged vertically first
-                    let tile_idx =
-                        base_tile + (tile_h_offset * sprite_v_tiles as u16) + tile_v_offset;
+                    let tile_idx = base_tile + (tile_h_offset * sprite_v_tiles as u16) + tile_v_offset;
 
                     let pattern_addr = (tile_idx * 32) + (pixel_v * 4) + (pixel_h / 2);
-                    if pattern_addr as usize + 4 > 0x10000 {
-                        continue;
-                    }
+                    if pattern_addr as usize + 4 > 0x10000 { continue; }
 
                     let byte = self.vram[pattern_addr as usize];
-                    let color_idx = if pixel_h % 2 == 0 {
-                        byte >> 4
-                    } else {
-                        byte & 0x0F
-                    };
+                    let color_idx = if pixel_h % 2 == 0 { byte >> 4 } else { byte & 0x0F };
 
                     if color_idx != 0 {
                         let color = self.get_cram_color(palette, color_idx);
@@ -570,16 +532,11 @@ impl Vdp {
 
     fn render_plane(&mut self, is_plane_a: bool, line: u16, priority_filter: bool) {
         let (plane_w, plane_h) = self.plane_size();
-        let name_table_base = if is_plane_a {
-            self.plane_a_address()
-        } else {
-            self.plane_b_address()
-        };
+        let name_table_base = if is_plane_a { self.plane_a_address() } else { self.plane_b_address() };
 
         // Get vertical scroll
         let vs_addr = if is_plane_a { 0 } else { 2 };
-        let v_scroll =
-            (((self.vsram[vs_addr] as u16) << 8) | (self.vsram[vs_addr + 1] as u16)) & 0x03FF;
+        let v_scroll = (((self.vsram[vs_addr] as u16) << 8) | (self.vsram[vs_addr + 1] as u16)) & 0x03FF;
 
         // Get horizontal scroll (per-screen for now)
         let hs_base = self.hscroll_address();
@@ -622,11 +579,7 @@ impl Vdp {
 
             let pattern_addr = (tile_idx * 32) + (fetch_v * 4) + (fetch_h / 2);
             let byte = self.vram[pattern_addr as usize];
-            let color_idx = if fetch_h % 2 == 0 {
-                byte >> 4
-            } else {
-                byte & 0x0F
-            };
+            let color_idx = if fetch_h % 2 == 0 { byte >> 4 } else { byte & 0x0F };
 
             // Color 0 is transparent
             if color_idx != 0 {
@@ -644,8 +597,12 @@ impl Vdp {
         let addr = index * 2;
         let hi = self.cram[addr] as u16;
         let lo = self.cram[addr + 1] as u16;
-        let color = (hi << 8) | lo;
+        let val = (hi << 8) | lo;
+        self.cram_cache[index] = self.genesis_color_to_rgb565(val);
+    }
 
+    /// Helper to convert Genesis color to RGB565
+    fn genesis_color_to_rgb565(&self, color: u16) -> u16 {
         // Genesis color format: ----BBB-GGG-RRR-
         // Convert to RGB565: RRRRR GGGGGG BBBBB
         let r = ((color >> 1) & 0x07) as u16;
@@ -657,7 +614,7 @@ impl Vdp {
         let g6 = (g << 3) | g;
         let b5 = (b << 2) | (b >> 1);
 
-        self.cram_cache[index] = (r5 << 11) | (g6 << 5) | b5;
+        (r5 << 11) | (g6 << 5) | b5
     }
 
     /// Get color from CRAM as RGB565
@@ -695,14 +652,13 @@ impl Vdp {
 
         // DMA length from registers 19-20 (in words for most modes)
         let mut dma_length = ((self.registers[20] as u32) << 8) | (self.registers[19] as u32);
-        if dma_length == 0 {
-            dma_length = 0x10000;
-        }
+        if dma_length == 0 { dma_length = 0x10000; }
 
         // DMA source from registers 21-23 (bits 0-5 of reg 23)
-        let dma_source = ((self.registers[23] as u32 & 0x3F) << 16)
+        // Note: Registers store A23-A1, so we shift left by 1 to get byte address
+        let dma_source = (((self.registers[23] as u32 & 0x3F) << 16)
             | ((self.registers[22] as u32) << 8)
-            | (self.registers[21] as u32);
+            | (self.registers[21] as u32)) << 1;
 
         let bytes_transferred = match dma_type {
             0 | 1 => {
@@ -736,16 +692,11 @@ impl Vdp {
                         }
                         _ => {}
                     }
-                    self.control_address = self
-                        .control_address
-                        .wrapping_add(self.auto_increment() as u16);
+                    self.control_address = self.control_address.wrapping_add(self.auto_increment() as u16);
                 }
 
                 self.dma_pending = false;
-                eprintln!(
-                    "DEBUG: VDP FILL/COPY EXECUTE: Mode={} Length={} Dest={:02X}",
-                    dma_type, dma_length, dest_code
-                );
+                eprintln!("DEBUG: VDP FILL/COPY EXECUTE: Mode={} Length={} Dest={:02X}", dma_type, dma_length, dest_code);
                 dma_length
             }
             3 => {
@@ -760,10 +711,7 @@ impl Vdp {
                 }
 
                 self.dma_pending = false;
-                eprintln!(
-                    "DEBUG: VDP FILL/COPY EXECUTE: Mode={} Length={}",
-                    dma_type, dma_length
-                );
+                eprintln!("DEBUG: VDP FILL/COPY EXECUTE: Mode={} Length={}", dma_type, dma_length);
                 dma_length
             }
             _ => {
@@ -784,6 +732,10 @@ impl Default for Vdp {
 
 #[cfg(test)]
 mod tests_properties;
+#[cfg(test)]
+mod test_command;
+#[cfg(test)]
+mod tests_dma;
 
 #[cfg(test)]
 mod tests {
@@ -907,29 +859,25 @@ mod tests {
 
         // 4. Define Tile 1 at VRAM 0x0020 (8x8 pixels, 4 bits each = 32 bytes)
         // Fill it with color index 2
-        vdp.write_control(0x4020);
-        vdp.write_control(0x0000);
+        vdp.write_control(0x4020); vdp.write_control(0x0000);
         for _ in 0..16 {
             vdp.write_data(0x2222);
         }
 
         // 5. Define CRAM index 2 (Palette 0, Color 2) as pure Red (0x000E)
-        vdp.write_control(0xC004);
-        vdp.write_control(0x0000);
+        vdp.write_control(0xC004); vdp.write_control(0x0000);
         vdp.write_data(0x000E);
 
         // 6. Set Nametable entry at (0,0) in Plane A (address 0xE000)
         // Entry: bit 15=priority, 14-13=pal, 12=vflip, 11=hflip, 10-0=index
         // We want: Tile 1, Palette 0, No flip, No priority = 0x0001
-        vdp.write_control(0x4000);
-        vdp.write_control(0x0002); // 0xE000 -> CD=01, A15-14=11 -> 0x4000 0003?
-                                   // Wait, command format: CD1-0 A13-0 | CD5-2 0000 00 A15-14
-                                   // For 0xE000 (1110 0000 0000 0000):
-                                   // CD=01 (VRAM Write)
-                                   // Word 1: 01 100000 000000 -> 0x6000
-                                   // Word 2: 0000 0000 0000 0011 -> 0x0003
-        vdp.write_control(0x6000);
-        vdp.write_control(0x0003);
+        vdp.write_control(0x4000); vdp.write_control(0x0002); // 0xE000 -> CD=01, A15-14=11 -> 0x4000 0003?
+        // Wait, command format: CD1-0 A13-0 | CD5-2 0000 00 A15-14
+        // For 0xE000 (1110 0000 0000 0000):
+        // CD=01 (VRAM Write)
+        // Word 1: 01 100000 000000 -> 0x6000
+        // Word 2: 0000 0000 0000 0011 -> 0x0003
+        vdp.write_control(0x6000); vdp.write_control(0x0003);
         vdp.write_data(0x0001);
 
         // 7. Enable display
@@ -957,23 +905,18 @@ mod tests {
         vdp.write_control(0x8700);
 
         // 4. Define Sprite 0 at (10, 10) -> internal pos (138, 138)
-        vdp.write_control(0x5000);
-        vdp.write_control(0x0003);
+        vdp.write_control(0x5000); vdp.write_control(0x0003);
         vdp.write_data(0x008A); // V-pos 138
         vdp.write_data(0x0000); // Size 1x1, Link 0
         vdp.write_data(0x0001); // Attr: Tile 1, Pal 0
         vdp.write_data(0x008A); // H-pos 138
 
         // 5. Define Tile 1 at 0x0020 (all color 3)
-        vdp.write_control(0x4020);
-        vdp.write_control(0x0000);
-        for _ in 0..16 {
-            vdp.write_data(0x3333);
-        }
+        vdp.write_control(0x4020); vdp.write_control(0x0000);
+        for _ in 0..16 { vdp.write_data(0x3333); }
 
         // 6. Define CRAM index 3 (Pal 0, Col 3) as Blue (0x0E00)
-        vdp.write_control(0xC006);
-        vdp.write_control(0x0000);
+        vdp.write_control(0xC006); vdp.write_control(0x0000);
         vdp.write_data(0x0E00);
 
         // 7. Enable display
