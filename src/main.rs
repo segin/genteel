@@ -27,7 +27,6 @@ use memory::bus::Bus;
 use memory::{SharedBus, Z80Bus};
 use apu::Apu;
 use input::InputManager;
-// use frontend::Frontend;
 use debugger::{GdbServer, GdbRegisters, GdbMemory, StopReason};
 
 pub struct Emulator {
@@ -39,18 +38,20 @@ pub struct Emulator {
     pub audio_buffer: Vec<i16>,
     pub apu_accumulator: f32,
     pub internal_frame_count: u64,
+    pub z80_last_bus_req: bool,
+    pub z80_trace_count: u32,
 }
 
 impl Emulator {
     pub fn new() -> Self {
         let bus = Rc::new(RefCell::new(Bus::new()));
-        
+
         // M68k uses SharedBus wrapper for main Genesis bus access
         let cpu = Cpu::new(Box::new(SharedBus::new(bus.clone())));
-        
+
         // Z80 uses Z80Bus which routes to sound chips and banked 68k memory
         let z80_bus = Z80Bus::new(SharedBus::new(bus.clone()));
-        
+
         // Temporary null I/O implementation for Z80 ports
         #[derive(Debug)]
         struct NullIo;
@@ -58,7 +59,7 @@ impl Emulator {
             fn read_port(&mut self, _port: u16) -> u8 { 0xFF }
             fn write_port(&mut self, _port: u16, _value: u8) {}
         }
-        
+
         let z80 = Z80::new(Box::new(z80_bus), Box::new(NullIo));
 
         let mut emulator = Self {
@@ -70,11 +71,13 @@ impl Emulator {
             audio_buffer: Vec::with_capacity(735 * 2), // Pre-allocate approx 1 frame
             apu_accumulator: 0.0,
             internal_frame_count: 0,
+            z80_last_bus_req: false,
+            z80_trace_count: 0,
         };
-        
+
         emulator.cpu.reset();
         emulator.z80.reset();
-        
+
         emulator
     }
 
@@ -85,41 +88,72 @@ impl Emulator {
         } else {
             std::fs::read(path)?
         };
-        
+
         self.bus.borrow_mut().load_rom(&data);
-        
+
         // Reset again to load initial PC/SP from ROM vectors
         self.cpu.reset();
         self.z80.reset();
-        
+
         Ok(())
     }
-    
+
+    fn read_rom_with_limit<R: std::io::Read>(reader: &mut R, size: u64) -> std::io::Result<Vec<u8>> {
+        use std::io::Read;
+        const MAX_ROM_SIZE: u64 = 32 * 1024 * 1024; // 32 MB
+
+        if size > MAX_ROM_SIZE {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("ROM size {} exceeds limit of {} bytes", size, MAX_ROM_SIZE)
+            ));
+        }
+
+        // Check if size fits in usize (for 32-bit/16-bit systems)
+        if size > usize::MAX as u64 {
+             return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "ROM size too large for memory address space"
+            ));
+        }
+
+        let mut data = Vec::with_capacity(size as usize);
+        reader.take(MAX_ROM_SIZE + 1).read_to_end(&mut data)?;
+
+        if data.len() as u64 > MAX_ROM_SIZE {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Decompressed ROM size exceeds limit"
+            ));
+        }
+
+        Ok(data)
+    }
+
     /// Load ROM from a zip file (finds first .bin, .md, .gen, or .smd file)
     fn load_rom_from_zip(path: &str) -> std::io::Result<Vec<u8>> {
-        use std::io::Read;
-        
+
         let file = std::fs::File::open(path)?;
         let mut archive = zip::ZipArchive::new(file)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        
+
         // ROM file extensions to look for
         let rom_extensions = [".bin", ".md", ".gen", ".smd", ".32x"];
-        
+
         // Find first ROM file in archive
         for i in 0..archive.len() {
             let mut entry = archive.by_index(i)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-            
+
             let name = entry.name().to_lowercase();
             if rom_extensions.iter().any(|ext| name.ends_with(ext)) {
-                let mut data = Vec::new();
-                entry.read_to_end(&mut data)?;
+                let size = entry.size();
+                let data = Self::read_rom_with_limit(&mut entry, size)?;
                 println!("Extracted ROM: {} ({} bytes)", entry.name(), data.len());
                 return Ok(data);
             }
         }
-        
+
         Err(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             "No ROM file found in zip archive"
@@ -159,13 +193,13 @@ impl Emulator {
 
     pub fn step_frame_internal(&mut self) {
         self.internal_frame_count += 1;
-        
+
 
         if self.internal_frame_count % 60 == 0 || self.internal_frame_count < 5 {
                  let bus = self.bus.borrow();
                  let disp_en = bus.vdp.display_enabled();
                  let dma_en = bus.vdp.dma_enabled();
-                 
+
                  let cram_sum: u32 = bus.vdp.cram.iter().take(128).map(|&b| b as u32).sum();
 
                  let z80_pc = self.z80.pc;
@@ -185,24 +219,24 @@ impl Emulator {
         // Active display: lines 0-223
         // VBlank: lines 224-261
         // Cycles per scanline: ~488
-        
+
         const LINES_PER_FRAME: u16 = 262;
         const ACTIVE_LINES: u16 = 224;
         const CYCLES_PER_LINE: u32 = 488;
         const Z80_CYCLES_PER_M68K_CYCLE: f32 = 3.58 / 7.67;
-        
+
         // APU Timing
         let samples_per_frame = audio::samples_per_frame() as f32;
         let samples_per_line = samples_per_frame / (LINES_PER_FRAME as f32);
-        
+
         let mut z80_cycle_debt: f32 = 0.0;
-        
+
         for line in 0..LINES_PER_FRAME {
             // === VDP scanline setup (single borrow) ===
             {
                 let mut bus = self.bus.borrow_mut();
                 bus.vdp.set_v_counter(line);
-                
+
                 // Render scanline if active
                 if line < ACTIVE_LINES {
                     bus.vdp.render_line(line);
@@ -220,17 +254,14 @@ impl Emulator {
                     let mut bus = self.bus.borrow_mut();
                     bus.apu.fm.step(m68k_cycles as u32);
                 }
-                
+
                 // Z80 execution
                 let (z80_can_run, z80_is_reset) = {
                     let bus = self.bus.borrow();
-                    static mut LAST_REQ: bool = false;
-                    unsafe {
-                        let prev = LAST_REQ;
-                        if bus.z80_bus_request != prev {
-                             eprintln!("DEBUG: Bus Req Changed: {} -> {} at 68k PC={:06X}", prev, bus.z80_bus_request, self.cpu.pc);
-                             LAST_REQ = bus.z80_bus_request;
-                        }
+                    let prev = self.z80_last_bus_req;
+                    if bus.z80_bus_request != prev {
+                         eprintln!("DEBUG: Bus Req Changed: {} -> {} at 68k PC={:06X}", prev, bus.z80_bus_request, self.cpu.pc);
+                         self.z80_last_bus_req = bus.z80_bus_request;
                     }
                     (!bus.z80_reset && !bus.z80_bus_request, bus.z80_reset)
                 };
@@ -241,14 +272,11 @@ impl Emulator {
                 }
 
                 if z80_can_run && self.internal_frame_count > 0 {
-                     static mut Z80_TRACE_COUNT: u32 = 0;
-                     unsafe {
-                         if Z80_TRACE_COUNT < 5000 {
-                             self.z80.debug = true;
-                             Z80_TRACE_COUNT += 1; // Logic slightly wrong here (step count vs frame), but enables flag
-                         } else {
-                             self.z80.debug = false;
-                         }
+                     if self.z80_trace_count < 5000 {
+                         self.z80.debug = true;
+                         self.z80_trace_count += 1; // Logic slightly wrong here (step count vs frame), but enables flag
+                     } else {
+                         self.z80.debug = false;
                      }
                 } else {
                      self.z80.debug = false;
@@ -258,7 +286,7 @@ impl Emulator {
                 if line == ACTIVE_LINES && cycles_scanline < m68k_cycles as u32 + 5 && !z80_is_reset {
                     self.z80.trigger_interrupt(0xFF);
                 }
-                
+
                 if z80_can_run {
                     z80_cycle_debt += (m68k_cycles as f32) * Z80_CYCLES_PER_M68K_CYCLE;
                     while z80_cycle_debt >= 1.0 {
@@ -267,13 +295,13 @@ impl Emulator {
                     }
                 }
             }
-            
+
             // === APU sample generation (single borrow) ===
             self.apu_accumulator += samples_per_line;
             let samples_to_run = self.apu_accumulator as usize;
             if samples_to_run > 0 {
                 self.apu_accumulator -= samples_to_run as f32;
-                
+
                 let mut bus = self.bus.borrow_mut();
                 for _ in 0..samples_to_run {
                     let sample = bus.apu.step();
@@ -282,11 +310,11 @@ impl Emulator {
                     self.audio_buffer.push(sample);
                 }
             }
-            
+
             // === Interrupt handling (single borrow) ===
             {
                 let mut bus = self.bus.borrow_mut();
-                
+
                 // VBlank Interrupt (Level 6) - Triggered at start of VBlank (line 224)
                 if line == ACTIVE_LINES {
                     bus.vdp.trigger_vint();
@@ -295,7 +323,7 @@ impl Emulator {
                         self.cpu.request_interrupt(6);
                     }
                 }
-                
+
                 // HBlank Interrupt (Level 4) - Proper counter logic
                 if line < ACTIVE_LINES {
                     // Check if HInterrupt enabled (Reg 0, bit 4)
@@ -329,18 +357,18 @@ impl Emulator {
     /// Run with GDB debugger attached
     pub fn run_with_gdb(&mut self, port: u16) -> std::io::Result<()> {
         let mut gdb = GdbServer::new(port)?;
-        
+
         println!("Waiting for GDB connection on port {}...", port);
         println!("Connect with: m68k-elf-gdb -ex \"target remote :{}\" <elf_file>", port);
-        
+
         // Wait for connection
         while !gdb.accept() {
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
-        
+
         let mut stepping = false;
         let mut running = false;
-        
+
         loop {
             // Check for GDB commands
             if let Some(cmd) = gdb.receive_packet() {
@@ -351,19 +379,19 @@ impl Emulator {
                     sr: self.cpu.sr,
                     pc: self.cpu.pc,
                 };
-                
+
 
                 // Create memory accessor
                 let mut mem_access = BusGdbMemory { bus: self.bus.clone() };
-                
+
                 let response = gdb.process_command(&cmd, &mut regs, &mut mem_access);
-                
+
                 // Apply register changes back to CPU
                 self.cpu.d = regs.d;
                 self.cpu.a = regs.a;
                 self.cpu.sr = regs.sr;
                 self.cpu.pc = regs.pc;
-                
+
                 match response.as_str() {
                     "CONTINUE" => {
                         running = true;
@@ -379,12 +407,12 @@ impl Emulator {
                     _ => {}
                 }
             }
-            
+
             // Execute if running
             if running {
                 // Step one instruction
                 self.cpu.step_instruction();
-                
+
                 // Check for breakpoint
                 if gdb.is_breakpoint(self.cpu.pc) {
                     gdb.stop_reason = StopReason::Breakpoint;
@@ -399,18 +427,17 @@ impl Emulator {
                 // Not running, sleep a bit to avoid spinning
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
-            
+
             // Check if client disconnected
             if !gdb.is_connected() && !gdb.accept() {
                 println!("GDB client disconnected");
                 break;
             }
         }
-        
+
         Ok(())
     }
 
-    /// Run with winit window (interactive play mode)
     /// Run with winit window (interactive play mode)
     pub fn run_with_frontend(mut self) -> Result<(), String> {
         use winit::event::{Event, WindowEvent, ElementState, KeyEvent};
@@ -419,12 +446,12 @@ impl Emulator {
         use winit::window::WindowBuilder;
         use pixels::{Pixels, SurfaceTexture};
         // use std::sync::Arc;
-        
+
         println!("Controls: Arrow keys=D-pad, Z=A, X=B, C=C, Enter=Start");
         println!("Press Escape to quit.");
 
         let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
-        
+
         let window = {
             let size = winit::dpi::LogicalSize::new(
                 frontend::GENESIS_WIDTH as f64 * 3.0,
@@ -440,71 +467,71 @@ impl Emulator {
                 .build(&event_loop)
                 .map_err(|e| e.to_string())?
         };
-        
+
         let mut pixels = {
             let window_size = window.inner_size();
             let surface_texture = SurfaceTexture::new(
-                window_size.width, 
-                window_size.height, 
+                window_size.width,
+                window_size.height,
                 &window
             );
             Pixels::new(
-                frontend::GENESIS_WIDTH, 
-                frontend::GENESIS_HEIGHT, 
+                frontend::GENESIS_WIDTH,
+                frontend::GENESIS_HEIGHT,
                 surface_texture
             ).map_err(|e| e.to_string())?
         };
-        
+
         // Audio setup
         let audio_buffer = audio::create_audio_buffer();
         let samples_per_frame = audio::samples_per_frame();
         let mut audio_samples = vec![0i16; samples_per_frame * 2];
         let _audio_output = audio::AudioOutput::new(audio_buffer.clone()).ok();
-        
+
         // Input state
         let mut input = input::FrameInput::default();
         let mut frame_count: u64 = 0;
-        
+
         println!("Starting event loop...");
         event_loop.run(move |event, target| {
             target.set_control_flow(ControlFlow::Poll);
-            
+
             match event {
                 Event::Resumed => {
                      println!("Event::Resumed");
                 }
-                
+
                 Event::WindowEvent { event, .. } => match event {
                     WindowEvent::CloseRequested => {
                          println!("Using CloseRequested to exit");
                         target.exit();
                     }
-                    
+
                     WindowEvent::KeyboardInput { event: KeyEvent { physical_key, state, .. }, .. } => {
                         if let PhysicalKey::Code(keycode) = physical_key {
                             let pressed = state == ElementState::Pressed;
-                            
+
                             if keycode == KeyCode::Escape && pressed {
                                 println!("Escape pressed, exiting");
                                 target.exit();
                                 return;
                             }
-                            
+
                             if let Some((button, _)) = frontend::keycode_to_button(keycode) {
                                 input.p1.set_button(button, pressed);
                             }
                         }
                     }
-                    
+
                     WindowEvent::Resized(size) => {
                          if size.width > 0 && size.height > 0 {
                             pixels.resize_surface(size.width, size.height).ok();
                         }
                     }
-                    
+
                     WindowEvent::RedrawRequested => {
                         frame_count += 1;
-                        
+
                         // Debug: Print every 60 frames (about once per second)
                         if frame_count % 60 == 1 {
                             let mut bus = self.bus.borrow_mut();
@@ -518,11 +545,11 @@ impl Emulator {
                             let z80_req = bus.z80_bus_request;
                             let z80_op = if (z80_pc as usize) < bus.z80_ram.len() { bus.z80_ram[z80_pc as usize] } else { 0 };
 
-                            println_safe!("Frame {}: 68k={:06X} Disp={} DMA={} CRAM={:04X} IntMask={} | Z80={:04X} [{:02X}] Rst={} Req={}", 
-                                frame_count, self.cpu.pc, disp_en, dma_en, cram_val, 
+                            println_safe!("Frame {}: 68k={:06X} Disp={} DMA={} CRAM={:04X} IntMask={} | Z80={:04X} [{:02X}] Rst={} Req={}",
+                                frame_count, self.cpu.pc, disp_en, dma_en, cram_val,
                                 (self.cpu.sr >> 8) & 7,
                                 z80_pc, z80_op, z80_reset, z80_req);
-                                
+
                             // One-shot opcode dump for hangs
                             if (self.cpu.pc == 0x072764 || self.cpu.pc == 0x002F06) && frame_count <= 121 {
                                 let dump_start = (self.cpu.pc - 0x10) & !1;
@@ -534,10 +561,10 @@ impl Emulator {
                                 }
                             }
                         }
-                        
+
                         // Run one frame of emulation
                         self.step_frame_with_input(input.p1.clone(), input.p2.clone());
-                        
+
                         // Generate audio - already done in step_frame
                         // Just move samples from accumulator to output buffer
                         audio_samples.clear(); // Ensure clean start (though push appends)
@@ -547,33 +574,33 @@ impl Emulator {
                         // Here we just extend audio_samples from self.audio_buffer
                         audio_samples.extend_from_slice(&self.audio_buffer);
                         self.audio_buffer.clear();
-                        
+
                         // Push audio to buffer
                         if let Ok(mut buf) = audio_buffer.lock() {
                             buf.push(&audio_samples);
                         }
-                        
+
                         // Render
                         let frame = pixels.frame_mut();
                         let bus = self.bus.borrow();
                         frontend::rgb565_to_rgba8(&bus.vdp.framebuffer, frame);
                         drop(bus);
-                        
+
                         if let Err(e) = pixels.render() {
                             eprintln!("Render error: {}", e);
                             target.exit();
                         }
                     }
-                    
+
                     _ => {}
                 },
-                
+
                 Event::AboutToWait => {
                     // Request a redraw just before waiting for events, only on redraw
                     // println!("AboutToWait - requesting redraw"); // Too spammy?
                     window.request_redraw();
                 }
-                
+
                 _ => {}
             }
         }).map_err(|e| e.to_string())
@@ -608,7 +635,7 @@ impl GdbMemory for BusGdbMemory {
     fn read_byte(&mut self, addr: u32) -> u8 {
         self.bus.borrow_mut().read_byte(addr)
     }
-    
+
     fn write_byte(&mut self, addr: u32, value: u8) {
         // Assuming Z80 RAM is mapped within the first 0x2000 bytes of the Z80's address space
         // This is a heuristic based on the provided snippet's `addr < 0x2000` condition.
@@ -626,12 +653,12 @@ impl GdbMemory for BusGdbMemory {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    
+
     let mut rom_path: Option<String> = None;
     let mut script_path: Option<String> = None;
     let mut headless_frames: Option<u32> = None;
     let mut gdb_port: Option<u16> = None;
-    
+
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
@@ -676,9 +703,9 @@ fn main() {
         }
         i += 1;
     }
-    
+
     let mut emulator = Emulator::new();
-    
+
     // Load ROM if provided
     if let Some(ref path) = rom_path {
         println!("Loading ROM: {}", path);
@@ -690,7 +717,7 @@ fn main() {
         print_usage();
         return;
     }
-    
+
     // Load input script if provided
     if let Some(ref path) = script_path {
         println!("Loading input script: {}", path);
@@ -699,7 +726,7 @@ fn main() {
             return;
         }
     }
-    
+
     // Run in appropriate mode
     if let Some(port) = gdb_port {
         // Debug mode with GDB
@@ -715,4 +742,3 @@ fn main() {
         }
     }
 }
-
