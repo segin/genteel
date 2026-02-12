@@ -78,7 +78,7 @@ impl Operand {
 ///
 /// Returns the effective address and updates PC if extension words are read.
 /// Also returns the number of cycles used.
-pub fn calculate_ea<M: MemoryInterface + ?Sized>(
+pub fn calculate_ea<M: MemoryInterface>(
     mode: AddressingMode,
     size: Size,
     d: &mut [u32; 8],
@@ -204,7 +204,7 @@ pub fn calculate_ea<M: MemoryInterface + ?Sized>(
 }
 
 /// Read a value from an effective address
-pub fn read_ea<M: MemoryInterface + ?Sized>(
+pub fn read_ea<M: MemoryInterface>(
     ea: EffectiveAddress,
     size: Size,
     d: &[u32; 8],
@@ -237,7 +237,7 @@ pub fn read_ea<M: MemoryInterface + ?Sized>(
 }
 
 /// Write a value to an effective address
-pub fn write_ea<M: MemoryInterface + ?Sized>(
+pub fn write_ea<M: MemoryInterface>(
     ea: EffectiveAddress,
     size: Size,
     value: u32,
