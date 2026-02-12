@@ -53,8 +53,14 @@ pub struct Vdp {
  
     /// Last data value written (for VRAM fill DMA)
     pub last_data_write: u16,
+
+    /// V30 offset for NTSC rolling effect
+    pub v30_offset: u16,
+
+    /// PAL region flag
+    pub is_pal: bool,
  
-    /// Framebuffer (320×224 pixels, 2 bytes per pixel for RGB565)
+    /// Framebuffer (320×240 pixels max, 2 bytes per pixel for RGB565)
     pub framebuffer: Vec<u16>,
 }
 
@@ -75,7 +81,9 @@ impl Vdp {
             v_counter: 0,
             line_counter: 0,
             last_data_write: 0,
-            framebuffer: vec![0; 320 * 224],
+            v30_offset: 0,
+            is_pal: false,
+            framebuffer: vec![0; 320 * 240],
         }
     }
 
@@ -93,6 +101,7 @@ impl Vdp {
         self.h_counter = 0;
         self.v_counter = 0;
         self.line_counter = 0;
+        self.v30_offset = 0;
         self.framebuffer.fill(0);
     }
 
@@ -234,6 +243,21 @@ impl Vdp {
     /// Screen width in pixels
     pub fn screen_width(&self) -> u16 {
         if self.h40_mode() { 320 } else { 256 }
+    }
+
+    /// Set the region (PAL=true, NTSC=false)
+    pub fn set_region(&mut self, is_pal: bool) {
+        self.is_pal = is_pal;
+    }
+
+    /// Update V30 rolling offset for NTSC mode
+    pub fn update_v30_offset(&mut self) {
+        if !self.is_pal && self.v30_mode() {
+            // Calculated optimal increment for NTSC (60Hz) running V30 (312 lines timing):
+            // 262 mod 240 = 22.
+            // This simulates the drift of a 50Hz signal on a 60Hz display.
+            self.v30_offset = (self.v30_offset + 22) % 240;
+        }
     }
 
     // === Port I/O ===
@@ -417,7 +441,14 @@ impl Vdp {
         }
 
         let width = self.screen_width();
-        let line_offset = (line as usize) * 320;
+        let draw_line = line;
+        let fetch_line = if !self.is_pal && self.v30_mode() {
+            (line + self.v30_offset) % 240
+        } else {
+            line
+        };
+
+        let line_offset = (draw_line as usize) * 320;
 
         // Get background color
         let (pal_line, color_idx) = self.bg_color();
@@ -433,28 +464,28 @@ impl Vdp {
         }
 
         // Plane rendering (Low priority)
-        self.render_plane(false, line, false); // Plane B low
-        self.render_plane(true, line, false);  // Plane A low
+        self.render_plane(false, fetch_line, draw_line, false); // Plane B low
+        self.render_plane(true, fetch_line, draw_line, false);  // Plane A low
         
         // Sprites low priority
-        self.render_sprites(line, false);
+        self.render_sprites(fetch_line, draw_line, false);
         
         // Plane rendering (High priority)
-        self.render_plane(false, line, true); // Plane B high
-        self.render_plane(true, line, true);  // Plane A high
+        self.render_plane(false, fetch_line, draw_line, true); // Plane B high
+        self.render_plane(true, fetch_line, draw_line, true);  // Plane A high
         
         // Sprites high priority
-        self.render_sprites(line, true);
+        self.render_sprites(fetch_line, draw_line, true);
     }
 
-    fn render_sprites(&mut self, line: u16, priority_filter: bool) {
+    fn render_sprites(&mut self, fetch_line: u16, draw_line: u16, priority_filter: bool) {
         let sat_base = self.sprite_table_address() as usize;
         let mut sprite_idx = 0;
         let mut sprite_count = 0;
         let max_sprites = if self.h40_mode() { 80 } else { 64 };
         
         let screen_width = self.screen_width();
-        let line_offset = (line as usize) * 320;
+        let line_offset = (draw_line as usize) * 320;
 
         // SAT structure is 8 bytes per sprite
         // We follow the 'link' pointer starting from sprite 0
@@ -484,8 +515,8 @@ impl Vdp {
             let h_pos = cur_h.wrapping_sub(128);
 
             // Check if sprite is visible on this line
-            if priority == priority_filter && line >= v_pos && line < v_pos + sprite_v_px as u16 {
-                let py = line - v_pos;
+            if priority == priority_filter && fetch_line >= v_pos && fetch_line < v_pos + sprite_v_px as u16 {
+                let py = fetch_line - v_pos;
                 let fetch_py = if v_flip { (sprite_v_px as u16 - 1) - py } else { py };
                 
                 let tile_v_offset = fetch_py / 8;
@@ -523,7 +554,7 @@ impl Vdp {
         }
     }
 
-    fn render_plane(&mut self, is_plane_a: bool, line: u16, priority_filter: bool) {
+    fn render_plane(&mut self, is_plane_a: bool, fetch_line: u16, draw_line: u16, priority_filter: bool) {
         let (plane_w, plane_h) = self.plane_size();
         let name_table_base = if is_plane_a { self.plane_a_address() } else { self.plane_b_address() };
         
@@ -538,12 +569,12 @@ impl Vdp {
         let lo = self.vram[hs_addr as usize + 1];
         let h_scroll = (((hi as u16) << 8) | (lo as u16)) & 0x03FF;
         
-        let scrolled_v = line.wrapping_add(v_scroll);
+        let scrolled_v = fetch_line.wrapping_add(v_scroll);
         let tile_v = (scrolled_v / 8) % plane_h;
         let pixel_v = scrolled_v % 8;
         
         let screen_width = self.screen_width();
-        let line_offset = (line as usize) * 320;
+        let line_offset = (draw_line as usize) * 320;
 
         for screen_x in 0..screen_width {
             let scrolled_h = (screen_x as u16).wrapping_sub(h_scroll);
@@ -919,6 +950,8 @@ impl Debuggable for Vdp {
             "control_pending": self.control_pending,
             "control_code": self.control_code,
             "control_address": self.control_address,
+            "v30_offset": self.v30_offset,
+            "is_pal": self.is_pal,
         })
     }
 
