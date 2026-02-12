@@ -2061,13 +2061,6 @@ impl Cpu {
     
     fn sr_value(&self) -> u16 {
         // Reconstruct SR from flags and internal state
-        // Currently self.sr holds it? 
-        // Mod.rs fields:
-        // status register:
-        // pub d: [u32; 8],
-        // pub a: [u32; 8],
-        // pub pc: u32,
-        // pub sr: u16, // Stores full SR?
         self.sr
     }
     
