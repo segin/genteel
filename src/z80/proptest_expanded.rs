@@ -3,12 +3,11 @@
 use proptest::prelude::*;
 use super::*;
 use crate::memory::Memory;
-use super::test_utils::TestIo;
 
 fn z80_prog(program: &[u8]) -> Z80 {
     let mut m = Memory::new(0x10000);
     for (i, &b) in program.iter().enumerate() { m.data[i] = b; }
-    Z80::new(Box::new(m), Box::new(TestIo::default()))
+    Z80::new(Box::new(m))
 }
 
 proptest! {
