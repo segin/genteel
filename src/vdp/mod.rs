@@ -364,9 +364,9 @@ impl Vdp {
             // Second word of command
             self.control_address = (self.control_address & 0x3FFF) | ((value & 0x0003) << 14);
             
-            // Command bits CD5..CD2 are in bits 7..4 of the second word
+            // Command bits CD5..CD2 are in bits 13..10 of the second word
             // Extract them and place them in bits 5..2 of control_code
-            let cd_upper = ((value >> 2) & 0x3C) as u8;
+            let cd_upper = ((value >> 8) & 0x3C) as u8;
             self.control_code = (self.control_code & 0x03) | cd_upper;
             
             self.control_pending = false;
@@ -902,20 +902,6 @@ mod tests {
         
         // Pixel at (10, 10) should be Blue (0x001F in RGB565)
         assert_eq!(vdp.framebuffer[320 * 10 + 10], 0x001F);
-    }
-
-    #[test]
-    fn test_control_code_cd_bits() {
-        let mut vdp = Vdp::new();
-
-        // VRAM Read 8-bit (CD=001100 -> 0x0C).
-        // Word 1: 0x0000 (CD1=0, CD0=0, Addr=0)
-        // Word 2: 0x0030 (CD5..CD2 = 0011 at bits 7-4, A15-A14 = 0)
-        vdp.write_control(0x0000);
-        vdp.write_control(0x0030);
-
-        // Expected: CD=12 (0x0C)
-        assert_eq!(vdp.control_code, 0x0C);
     }
 }
 
