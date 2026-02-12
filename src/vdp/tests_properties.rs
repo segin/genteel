@@ -20,8 +20,11 @@ proptest! {
         // Set CRAM color: ----BBB-GGG-RRR-
         let cram_value = ((b as u16) << 9) | ((g as u16) << 5) | ((r as u16) << 1);
         let addr = ((palette as usize) << 5) | ((color as usize) << 1);
-        vdp.cram[addr] = (cram_value >> 8) as u8;
-        vdp.cram[addr | 1] = cram_value as u8;
+
+        // Use public API to ensure cache update
+        vdp.write_control(0xC000 | (addr as u16)); // Set write address (CRAM write command)
+        vdp.write_control(0x0000); // Complete command
+        vdp.write_data(cram_value);
         
         let rgb565 = vdp.get_cram_color_pub(palette, color);
         

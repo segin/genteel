@@ -27,6 +27,10 @@ pub struct Vdp {
     /// Format: ----BBB-GGG-RRR- (each component 0-7)
     pub cram: [u8; 128],
 
+    /// CRAM Cache (64 colors) - pre-converted RGB565 values
+    /// Stores: RRRRR GGGGGG BBBBB
+    cram_cache: [u16; 64],
+
     /// Vertical Scroll RAM (80 bytes) - 40 columns × 2 bytes
     pub vsram: [u8; 80],
 
@@ -64,6 +68,7 @@ impl Vdp {
         Self {
             vram: [0; 0x10000],
             cram: [0; 128],
+            cram_cache: [0; 64],
             vsram: [0; 80],
             registers: [0; 24],
             control_pending: false,
@@ -83,6 +88,7 @@ impl Vdp {
     pub fn reset(&mut self) {
         self.vram.fill(0);
         self.cram.fill(0);
+        self.cram_cache.fill(0);
         self.vsram.fill(0);
         self.registers.fill(0);
         self.control_pending = false;
@@ -294,6 +300,7 @@ impl Vdp {
                 let cram_addr = (addr & 0x7E) as usize; // Ensure word alignment
                 self.cram[cram_addr] = (value >> 8) as u8;
                 self.cram[cram_addr + 1] = (value & 0xFF) as u8;
+                self.update_cram_cache_entry(cram_addr);
                 if value != 0 {
                     eprintln!("DEBUG: NON-ZERO CRAM WRITE: addr=0x{:02X} val=0x{:04X}", cram_addr, value);
                 }
@@ -584,13 +591,22 @@ impl Vdp {
 
     /// Get color from CRAM as RGB565
     fn get_cram_color(&self, palette: u8, index: u8) -> u16 {
-        let addr = ((palette as usize) << 5) | ((index as usize) << 1);
-        if addr >= 128 {
+        // CRAM cache stores 64 colors directly
+        let entry = ((palette as usize) << 4) | (index as usize);
+        if entry >= 64 {
             return 0;
         }
+        self.cram_cache[entry]
+    }
 
-        let hi = self.cram[addr] as u16;
-        let lo = self.cram[addr | 1] as u16;
+    /// Update a single entry in the CRAM cache
+    fn update_cram_cache_entry(&mut self, byte_addr: usize) {
+        let entry_idx = byte_addr >> 1; // 0-63
+        if entry_idx >= 64 { return; }
+
+        let base_addr = entry_idx << 1;
+        let hi = self.cram[base_addr] as u16;
+        let lo = self.cram[base_addr | 1] as u16;
         let color = (hi << 8) | lo;
 
         // Genesis color format: ----BBB-GGG-RRR-
@@ -604,7 +620,7 @@ impl Vdp {
         let g6 = (g << 3) | g;
         let b5 = (b << 2) | (b >> 1);
 
-        (r5 << 11) | (g6 << 5) | b5
+        self.cram_cache[entry_idx] = (r5 << 11) | (g6 << 5) | b5;
     }
 
     /// Public wrapper for get_cram_color (for testing)
@@ -662,6 +678,7 @@ impl Vdp {
                         0x03 => {
                             let addr = (self.control_address & 0x7F) as usize;
                             self.cram[addr] = fill_data;
+                            self.update_cram_cache_entry(addr);
                         }
                         0x05 => {
                             let addr = (self.control_address & 0x7F) as usize;
