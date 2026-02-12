@@ -9,12 +9,12 @@
   },
   "file_count": 399,
   "languages": [
-    "JSON",
-    "Markdown",
-    "TOML",
+    "Rust",
     "Python",
     "Unknown",
-    "Rust"
+    "TOML",
+    "Markdown",
+    "JSON"
   ],
   "dependency_count": 322,
   "vulnerabilities": 0,
