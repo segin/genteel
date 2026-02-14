@@ -1045,6 +1045,8 @@ mod tests {
 
         // Check if 0xA01FFD is 0x80
         // We use read_byte on bus.
+        // We must request the bus first to read Z80 RAM
+        emulator.bus.borrow_mut().write_word(0xA11100, 0x0100);
         let val = emulator.bus.borrow_mut().read_byte(0xA01FFD);
         assert_eq!(val, 0x80, "Z80 should have written 0x80 to 0xA01FFD");
     }
