@@ -1,4 +1,4 @@
-use crate::cpu::addressing::{calculate_ea, read_ea, write_ea};
+use crate::cpu::addressing::{calculate_ea};
 use crate::cpu::decoder::{AddressingMode, Size};
 use crate::cpu::{flags, Cpu};
 use crate::memory::MemoryInterface;
@@ -544,7 +544,7 @@ pub fn exec_divu<M: MemoryInterface>(
     let divisor = cpu.cpu_read_ea(src_ea, Size::Word, memory) as u16;
 
     if divisor == 0 {
-        cpu.trigger_trap(5);
+        cpu.process_exception(5, memory);
         return 0;
     }
 
@@ -575,7 +575,7 @@ pub fn exec_divs<M: MemoryInterface>(
     let divisor = cpu.cpu_read_ea(src_ea, Size::Word, memory) as i16;
 
     if divisor == 0 {
-        cpu.trigger_trap(5);
+        cpu.process_exception(5, memory);
         return 0;
     }
 
@@ -751,10 +751,10 @@ pub fn exec_chk<M: MemoryInterface>(
     
     if val < 0 {
         cpu.set_flag(flags::NEGATIVE, true);
-        cpu.trigger_trap(6);
+        cpu.process_exception(6, memory);
     } else if val > bound {
         cpu.set_flag(flags::NEGATIVE, false);
-        cpu.trigger_trap(6);
+        cpu.process_exception(6, memory);
     }
 
     10 + cycles

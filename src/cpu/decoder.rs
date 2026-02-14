@@ -52,6 +52,17 @@ impl Size {
         }
     }
 
+    /// Apply this size to a 32-bit value (keeping higher bits of old value)
+    pub fn apply(self, old: u32, new: u32) -> u32 {
+        let mask = self.mask();
+        (old & !mask) | (new & mask)
+    }
+
+    /// Check if a value is negative for this size
+    pub fn is_negative(self, val: u32) -> bool {
+        (val & self.sign_bit()) != 0
+    }
+
     /// Returns the sign bit (MSB) for this size
     pub fn sign_bit(self) -> u32 {
         match self {
