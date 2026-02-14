@@ -905,40 +905,157 @@ impl Vdp {
         let mut screen_x: u16 = 0;
         let mut scrolled_h = (0u16).wrapping_sub(h_scroll);
 
-        while screen_x < screen_width {
-            let pixel_h = scrolled_h % 8;
+        // Plane width mask (plane_w is always power of 2)
+        let plane_w_mask = plane_w - 1;
+
+        // === Prologue: Align to 8-pixel boundary ===
+        let pixel_h = scrolled_h % 8;
+        if pixel_h != 0 {
             let pixels_left_in_tile = 8 - pixel_h;
             let pixels_to_process = std::cmp::min(pixels_left_in_tile, screen_width - screen_x);
 
-            let tile_h = (scrolled_h as usize / 8) % plane_w;
+            let tile_h = (scrolled_h as usize / 8) & plane_w_mask;
 
             let entry = self.fetch_nametable_entry(name_table_base, tile_v, tile_h, plane_w);
-
             let priority = (entry & 0x8000) != 0;
-            if priority != priority_filter {
-                screen_x += pixels_to_process;
-                scrolled_h = scrolled_h.wrapping_add(pixels_to_process);
-                continue;
+
+            if priority == priority_filter {
+                let palette = ((entry >> 13) & 0x03) as u8;
+                let v_flip = (entry & 0x1000) != 0;
+                let h_flip = (entry & 0x0800) != 0;
+                let tile_index = entry & 0x07FF;
+                let patterns = self.fetch_tile_pattern(tile_index, pixel_v, v_flip);
+
+                self.draw_tile_segment(
+                    patterns,
+                    palette,
+                    h_flip,
+                    pixel_h,
+                    pixels_to_process,
+                    line_offset + screen_x as usize,
+                );
             }
-
-            let palette = ((entry >> 13) & 0x03) as u8;
-            let v_flip = (entry & 0x1000) != 0;
-            let h_flip = (entry & 0x0800) != 0;
-            let tile_index = entry & 0x07FF;
-
-            let patterns = self.fetch_tile_pattern(tile_index, pixel_v, v_flip);
-
-            self.draw_tile_segment(
-                patterns,
-                palette,
-                h_flip,
-                pixel_h,
-                pixels_to_process,
-                line_offset + screen_x as usize,
-            );
 
             screen_x += pixels_to_process;
             scrolled_h = scrolled_h.wrapping_add(pixels_to_process);
+        }
+
+        // === Main Loop: Process full 8-pixel tiles ===
+        // At this point, scrolled_h % 8 == 0 (unless we already hit screen_width)
+        // We can iterate until screen_x is close to screen_width
+
+        // Initialize tile_h for the main loop
+        let mut tile_h = (scrolled_h as usize / 8) & plane_w_mask;
+
+        while screen_x + 8 <= screen_width {
+            // Unrolled inner loop logic for full tile
+            let entry = self.fetch_nametable_entry(name_table_base, tile_v, tile_h, plane_w);
+            let priority = (entry & 0x8000) != 0;
+
+            if priority == priority_filter {
+                let palette = ((entry >> 13) & 0x03) as u8;
+                let v_flip = (entry & 0x1000) != 0;
+                let h_flip = (entry & 0x0800) != 0;
+                let tile_index = entry & 0x07FF;
+
+                // pixel_h is always 0 here
+                let patterns = self.fetch_tile_pattern(tile_index, pixel_v, v_flip);
+
+                // Specialized drawing logic for 8 pixels
+                let start_idx = line_offset + screen_x as usize;
+
+                // Using get_cram_color inline manually to avoid function call overhead in inner loop if possible,
+                // but get_cram_color is small enough to inline.
+                // However, directly accessing framebuffer is faster if unrolled.
+
+                if h_flip {
+                    // h_flip: pixels 7,6,5,4,3,2,1,0
+                    // Pattern 3 (7,6), Pattern 2 (5,4), Pattern 1 (3,2), Pattern 0 (1,0)
+
+                    let byte = patterns[3];
+                    let col = byte & 0x0F;
+                    if col != 0 { self.framebuffer[start_idx] = self.get_cram_color(palette, col); }
+                    let col = byte >> 4;
+                    if col != 0 { self.framebuffer[start_idx + 1] = self.get_cram_color(palette, col); }
+
+                    let byte = patterns[2];
+                    let col = byte & 0x0F;
+                    if col != 0 { self.framebuffer[start_idx + 2] = self.get_cram_color(palette, col); }
+                    let col = byte >> 4;
+                    if col != 0 { self.framebuffer[start_idx + 3] = self.get_cram_color(palette, col); }
+
+                    let byte = patterns[1];
+                    let col = byte & 0x0F;
+                    if col != 0 { self.framebuffer[start_idx + 4] = self.get_cram_color(palette, col); }
+                    let col = byte >> 4;
+                    if col != 0 { self.framebuffer[start_idx + 5] = self.get_cram_color(palette, col); }
+
+                    let byte = patterns[0];
+                    let col = byte & 0x0F;
+                    if col != 0 { self.framebuffer[start_idx + 6] = self.get_cram_color(palette, col); }
+                    let col = byte >> 4;
+                    if col != 0 { self.framebuffer[start_idx + 7] = self.get_cram_color(palette, col); }
+                } else {
+                    // No flip: pixels 0,1,2,3,4,5,6,7
+                    // Pattern 0 (0,1), Pattern 1 (2,3), Pattern 2 (4,5), Pattern 3 (6,7)
+
+                    let byte = patterns[0];
+                    let col = byte >> 4;
+                    if col != 0 { self.framebuffer[start_idx] = self.get_cram_color(palette, col); }
+                    let col = byte & 0x0F;
+                    if col != 0 { self.framebuffer[start_idx + 1] = self.get_cram_color(palette, col); }
+
+                    let byte = patterns[1];
+                    let col = byte >> 4;
+                    if col != 0 { self.framebuffer[start_idx + 2] = self.get_cram_color(palette, col); }
+                    let col = byte & 0x0F;
+                    if col != 0 { self.framebuffer[start_idx + 3] = self.get_cram_color(palette, col); }
+
+                    let byte = patterns[2];
+                    let col = byte >> 4;
+                    if col != 0 { self.framebuffer[start_idx + 4] = self.get_cram_color(palette, col); }
+                    let col = byte & 0x0F;
+                    if col != 0 { self.framebuffer[start_idx + 5] = self.get_cram_color(palette, col); }
+
+                    let byte = patterns[3];
+                    let col = byte >> 4;
+                    if col != 0 { self.framebuffer[start_idx + 6] = self.get_cram_color(palette, col); }
+                    let col = byte & 0x0F;
+                    if col != 0 { self.framebuffer[start_idx + 7] = self.get_cram_color(palette, col); }
+                }
+            }
+
+            screen_x += 8;
+            scrolled_h = scrolled_h.wrapping_add(8);
+            tile_h = (tile_h + 1) & plane_w_mask;
+        }
+
+        // === Epilogue: Handle remaining pixels ===
+        if screen_x < screen_width {
+            let pixels_to_process = screen_width - screen_x;
+            // tile_h is already updated correctly from main loop
+
+            let entry = self.fetch_nametable_entry(name_table_base, tile_v, tile_h, plane_w);
+            let priority = (entry & 0x8000) != 0;
+
+            if priority == priority_filter {
+                let palette = ((entry >> 13) & 0x03) as u8;
+                let v_flip = (entry & 0x1000) != 0;
+                let h_flip = (entry & 0x0800) != 0;
+                let tile_index = entry & 0x07FF;
+                let patterns = self.fetch_tile_pattern(tile_index, pixel_v, v_flip);
+
+                self.draw_tile_segment(
+                    patterns,
+                    palette,
+                    h_flip,
+                    0, // pixel_h is 0 since we came from aligned main loop
+                    pixels_to_process,
+                    line_offset + screen_x as usize,
+                );
+            }
+
+            // screen_x += pixels_to_process; // Not needed as we are done
         }
     }
 }
