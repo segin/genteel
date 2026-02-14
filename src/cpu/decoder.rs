@@ -42,6 +42,33 @@ impl Size {
             Size::Long => 4,
         }
     }
+
+    /// Returns the bitmask for this size
+    pub fn mask(self) -> u32 {
+        match self {
+            Size::Byte => 0xFF,
+            Size::Word => 0xFFFF,
+            Size::Long => 0xFFFFFFFF,
+        }
+    }
+
+    /// Returns the sign bit (MSB) for this size
+    pub fn sign_bit(self) -> u32 {
+        match self {
+            Size::Byte => 0x80,
+            Size::Word => 0x8000,
+            Size::Long => 0x80000000,
+        }
+    }
+
+    /// Returns the number of bits for this size
+    pub fn bits(self) -> u32 {
+        match self {
+            Size::Byte => 8,
+            Size::Word => 16,
+            Size::Long => 32,
+        }
+    }
 }
 
 impl fmt::Display for Size {

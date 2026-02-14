@@ -204,11 +204,8 @@ pub fn exec_shift<M: MemoryInterface>(
     let (dst_ea, cycles) = calculate_ea(dst, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     let val = read_ea(dst_ea, size, &cpu.d, &cpu.a, memory);
 
-    let (mask, sign_bit) = match size {
-        Size::Byte => (0xFFu32, 0x80u32),
-        Size::Word => (0xFFFF, 0x8000),
-        Size::Long => (0xFFFFFFFF, 0x80000000),
-    };
+    let mask = size.mask();
+    let sign_bit = size.sign_bit();
 
     let val = val & mask;
     let mut result = val;
@@ -265,11 +262,8 @@ pub fn exec_rotate<M: MemoryInterface>(
     let (dst_ea, cycles) = calculate_ea(dst, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     let val = read_ea(dst_ea, size, &cpu.d, &cpu.a, memory);
 
-    let (mask, bits) = match size {
-        Size::Byte => (0xFFu32, 8u32),
-        Size::Word => (0xFFFF, 16),
-        Size::Long => (0xFFFFFFFF, 32),
-    };
+    let mask = size.mask();
+    let bits = size.bits();
 
     let val = val & mask;
     let effective_count = count_val % bits;
@@ -323,11 +317,8 @@ pub fn exec_roxl<M: MemoryInterface>(
     let (dst_ea, cycles) = calculate_ea(dst, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     let val = cpu.cpu_read_ea(dst_ea, size, memory);
 
-    let (mask, msb) = match size {
-        Size::Byte => (0xFFu32, 0x80u32),
-        Size::Word => (0xFFFF, 0x8000),
-        Size::Long => (0xFFFFFFFF, 0x80000000),
-    };
+    let mask = size.mask();
+    let msb = size.sign_bit();
 
     let mut res = val & mask;
     let mut x = cpu.get_flag(flags::EXTEND);
@@ -368,11 +359,8 @@ pub fn exec_roxr<M: MemoryInterface>(
     let (dst_ea, cycles) = calculate_ea(dst, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     let val = cpu.cpu_read_ea(dst_ea, size, memory);
 
-    let (mask, msb) = match size {
-        Size::Byte => (0xFFu32, 0x80u32),
-        Size::Word => (0xFFFF, 0x8000),
-        Size::Long => (0xFFFFFFFF, 0x80000000),
-    };
+    let mask = size.mask();
+    let msb = size.sign_bit();
 
     let mut res = val & mask;
     let mut x = cpu.get_flag(flags::EXTEND);

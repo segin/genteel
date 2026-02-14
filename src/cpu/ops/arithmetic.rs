@@ -238,11 +238,7 @@ pub fn exec_addx<M: MemoryInterface>(
         cpu.write_data_reg(dst_reg, size, result);
     }
 
-    let msb = match size {
-        Size::Byte => 0x80,
-        Size::Word => 0x8000,
-        Size::Long => 0x80000000,
-    };
+    let msb = size.sign_bit();
 
     cpu.set_flag(flags::NEGATIVE, (result & msb) != 0);
     if result != 0 {
@@ -299,11 +295,7 @@ pub fn exec_subx<M: MemoryInterface>(
         cpu.write_data_reg(dst_reg, size, result);
     }
 
-    let msb = match size {
-        Size::Byte => 0x80,
-        Size::Word => 0x8000,
-        Size::Long => 0x80000000,
-    };
+    let msb = size.sign_bit();
 
     cpu.set_flag(flags::NEGATIVE, (result & msb) != 0);
     if result != 0 {
@@ -330,11 +322,7 @@ pub fn exec_negx<M: MemoryInterface>(
 
     cpu.cpu_write_ea(dst_ea, size, result, memory);
 
-    let msb = match size {
-        Size::Byte => 0x80,
-        Size::Word => 0x8000,
-        Size::Long => 0x80000000,
-    };
+    let msb = size.sign_bit();
 
     cpu.set_flag(flags::NEGATIVE, (result & msb) != 0);
     if result != 0 {
