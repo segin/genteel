@@ -227,8 +227,8 @@ impl Vdp {
         self.last_data_write = value;
 
         // DMA Fill (Mode 2) check
-        // Enabled (Reg 1 bit 4) AND Mode 2 (Reg 23 bits 7,6 = 1,0)
-        if (self.registers[1] & 0x10) != 0 && (self.registers[23] & 0xC0) == 0x80 {
+        // Enabled (Reg 1 bit 4) AND Mode 2 (Reg 23 bits 7,6 = 1,0) AND DMA Pending (CD5=1)
+        if (self.registers[1] & 0x10) != 0 && (self.registers[23] & 0xC0) == 0x80 && self.dma_pending {
             let length = self.dma_length();
             let mut addr = self.control_address;
             let inc = self.auto_increment() as u16;
@@ -244,6 +244,7 @@ impl Vdp {
                 addr = addr.wrapping_add(inc);
             }
             self.control_address = addr;
+            self.dma_pending = false;
             return;
         }
 
