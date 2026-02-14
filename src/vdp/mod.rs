@@ -837,6 +837,7 @@ impl Vdp {
 
             // Fetch nametable entry (2 bytes)
             let nt_entry_addr = name_table_base + (tile_v * plane_w + tile_h) * 2;
+            // Security: Mask with 0xFFFF to prevent out-of-bounds access if name_table_base + offset exceeds 64KB
             let hi = self.vram[nt_entry_addr & 0xFFFF];
             let lo = self.vram[(nt_entry_addr + 1) & 0xFFFF];
             let entry = ((hi as u16) << 8) | (lo as u16);
