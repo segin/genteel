@@ -1407,6 +1407,27 @@ fn decode_add(opcode: u16) -> Instruction {
     Instruction::Unimplemented { opcode }
 }
 
+fn make_shift_instruction(
+    op_type: u8,
+    direction: bool,
+    size: Size,
+    dst: AddressingMode,
+    count: ShiftCount,
+    opcode: u16,
+) -> Instruction {
+    match (op_type, direction) {
+        (0b00, false) => Instruction::Asr { size, dst, count },
+        (0b00, true) => Instruction::Asl { size, dst, count },
+        (0b01, false) => Instruction::Lsr { size, dst, count },
+        (0b01, true) => Instruction::Lsl { size, dst, count },
+        (0b10, false) => Instruction::Roxr { size, dst, count },
+        (0b10, true) => Instruction::Roxl { size, dst, count },
+        (0b11, false) => Instruction::Ror { size, dst, count },
+        (0b11, true) => Instruction::Rol { size, dst, count },
+        _ => Instruction::Unimplemented { opcode },
+    }
+}
+
 fn decode_shifts(opcode: u16) -> Instruction {
     // ASL, ASR, LSL, LSR, ROL, ROR, ROXL, ROXR
 
@@ -1423,49 +1444,7 @@ fn decode_shifts(opcode: u16) -> Instruction {
         let ea_reg = (opcode & 0x07) as u8;
         if let Some(dst) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
             let count = ShiftCount::Immediate(1); // Memory shifts are always by 1
-            return match (op_type, direction) {
-                (0b00, false) => Instruction::Asr {
-                    size: Size::Word,
-                    dst,
-                    count,
-                },
-                (0b00, true) => Instruction::Asl {
-                    size: Size::Word,
-                    dst,
-                    count,
-                },
-                (0b01, false) => Instruction::Lsr {
-                    size: Size::Word,
-                    dst,
-                    count,
-                },
-                (0b01, true) => Instruction::Lsl {
-                    size: Size::Word,
-                    dst,
-                    count,
-                },
-                (0b10, false) => Instruction::Roxr {
-                    size: Size::Word,
-                    dst,
-                    count,
-                },
-                (0b10, true) => Instruction::Roxl {
-                    size: Size::Word,
-                    dst,
-                    count,
-                },
-                (0b11, false) => Instruction::Ror {
-                    size: Size::Word,
-                    dst,
-                    count,
-                },
-                (0b11, true) => Instruction::Rol {
-                    size: Size::Word,
-                    dst,
-                    count,
-                },
-                _ => Instruction::Unimplemented { opcode },
-            };
+            return make_shift_instruction(op_type, direction, Size::Word, dst, count, opcode);
         }
     }
 
@@ -1479,17 +1458,7 @@ fn decode_shifts(opcode: u16) -> Instruction {
         };
         let dst = AddressingMode::DataRegister(reg);
 
-        return match (op_type, direction) {
-            (0b00, false) => Instruction::Asr { size, dst, count },
-            (0b00, true) => Instruction::Asl { size, dst, count },
-            (0b01, false) => Instruction::Lsr { size, dst, count },
-            (0b01, true) => Instruction::Lsl { size, dst, count },
-            (0b10, false) => Instruction::Roxr { size, dst, count },
-            (0b10, true) => Instruction::Roxl { size, dst, count },
-            (0b11, false) => Instruction::Ror { size, dst, count },
-            (0b11, true) => Instruction::Rol { size, dst, count },
-            _ => Instruction::Unimplemented { opcode },
-        };
+        return make_shift_instruction(op_type, direction, size, dst, count, opcode);
     }
 
     Instruction::Unimplemented { opcode }
