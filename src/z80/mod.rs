@@ -718,7 +718,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 let d = self.fetch_byte() as i8;
                 self.b = self.b.wrapping_sub(1);
                 if self.b != 0 {
-                    self.pc = (self.pc as i16 + d as i16) as u16;
+                    self.pc = (self.pc as i32 + d as i32) as u16;
                     13
                 } else {
                     8
@@ -727,14 +727,14 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
             3 => {
                 // JR d
                 let d = self.fetch_byte() as i8;
-                self.pc = (self.pc as i16 + d as i16) as u16;
+                self.pc = (self.pc as i32 + d as i32) as u16;
                 12
             }
             4..=7 => {
                 // JR cc, d
                 let d = self.fetch_byte() as i8;
                 if self.check_condition(y - 4) {
-                    self.pc = (self.pc as i16 + d as i16) as u16;
+                    self.pc = (self.pc as i32 + d as i32) as u16;
                     12
                 } else {
                     7

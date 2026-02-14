@@ -49,6 +49,24 @@ fn regression_jr_negative() {
     assert_eq!(c.pc, 0); // 2 + 2 (instruction) + (-4) = 0
 }
 
+#[test]
+fn regression_jr_positive_overflow() {
+    // Test JR at boundary where i16 addition might overflow
+    // PC starts at 0x7FFD (32765)
+    // 0x7FFD: 18 (JR)
+    // 0x7FFE: 01 (+1)
+    // After fetch JR: PC=0x7FFE
+    // After fetch disp: PC=0x7FFF (32767)
+    // Calculation: 32767 + 1 = 32768
+    // If done in i16, 32767 + 1 overflows.
+    let mut c = z80(&[]);
+    c.memory.data[0x7FFD] = 0x18;
+    c.memory.data[0x7FFE] = 0x01;
+    c.pc = 0x7FFD;
+    c.step();
+    assert_eq!(c.pc, 0x8000);
+}
+
 // Bug: LD (HL), H/L uses new value after HL is modified
 #[test]
 fn regression_ld_hl_h() {
