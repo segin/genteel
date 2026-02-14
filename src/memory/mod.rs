@@ -166,12 +166,13 @@ impl MemoryInterface for Memory {
 impl Memory {
     #[cfg(test)]
     pub fn hex_dump(&self, start: u32, end: u32) -> String {
+        use std::fmt::Write;
         let mut output = String::new();
         for i in (start..=end).step_by(16) {
-            output.push_str(&format!("{:08x}: ", i));
+            write!(output, "{:08x}: ", i).unwrap();
             for j in 0..16 {
                 if (i + j) <= end {
-                    output.push_str(&format!("{:02X} ", self.data[(i + j) as usize]));
+                    write!(output, "{:02X} ", self.data[(i + j) as usize]).unwrap();
                 } else {
                     output.push_str("   ");
                 }
