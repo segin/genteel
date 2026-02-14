@@ -130,3 +130,23 @@ fn test_render_plane_scroll() {
     // Pixel 8 should be Empty (0) because Tile 2 is empty.
     assert_eq!(vdp.framebuffer[8], 0x0000);
 }
+
+#[test]
+fn test_render_line_performance() {
+    let mut vdp = Vdp::new();
+    vdp.set_region(false);
+    vdp.registers[1] |= 0x40; // Display enabled
+
+    let start = std::time::Instant::now();
+    // Render 100 frames. On the test runner (~4ms/frame), this should take ~400ms.
+    for _ in 0..100 {
+        for line in 0..224 {
+            vdp.render_line(line);
+        }
+    }
+    let duration = start.elapsed();
+    println!("Render 100 frames took: {:?}", duration);
+
+    // Simple sanity check to ensure no massive regression (e.g. if it took 2s, something is wrong)
+    assert!(duration.as_millis() < 2000, "Rendering 100 frames took too long: {:?}", duration);
+}
