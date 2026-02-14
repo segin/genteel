@@ -652,6 +652,18 @@ mod tests {
         }
     }
 
+    fn create_test_server() -> GdbServer {
+        GdbServer {
+            listener: TcpListener::bind("127.0.0.1:0").unwrap(),
+            client: None,
+            breakpoints: HashSet::new(),
+            stop_reason: StopReason::Halted,
+            no_ack_mode: false,
+            password: None,
+            authenticated: true,
+        }
+    }
+
     #[test]
     fn test_checksum() {
         let data = "OK";
@@ -675,15 +687,7 @@ mod tests {
 
     #[test]
     fn test_breakpoint_management() {
-        let mut server = GdbServer {
-            listener: TcpListener::bind("127.0.0.1:0").unwrap(),
-            client: None,
-            breakpoints: HashSet::new(),
-            stop_reason: StopReason::Halted,
-            no_ack_mode: false,
-            password: None,
-            authenticated: true,
-        };
+        let mut server = create_test_server();
 
         // Set breakpoint
         let result = server.set_breakpoint("0,1000,4");
@@ -719,15 +723,7 @@ mod tests {
 
     #[test]
     fn test_process_command_basic() {
-        let mut server = GdbServer {
-            listener: TcpListener::bind("127.0.0.1:0").unwrap(),
-            client: None,
-            breakpoints: HashSet::new(),
-            stop_reason: StopReason::Halted,
-            no_ack_mode: false,
-            password: None,
-            authenticated: true,
-        };
+        let mut server = create_test_server();
         let mut regs = GdbRegisters::default();
         let mut mem = MockMemory::new();
 
@@ -750,15 +746,7 @@ mod tests {
 
     #[test]
     fn test_process_command_memory() {
-        let mut server = GdbServer {
-            listener: TcpListener::bind("127.0.0.1:0").unwrap(),
-            client: None,
-            breakpoints: HashSet::new(),
-            stop_reason: StopReason::Halted,
-            no_ack_mode: false,
-            password: None,
-            authenticated: true,
-        };
+        let mut server = create_test_server();
         let mut regs = GdbRegisters::default();
         let mut mem = MockMemory::new();
 
@@ -784,15 +772,7 @@ mod tests {
 
     #[test]
     fn test_process_command_registers() {
-        let mut server = GdbServer {
-            listener: TcpListener::bind("127.0.0.1:0").unwrap(),
-            client: None,
-            breakpoints: HashSet::new(),
-            stop_reason: StopReason::Halted,
-            no_ack_mode: false,
-            password: None,
-            authenticated: true,
-        };
+        let mut server = create_test_server();
         let mut regs = GdbRegisters::default();
         let mut mem = MockMemory::new();
 
@@ -817,15 +797,7 @@ mod tests {
 
     #[test]
     fn test_process_command_queries() {
-        let mut server = GdbServer {
-            listener: TcpListener::bind("127.0.0.1:0").unwrap(),
-            client: None,
-            breakpoints: HashSet::new(),
-            stop_reason: StopReason::Halted,
-            no_ack_mode: false,
-            password: None,
-            authenticated: true,
-        };
+        let mut server = create_test_server();
         let mut regs = GdbRegisters::default();
         let mut mem = MockMemory::new();
 
@@ -842,15 +814,7 @@ mod tests {
 
     #[test]
     fn test_process_command_connection() {
-        let mut server = GdbServer {
-            listener: TcpListener::bind("127.0.0.1:0").unwrap(),
-            client: None,
-            breakpoints: HashSet::new(),
-            stop_reason: StopReason::Halted,
-            no_ack_mode: false,
-            password: None,
-            authenticated: true,
-        };
+        let mut server = create_test_server();
         let mut regs = GdbRegisters::default();
         let mut mem = MockMemory::new();
 
