@@ -436,7 +436,7 @@ pub fn exec_divs<M: MemoryInterface>(
     let quotient = dst_val / (src_val as i32);
     let remainder = dst_val % (src_val as i32);
 
-    if quotient > 32767 || quotient < -32768 {
+    if !(-32768..=32767).contains(&quotient) {
         cpu.set_flag(flags::OVERFLOW, true);
         cpu.set_flag(flags::CARRY, false);
         return cycles + 10;

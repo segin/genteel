@@ -238,21 +238,11 @@ impl GdbServer {
 
         // Authentication check
         if !self.authenticated {
-            let allowed = if cmd.starts_with("qSupported") {
-                true
-            } else if cmd == "?" {
-                true
-            } else if cmd.starts_with("qRcmd,") {
-                // Allow qRcmd so we can process 'monitor auth'
-                true
-            } else if cmd.starts_with("H") {
-                // Allow thread setting (harmless)
-                true
-            } else if cmd == "QStartNoAckMode" {
-                true
-            } else {
-                false
-            };
+            let allowed = cmd.starts_with("qSupported")
+                || cmd == "?"
+                || cmd.starts_with("qRcmd,")
+                || cmd.starts_with('H')
+                || cmd == "QStartNoAckMode";
 
             if !allowed {
                 return "E01".to_string();
@@ -562,9 +552,9 @@ impl GdbServer {
         } else if cmd == "qAttached" {
             // Attached to existing process
             "1".to_string()
-        } else if cmd.starts_with("qRcmd,") {
+        } else if let Some(stripped) = cmd.strip_prefix("qRcmd,") {
             // Monitor command
-            self.handle_monitor_command(&cmd[6..])
+            self.handle_monitor_command(stripped)
         } else {
             // Unknown query
             "".to_string()
@@ -582,8 +572,8 @@ impl GdbServer {
         }
 
         let cmd = String::from_utf8_lossy(&bytes);
-        if cmd.starts_with("auth ") {
-            let provided_pass = cmd[5..].trim();
+        if let Some(stripped) = cmd.strip_prefix("auth ") {
+            let provided_pass = stripped.trim();
             if let Some(ref correct_pass) = self.password {
                 if provided_pass == correct_pass {
                     self.authenticated = true;

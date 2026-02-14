@@ -201,7 +201,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
     }
 
     fn set_parity_flag(&mut self, value: u8) {
-        let parity = value.count_ones() % 2 == 0;
+        let parity = value.count_ones().is_multiple_of(2);
         self.set_flag(flags::PARITY, parity);
     }
 

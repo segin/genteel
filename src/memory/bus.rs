@@ -279,15 +279,15 @@ impl Bus {
         }
 
         // VDP Data Port (Word access)
-        if addr >= 0xC00000 && addr <= 0xC00003 {
+        if (0xC00000..=0xC00003).contains(&addr) {
             return self.vdp.read_data();
         }
         // VDP Control Port / Status
-        if addr >= 0xC00004 && addr <= 0xC00007 {
+        if (0xC00004..=0xC00007).contains(&addr) {
             return self.vdp.read_status();
         }
         // VDP H/V Counter
-        if addr >= 0xC00008 && addr <= 0xC0000F {
+        if (0xC00008..=0xC0000F).contains(&addr) {
             return self.vdp.read_hv_counter();
         }
 
@@ -317,12 +317,12 @@ impl Bus {
         let addr = address & 0xFFFFFF;
 
         // VDP Data Port
-        if addr >= 0xC00000 && addr <= 0xC00003 {
+        if (0xC00000..=0xC00003).contains(&addr) {
             self.vdp.write_data(value);
             return;
         }
         // VDP Control Port
-        if addr >= 0xC00004 && addr <= 0xC00007 {
+        if (0xC00004..=0xC00007).contains(&addr) {
             self.vdp.write_control(value);
             if self.vdp.dma_pending {
                 self.run_dma();

@@ -1184,16 +1184,14 @@ fn decode_sub(opcode: u16) -> Instruction {
     }
 
     // SUBA
-    if size_bits == 0b11 || (size_bits == 0b11 && direction) {
-        if size_bits == 0b11 {
-            let size = if direction { Size::Long } else { Size::Word };
-            if let Some(src) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
-                return Instruction::SubA {
-                    size,
-                    src,
-                    dst_reg: reg,
-                };
-            }
+    if size_bits == 0b11 {
+        let size = if direction { Size::Long } else { Size::Word };
+        if let Some(src) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
+            return Instruction::SubA {
+                size,
+                src,
+                dst_reg: reg,
+            };
         }
     }
 

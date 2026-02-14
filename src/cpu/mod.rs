@@ -715,7 +715,7 @@ impl Cpu {
     // === Centralized Memory Access with Alignment Checks ===
 
     fn read_instruction_word<M: MemoryInterface>(&mut self, addr: u32, memory: &mut M) -> u16 {
-        if addr % 2 != 0 {
+        if !addr.is_multiple_of(2) {
             self.process_exception(3, memory); // Address Error
             return 0;
         }
@@ -723,7 +723,7 @@ impl Cpu {
     }
 
     pub(crate) fn read_word<M: MemoryInterface>(&mut self, addr: u32, memory: &mut M) -> u16 {
-        if addr % 2 != 0 {
+        if !addr.is_multiple_of(2) {
             self.process_exception(3, memory); // Address Error
             return 0;
         }
@@ -731,7 +731,7 @@ impl Cpu {
     }
 
     pub(crate) fn read_long<M: MemoryInterface>(&mut self, addr: u32, memory: &mut M) -> u32 {
-        if addr % 2 != 0 {
+        if !addr.is_multiple_of(2) {
             self.process_exception(3, memory); // Address Error
             return 0;
         }
@@ -739,7 +739,7 @@ impl Cpu {
     }
 
     pub(crate) fn write_word<M: MemoryInterface>(&mut self, addr: u32, val: u16, memory: &mut M) {
-        if addr % 2 != 0 {
+        if !addr.is_multiple_of(2) {
             self.process_exception(3, memory); // Address Error
             return;
         }
@@ -747,7 +747,7 @@ impl Cpu {
     }
 
     pub(crate) fn write_long<M: MemoryInterface>(&mut self, addr: u32, val: u32, memory: &mut M) {
-        if addr % 2 != 0 {
+        if !addr.is_multiple_of(2) {
             self.process_exception(3, memory); // Address Error
             return;
         }
@@ -798,7 +798,7 @@ impl Cpu {
         memory: &mut M,
     ) -> u32 {
         if let EffectiveAddress::Memory(addr) = ea {
-            if size != Size::Byte && addr % 2 != 0 {
+            if size != Size::Byte && !addr.is_multiple_of(2) {
                 self.process_exception(3, memory);
                 return 0;
             }
@@ -814,7 +814,7 @@ impl Cpu {
         memory: &mut M,
     ) {
         if let EffectiveAddress::Memory(addr) = ea {
-            if size != Size::Byte && addr % 2 != 0 {
+            if size != Size::Byte && !addr.is_multiple_of(2) {
                 self.process_exception(3, memory);
                 return;
             }

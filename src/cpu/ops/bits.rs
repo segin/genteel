@@ -287,16 +287,14 @@ pub fn exec_rotate<M: MemoryInterface>(
             result = ((val << effective_count) | (val >> (bits - effective_count))) & mask;
             carry = ((val >> (bits - effective_count)) & 1) != 0;
         }
-    } else {
-        if effective_count == 0 {
-            result = val;
-            if count_val > 0 {
-                carry = (val & 1) != 0;
-            }
-        } else {
-            result = ((val >> effective_count) | (val << (bits - effective_count))) & mask;
-            carry = ((val >> (effective_count - 1)) & 1) != 0;
+    } else if effective_count == 0 {
+        result = val;
+        if count_val > 0 {
+            carry = (val & 1) != 0;
         }
+    } else {
+        result = ((val >> effective_count) | (val << (bits - effective_count))) & mask;
+        carry = ((val >> (effective_count - 1)) & 1) != 0;
     }
 
     write_ea(dst_ea, size, result, &mut cpu.d, &mut cpu.a, memory);

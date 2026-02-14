@@ -193,10 +193,10 @@ impl Psg {
                 // Shift LFSR
                 let feedback = if self.noise.white_noise {
                     // White noise: XOR bits 0 and 3
-                    ((self.noise.lfsr & 1) ^ ((self.noise.lfsr >> 3) & 1)) as u16
+                    (self.noise.lfsr & 1) ^ ((self.noise.lfsr >> 3) & 1)
                 } else {
                     // Periodic noise: just bit 0
-                    (self.noise.lfsr & 1) as u16
+                    self.noise.lfsr & 1
                 };
                 
                 self.noise.lfsr = (self.noise.lfsr >> 1) | (feedback << 14);

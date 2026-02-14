@@ -427,50 +427,45 @@ impl Vdp {
 
         let mode = self.registers[23] & 0xC0;
 
-        if mode == 0xC0 {
-            // VRAM Copy (Mode 3)
-            // Source is in VRAM, masked to 16-bit
-            // Note: dma_source() returns 24-bit address, but for VRAM copy we only need 16 bits
-            // The registers hold the address shifted.
-            // Reg 21 (A1-A8) << 1
-            // Reg 22 (A9-A16) << 9
-            // Reg 23 (A17-A23) << 17
-            // VRAM is 64KB (16-bit address).
-            // We need to extract the 16-bit address from the registers correctly?
-            // "DMA Source Address" is a byte address.
-            // But usually for 68k transfer it's word aligned (bit 0 ignored/used for something else).
-            // For VRAM Copy, it's byte address.
-            // Reg 21 (bits 1-7 map to A1-A7, bit 0 is ignored?).
-            // Wait, dma_source implementation:
-            // ((r23)<<17) | ((r22)<<9) | ((r21)<<1)
-            // This constructs a 24-bit address where bit 0 is always 0.
-            // This suggests 16-bit alignment?
-            // But VRAM Copy can copy bytes?
-            // "Source address... is a byte address".
-            // If the register mapping enforces bit 0=0, then we can only copy from even addresses?
-            // I'll stick to dma_source() logic for now and mask to 0xFFFF.
+        match mode {
+            0x80 => {
+                // VRAM Fill (Mode 2)
+                // This is also handled in write_data, but provided here for completeness
+                // if triggered via control port (non-standard but possible).
+                let data = self.last_data_write;
+                let mut addr = self.control_address;
+                let inc = self.auto_increment() as u16;
+                let fill_byte = (data >> 8) as u8;
 
-            let mut source = (self.dma_source() & 0xFFFF) as u16;
-            let mut dest = self.control_address;
-            let inc = self.auto_increment() as u16;
-
-            for _ in 0..len {
-                let val = self.vram[source as usize];
-                self.vram[dest as usize] = val;
-                source = source.wrapping_add(1);
-                dest = dest.wrapping_add(inc);
+                for _ in 0..len {
+                    self.vram[addr as usize] = fill_byte;
+                    addr = addr.wrapping_add(inc);
+                }
+                self.control_address = addr;
             }
-            self.control_address = dest;
-        }
+            0xC0 => {
+                // VRAM Copy (Mode 3)
+                let mut source = (self.dma_source() & 0xFFFF) as u16;
+                let mut dest = self.control_address;
+                let inc = self.auto_increment() as u16;
 
-        // Mode 2 (Fill) is handled in write_data
+                for _ in 0..len {
+                    let val = self.vram[source as usize];
+                    self.vram[dest as usize] = val;
+                    source = source.wrapping_add(1);
+                    dest = dest.wrapping_add(inc);
+                }
+                self.control_address = dest;
+            }
+            _ => {}
+        }
 
         self.dma_pending = false;
         len
     }
 
     pub fn sprite_table_address(&self) -> u16 {
-        let mask = if self.h40_mode() { 0xFE00 } else { 0xFE00 }; // simplified
+        let mask = 0xFE00; // simplified
         ((self.registers[5] as u16) << 9) & mask
     }
 
@@ -908,6 +903,9 @@ impl Debuggable for Vdp {
         }
     }
 }
+
+#[cfg(test)]
+mod tests_render;
 
 #[cfg(test)]
 mod tests_dma;

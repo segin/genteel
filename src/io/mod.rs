@@ -87,20 +87,15 @@ impl ControllerState {
 }
 
 /// Controller type
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ControllerType {
     /// No controller connected
     None,
     /// 3-button controller (original)
+    #[default]
     ThreeButton,
     /// 6-button controller (Fighting Pad)
     SixButton,
-}
-
-impl Default for ControllerType {
-    fn default() -> Self {
-        ControllerType::ThreeButton
-    }
 }
 
 /// A controller port
