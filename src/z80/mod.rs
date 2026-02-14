@@ -72,10 +72,10 @@ pub struct Z80<M: MemoryInterface, I: IoInterface> {
     // Interrupt logic
     pub pending_ei: bool,
 
-    // Memory (trait object for flexibility)
+    // Memory interface
     pub memory: M,
 
-    // I/O (trait object for flexibility)
+    // I/O interface
     pub io: I,
 
     // Cycle counter for timing
@@ -327,29 +327,62 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
 
     fn and_a(&mut self, value: u8) {
         self.a &= value;
-        self.set_flag(flags::CARRY, false);
-        self.set_flag(flags::HALF_CARRY, true);
-        self.set_flag(flags::ADD_SUB, false);
-        self.set_sz_flags(self.a);
-        self.set_parity_flag(self.a);
+
+        // H=1, N=0, C=0
+        let mut f = flags::HALF_CARRY;
+
+        // S, Z, X, Y
+        f |= self.a & (flags::SIGN | flags::Y_FLAG | flags::X_FLAG);
+        if self.a == 0 {
+            f |= flags::ZERO;
+        }
+
+        // P
+        if self.a.count_ones().is_multiple_of(2) {
+            f |= flags::PARITY;
+        }
+
+        self.f = f;
     }
 
     fn or_a(&mut self, value: u8) {
         self.a |= value;
-        self.set_flag(flags::CARRY, false);
-        self.set_flag(flags::HALF_CARRY, false);
-        self.set_flag(flags::ADD_SUB, false);
-        self.set_sz_flags(self.a);
-        self.set_parity_flag(self.a);
+
+        // H=0, N=0, C=0
+        let mut f = 0;
+
+        // S, Z, X, Y
+        f |= self.a & (flags::SIGN | flags::Y_FLAG | flags::X_FLAG);
+        if self.a == 0 {
+            f |= flags::ZERO;
+        }
+
+        // P
+        if self.a.count_ones().is_multiple_of(2) {
+            f |= flags::PARITY;
+        }
+
+        self.f = f;
     }
 
     fn xor_a(&mut self, value: u8) {
         self.a ^= value;
-        self.set_flag(flags::CARRY, false);
-        self.set_flag(flags::HALF_CARRY, false);
-        self.set_flag(flags::ADD_SUB, false);
-        self.set_sz_flags(self.a);
-        self.set_parity_flag(self.a);
+
+        // H=0, N=0, C=0
+        let mut f = 0;
+
+        // S, Z, X, Y
+        f |= self.a & (flags::SIGN | flags::Y_FLAG | flags::X_FLAG);
+        if self.a == 0 {
+            f |= flags::ZERO;
+        }
+
+        // P
+        if self.a.count_ones().is_multiple_of(2) {
+            f |= flags::PARITY;
+        }
+
+        self.f = f;
     }
 
     fn inc(&mut self, value: u8) -> u8 {

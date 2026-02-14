@@ -44,8 +44,35 @@ impl InputScript {
 
     /// Load a script from a file
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, String> {
-        let content =
-            fs::read_to_string(path).map_err(|e| format!("Failed to read input script: {}", e))?;
+        use std::io::Read;
+        const MAX_SCRIPT_SIZE: u64 = 50 * 1024 * 1024; // 50 MB
+
+        let file =
+            fs::File::open(path).map_err(|e| format!("Failed to open input script: {}", e))?;
+        let metadata = file
+            .metadata()
+            .map_err(|e| format!("Failed to get script metadata: {}", e))?;
+
+        if metadata.len() > MAX_SCRIPT_SIZE {
+            return Err(format!(
+                "Input script too large ({} bytes, max {} bytes)",
+                metadata.len(),
+                MAX_SCRIPT_SIZE
+            ));
+        }
+
+        let mut content = String::with_capacity(metadata.len() as usize);
+        file.take(MAX_SCRIPT_SIZE + 1)
+            .read_to_string(&mut content)
+            .map_err(|e| format!("Failed to read input script: {}", e))?;
+
+        if content.len() as u64 > MAX_SCRIPT_SIZE {
+            return Err(format!(
+                "Input script exceeds maximum size of {} bytes",
+                MAX_SCRIPT_SIZE
+            ));
+        }
+
         Self::parse(&content)
     }
 
@@ -192,6 +219,7 @@ impl InputManager {
     pub fn reset(&mut self) {
         self.current_frame = 0;
         self.last_input = FrameInput::default();
+        self.script = None;
     }
 
     /// Check if script playback is complete
@@ -231,6 +259,7 @@ impl InputManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn test_parse_buttons_basic() {
@@ -464,7 +493,7 @@ mod tests {
         assert!(!manager.last_input.p1.a);
         assert!(!manager.last_input.p2.start);
 
-        // 2. Test script-based state reset
+        // 2. Test script-based state reset (Basic)
         // Frame 0: default
         // Frame 1: A pressed
         let script = InputScript::parse("0,........,........\n1,....A...,........").unwrap();
@@ -478,12 +507,36 @@ mod tests {
         assert!(input.p1.a);
         assert!(manager.last_input.p1.a);
 
-        // Reset
         manager.reset();
 
         assert_eq!(manager.frame(), 0);
-        // Verify last_input is reset to default (no A pressed)
         assert!(!manager.last_input.p1.a);
+
+        // 3. Test script-based state reset (Multi-frame)
+        let script = InputScript::parse("0,....A...,........\n1,.....B..,........").unwrap();
+        manager.set_script(script);
+
+        // Advance to frame 1, which should set last_input to have A pressed
+        let input = manager.advance_frame();
+        assert!(input.p1.a);
+        assert_eq!(manager.frame(), 1);
+
+        // Advance to frame 2, which should set last_input to have B pressed
+        let input = manager.advance_frame();
+        assert!(input.p1.b);
+        assert_eq!(manager.frame(), 2);
+
+        // Verify internal state is not default
+        assert!(manager.last_input.p1.b);
+
+        manager.reset();
+
+        // Verify frame is 0
+        assert_eq!(manager.frame(), 0);
+
+        // Verify last_input is default (no A or B pressed)
+        assert!(!manager.last_input.p1.a);
+        assert!(!manager.last_input.p1.b);
 
         // Advance frame 0 again
         let input0 = manager.advance_frame();
@@ -495,7 +548,7 @@ mod tests {
         let result = InputScript::load("non_existent_file.txt");
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.contains("Failed to read input script"));
+        assert!(err.contains("Failed to open input script"));
     }
 
     #[test]
@@ -512,5 +565,37 @@ mod tests {
         let result = InputScript::parse(content);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "Line 1: invalid frame number");
+    }
+
+    proptest! {
+        #[test]
+        fn test_is_complete_property(
+            max_frame in 0..u64::MAX,
+            delta in -2i64..=2i64, // Test around the boundary
+            random_frame in 0..u64::MAX // And random frames
+        ) {
+            let mut manager = InputManager::new();
+
+            // Case 1: No script
+            prop_assert!(!manager.is_complete());
+
+            // Case 2: With script
+            let mut script = InputScript::new();
+            script.max_frame = max_frame;
+            manager.set_script(script);
+
+            // Check boundary conditions
+            let boundary_frame = (max_frame as i128 + delta as i128).max(0) as u64;
+            manager.current_frame = boundary_frame;
+            let expected_boundary = boundary_frame > max_frame;
+            prop_assert_eq!(manager.is_complete(), expected_boundary,
+                "Failed boundary check: max_frame={}, current_frame={}", max_frame, boundary_frame);
+
+            // Check random frame
+            manager.current_frame = random_frame;
+            let expected_random = random_frame > max_frame;
+            prop_assert_eq!(manager.is_complete(), expected_random,
+                "Failed random check: max_frame={}, current_frame={}", max_frame, random_frame);
+        }
     }
 }
