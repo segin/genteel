@@ -760,14 +760,6 @@ impl Cpu {
 
         if self.pending_interrupt > current_mask as u8 || self.pending_interrupt == 7 {
             let level = self.pending_interrupt;
-            if level == 6 {
-                let f62a = memory.read_byte(0xFFF62A);
-                let f605 = memory.read_byte(0xFFF605);
-                eprintln!(
-                    "DEBUG: VInt triggered! PC={:06X} F62A={:02X} F605={:02X}",
-                    self.pc, f62a, f605
-                );
-            }
             self.acknowledge_interrupt(level); // Use new queuing system
             self.halted = false; // Wake if halted
 
@@ -794,10 +786,6 @@ impl Cpu {
             let vector = 24 + level as u32;
             let vector_addr = vector * 4;
             let handler_pc = memory.read_long(vector_addr);
-            eprintln!(
-                "DEBUG: Interrupt Level {} Vector {} -> PC={:06X}",
-                level, vector, handler_pc
-            );
             self.pc = handler_pc;
 
             return 44; // Interrupt takes about 44 cycles
