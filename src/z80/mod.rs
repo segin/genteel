@@ -266,7 +266,7 @@ impl Z80 {
     // ========== ALU operations ==========
 
     fn add_a(&mut self, value: u8, with_carry: bool) {
-        let carry = if with_carry && self.get_flag(flags::CARRY) {
+        let carry = if with_carry && (self.f & flags::CARRY) != 0 {
             1u16
         } else {
             0
@@ -279,15 +279,23 @@ impl Z80 {
         let overflow = ((a ^ result) & (v ^ result) & 0x80) != 0;
 
         self.a = result as u8;
-        self.set_flag(flags::CARRY, result > 0xFF);
-        self.set_flag(flags::HALF_CARRY, half_carry);
-        self.set_flag(flags::PARITY, overflow);
-        self.set_flag(flags::ADD_SUB, false);
-        self.set_sz_flags(self.a);
+
+        let mut f = 0;
+        if result > 0xFF { f |= flags::CARRY; }
+        if half_carry { f |= flags::HALF_CARRY; }
+        if overflow { f |= flags::PARITY; }
+        // ADD_SUB is false (0)
+
+        // Inline set_sz_flags logic
+        f |= self.a & (flags::SIGN | flags::Y_FLAG | flags::X_FLAG);
+        if self.a == 0 {
+            f |= flags::ZERO;
+        }
+        self.f = f;
     }
 
     fn sub_a(&mut self, value: u8, with_carry: bool, store: bool) {
-        let carry = if with_carry && self.get_flag(flags::CARRY) {
+        let carry = if with_carry && (self.f & flags::CARRY) != 0 {
             1u16
         } else {
             0
@@ -299,15 +307,21 @@ impl Z80 {
         let half_carry = (a & 0x0F) < (v & 0x0F) + carry;
         let overflow = ((a ^ v) & (a ^ result) & 0x80) != 0;
 
-        self.set_flag(flags::CARRY, result > 0xFF);
-        self.set_flag(flags::HALF_CARRY, half_carry);
-        self.set_flag(flags::PARITY, overflow);
-        self.set_flag(flags::ADD_SUB, true);
-
         if store {
             self.a = result as u8;
         }
-        self.set_sz_flags(result as u8);
+
+        let mut f = flags::ADD_SUB;
+        if result > 0xFF { f |= flags::CARRY; }
+        if half_carry { f |= flags::HALF_CARRY; }
+        if overflow { f |= flags::PARITY; }
+
+        let res_u8 = result as u8;
+        f |= res_u8 & (flags::SIGN | flags::Y_FLAG | flags::X_FLAG);
+        if res_u8 == 0 {
+            f |= flags::ZERO;
+        }
+        self.f = f;
     }
 
     fn and_a(&mut self, value: u8) {
@@ -339,19 +353,34 @@ impl Z80 {
 
     fn inc(&mut self, value: u8) -> u8 {
         let result = value.wrapping_add(1);
-        self.set_flag(flags::HALF_CARRY, (value & 0x0F) == 0x0F);
-        self.set_flag(flags::PARITY, value == 0x7F);
-        self.set_flag(flags::ADD_SUB, false);
-        self.set_sz_flags(result);
+
+        let mut f = self.f & flags::CARRY; // Preserve Carry
+        if (value & 0x0F) == 0x0F { f |= flags::HALF_CARRY; }
+        if value == 0x7F { f |= flags::PARITY; }
+        // ADD_SUB is false (0)
+
+        f |= result & (flags::SIGN | flags::Y_FLAG | flags::X_FLAG);
+        if result == 0 {
+            f |= flags::ZERO;
+        }
+
+        self.f = f;
         result
     }
 
     fn dec(&mut self, value: u8) -> u8 {
         let result = value.wrapping_sub(1);
-        self.set_flag(flags::HALF_CARRY, (value & 0x0F) == 0x00);
-        self.set_flag(flags::PARITY, value == 0x80);
-        self.set_flag(flags::ADD_SUB, true);
-        self.set_sz_flags(result);
+
+        let mut f = (self.f & flags::CARRY) | flags::ADD_SUB; // Preserve Carry, set N
+        if (value & 0x0F) == 0x00 { f |= flags::HALF_CARRY; }
+        if value == 0x80 { f |= flags::PARITY; }
+
+        f |= result & (flags::SIGN | flags::Y_FLAG | flags::X_FLAG);
+        if result == 0 {
+            f |= flags::ZERO;
+        }
+
+        self.f = f;
         result
     }
 
