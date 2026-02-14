@@ -253,10 +253,24 @@ impl Emulator {
 
             // === CPU execution for this scanline ===
             let mut cycles_scanline: u32 = 0;
+            const CPU_BATCH_CYCLES: u32 = 128;
+
             while cycles_scanline < CYCLES_PER_LINE {
                 // Borrow bus for CPU execution
                 let mut bus = self.bus.borrow_mut();
-                let m68k_cycles = self.cpu.step_instruction(&mut *bus);
+                let mut m68k_cycles = 0;
+
+                // Run CPU in a batch
+                loop {
+                    let cycles = self.cpu.step_instruction(&mut *bus);
+                    m68k_cycles += cycles;
+
+                    if m68k_cycles >= CPU_BATCH_CYCLES
+                        || cycles_scanline + (m68k_cycles as u32) >= CYCLES_PER_LINE
+                    {
+                        break;
+                    }
+                }
 
                 // Step APU with cycles to update timers
                 bus.apu.fm.step(m68k_cycles as u32);
@@ -465,6 +479,7 @@ impl Emulator {
         Ok(())
     }
 
+    #[cfg(feature = "gui")]
     fn print_debug_info(&self, frame_count: u64) {
         let mut bus = self.bus.borrow_mut();
         let disp_en = bus.vdp.display_enabled();
@@ -509,6 +524,7 @@ impl Emulator {
         }
     }
 
+    #[cfg(feature = "gui")]
     fn render_frame(&self, pixels: &mut pixels::Pixels) -> Result<(), String> {
         let frame = pixels.frame_mut();
         let bus = self.bus.borrow();
@@ -518,6 +534,7 @@ impl Emulator {
         pixels.render().map_err(|e| e.to_string())
     }
 
+    #[cfg(feature = "gui")]
     fn process_audio(&mut self, audio_buffer: &audio::SharedAudioBuffer) {
         if let Ok(mut buf) = audio_buffer.lock() {
             buf.push(&self.audio_buffer);
@@ -526,6 +543,7 @@ impl Emulator {
     }
 
     /// Run with winit window (interactive play mode)
+    #[cfg(feature = "gui")]
     pub fn run_with_frontend(mut self) -> Result<(), String> {
         use pixels::{Pixels, SurfaceTexture};
         use winit::event::{ElementState, Event, KeyEvent, WindowEvent};
@@ -975,4 +993,5 @@ mod tests {
         let config = Config::from_args(args);
         assert_eq!(config.rom_path, Some("rom part2.bin".to_string()));
     }
+
 }
