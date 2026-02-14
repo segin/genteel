@@ -400,4 +400,63 @@ mod tests {
         assert_eq!(manager.frame(), 0);
         assert!(!manager.is_complete());
     }
+
+    #[test]
+    fn test_input_manager_completion_edge_cases() {
+        let mut manager = InputManager::new();
+
+        // 1. Script with only frame 0
+        let script = InputScript::parse("0,........,........").unwrap();
+        manager.set_script(script);
+
+        // Frame 0 - not complete
+        assert!(
+            !manager.is_complete(),
+            "Should not be complete at frame 0 (max_frame=0)"
+        );
+
+        manager.advance_frame();
+        // Frame 1 - complete
+        assert!(
+            manager.is_complete(),
+            "Should be complete at frame 1 for single-frame script"
+        );
+
+        // 2. Script with sparse frames (e.g. max_frame=10)
+        let script = InputScript::parse("10,........,........").unwrap();
+        manager.set_script(script);
+
+        // Advance to frame 10
+        for _ in 0..10 {
+            assert!(!manager.is_complete());
+            manager.advance_frame();
+        }
+        assert_eq!(manager.frame(), 10);
+        assert!(
+            !manager.is_complete(),
+            "Should not be complete at frame 10 (max_frame=10)"
+        );
+
+        manager.advance_frame();
+        assert_eq!(manager.frame(), 11);
+        assert!(manager.is_complete(), "Should be complete at frame 11");
+
+        // 3. Continued execution
+        manager.advance_frame();
+        assert!(manager.is_complete(), "Should remain complete at frame 12");
+
+        // 4. Empty script (no frames)
+        let script = InputScript::parse("# empty").unwrap();
+        manager.set_script(script);
+        // max_frame is 0 by default for empty script
+        assert!(
+            !manager.is_complete(),
+            "Empty script should behave like max_frame=0"
+        );
+        manager.advance_frame();
+        assert!(
+            manager.is_complete(),
+            "Empty script should complete after frame 0"
+        );
+    }
 }
