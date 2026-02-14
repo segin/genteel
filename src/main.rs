@@ -54,19 +54,10 @@ impl Emulator {
         drop(bus_ref);
 
         // Z80 uses Z80Bus which routes to sound chips and banked 68k memory
+        // It also handles Z80 I/O (which is unconnected on Genesis)
         let z80_bus = Z80Bus::new(SharedBus::new(bus.clone()));
 
-        // Temporary null I/O implementation for Z80 ports
-        #[derive(Debug)]
-        struct NullIo;
-        impl crate::memory::IoInterface for NullIo {
-            fn read_port(&mut self, _port: u16) -> u8 {
-                0xFF
-            }
-            fn write_port(&mut self, _port: u16, _value: u8) {}
-        }
-
-        let z80 = Z80::new(Box::new(z80_bus), Box::new(NullIo));
+        let z80 = Z80::new(Box::new(z80_bus.clone()), Box::new(z80_bus));
 
         let mut emulator = Self {
             cpu,
@@ -713,58 +704,77 @@ impl GdbMemory for BusGdbMemory {
     }
 }
 
-fn main() {
-    let args: Vec<String> = std::env::args().collect();
+#[derive(Debug, Default)]
+struct Config {
+    rom_path: Option<String>,
+    script_path: Option<String>,
+    headless_frames: Option<u32>,
+    gdb_port: Option<u16>,
+    show_help: bool,
+}
 
-    let mut rom_path: Option<String> = None;
-    let mut script_path: Option<String> = None;
-    let mut headless_frames: Option<u32> = None;
-    let mut gdb_port: Option<u16> = None;
+impl Config {
+    fn from_args<I>(args: I) -> Self
+    where
+        I: IntoIterator<Item = String>,
+    {
+        let mut config = Config::default();
+        let mut iter = args.into_iter().skip(1).peekable();
 
-    let mut i = 1;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--help" | "-h" => {
-                print_usage();
-                return;
-            }
-            "--script" => {
-                i += 1;
-                if i < args.len() {
-                    script_path = Some(args[i].clone());
+        while let Some(arg) = iter.next() {
+            match arg.as_str() {
+                "--help" | "-h" => {
+                    config.show_help = true;
                 }
-            }
-            "--headless" => {
-                i += 1;
-                if i < args.len() {
-                    headless_frames = args[i].parse().ok();
+                "--script" => {
+                    config.script_path = iter.next();
                 }
-            }
-            "--gdb" => {
-                let mut port = debugger::DEFAULT_PORT;
-                // Check if next arg is a number
-                if i + 1 < args.len() && !args[i + 1].starts_with('-') {
-                    if let Ok(p) = args[i + 1].parse() {
-                        port = p;
-                        i += 1;
+                "--headless" => {
+                    if let Some(next) = iter.next() {
+                        config.headless_frames = next.parse().ok();
                     }
                 }
-                gdb_port = Some(port);
-            }
-            arg if !arg.starts_with('-') => {
-                if let Some(ref mut path) = rom_path {
-                    path.push(' ');
-                    path.push_str(arg);
-                } else {
-                    rom_path = Some(arg.to_string());
+                "--gdb" => {
+                    let mut port = debugger::DEFAULT_PORT;
+                    if let Some(next) = iter.peek() {
+                        if !next.starts_with('-') {
+                            if let Ok(p) = next.parse() {
+                                port = p;
+                                iter.next(); // consume it
+                            }
+                        }
+                    }
+                    config.gdb_port = Some(port);
+                }
+                arg if !arg.starts_with('-') => {
+                    if let Some(ref mut path) = config.rom_path {
+                        path.push(' ');
+                        path.push_str(arg);
+                    } else {
+                        config.rom_path = Some(arg.to_string());
+                    }
+                }
+                _ => {
+                    eprintln!("Unknown option: {}", arg);
                 }
             }
-            _ => {
-                eprintln!("Unknown option: {}", args[i]);
-            }
         }
-        i += 1;
+        config
     }
+}
+
+fn main() {
+    let config = Config::from_args(std::env::args());
+
+    if config.show_help {
+        print_usage();
+        return;
+    }
+
+    let mut rom_path = config.rom_path;
+    let script_path = config.script_path;
+    let headless_frames = config.headless_frames;
+    let gdb_port = config.gdb_port;
 
     let mut emulator = Emulator::new();
 
@@ -905,5 +915,64 @@ mod tests {
         // If hack is removed, this passes ONLY if Z80 ran correctly (PC=0 at start).
         let val = emulator.bus.borrow_mut().read_byte(0xA01FFD);
         assert_eq!(val, 0x80, "Z80 should have written 0x80 to 0xA01FFD");
+    }
+
+    #[test]
+    fn test_config_parsing() {
+        let args = vec!["genteel".to_string(), "rom.bin".to_string()];
+        let config = Config::from_args(args);
+        assert_eq!(config.rom_path, Some("rom.bin".to_string()));
+        assert!(!config.show_help);
+
+        let args = vec!["genteel".to_string(), "--help".to_string()];
+        let config = Config::from_args(args);
+        assert!(config.show_help);
+
+        let args = vec![
+            "genteel".to_string(),
+            "--script".to_string(),
+            "script.txt".to_string(),
+            "rom.bin".to_string(),
+        ];
+        let config = Config::from_args(args);
+        assert_eq!(config.script_path, Some("script.txt".to_string()));
+        assert_eq!(config.rom_path, Some("rom.bin".to_string()));
+
+        let args = vec![
+            "genteel".to_string(),
+            "--headless".to_string(),
+            "60".to_string(),
+            "rom.bin".to_string(),
+        ];
+        let config = Config::from_args(args);
+        assert_eq!(config.headless_frames, Some(60));
+        assert_eq!(config.rom_path, Some("rom.bin".to_string()));
+
+        let args = vec![
+            "genteel".to_string(),
+            "--gdb".to_string(),
+            "rom.bin".to_string(),
+        ];
+        let config = Config::from_args(args);
+        assert_eq!(config.gdb_port, Some(crate::debugger::DEFAULT_PORT));
+        assert_eq!(config.rom_path, Some("rom.bin".to_string()));
+
+        let args = vec![
+            "genteel".to_string(),
+            "--gdb".to_string(),
+            "1234".to_string(),
+            "rom.bin".to_string(),
+        ];
+        let config = Config::from_args(args);
+        assert_eq!(config.gdb_port, Some(1234));
+        assert_eq!(config.rom_path, Some("rom.bin".to_string()));
+
+        let args = vec![
+            "genteel".to_string(),
+            "rom".to_string(),
+            "part2.bin".to_string(),
+        ];
+        let config = Config::from_args(args);
+        assert_eq!(config.rom_path, Some("rom part2.bin".to_string()));
     }
 }
