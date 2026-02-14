@@ -448,3 +448,92 @@ fn test_line_f() {
 
     assert_eq!(cpu.pc, 0x6000);
 }
+
+#[test]
+fn test_bcd_memory() {
+    let (mut cpu, mut memory) = create_test_cpu();
+
+    // ABCD -(A0), -(A1)
+    // A0 = 0x2001, A1 = 0x3001
+    // Mem[0x2000] = 0x45, Mem[0x3000] = 0x33
+    // Result Mem[0x3000] = 0x78
+    // Opcode: 1100 001 1 0000 1 000 = 0xC308
+    memory.write_word(0x100, 0xC308);
+    cpu.a[0] = 0x2001;
+    cpu.a[1] = 0x3001;
+    memory.write_byte(0x2000, 0x45);
+    memory.write_byte(0x3000, 0x33);
+    cpu.set_flag(flags::ZERO, true);
+    cpu.set_flag(flags::EXTEND, false);
+
+    cpu.step_instruction(&mut memory);
+
+    assert_eq!(memory.read_byte(0x3000), 0x78);
+    assert_eq!(cpu.a[0], 0x2000);
+    assert_eq!(cpu.a[1], 0x3000);
+    assert!(!cpu.get_flag(flags::ZERO));
+    assert!(!cpu.get_flag(flags::EXTEND));
+
+    // SBCD -(A0), -(A1)
+    // A0 = 0x2001, A1 = 0x3001
+    // Mem[0x2000] = 0x33, Mem[0x3000] = 0x78
+    // Result Mem[0x3000] = 0x45
+    // Opcode: 1000 001 1 0000 1 000 = 0x8308
+    cpu.pc = 0x102;
+    memory.write_word(0x102, 0x8308);
+    cpu.a[0] = 0x2001;
+    cpu.a[1] = 0x3001;
+    memory.write_byte(0x2000, 0x33);
+    memory.write_byte(0x3000, 0x78);
+    cpu.set_flag(flags::ZERO, true);
+    cpu.set_flag(flags::EXTEND, false);
+
+    cpu.step_instruction(&mut memory);
+
+    assert_eq!(memory.read_byte(0x3000), 0x45);
+    assert_eq!(cpu.a[0], 0x2000);
+    assert_eq!(cpu.a[1], 0x3000);
+    assert!(!cpu.get_flag(flags::ZERO));
+}
+
+#[test]
+fn test_addx_subx_memory() {
+    let (mut cpu, mut memory) = create_test_cpu();
+
+    // ADDX.B -(A0), -(A1)
+    // A0 = 0x2001, A1 = 0x3001
+    // Mem[0x2000] = 0x10, Mem[0x3000] = 0x20
+    // Result Mem[0x3000] = 0x30
+    // Opcode: 1101 001 1 0000 1 000 = 0xD308
+    memory.write_word(0x100, 0xD308);
+    cpu.a[0] = 0x2001;
+    cpu.a[1] = 0x3001;
+    memory.write_byte(0x2000, 0x10);
+    memory.write_byte(0x3000, 0x20);
+    cpu.set_flag(flags::EXTEND, false);
+
+    cpu.step_instruction(&mut memory);
+
+    assert_eq!(memory.read_byte(0x3000), 0x30);
+    assert_eq!(cpu.a[0], 0x2000);
+    assert_eq!(cpu.a[1], 0x3000);
+
+    // SUBX.B -(A0), -(A1)
+    // A0 = 0x2001, A1 = 0x3001
+    // Mem[0x2000] = 0x10, Mem[0x3000] = 0x30
+    // Result Mem[0x3000] = 0x20
+    // Opcode: 1001 001 1 0000 1 000 = 0x9308
+    cpu.pc = 0x102;
+    memory.write_word(0x102, 0x9308);
+    cpu.a[0] = 0x2001;
+    cpu.a[1] = 0x3001;
+    memory.write_byte(0x2000, 0x10);
+    memory.write_byte(0x3000, 0x30);
+    cpu.set_flag(flags::EXTEND, false);
+
+    cpu.step_instruction(&mut memory);
+
+    assert_eq!(memory.read_byte(0x3000), 0x20);
+    assert_eq!(cpu.a[0], 0x2000);
+    assert_eq!(cpu.a[1], 0x3000);
+}
