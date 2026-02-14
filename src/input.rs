@@ -404,6 +404,22 @@ mod tests {
     #[test]
     fn test_input_manager_reset() {
         let mut manager = InputManager::new();
+
+        // 1. Test manual state reset
+        manager.current_frame = 100;
+        manager.last_input.p1.a = true;
+        manager.last_input.p2.start = true;
+
+        assert_eq!(manager.frame(), 100);
+        assert!(manager.last_input.p1.a);
+
+        manager.reset();
+
+        assert_eq!(manager.frame(), 0);
+        assert!(!manager.last_input.p1.a);
+        assert!(!manager.last_input.p2.start);
+
+        // 2. Test script-based state reset
         // Frame 0: default
         // Frame 1: A pressed
         let script = InputScript::parse("0,........,........\n1,....A...,........").unwrap();
