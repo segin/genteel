@@ -163,13 +163,13 @@ def scan_text_patterns():
     files = [f for f in files if not f.startswith("audit_reports/")]
 
     secret_patterns = {
-        "AWS Key": r"AKIA[0-9A-Z]{16}",
-        "Private Key": r"-----BEGIN .* PRIVATE KEY-----",
-        "Generic Token": r"token\s*=\s*['\"][a-zA-Z0-9]{20,}['\"]",
+        "AWS Key": re.compile(r"AKIA[0-9A-Z]{16}"),
+        "Private Key": re.compile(r"-----BEGIN .* PRIVATE KEY-----"),
+        "Generic Token": re.compile(r"token\s*=\s*['\"][a-zA-Z0-9]{20,}['\"]"),
     }
 
-    unsafe_pattern = r"unsafe\s*\{"
-    todo_pattern = r"(TODO|FIXME|XXX):"
+    unsafe_pattern = re.compile(r"unsafe\s*\{")
+    todo_pattern = re.compile(r"(TODO|FIXME|XXX):")
 
     for f in files:
         if not os.path.exists(f): continue
@@ -179,8 +179,8 @@ def scan_text_patterns():
             with open(f, 'r', encoding='utf-8', errors='ignore') as fp:
                 for i, line_content in enumerate(fp):
                     # Secrets
-                    for name, pattern in secret_patterns.items():
-                        if re.search(pattern, line_content):
+                    for name, compiled_pattern in secret_patterns.items():
+                        if compiled_pattern.search(line_content):
                             add_finding(
                                 title=f"Potential Secret: {name}",
                                 severity="Critical",
@@ -192,7 +192,7 @@ def scan_text_patterns():
                             metrics["secrets_found"] += 1
 
                     # Unsafe
-                    if re.search(unsafe_pattern, line_content):
+                    if unsafe_pattern.search(line_content):
                         add_finding(
                             title="Unsafe Rust Code",
                             severity="Medium",
@@ -203,7 +203,7 @@ def scan_text_patterns():
                         )
 
                     # TODOs
-                    if re.search(todo_pattern, line_content):
+                    if todo_pattern.search(line_content):
                         add_finding(
                             title="Technical Debt (TODO/FIXME)",
                             severity="Info",
