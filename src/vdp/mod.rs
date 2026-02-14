@@ -16,6 +16,14 @@
 use crate::debugger::Debuggable;
 use serde_json::{json, Value};
 
+// VDP Control Codes (bits 0-3)
+const VRAM_READ: u8 = 0x00;
+const VRAM_WRITE: u8 = 0x01;
+const CRAM_WRITE: u8 = 0x03;
+const VSRAM_READ: u8 = 0x04;
+const VSRAM_WRITE: u8 = 0x05;
+const CRAM_READ: u8 = 0x08;
+
 struct SpriteAttributes {
     v_pos: u16,
     h_pos: u16,
@@ -116,7 +124,7 @@ impl Vdp {
         }
 
         match self.control_code & 0x0F {
-            1 => {
+            VRAM_WRITE => {
                 // Write VRAM
                 let addr = self.control_address as usize;
                 if addr < 0x10000 {
@@ -125,7 +133,7 @@ impl Vdp {
                     self.vram[addr ^ 1] = (value & 0xFF) as u8;
                 }
             }
-            3 => {
+            CRAM_WRITE => {
                 // Write CRAM
                 let mut val = value;
                 if (self.control_address & 0x01) != 0 {
@@ -145,7 +153,7 @@ impl Vdp {
                 self.cram[addr] = (val & 0xFF) as u8;
                 self.cram[addr + 1] = (val >> 8) as u8;
             }
-            5 => {
+            VSRAM_WRITE => {
                 // Write VSRAM
                 let addr = (self.control_address & 0x7F) as usize;
                 if addr < 80 {
@@ -164,7 +172,7 @@ impl Vdp {
     pub fn read_data(&mut self) -> u16 {
         self.control_pending = false;
         match self.control_code & 0x0F {
-            0 => {
+            VRAM_READ => {
                 // Read VRAM
                 let addr = self.control_address as usize;
                 let val = if addr < 0x10000 {
@@ -177,12 +185,12 @@ impl Vdp {
                     .wrapping_add(self.auto_increment() as u16);
                 val
             }
-            8 => {
+            CRAM_READ => {
                 // Read CRAM
                 let addr = (self.control_address & 0x7F) as usize;
                 ((self.cram[addr + 1] as u16) << 8) | (self.cram[addr] as u16)
             }
-            4 => {
+            VSRAM_READ => {
                 // Read VSRAM
                 let addr = (self.control_address & 0x7F) as usize;
                 if addr < 80 {
@@ -738,3 +746,6 @@ impl Debuggable for Vdp {
         // Not implemented
     }
 }
+
+#[cfg(test)]
+mod test_command;
