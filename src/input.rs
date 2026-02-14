@@ -405,24 +405,67 @@ mod tests {
     fn test_input_manager_reset() {
         let mut manager = InputManager::new();
 
-        // Manually set state to simulate playback
+        // 1. Test manual state reset
         manager.current_frame = 100;
         manager.last_input.p1.a = true;
         manager.last_input.p2.start = true;
 
-        // Verify setup
         assert_eq!(manager.frame(), 100);
         assert!(manager.last_input.p1.a);
 
-        // Perform reset
         manager.reset();
 
-        // Verify reset
         assert_eq!(manager.frame(), 0);
-
-        // Verify last_input is cleared (default)
-        // We check a few buttons to ensure it's reset
         assert!(!manager.last_input.p1.a);
         assert!(!manager.last_input.p2.start);
+
+        // 2. Test script-based state reset
+        // Frame 0: default
+        // Frame 1: A pressed
+        let script = InputScript::parse("0,........,........\n1,....A...,........").unwrap();
+        manager.set_script(script);
+
+        // Advance to frame 1
+        manager.advance_frame(); // Frame 0 processed
+        let input = manager.advance_frame(); // Frame 1 processed
+
+        assert_eq!(manager.frame(), 2);
+        assert!(input.p1.a);
+        assert!(manager.last_input.p1.a);
+
+        // Reset
+        manager.reset();
+
+        assert_eq!(manager.frame(), 0);
+        // Verify last_input is reset to default (no A pressed)
+        assert!(!manager.last_input.p1.a);
+
+        // Advance frame 0 again
+        let input0 = manager.advance_frame();
+        assert!(!input0.p1.a);
+    }
+
+    #[test]
+    fn test_load_nonexistent_file() {
+        let result = InputScript::load("non_existent_file.txt");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("Failed to read input script"));
+    }
+
+    #[test]
+    fn test_parse_missing_fields() {
+        let content = "0";
+        let result = InputScript::parse(content);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Line 1: expected at least 2 fields");
+    }
+
+    #[test]
+    fn test_parse_invalid_frame_number() {
+        let content = "invalid,........";
+        let result = InputScript::parse(content);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Line 1: invalid frame number");
     }
 }
