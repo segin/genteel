@@ -836,6 +836,8 @@ impl Vdp {
             let tile_h = (scrolled_h as usize / 8) % plane_w;
 
             // Fetch nametable entry (2 bytes)
+            // nt_entry_addr can exceed 0xFFFF due to high name_table_base and large tile indices,
+            // so we must mask it to prevent OOB access.
             let nt_entry_addr = name_table_base + (tile_v * plane_w + tile_h) * 2;
             let hi = self.vram[nt_entry_addr & 0xFFFF];
             let lo = self.vram[(nt_entry_addr + 1) & 0xFFFF];
