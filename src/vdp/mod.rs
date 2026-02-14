@@ -29,6 +29,24 @@ struct SpriteAttributes {
     base_tile: u16,
 }
 
+// Control Port Constants
+const CTRL_CODE_LOW_MASK: u8 = 0x03; // CD1-CD0
+const CTRL_CODE_HIGH_MASK: u16 = 0x3C; // CD5-CD2 (after shift)
+const CTRL_ADDR_LO_MASK: u16 = 0x3FFF; // A13-A0
+const CTRL_ADDR_HI_MASK: u16 = 0x03; // A15-A14 (in value)
+const CTRL_DMA_BIT: u8 = 0x20; // DMA enable bit in control code
+
+const CTRL_CODE_LOW_SHIFT: u16 = 14;
+const CTRL_CODE_HIGH_SHIFT: u16 = 2;
+const CTRL_ADDR_HI_SHIFT: u16 = 14;
+
+const REG_WRITE_TAG: u16 = 0x8000; // Value indicating register write
+const REG_WRITE_MASK: u16 = 0xC000; // Mask to check register write tag
+const REG_IDX_MASK: u16 = 0x1F; // Register index mask (5 bits)
+const REG_DATA_MASK: u16 = 0xFF; // Register data mask (8 bits)
+const REG_IDX_SHIFT: u16 = 8;
+const NUM_REGISTERS: usize = 24;
+
 /// Video Display Processor (VDP)
 #[derive(Debug)]
 pub struct Vdp {
@@ -46,7 +64,7 @@ pub struct Vdp {
     pub vsram: [u8; 80],
 
     /// VDP Registers (24 registers, but only first 24 are meaningful)
-    pub registers: [u8; 24],
+    pub registers: [u8; NUM_REGISTERS],
 
     /// Control port state
     control_pending: bool,
@@ -84,7 +102,7 @@ impl Vdp {
             cram: [0; 128],
             cram_cache: [0; 64],
             vsram: [0; 80],
-            registers: [0; 24],
+            registers: [0; NUM_REGISTERS],
             control_pending: false,
             control_code: 0,
             control_address: 0,
@@ -198,30 +216,29 @@ impl Vdp {
     pub fn write_control(&mut self, value: u16) {
         if self.control_pending {
             // Second word of command
-            let high = ((value >> 2) & 0x3C) as u8;
-            self.control_code = (self.control_code & 0x03) | high;
-            self.control_address = (self.control_address & 0x3FFF) | ((value & 0x3) << 14);
+            let high = ((value >> CTRL_CODE_HIGH_SHIFT) & CTRL_CODE_HIGH_MASK) as u8;
+            self.control_code = (self.control_code & CTRL_CODE_LOW_MASK) | high;
+            self.control_address = (self.control_address & CTRL_ADDR_LO_MASK)
+                | ((value & CTRL_ADDR_HI_MASK) << CTRL_ADDR_HI_SHIFT);
             self.control_pending = false;
 
             // DMA initiation check
-            if (self.control_code & 0x20) != 0 {
+            if (self.control_code & CTRL_DMA_BIT) != 0 {
                 // DMA requested
                 self.dma_pending = true;
             }
-        } else {
-            if (value & 0xC000) == 0x8000 {
-                // Register write
-                let reg = ((value >> 8) & 0x1F) as usize;
-                let val = (value & 0xFF) as u8;
-                if reg < 24 {
-                    self.registers[reg] = val;
-                }
-            } else {
-                // First word of command
-                self.control_code = ((value >> 14) & 0x03) as u8;
-                self.control_address = (value & 0x3FFF) as u16;
-                self.control_pending = true;
+        } else if (value & REG_WRITE_MASK) == REG_WRITE_TAG {
+            // Register write
+            let reg = ((value >> REG_IDX_SHIFT) & REG_IDX_MASK) as usize;
+            let val = (value & REG_DATA_MASK) as u8;
+            if reg < NUM_REGISTERS {
+                self.registers[reg] = val;
             }
+        } else {
+            // First word of command
+            self.control_code = ((value >> CTRL_CODE_LOW_SHIFT) & (CTRL_CODE_LOW_MASK as u16)) as u8;
+            self.control_address = value & CTRL_ADDR_LO_MASK;
+            self.control_pending = true;
         }
     }
 
@@ -738,3 +755,12 @@ impl Debuggable for Vdp {
         // Not implemented
     }
 }
+
+#[cfg(test)]
+mod test_command;
+#[cfg(test)]
+mod tests_control;
+#[cfg(test)]
+mod tests_dma;
+#[cfg(test)]
+mod tests_properties;
