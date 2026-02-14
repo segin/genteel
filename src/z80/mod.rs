@@ -2312,6 +2312,9 @@ mod tests_torture;
 mod tests_gaps;
 
 #[cfg(test)]
+mod tests_reset;
+
+#[cfg(test)]
 pub mod test_utils {
     use crate::memory::IoInterface;
     #[derive(Debug, Default)]
