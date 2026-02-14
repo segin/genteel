@@ -755,4 +755,47 @@ mod tests {
         assert!(!bus.z80_reset);
         assert_eq!(bus.z80_bank_bit, 0); // Should stay 0 until next write
     }
+
+    #[test]
+    fn test_work_ram_wrapping_word_access() {
+        let mut bus = Bus::new();
+        // Setup ROM to verify mixed read
+        let rom_data = vec![0x11];
+        bus.load_rom(&rom_data);
+
+        // 1. Wrap within Work RAM mirrors (e.g., 0xE0FFFF -> 0xE10000)
+        // Write to End of RAM (0xFFFF) and Start of RAM (0x0000)
+        // 0xE0FFFF maps to work_ram[0xFFFF]
+        // 0xE10000 maps to work_ram[0x0000]
+        bus.work_ram[0xFFFF] = 0xAA;
+        bus.work_ram[0x0000] = 0xBB;
+
+        // Read word at 0xE0FFFF
+        // Should get High=0xAA (from 0xE0FFFF->0xFFFF), Low=0xBB (from 0xE10000->0x0000)
+        let val = bus.read_word(0xE0FFFF);
+        assert_eq!(val, 0xAABB, "Word read across RAM mirror boundary failed");
+
+        // Write word at 0xE0FFFF
+        // Write 0xCCDD
+        bus.write_word(0xE0FFFF, 0xCCDD);
+        assert_eq!(bus.work_ram[0xFFFF], 0xCC);
+        assert_eq!(bus.work_ram[0x0000], 0xDD);
+
+        // 2. Wrap at end of address space (0xFFFFFF -> 0x000000)
+        // RAM[0xFFFF] is now 0xCC.
+        // ROM[0x0000] is 0x11 (from loaded ROM).
+
+        // Read word at 0xFFFFFF
+        let val2 = bus.read_word(0xFFFFFF);
+        // High = RAM[0xFFFF] = 0xCC
+        // Low = ROM[0x0000] = 0x11
+        assert_eq!(val2, 0xCC11, "Word read across RAM/ROM boundary failed");
+
+        // Write word at 0xFFFFFF
+        // Should write to RAM[0xFFFF] and ignore ROM write
+        bus.write_word(0xFFFFFF, 0xEEFF);
+        assert_eq!(bus.work_ram[0xFFFF], 0xEE);
+        // Verify ROM is unchanged
+        assert_eq!(bus.rom[0], 0x11);
+    }
 }
