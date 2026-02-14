@@ -699,6 +699,58 @@ mod tests {
     }
 
     #[test]
+    fn test_work_ram_wrapping_word() {
+        let mut bus = Bus::new();
+
+        // Write to the last byte of the first mirror (0xE0FFFF)
+        bus.write_byte(0xE0FFFF, 0x11);
+        // Write to the first byte of the second mirror (0xE10000)
+        bus.write_byte(0xE10000, 0x22);
+
+        // Read word at the boundary (0xE0FFFF)
+        // Should combine the byte at 0xE0FFFF (0x11) and 0xE10000 (0x22)
+        assert_eq!(bus.read_word(0xE0FFFF), 0x1122);
+    }
+
+    #[test]
+    fn test_work_ram_write_word_wrapping() {
+        let mut bus = Bus::new();
+
+        // Write word across the boundary (0xE0FFFF)
+        bus.write_word(0xE0FFFF, 0x3344);
+
+        // Verify bytes
+        assert_eq!(bus.read_byte(0xE0FFFF), 0x33);
+        assert_eq!(bus.read_byte(0xE10000), 0x44);
+
+        // Verify mirroring to start of RAM (0xFF0000)
+        assert_eq!(bus.read_byte(0xFF0000), 0x44);
+
+        // Verify mirroring to end of RAM (0xFFFFFF)
+        assert_eq!(bus.read_byte(0xFFFFFF), 0x33);
+    }
+
+    #[test]
+    fn test_ram_end_boundary() {
+        let mut bus = Bus::new();
+        // Load dummy ROM to ensure 0x000000 has known value
+        let rom_data = vec![0xEE; 512];
+        bus.load_rom(&rom_data);
+
+        // Write word 0xBBCC to 0xFFFFFF
+        bus.write_word(0xFFFFFF, 0xBBCC);
+
+        // Read byte at 0xFFFFFF. Should be 0xBB.
+        assert_eq!(bus.read_byte(0xFFFFFF), 0xBB);
+
+        // Read byte at 0x000000. Should be 0xEE (ROM content unmodified).
+        assert_eq!(bus.read_byte(0x000000), 0xEE);
+
+        // Read word at 0xFFFFFF.
+        assert_eq!(bus.read_word(0xFFFFFF), 0xBBEE);
+    }
+
+    #[test]
     fn test_rom_lifecycle() {
         let mut bus = Bus::new();
 
