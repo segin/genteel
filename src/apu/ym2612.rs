@@ -419,6 +419,37 @@ mod tests {
     }
 
     #[test]
+    fn test_frequency_setting_bank1() {
+        let mut ym = Ym2612::new();
+
+        // Set Ch4 Frequency (Bank 1, offset 1)
+        // This corresponds to channel index 4 in get_frequency.
+        // Registers are in Bank 1.
+        // Base for Bank 1 (offset 1) is:
+        // Low: 0xA0 + 1 = 0xA1
+        // High: 0xA4 + 1 = 0xA5
+
+        // Write Low byte 0x55 to 0xA1 (Bank 1)
+        ym.write_addr1(0xA1);
+        ym.write_data1(0x55);
+
+        // Write High byte 0x22 to 0xA5 (Bank 1) -> Block 4, F-Num High 2
+        ym.write_addr1(0xA5);
+        ym.write_data1(0x22);
+
+        let (block, f_num) = ym.get_frequency(4);
+        assert_eq!(block, 4);
+        assert_eq!(f_num, 0x255);
+
+        // Ensure Bank 0 (Channel 1, offset 1) is unaffected.
+        // Channel 1 corresponds to index 1.
+        // Registers 0xA1, 0xA5 in Bank 0.
+        let (block0, f_num0) = ym.get_frequency(1);
+        assert_eq!(block0, 0);
+        assert_eq!(f_num0, 0);
+    }
+
+    #[test]
     fn test_busy_flag() {
         let mut ym = Ym2612::new();
 

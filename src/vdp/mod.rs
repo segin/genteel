@@ -1000,3 +1000,6 @@ mod tests {
         assert_eq!(new_state["control"]["address"], 0x3FFF);
     }
 }
+
+#[cfg(test)]
+mod tests_security;
