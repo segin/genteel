@@ -400,10 +400,13 @@ impl Emulator {
     }
 
     /// Run with GDB debugger attached
-    pub fn run_with_gdb(&mut self, port: u16) -> std::io::Result<()> {
-        let mut gdb = GdbServer::new(port)?;
+    pub fn run_with_gdb(&mut self, port: u16, password: Option<String>) -> std::io::Result<()> {
+        let mut gdb = GdbServer::new(port, password.clone())?;
 
         println!("Waiting for GDB connection on port {}...", port);
+        if let Some(pwd) = password {
+            println!("🔒 Password protected. After connecting, run: monitor auth {}", pwd);
+        }
         println!(
             "Connect with: m68k-elf-gdb -ex \"target remote :{}\" <elf_file>",
             port
@@ -697,6 +700,7 @@ fn print_usage() {
     println!("  --script <path>  Load TAS input script");
     println!("  --headless <n>   Run N frames without display");
     println!("  --gdb [port]     Start GDB server (default port: 1234)");
+    println!("  --gdb-password <pwd> Set password for GDB server");
     println!("  --help           Show this help");
     println!();
     println!("Controls (play mode):");
@@ -741,6 +745,7 @@ struct Config {
     script_path: Option<String>,
     headless_frames: Option<u32>,
     gdb_port: Option<u16>,
+    gdb_password: Option<String>,
     show_help: bool,
 }
 
@@ -776,6 +781,9 @@ impl Config {
                         }
                     }
                     config.gdb_port = Some(port);
+                }
+                "--gdb-password" => {
+                    config.gdb_password = iter.next();
                 }
                 arg if !arg.starts_with('-') => {
                     if let Some(ref mut path) = config.rom_path {
@@ -833,7 +841,7 @@ fn main() {
     // Run in appropriate mode
     if let Some(port) = gdb_port {
         // Debug mode with GDB
-        if let Err(e) = emulator.run_with_gdb(port) {
+        if let Err(e) = emulator.run_with_gdb(port, config.gdb_password) {
             eprintln!("GDB server error: {}", e);
         }
     } else if let Some(frames) = headless_frames {
