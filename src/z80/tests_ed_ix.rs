@@ -1,9 +1,10 @@
+#![allow(unused_imports)]
 //! Unit tests for Z80 CPU - Part 5: ED Prefix and IX/IY
 
-use super::*;
+use super::*; use crate::memory::{MemoryInterface, IoInterface};
 use crate::memory::Memory;
 
-fn z80(program: &[u8]) -> Z80 {
+fn z80(program: &[u8]) -> Z80<Box<crate::memory::Memory>, Box<crate::z80::test_utils::TestIo>> {
     let mut m = Memory::new(0x10000);
     for (i, &b) in program.iter().enumerate() {
         m.data[i] = b;
@@ -640,6 +641,25 @@ fn test_scf() {
     c.step();
     assert!(c.get_flag(flags::CARRY));
     assert_eq!(c.pc, 1);
+}
+
+// ============ Undocumented HALT (DD 76, FD 76) ============
+#[test]
+fn test_dd_76_halt() {
+    let mut c = z80(&[0xDD, 0x76]);
+    let t = c.step();
+    assert!(c.halted, "CPU should be halted");
+    assert_eq!(c.pc, 2, "PC should be incremented by 2");
+    assert_eq!(t, 8, "T-states should be 8");
+}
+
+#[test]
+fn test_fd_76_halt() {
+    let mut c = z80(&[0xFD, 0x76]);
+    let t = c.step();
+    assert!(c.halted, "CPU should be halted");
+    assert_eq!(c.pc, 2, "PC should be incremented by 2");
+    assert_eq!(t, 8, "T-states should be 8");
 }
 #[test]
 fn test_ccf_set() {

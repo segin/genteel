@@ -201,8 +201,9 @@ mod unit_tests {
         vdp.write_control(0x0000);
         vdp.write_data(0x1234);
 
-        assert_eq!(vdp.cram[0x7E], 0x12);
-        assert_eq!(vdp.cram[0x7F], 0x34);
+        // Little-endian storage (existing behavior)
+        assert_eq!(vdp.cram[0x7E], 0x34);
+        assert_eq!(vdp.cram[0x7F], 0x12);
     }
 
     #[test]

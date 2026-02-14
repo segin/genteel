@@ -1,9 +1,10 @@
+#![allow(unused_imports)]
 //! Unit tests for Z80 CPU - Part 1: Load Instructions
 
-use super::*;
+use super::*; use crate::memory::{MemoryInterface, IoInterface};
 use crate::memory::Memory;
 
-fn z80(program: &[u8]) -> Z80 {
+fn z80(program: &[u8]) -> Z80<Box<crate::memory::Memory>, Box<crate::z80::test_utils::TestIo>> {
     let mut m = Memory::new(0x10000);
     for (i, &b) in program.iter().enumerate() {
         m.data[i] = b;
