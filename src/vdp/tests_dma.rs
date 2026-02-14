@@ -51,7 +51,7 @@ fn test_dma_fill_vram() {
     // Command: VRAM Write (0x1).
     // Addr 0x0000.
     // Word 1: 0x4000.
-    // Word 2: DMA bit (CD5) is NOT set for Fill. (0x0000).
+    // Word 2: DMA bit (CD5) IS set for Fill (0x0080 in second word = 0x20 in control code).
 
     vdp.write_control(0x4000);
     vdp.write_control(0x0080);
