@@ -72,10 +72,10 @@ pub struct Z80<M: MemoryInterface, I: IoInterface> {
     // Interrupt logic
     pub pending_ei: bool,
 
-    // Memory (trait object for flexibility)
+    // Memory interface
     pub memory: M,
 
-    // I/O (trait object for flexibility)
+    // I/O interface
     pub io: I,
 
     // Cycle counter for timing
