@@ -239,4 +239,45 @@ mod tests {
         assert!((out[0] - 0.5).abs() < 0.001);
         assert!((out[1] + 0.5).abs() < 0.001);
     }
+
+    #[test]
+    fn test_audio_buffer_clear() {
+        let mut buf = AudioBuffer::new(64);
+
+        // 1. Push data
+        buf.push(&[10i16, 20]);
+
+        // 2. Pop 1 sample (advances read_pos to 1)
+        let mut out = [0i16; 1];
+        buf.pop(&mut out);
+        assert_eq!(out[0], 10);
+        assert_eq!(buf.available(), 1);
+
+        // 3. Clear the buffer
+        buf.clear();
+
+        // 4. Verify state reset
+        assert_eq!(buf.available(), 0);
+        assert_eq!(buf.read_pos, 0);
+        assert_eq!(buf.write_pos, 0);
+
+        // 5. Verify pop returns silence
+        let mut out_silence = [0i16; 1];
+        buf.pop(&mut out_silence);
+        assert_eq!(out_silence[0], 0);
+
+        // 6. Verify reset state by pushing new data and checking order
+        // If write_pos was not reset, we'd be writing at index 2.
+        // If read_pos was not reset, we'd be reading from index 1.
+        buf.push(&[30i16]);
+
+        let mut out2 = [0i16; 1];
+        buf.pop(&mut out2);
+
+        // Expect 30.
+        // If read_pos was 1, we'd read from index 1 (which holds 20 from before clear).
+        // If write_pos was 2, we'd write 30 to index 2. If read_pos was 0, we'd read index 0 (holds 10).
+        assert_eq!(out2[0], 30);
+        assert_eq!(buf.buffer[0], 30);
+    }
 }
