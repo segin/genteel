@@ -25,7 +25,7 @@ use cpu::Cpu;
 use debugger::{GdbMemory, GdbRegisters, GdbServer, StopReason};
 use input::InputManager;
 use memory::bus::Bus;
-use memory::{SharedBus, Z80Bus};
+use memory::Z80Bus;
 use std::cell::RefCell;
 use std::rc::Rc;
 use z80::Z80;
@@ -53,11 +53,8 @@ impl Emulator {
         let cpu = Cpu::new(&mut *bus_ref);
         drop(bus_ref);
 
-        // Z80 uses Z80Bus which routes to sound chips and banked 68k memory
-        // It also handles Z80 I/O (which is unconnected on Genesis)
-        let z80_bus = Z80Bus::new(SharedBus::new(bus.clone()));
-
-        let z80 = Z80::new(Box::new(z80_bus.clone()), Box::new(z80_bus));
+        // Z80 (bus is now created on demand)
+        let z80 = Z80::new();
 
         let mut emulator = Self {
             cpu,
@@ -300,14 +297,20 @@ impl Emulator {
                 // Trigger Z80 VInt at start of VBlank
                 if line == active_lines && cycles_scanline < m68k_cycles as u32 + 5 && !z80_is_reset
                 {
-                    self.z80.trigger_interrupt(0xFF);
+                    let mut bus = self.bus.borrow_mut();
+                    let mut z80_bus = Z80Bus::new(&mut *bus);
+                    self.z80.trigger_interrupt(&mut z80_bus, 0xFF);
                 }
 
                 if z80_can_run {
                     z80_cycle_debt += (m68k_cycles as f32) * Z80_CYCLES_PER_M68K_CYCLE;
-                    while z80_cycle_debt >= 1.0 {
-                        let z80_cycles = self.z80.step();
-                        z80_cycle_debt -= z80_cycles as f32;
+                    if z80_cycle_debt >= 1.0 {
+                        let mut bus = self.bus.borrow_mut();
+                        let mut z80_bus = Z80Bus::new(&mut *bus);
+                        while z80_cycle_debt >= 1.0 {
+                            let z80_cycles = self.z80.step(&mut z80_bus);
+                            z80_cycle_debt -= z80_cycles as f32;
+                        }
                     }
                 }
             }
@@ -465,6 +468,7 @@ impl Emulator {
         Ok(())
     }
 
+    #[cfg(feature = "gui")]
     fn print_debug_info(&self, frame_count: u64) {
         let mut bus = self.bus.borrow_mut();
         let disp_en = bus.vdp.display_enabled();
@@ -509,6 +513,7 @@ impl Emulator {
         }
     }
 
+    #[cfg(feature = "gui")]
     fn render_frame(&self, pixels: &mut pixels::Pixels) -> Result<(), String> {
         let frame = pixels.frame_mut();
         let bus = self.bus.borrow();
@@ -518,6 +523,7 @@ impl Emulator {
         pixels.render().map_err(|e| e.to_string())
     }
 
+    #[cfg(feature = "gui")]
     fn process_audio(&mut self, audio_buffer: &audio::SharedAudioBuffer) {
         if let Ok(mut buf) = audio_buffer.lock() {
             buf.push(&self.audio_buffer);
@@ -526,6 +532,7 @@ impl Emulator {
     }
 
     /// Run with winit window (interactive play mode)
+    #[cfg(feature = "gui")]
     pub fn run_with_frontend(mut self) -> Result<(), String> {
         use pixels::{Pixels, SurfaceTexture};
         use winit::event::{ElementState, Event, KeyEvent, WindowEvent};
@@ -974,5 +981,45 @@ mod tests {
         ];
         let config = Config::from_args(args);
         assert_eq!(config.rom_path, Some("rom part2.bin".to_string()));
+    }
+
+    #[test]
+    fn bench_z80_performance() {
+        let mut emulator = Emulator::new();
+        // Setup Z80 code: INC A; JP 0000
+        // 3C C3 00 00
+        let code = vec![0x3C, 0xC3, 0x00, 0x00];
+
+        // Release Reset
+        emulator.bus.borrow_mut().write_word(0xA11200, 0x0100);
+        emulator.step_frame_internal();
+
+        // Request Bus
+        emulator.bus.borrow_mut().write_word(0xA11100, 0x0100);
+        emulator.step_frame_internal();
+
+        // Write code to Z80 RAM
+        for (i, byte) in code.iter().enumerate() {
+            emulator
+                .bus
+                .borrow_mut()
+                .write_byte(0xA00000 + i as u32, *byte);
+        }
+
+        // Release Bus
+        emulator.bus.borrow_mut().write_word(0xA11100, 0x0000);
+        // Release Reset again just in case (already released)
+        emulator.bus.borrow_mut().write_word(0xA11200, 0x0100);
+
+        // Warmup
+        emulator.step_frame_internal();
+
+        let start = std::time::Instant::now();
+        for _ in 0..600 {
+            // 10 seconds of emulation
+            emulator.step_frame_internal();
+        }
+        let duration = start.elapsed();
+        println!("Z80 Benchmark Duration: {:?}", duration);
     }
 }

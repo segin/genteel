@@ -3,84 +3,79 @@
 //! The Half-Carry (H) flag indicates carry from bit 3 to bit 4.
 //! It's critical for DAA and often implemented incorrectly.
 
+#![allow(unused_variables, unused_mut)]
 use super::*;
-use crate::memory::Memory;
 
-fn z80(program: &[u8]) -> Z80 {
-    let mut m = Memory::new(0x10000);
-    for (i, &b) in program.iter().enumerate() {
-        m.data[i] = b;
-    }
-    Z80::new(
-        Box::new(m),
-        Box::new(crate::z80::test_utils::TestIo::default()),
-    )
+use crate::z80::test_utils::TestContext;
+
+fn z80(program: &[u8]) -> (Z80, TestContext) {
+    (Z80::new(), TestContext::new(program))
 }
 
 // ============ ADD: Half-carry when low nibble overflows ============
 
 #[test]
 fn add_h_0f_01() {
-    let mut c = z80(&[0x80]);
+    let (mut c, mut context) = z80(&[0x80]);
     c.a = 0x0F;
     c.b = 0x01;
-    c.step();
+    c.step(&mut context);
     assert!(c.get_flag(flags::HALF_CARRY));
 }
 #[test]
 fn add_h_0e_01() {
-    let mut c = z80(&[0x80]);
+    let (mut c, mut context) = z80(&[0x80]);
     c.a = 0x0E;
     c.b = 0x01;
-    c.step();
+    c.step(&mut context);
     assert!(!c.get_flag(flags::HALF_CARRY));
 }
 #[test]
 fn add_h_0f_0f() {
-    let mut c = z80(&[0x80]);
+    let (mut c, mut context) = z80(&[0x80]);
     c.a = 0x0F;
     c.b = 0x0F;
-    c.step();
+    c.step(&mut context);
     assert!(c.get_flag(flags::HALF_CARRY));
 }
 #[test]
 fn add_h_08_08() {
-    let mut c = z80(&[0x80]);
+    let (mut c, mut context) = z80(&[0x80]);
     c.a = 0x08;
     c.b = 0x08;
-    c.step();
+    c.step(&mut context);
     assert!(c.get_flag(flags::HALF_CARRY));
 }
 #[test]
 fn add_h_07_08() {
-    let mut c = z80(&[0x80]);
+    let (mut c, mut context) = z80(&[0x80]);
     c.a = 0x07;
     c.b = 0x08;
-    c.step();
+    c.step(&mut context);
     assert!(!c.get_flag(flags::HALF_CARRY));
 }
 #[test]
 fn add_h_00_00() {
-    let mut c = z80(&[0x80]);
+    let (mut c, mut context) = z80(&[0x80]);
     c.a = 0x00;
     c.b = 0x00;
-    c.step();
+    c.step(&mut context);
     assert!(!c.get_flag(flags::HALF_CARRY));
 }
 #[test]
 fn add_h_f0_10() {
-    let mut c = z80(&[0x80]);
+    let (mut c, mut context) = z80(&[0x80]);
     c.a = 0xF0;
     c.b = 0x10;
-    c.step();
+    c.step(&mut context);
     assert!(!c.get_flag(flags::HALF_CARRY));
 } // High nibble carry, not half
 #[test]
 fn add_h_1f_01() {
-    let mut c = z80(&[0x80]);
+    let (mut c, mut context) = z80(&[0x80]);
     c.a = 0x1F;
     c.b = 0x01;
-    c.step();
+    c.step(&mut context);
     assert!(c.get_flag(flags::HALF_CARRY));
 }
 
@@ -88,29 +83,29 @@ fn add_h_1f_01() {
 
 #[test]
 fn adc_h_0e_00_c() {
-    let mut c = z80(&[0x88]);
+    let (mut c, mut context) = z80(&[0x88]);
     c.a = 0x0E;
     c.b = 0x00;
     c.set_flag(flags::CARRY, true);
-    c.step();
+    c.step(&mut context);
     assert!(!c.get_flag(flags::HALF_CARRY));
 }
 #[test]
 fn adc_h_0e_01_c() {
-    let mut c = z80(&[0x88]);
+    let (mut c, mut context) = z80(&[0x88]);
     c.a = 0x0E;
     c.b = 0x01;
     c.set_flag(flags::CARRY, true);
-    c.step();
+    c.step(&mut context);
     assert!(c.get_flag(flags::HALF_CARRY));
 }
 #[test]
 fn adc_h_0f_00_c() {
-    let mut c = z80(&[0x88]);
+    let (mut c, mut context) = z80(&[0x88]);
     c.a = 0x0F;
     c.b = 0x00;
     c.set_flag(flags::CARRY, true);
-    c.step();
+    c.step(&mut context);
     assert!(c.get_flag(flags::HALF_CARRY));
 }
 
@@ -118,42 +113,42 @@ fn adc_h_0f_00_c() {
 
 #[test]
 fn sub_h_10_01() {
-    let mut c = z80(&[0x90]);
+    let (mut c, mut context) = z80(&[0x90]);
     c.a = 0x10;
     c.b = 0x01;
-    c.step();
+    c.step(&mut context);
     assert!(c.get_flag(flags::HALF_CARRY));
 }
 #[test]
 fn sub_h_11_01() {
-    let mut c = z80(&[0x90]);
+    let (mut c, mut context) = z80(&[0x90]);
     c.a = 0x11;
     c.b = 0x01;
-    c.step();
+    c.step(&mut context);
     assert!(!c.get_flag(flags::HALF_CARRY));
 }
 #[test]
 fn sub_h_00_01() {
-    let mut c = z80(&[0x90]);
+    let (mut c, mut context) = z80(&[0x90]);
     c.a = 0x00;
     c.b = 0x01;
-    c.step();
+    c.step(&mut context);
     assert!(c.get_flag(flags::HALF_CARRY));
 }
 #[test]
 fn sub_h_20_0f() {
-    let mut c = z80(&[0x90]);
+    let (mut c, mut context) = z80(&[0x90]);
     c.a = 0x20;
     c.b = 0x0F;
-    c.step();
+    c.step(&mut context);
     assert!(c.get_flag(flags::HALF_CARRY));
 }
 #[test]
 fn sub_h_2f_0f() {
-    let mut c = z80(&[0x90]);
+    let (mut c, mut context) = z80(&[0x90]);
     c.a = 0x2F;
     c.b = 0x0F;
-    c.step();
+    c.step(&mut context);
     assert!(!c.get_flag(flags::HALF_CARRY));
 }
 
@@ -161,29 +156,29 @@ fn sub_h_2f_0f() {
 
 #[test]
 fn sbc_h_11_00_c() {
-    let mut c = z80(&[0x98]);
+    let (mut c, mut context) = z80(&[0x98]);
     c.a = 0x11;
     c.b = 0x00;
     c.set_flag(flags::CARRY, true);
-    c.step();
+    c.step(&mut context);
     assert!(!c.get_flag(flags::HALF_CARRY));
 }
 #[test]
 fn sbc_h_10_00_c() {
-    let mut c = z80(&[0x98]);
+    let (mut c, mut context) = z80(&[0x98]);
     c.a = 0x10;
     c.b = 0x00;
     c.set_flag(flags::CARRY, true);
-    c.step();
+    c.step(&mut context);
     assert!(c.get_flag(flags::HALF_CARRY));
 }
 #[test]
 fn sbc_h_11_01_c() {
-    let mut c = z80(&[0x98]);
+    let (mut c, mut context) = z80(&[0x98]);
     c.a = 0x11;
     c.b = 0x01;
     c.set_flag(flags::CARRY, true);
-    c.step();
+    c.step(&mut context);
     assert!(c.get_flag(flags::HALF_CARRY));
 }
 
@@ -191,37 +186,37 @@ fn sbc_h_11_01_c() {
 
 #[test]
 fn inc_h_0f() {
-    let mut c = z80(&[0x3C]);
+    let (mut c, mut context) = z80(&[0x3C]);
     c.a = 0x0F;
-    c.step();
+    c.step(&mut context);
     assert!(c.get_flag(flags::HALF_CARRY));
 }
 #[test]
 fn inc_h_1f() {
-    let mut c = z80(&[0x3C]);
+    let (mut c, mut context) = z80(&[0x3C]);
     c.a = 0x1F;
-    c.step();
+    c.step(&mut context);
     assert!(c.get_flag(flags::HALF_CARRY));
 }
 #[test]
 fn inc_h_ff() {
-    let mut c = z80(&[0x3C]);
+    let (mut c, mut context) = z80(&[0x3C]);
     c.a = 0xFF;
-    c.step();
+    c.step(&mut context);
     assert!(c.get_flag(flags::HALF_CARRY));
 }
 #[test]
 fn inc_h_0e() {
-    let mut c = z80(&[0x3C]);
+    let (mut c, mut context) = z80(&[0x3C]);
     c.a = 0x0E;
-    c.step();
+    c.step(&mut context);
     assert!(!c.get_flag(flags::HALF_CARRY));
 }
 #[test]
 fn inc_h_00() {
-    let mut c = z80(&[0x3C]);
+    let (mut c, mut context) = z80(&[0x3C]);
     c.a = 0x00;
-    c.step();
+    c.step(&mut context);
     assert!(!c.get_flag(flags::HALF_CARRY));
 }
 
@@ -229,37 +224,37 @@ fn inc_h_00() {
 
 #[test]
 fn dec_h_10() {
-    let mut c = z80(&[0x3D]);
+    let (mut c, mut context) = z80(&[0x3D]);
     c.a = 0x10;
-    c.step();
+    c.step(&mut context);
     assert!(c.get_flag(flags::HALF_CARRY));
 }
 #[test]
 fn dec_h_20() {
-    let mut c = z80(&[0x3D]);
+    let (mut c, mut context) = z80(&[0x3D]);
     c.a = 0x20;
-    c.step();
+    c.step(&mut context);
     assert!(c.get_flag(flags::HALF_CARRY));
 }
 #[test]
 fn dec_h_00() {
-    let mut c = z80(&[0x3D]);
+    let (mut c, mut context) = z80(&[0x3D]);
     c.a = 0x00;
-    c.step();
+    c.step(&mut context);
     assert!(c.get_flag(flags::HALF_CARRY));
 }
 #[test]
 fn dec_h_11() {
-    let mut c = z80(&[0x3D]);
+    let (mut c, mut context) = z80(&[0x3D]);
     c.a = 0x11;
-    c.step();
+    c.step(&mut context);
     assert!(!c.get_flag(flags::HALF_CARRY));
 }
 #[test]
 fn dec_h_01() {
-    let mut c = z80(&[0x3D]);
+    let (mut c, mut context) = z80(&[0x3D]);
     c.a = 0x01;
-    c.step();
+    c.step(&mut context);
     assert!(!c.get_flag(flags::HALF_CARRY));
 }
 
@@ -267,18 +262,18 @@ fn dec_h_01() {
 
 #[test]
 fn cp_h_10_01() {
-    let mut c = z80(&[0xB8]);
+    let (mut c, mut context) = z80(&[0xB8]);
     c.a = 0x10;
     c.b = 0x01;
-    c.step();
+    c.step(&mut context);
     assert!(c.get_flag(flags::HALF_CARRY));
 }
 #[test]
 fn cp_h_11_01() {
-    let mut c = z80(&[0xB8]);
+    let (mut c, mut context) = z80(&[0xB8]);
     c.a = 0x11;
     c.b = 0x01;
-    c.step();
+    c.step(&mut context);
     assert!(!c.get_flag(flags::HALF_CARRY));
 }
 
@@ -286,26 +281,26 @@ fn cp_h_11_01() {
 
 #[test]
 fn and_h_always_set_1() {
-    let mut c = z80(&[0xA0]);
+    let (mut c, mut context) = z80(&[0xA0]);
     c.a = 0xFF;
     c.b = 0xFF;
-    c.step();
+    c.step(&mut context);
     assert!(c.get_flag(flags::HALF_CARRY));
 }
 #[test]
 fn and_h_always_set_2() {
-    let mut c = z80(&[0xA0]);
+    let (mut c, mut context) = z80(&[0xA0]);
     c.a = 0x00;
     c.b = 0x00;
-    c.step();
+    c.step(&mut context);
     assert!(c.get_flag(flags::HALF_CARRY));
 }
 #[test]
 fn and_h_always_set_3() {
-    let mut c = z80(&[0xA0]);
+    let (mut c, mut context) = z80(&[0xA0]);
     c.a = 0xAA;
     c.b = 0x55;
-    c.step();
+    c.step(&mut context);
     assert!(c.get_flag(flags::HALF_CARRY));
 }
 
@@ -313,18 +308,18 @@ fn and_h_always_set_3() {
 
 #[test]
 fn or_h_always_clear_1() {
-    let mut c = z80(&[0xB0]);
+    let (mut c, mut context) = z80(&[0xB0]);
     c.a = 0xFF;
     c.b = 0xFF;
-    c.step();
+    c.step(&mut context);
     assert!(!c.get_flag(flags::HALF_CARRY));
 }
 #[test]
 fn or_h_always_clear_2() {
-    let mut c = z80(&[0xB0]);
+    let (mut c, mut context) = z80(&[0xB0]);
     c.a = 0x00;
     c.b = 0x00;
-    c.step();
+    c.step(&mut context);
     assert!(!c.get_flag(flags::HALF_CARRY));
 }
 
@@ -332,18 +327,18 @@ fn or_h_always_clear_2() {
 
 #[test]
 fn xor_h_always_clear_1() {
-    let mut c = z80(&[0xA8]);
+    let (mut c, mut context) = z80(&[0xA8]);
     c.a = 0xFF;
     c.b = 0xFF;
-    c.step();
+    c.step(&mut context);
     assert!(!c.get_flag(flags::HALF_CARRY));
 }
 #[test]
 fn xor_h_always_clear_2() {
-    let mut c = z80(&[0xA8]);
+    let (mut c, mut context) = z80(&[0xA8]);
     c.a = 0x00;
     c.b = 0x00;
-    c.step();
+    c.step(&mut context);
     assert!(!c.get_flag(flags::HALF_CARRY));
 }
 
@@ -351,42 +346,42 @@ fn xor_h_always_clear_2() {
 
 #[test]
 fn add_hl_h_0fff_0001() {
-    let mut c = z80(&[0x09]);
+    let (mut c, mut context) = z80(&[0x09]);
     c.set_hl(0x0FFF);
     c.set_bc(0x0001);
-    c.step();
+    c.step(&mut context);
     assert!(c.get_flag(flags::HALF_CARRY));
 }
 #[test]
 fn add_hl_h_0ffe_0001() {
-    let mut c = z80(&[0x09]);
+    let (mut c, mut context) = z80(&[0x09]);
     c.set_hl(0x0FFE);
     c.set_bc(0x0001);
-    c.step();
+    c.step(&mut context);
     assert!(!c.get_flag(flags::HALF_CARRY));
 }
 #[test]
 fn add_hl_h_1fff_0001() {
-    let mut c = z80(&[0x09]);
+    let (mut c, mut context) = z80(&[0x09]);
     c.set_hl(0x1FFF);
     c.set_bc(0x0001);
-    c.step();
+    c.step(&mut context);
     assert!(c.get_flag(flags::HALF_CARRY));
 }
 #[test]
 fn add_hl_h_0800_0800() {
-    let mut c = z80(&[0x09]);
+    let (mut c, mut context) = z80(&[0x09]);
     c.set_hl(0x0800);
     c.set_bc(0x0800);
-    c.step();
+    c.step(&mut context);
     assert!(c.get_flag(flags::HALF_CARRY));
 }
 #[test]
 fn add_hl_h_0700_0800() {
-    let mut c = z80(&[0x09]);
+    let (mut c, mut context) = z80(&[0x09]);
     c.set_hl(0x0700);
     c.set_bc(0x0800);
-    c.step();
+    c.step(&mut context);
     assert!(!c.get_flag(flags::HALF_CARRY));
 }
 
@@ -394,19 +389,19 @@ fn add_hl_h_0700_0800() {
 
 #[test]
 fn adc_hl_h_0fff_0000_c() {
-    let mut c = z80(&[0xED, 0x4A]);
+    let (mut c, mut context) = z80(&[0xED, 0x4A]);
     c.set_hl(0x0FFF);
     c.set_bc(0x0000);
     c.set_flag(flags::CARRY, true);
-    c.step();
+    c.step(&mut context);
     assert!(c.get_flag(flags::HALF_CARRY));
 }
 #[test]
 fn sbc_hl_h_1000_0001() {
-    let mut c = z80(&[0xED, 0x42]);
+    let (mut c, mut context) = z80(&[0xED, 0x42]);
     c.set_hl(0x1000);
     c.set_bc(0x0001);
     c.f = 0;
-    c.step();
+    c.step(&mut context);
     assert!(c.get_flag(flags::HALF_CARRY));
 }

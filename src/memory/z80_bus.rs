@@ -7,50 +7,49 @@
 //! - 7F11h: SN76489 PSG
 //! - 8000h-FFFFh: Banked 68k Memory (32KB window)
 
-use super::{MemoryInterface, SharedBus, IoInterface};
+use super::{IoInterface, MemoryInterface};
+use crate::memory::bus::Bus;
 
 /// Z80 Bus adapter that routes memory accesses to Genesis components
-#[derive(Debug, Clone)]
-pub struct Z80Bus {
+#[derive(Debug)]
+pub struct Z80Bus<'a> {
     /// Reference to the main Genesis bus
-    bus: SharedBus,
+    pub bus: &'a mut Bus,
 }
 
-impl Z80Bus {
+impl<'a> Z80Bus<'a> {
     /// Create a new Z80 bus adapter
-    pub fn new(bus: SharedBus) -> Self {
+    pub fn new(bus: &'a mut Bus) -> Self {
         Self { bus }
     }
 
     /// Set the bank register (called on write to $6000)
     /// The value written becomes the upper bits of the 68k address
-    /// Set the bank register (called on write to $6000)
     pub fn set_bank(&mut self, value: u8) {
         // Delegate to shared bus so 68k and Z80 see the same state
-        self.bus.bus.borrow_mut().write_byte(0xA06000, value);
+        self.bus.write_byte(0xA06000, value);
     }
 
     /// Reset bank register to 0
     pub fn reset_bank(&mut self) {
-        let mut bus = self.bus.bus.borrow_mut();
-        bus.z80_bank_addr = 0;
-        bus.z80_bank_bit = 0;
+        self.bus.z80_bank_addr = 0;
+        self.bus.z80_bank_bit = 0;
     }
 }
 
-impl MemoryInterface for Z80Bus {
+impl<'a> MemoryInterface for Z80Bus<'a> {
     fn read_byte(&mut self, address: u32) -> u8 {
         let addr = address as u16;
 
         match addr {
             // Z80 Sound RAM: 0000h-1FFFh
-            0x0000..=0x1FFF => self.bus.bus.borrow().z80_ram[addr as usize],
+            0x0000..=0x1FFF => self.bus.z80_ram[addr as usize],
 
             // Mirror of Z80 RAM: 2000h-3FFFh
-            0x2000..=0x3FFF => self.bus.bus.borrow().z80_ram[(addr & 0x1FFF) as usize],
+            0x2000..=0x3FFF => self.bus.z80_ram[(addr & 0x1FFF) as usize],
 
             // YM2612: 4000h-4003h
-            0x4000..=0x4003 => self.bus.bus.borrow().apu.fm.read((addr & 3) as u8),
+            0x4000..=0x4003 => self.bus.apu.fm.read((addr & 3) as u8),
 
             // FM Mirror or PSG/Bank area
             0x4004..=0x5FFF => 0xFF,
@@ -60,11 +59,11 @@ impl MemoryInterface for Z80Bus {
 
             // Banked 68k memory: 8000h-FFFFh
             0x8000..=0xFFFF => {
-                let bank_addr = self.bus.bus.borrow().z80_bank_addr;
+                let bank_addr = self.bus.z80_bank_addr;
                 let effective_addr = bank_addr | ((addr as u32) & 0x7FFF);
-                let value = self.bus.bus.borrow_mut().read_byte(effective_addr);
-                // eprintln!("DEBUG: Z80 BANK READ: z80_addr=0x{:04X} bank=0x{:06X} effective=0x{:06X} val=0x{:02X}", addr, bank_addr, effective_addr, value);
-                value
+                // Note: accessing 68k memory via Z80 bus is subject to bus arbitration
+                // But here we just read it directly as we are the Z80 thread/step
+                self.bus.read_byte(effective_addr)
             }
         }
     }
@@ -75,12 +74,12 @@ impl MemoryInterface for Z80Bus {
         match addr {
             // Z80 Sound RAM: 0000h-1FFFh
             0x0000..=0x1FFF => {
-                self.bus.bus.borrow_mut().z80_ram[addr as usize] = value;
+                self.bus.z80_ram[addr as usize] = value;
             }
 
             // Mirror of Z80 RAM: 2000h-3FFFh
             0x2000..=0x3FFF => {
-                self.bus.bus.borrow_mut().z80_ram[(addr & 0x1FFF) as usize] = value;
+                self.bus.z80_ram[(addr & 0x1FFF) as usize] = value;
             }
 
             // YM2612: 4000h-4003h
@@ -88,19 +87,9 @@ impl MemoryInterface for Z80Bus {
                 let port = (addr & 2) >> 1;
                 let is_data = (addr & 1) != 0;
                 if is_data {
-                    self.bus
-                        .bus
-                        .borrow_mut()
-                        .apu
-                        .fm
-                        .write_data(port as u8, value);
+                    self.bus.apu.fm.write_data(port as u8, value);
                 } else {
-                    self.bus
-                        .bus
-                        .borrow_mut()
-                        .apu
-                        .fm
-                        .write_address(port as u8, value);
+                    self.bus.apu.fm.write_address(port as u8, value);
                 }
             }
 
@@ -115,18 +104,15 @@ impl MemoryInterface for Z80Bus {
             // Reserved / PSG area
             0x6100..=0x7F10 => {}
             0x7F11 => {
-                self.bus.bus.borrow_mut().apu.psg.write(value);
+                self.bus.apu.psg.write(value);
             }
             0x7F12..=0x7FFF => {}
 
             // Banked 68k memory: 8000h-FFFFh
             0x8000..=0xFFFF => {
-                let bank_addr = self.bus.bus.borrow().z80_bank_addr;
+                let bank_addr = self.bus.z80_bank_addr;
                 let effective_addr = bank_addr | ((addr as u32) & 0x7FFF);
-                if effective_addr == 0xFFF605 || effective_addr == 0xFFF62A {
-                    // eprintln!("DEBUG: Z80 SYNC WRITE: addr=0x{:06X} val=0x{:02X}", effective_addr, value);
-                }
-                self.bus.bus.borrow_mut().write_byte(effective_addr, value);
+                self.bus.write_byte(effective_addr, value);
             }
         }
     }
@@ -170,7 +156,7 @@ impl MemoryInterface for Z80Bus {
     }
 }
 
-impl IoInterface for Z80Bus {
+impl<'a> IoInterface for Z80Bus<'a> {
     fn read_port(&mut self, _port: u16) -> u8 {
         // On a real Sega Genesis, the Z80 I/O space is not connected to any internal hardware.
         // Any IN instruction will result in 0xFF (due to bus pull-ups).
@@ -187,17 +173,11 @@ impl IoInterface for Z80Bus {
 mod tests {
     use super::*;
     use crate::memory::bus::Bus;
-    use std::cell::RefCell;
-    use std::rc::Rc;
-
-    fn create_test_z80_bus() -> Z80Bus {
-        let bus = Rc::new(RefCell::new(Bus::new()));
-        Z80Bus::new(SharedBus::new(bus))
-    }
 
     #[test]
     fn test_z80_ram_read_write() {
-        let mut z80_bus = create_test_z80_bus();
+        let mut bus = Bus::new();
+        let mut z80_bus = Z80Bus::new(&mut bus);
 
         z80_bus.write_byte(0x0000, 0x42);
         assert_eq!(z80_bus.read_byte(0x0000), 0x42);
@@ -208,22 +188,22 @@ mod tests {
 
     #[test]
     fn test_bank_register() {
-        let mut z80_bus = create_test_z80_bus();
+        let mut bus = Bus::new();
+        let mut z80_bus = Z80Bus::new(&mut bus);
 
         // Initially bank is 0
-        assert_eq!(z80_bus.bus.bus.borrow().z80_bank_addr, 0);
+        assert_eq!(z80_bus.bus.z80_bank_addr, 0);
 
         // Write to bank register (bit-by-bit shifting)
         z80_bus.write_byte(0x6000, 0x01); // Shift in 1
 
-        // Note: bank register implementation in Bus handles the bit shifting logic
-        // We just verify it changed
-        assert_ne!(z80_bus.bus.bus.borrow().z80_bank_addr, 0);
+        assert_ne!(z80_bus.bus.z80_bank_addr, 0);
     }
 
     #[test]
     fn test_reserved_reads_ff() {
-        let mut z80_bus = create_test_z80_bus();
+        let mut bus = Bus::new();
+        let mut z80_bus = Z80Bus::new(&mut bus);
 
         // Z80 RAM is mirrored at 0x2000-0x3FFF, so reading 0x2000 reads 0x0000 (initially 0)
         assert_eq!(z80_bus.read_byte(0x2000), 0x00);
@@ -237,7 +217,8 @@ mod tests {
 
     #[test]
     fn test_z80_io_ports() {
-        let mut z80_bus = create_test_z80_bus();
+        let mut bus = Bus::new();
+        let mut z80_bus = Z80Bus::new(&mut bus);
 
         // All I/O port reads should return 0xFF on Genesis
         assert_eq!(z80_bus.read_port(0x0000), 0xFF);
