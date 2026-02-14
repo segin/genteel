@@ -612,11 +612,76 @@ pub enum BitSource {
 }
 
 
-type DecoderFn = fn(u16) -> Instruction;const GROUP_DECODERS: [DecoderFn; 16] = [    decode_group_0,    decode_move_byte,    decode_move_long,    decode_move_word,    decode_group_4,    decode_group_5,    decode_group_6,    decode_moveq,    decode_group_8,    decode_sub,    decode_line_a,    decode_group_b,    decode_group_c,    decode_add,    decode_shifts,    decode_line_f,];fn decode_group_0(opcode: u16) -> Instruction {    decode_movep(opcode)        .or_else(|| decode_bit_dynamic(opcode))        .or_else(|| decode_immediate_and_static_bit(opcode))        .unwrap_or(Instruction::Unimplemented { opcode })}fn decode_movep(opcode: u16) -> Option<Instruction> {
->>>>>>> origin/main
+/// Decode a single M68k instruction from an opcode
+pub fn decode(opcode: u16) -> Instruction {
+    let group = ((opcode >> 12) & 0x0F) as usize;
+    GROUP_DECODERS[group](opcode)
+}
+
+// === Group decoders ===
+
+type DecoderFn = fn(u16) -> Instruction;
+
+const GROUP_DECODERS: [DecoderFn; 16] = [
+    decode_group_0,
+    decode_move_byte,
+    decode_move_long,
+    decode_move_word,
+    decode_group_4,
+    decode_group_5,
+    decode_group_6,
+    decode_moveq,
+    decode_group_8,
+    decode_sub,
+    decode_line_a,
+    decode_group_b,
+    decode_group_c,
+    decode_add,
+    decode_shifts,
+    decode_line_f,
+];
+
+fn decode_line_a(opcode: u16) -> Instruction {
+    Instruction::LineA { opcode }
+}
+
+fn decode_line_f(opcode: u16) -> Instruction {
+    Instruction::LineF { opcode }
+}
+
+fn decode_group_0(opcode: u16) -> Instruction {
+    decode_movep(opcode)
+        .or_else(|| decode_bit_dynamic(opcode))
+        .or_else(|| decode_immediate_and_static_bit(opcode))
+        .unwrap_or(Instruction::Unimplemented { opcode })
+}
+
+fn decode_movep(opcode: u16) -> Option<Instruction> {
+    if opcode & 0x0138 == 0x0108 {
+        let reg = ((opcode >> 9) & 0x07) as u8;
+        let op = (opcode >> 6) & 0x07;
+        let an = (opcode & 0x07) as u8;
+
+        if (op & 0x04) != 0 {
+            let size = if (op & 0x01) != 0 {
+                Size::Long
+            } else {
+                Size::Word
+            };
+            let direction = (op & 0x02) != 0; // 0 = mem to reg, 1 = reg to mem
+            return Some(Instruction::Movep {
+                size,
+                reg,
+                an,
+                direction,
+            });
+        }
+    }
+    None
+}
 
 fn decode_bit_dynamic(opcode: u16) -> Option<Instruction> {
-    if opcode & 0x0100 \!= 0 {
+    if opcode & 0x0100 != 0 {
         // Bit manipulation with register
         let reg = ((opcode >> 9) & 0x07) as u8;
         let mode = ((opcode >> 3) & 0x07) as u8;
@@ -631,7 +696,7 @@ fn decode_bit_dynamic(opcode: u16) -> Option<Instruction> {
                 0b01 => Instruction::Bchg { bit, dst },
                 0b10 => Instruction::Bclr { bit, dst },
                 0b11 => Instruction::Bset { bit, dst },
-                _ => unreachable\!(),
+                _ => unreachable!(),
             });
         }
     }
@@ -656,7 +721,7 @@ fn decode_immediate_and_static_bit(opcode: u16) -> Option<Instruction> {
                     0b01 => Instruction::Bchg { bit, dst },
                     0b10 => Instruction::Bclr { bit, dst },
                     0b11 => Instruction::Bset { bit, dst },
-                    _ => unreachable\!(),
+                    _ => unreachable!(),
                 });
             }
         }
@@ -751,7 +816,6 @@ fn decode_move(opcode: u16, size: Size) -> Instruction {
     Instruction::Move { size, src, dst }
 }
 
-    None
 fn decode_group_4(opcode: u16) -> Instruction {
     decode_group_4_misc(opcode)
         .or_else(|| decode_group_4_control(opcode))
@@ -963,7 +1027,6 @@ fn decode_group_4_arithmetic(opcode: u16) -> Option<Instruction> {
         }
     }
     None
-}
 }
 
 fn decode_group_5(opcode: u16) -> Instruction {
