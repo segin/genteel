@@ -1818,76 +1818,23 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
             }
 
             // Specific ALU ops
-            0x86 => {
+            0x86 | 0x8E | 0x96 | 0x9E | 0xA6 | 0xAE | 0xB6 | 0xBE => {
                 let d = self.fetch_byte() as i8;
                 let idx = self.get_index_val(is_ix);
                 let addr = (idx as i16 + d as i16) as u16;
                 self.memptr = addr;
                 let val = self.read_byte(addr);
-                self.add_a(val, false);
-                19
-            }
-            0x8E => {
-                let d = self.fetch_byte() as i8;
-                let idx = self.get_index_val(is_ix);
-                let addr = (idx as i16 + d as i16) as u16;
-                self.memptr = addr;
-                let val = self.read_byte(addr);
-                self.add_a(val, true);
-                19
-            }
-            0x96 => {
-                let d = self.fetch_byte() as i8;
-                let idx = self.get_index_val(is_ix);
-                let addr = (idx as i16 + d as i16) as u16;
-                self.memptr = addr;
-                let val = self.read_byte(addr);
-                self.sub_a(val, false, true);
-                19
-            }
-            0x9E => {
-                let d = self.fetch_byte() as i8;
-                let idx = self.get_index_val(is_ix);
-                let addr = (idx as i16 + d as i16) as u16;
-                self.memptr = addr;
-                let val = self.read_byte(addr);
-                self.sub_a(val, true, true);
-                19
-            }
-            0xA6 => {
-                let d = self.fetch_byte() as i8;
-                let idx = self.get_index_val(is_ix);
-                let addr = (idx as i16 + d as i16) as u16;
-                self.memptr = addr;
-                let val = self.read_byte(addr);
-                self.and_a(val);
-                19
-            }
-            0xAE => {
-                let d = self.fetch_byte() as i8;
-                let idx = self.get_index_val(is_ix);
-                let addr = (idx as i16 + d as i16) as u16;
-                self.memptr = addr;
-                let val = self.read_byte(addr);
-                self.xor_a(val);
-                19
-            }
-            0xB6 => {
-                let d = self.fetch_byte() as i8;
-                let idx = self.get_index_val(is_ix);
-                let addr = (idx as i16 + d as i16) as u16;
-                self.memptr = addr;
-                let val = self.read_byte(addr);
-                self.or_a(val);
-                19
-            }
-            0xBE => {
-                let d = self.fetch_byte() as i8;
-                let idx = self.get_index_val(is_ix);
-                let addr = (idx as i16 + d as i16) as u16;
-                self.memptr = addr;
-                let val = self.read_byte(addr);
-                self.sub_a(val, false, false);
+                match (opcode >> 3) & 0x07 {
+                    0 => self.add_a(val, false),
+                    1 => self.add_a(val, true),
+                    2 => self.sub_a(val, false, true),
+                    3 => self.sub_a(val, true, true),
+                    4 => self.and_a(val),
+                    5 => self.xor_a(val),
+                    6 => self.or_a(val),
+                    7 => self.sub_a(val, false, false),
+                    _ => unreachable!(),
+                }
                 19
             }
 
