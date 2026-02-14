@@ -764,24 +764,28 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 // LD (BC), A
                 let addr = self.bc();
                 self.write_byte(addr, self.a);
+                self.memptr = ((self.a as u16) << 8) | (addr.wrapping_add(1) & 0xFF);
                 7
             }
             (0, 1) => {
                 // LD A, (BC)
                 let addr = self.bc();
                 self.a = self.read_byte(addr);
+                self.memptr = addr.wrapping_add(1);
                 7
             }
             (1, 0) => {
                 // LD (DE), A
                 let addr = self.de();
                 self.write_byte(addr, self.a);
+                self.memptr = ((self.a as u16) << 8) | (addr.wrapping_add(1) & 0xFF);
                 7
             }
             (1, 1) => {
                 // LD A, (DE)
                 let addr = self.de();
                 self.a = self.read_byte(addr);
+                self.memptr = addr.wrapping_add(1);
                 7
             }
             (2, 0) => {
@@ -804,6 +808,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 let addr = self.fetch_word();
                 self.write_byte(addr, self.a);
                 self.memptr = (self.a as u16) << 8 | addr.wrapping_add(1) & 0xFF;
+                self.memptr = ((self.a as u16) << 8) | (addr.wrapping_add(1) & 0xFF);
                 13
             }
             (3, 1) => {
