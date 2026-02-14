@@ -54,8 +54,18 @@ fn regression_jr_negative() {
 fn regression_ld_hl_h() {
     let mut c = z80(&[0x74]); // LD (HL), H
     c.set_hl(0x1234);
-    c.step();
+    let t = c.step();
+    assert_eq!(t, 7); // Timing check
     assert_eq!(c.memory.read_byte(0x1234 as u32), 0x12); // H value, not modified
+}
+
+#[test]
+fn regression_ld_hl_l() {
+    let mut c = z80(&[0x75]); // LD (HL), L
+    c.set_hl(0x1234);
+    let t = c.step();
+    assert_eq!(t, 7); // Timing check
+    assert_eq!(c.memory.read_byte(0x1234 as u32), 0x34); // L value
 }
 
 // Bug: PUSH/POP AF not preserving all flag bits
