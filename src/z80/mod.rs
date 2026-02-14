@@ -991,168 +991,186 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
 
     fn execute_x3(&mut self, _opcode: u8, y: u8, z: u8, p: u8, q: u8) -> u8 {
         match z {
-            0 => {
-                // RET cc
-                if self.check_condition(y) {
-                    self.pc = self.pop();
-                    11
-                } else {
-                    5
-                }
-            }
-            1 => {
-                if q == 0 {
-                    // POP rp2
-                    let val = self.pop();
-                    self.set_rp2(p, val);
-                    10
-                } else {
-                    match p {
-                        0 => {
-                            // RET
-                            self.pc = self.pop();
-                            10
-                        }
-                        1 => {
-                            // EXX
-                            std::mem::swap(&mut self.b, &mut self.b_prime);
-                            std::mem::swap(&mut self.c, &mut self.c_prime);
-                            std::mem::swap(&mut self.d, &mut self.d_prime);
-                            std::mem::swap(&mut self.e, &mut self.e_prime);
-                            std::mem::swap(&mut self.h, &mut self.h_prime);
-                            std::mem::swap(&mut self.l, &mut self.l_prime);
-                            4
-                        }
-                        2 => {
-                            // JP HL
-                            self.pc = self.hl();
-                            4
-                        }
-                        3 => {
-                            // LD SP, HL
-                            self.sp = self.hl();
-                            6
-                        }
-                        _ => 4,
-                    }
-                }
-            }
-            2 => {
-                // JP cc, nn
-                let nn = self.fetch_word();
-                if self.check_condition(y) {
-                    self.pc = nn;
-                }
-                10
-            }
-            3 => match y {
+            0 => self.execute_x3_z0(y),
+            1 => self.execute_x3_z1(p, q),
+            2 => self.execute_x3_z2(y),
+            3 => self.execute_x3_z3(y),
+            4 => self.execute_x3_z4(y),
+            5 => self.execute_x3_z5(p, q),
+            6 => self.execute_x3_z6(y),
+            7 => self.execute_x3_z7(y),
+            _ => 4,
+        }
+    }
+
+    fn execute_x3_z0(&mut self, y: u8) -> u8 {
+        // RET cc
+        if self.check_condition(y) {
+            self.pc = self.pop();
+            11
+        } else {
+            5
+        }
+    }
+
+    fn execute_x3_z1(&mut self, p: u8, q: u8) -> u8 {
+        if q == 0 {
+            // POP rp2
+            let val = self.pop();
+            self.set_rp2(p, val);
+            10
+        } else {
+            match p {
                 0 => {
-                    // JP nn
-                    self.pc = self.fetch_word();
+                    // RET
+                    self.pc = self.pop();
                     10
                 }
-                1 => self.execute_cb_prefix(),
+                1 => {
+                    // EXX
+                    std::mem::swap(&mut self.b, &mut self.b_prime);
+                    std::mem::swap(&mut self.c, &mut self.c_prime);
+                    std::mem::swap(&mut self.d, &mut self.d_prime);
+                    std::mem::swap(&mut self.e, &mut self.e_prime);
+                    std::mem::swap(&mut self.h, &mut self.h_prime);
+                    std::mem::swap(&mut self.l, &mut self.l_prime);
+                    4
+                }
                 2 => {
-                    // OUT (n), A
-                    let n = self.fetch_byte();
-                    let port = (n as u16) | ((self.a as u16) << 8);
-                    self.write_port(port, self.a);
-                    11
+                    // JP HL
+                    self.pc = self.hl();
+                    4
                 }
                 3 => {
-                    // IN A, (n)
-                    let n = self.fetch_byte();
-                    let port = (n as u16) | ((self.a as u16) << 8);
-                    self.a = self.read_port(port);
-                    11
-                }
-                4 => {
-                    // EX (SP), HL
-                    let val = self.read_word(self.sp);
-                    self.write_word(self.sp, self.hl());
-                    self.set_hl(val);
-                    19
-                }
-                5 => {
-                    // EX DE, HL
-                    let de = self.de();
-                    let hl = self.hl();
-                    self.set_de(hl);
-                    self.set_hl(de);
-                    4
-                }
-                6 => {
-                    // DI
-                    self.iff1 = false;
-                    self.iff2 = false;
-                    4
-                }
-                7 => {
-                    // EI
-                    self.iff1 = true;
-                    self.iff2 = true;
-                    self.pending_ei = true;
-                    4
+                    // LD SP, HL
+                    self.sp = self.hl();
+                    6
                 }
                 _ => 4,
-            },
+            }
+        }
+    }
+
+    fn execute_x3_z2(&mut self, y: u8) -> u8 {
+        // JP cc, nn
+        let nn = self.fetch_word();
+        if self.check_condition(y) {
+            self.pc = nn;
+        }
+        10
+    }
+
+    fn execute_x3_z3(&mut self, y: u8) -> u8 {
+        match y {
+            0 => {
+                // JP nn
+                self.pc = self.fetch_word();
+                10
+            }
+            1 => self.execute_cb_prefix(),
+            2 => {
+                // OUT (n), A
+                let n = self.fetch_byte();
+                let port = (n as u16) | ((self.a as u16) << 8);
+                self.write_port(port, self.a);
+                11
+            }
+            3 => {
+                // IN A, (n)
+                let n = self.fetch_byte();
+                let port = (n as u16) | ((self.a as u16) << 8);
+                self.a = self.read_port(port);
+                11
+            }
             4 => {
-                // CALL cc, nn
-                let nn = self.fetch_word();
-                if self.check_condition(y) {
-                    self.push(self.pc);
-                    self.pc = nn;
-                    17
-                } else {
-                    10
-                }
+                // EX (SP), HL
+                let val = self.read_word(self.sp);
+                self.write_word(self.sp, self.hl());
+                self.set_hl(val);
+                19
             }
             5 => {
-                if q == 0 {
-                    // PUSH rp2
-                    let val = self.get_rp2(p);
-                    self.push(val);
-                    11
-                } else {
-                    match p {
-                        0 => {
-                            // CALL nn
-                            let nn = self.fetch_word();
-                            self.push(self.pc);
-                            self.pc = nn;
-                            17
-                        }
-                        1 => self.execute_dd_prefix(),
-                        2 => self.execute_ed_prefix(),
-                        3 => self.execute_fd_prefix(),
-                        _ => 4,
-                    }
-                }
+                // EX DE, HL
+                let de = self.de();
+                let hl = self.hl();
+                self.set_de(hl);
+                self.set_hl(de);
+                4
             }
             6 => {
-                // ALU A, n
-                let n = self.fetch_byte();
-                match y {
-                    0 => self.add_a(n, false),
-                    1 => self.add_a(n, true),
-                    2 => self.sub_a(n, false, true),
-                    3 => self.sub_a(n, true, true),
-                    4 => self.and_a(n),
-                    5 => self.xor_a(n),
-                    6 => self.or_a(n),
-                    7 => self.sub_a(n, false, false),
-                    _ => {}
-                }
-                7
+                // DI
+                self.iff1 = false;
+                self.iff2 = false;
+                4
             }
             7 => {
-                // RST y*8
-                self.push(self.pc);
-                self.pc = (y as u16) * 8;
-                11
+                // EI
+                self.iff1 = true;
+                self.iff2 = true;
+                self.pending_ei = true;
+                4
             }
             _ => 4,
         }
+    }
+
+    fn execute_x3_z4(&mut self, y: u8) -> u8 {
+        // CALL cc, nn
+        let nn = self.fetch_word();
+        if self.check_condition(y) {
+            self.push(self.pc);
+            self.pc = nn;
+            17
+        } else {
+            10
+        }
+    }
+
+    fn execute_x3_z5(&mut self, p: u8, q: u8) -> u8 {
+        if q == 0 {
+            // PUSH rp2
+            let val = self.get_rp2(p);
+            self.push(val);
+            11
+        } else {
+            match p {
+                0 => {
+                    // CALL nn
+                    let nn = self.fetch_word();
+                    self.push(self.pc);
+                    self.pc = nn;
+                    17
+                }
+                1 => self.execute_dd_prefix(),
+                2 => self.execute_ed_prefix(),
+                3 => self.execute_fd_prefix(),
+                _ => 4,
+            }
+        }
+    }
+
+    fn execute_x3_z6(&mut self, y: u8) -> u8 {
+        // ALU A, n
+        let n = self.fetch_byte();
+        match y {
+            0 => self.add_a(n, false),
+            1 => self.add_a(n, true),
+            2 => self.sub_a(n, false, true),
+            3 => self.sub_a(n, true, true),
+            4 => self.and_a(n),
+            5 => self.xor_a(n),
+            6 => self.or_a(n),
+            7 => self.sub_a(n, false, false),
+            _ => {}
+        }
+        7
+    }
+
+    fn execute_x3_z7(&mut self, y: u8) -> u8 {
+        // RST y*8
+        self.push(self.pc);
+        self.pc = (y as u16) * 8;
+        11
     }
 
     // ========== CB Prefix (Bit operations) ==========
