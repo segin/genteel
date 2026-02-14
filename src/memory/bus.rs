@@ -840,4 +840,99 @@ mod tests {
         assert!(!bus.z80_reset);
         assert_eq!(bus.z80_bank_bit, 0); // Should stay 0 until next write
     }
+
+    #[test]
+    fn test_work_ram_wrapping_comprehensive() {
+        let mut bus = Bus::new();
+        // Load some dummy ROM to verify wrap-to-ROM behavior at 0xFFFFFF
+        bus.load_rom(&[0xAA; 512]);
+
+        // There are 32 mirrors of 64KB in the range 0xE00000 - 0xFFFFFF
+        for i in 0..32 {
+            let base = 0xE00000 + (i * 0x10000);
+            let boundary = base + 0xFFFF;
+            let next_addr = boundary + 1;
+
+            // 1. Test write_word wrapping
+            let val_high = (0x10 + i) as u8;
+            let val_low = (0x30 + i) as u8;
+            let word_val = ((val_high as u16) << 8) | (val_low as u16);
+
+            bus.write_word(boundary, word_val);
+
+            // Verify first byte (at boundary)
+            assert_eq!(
+                bus.read_byte(boundary),
+                val_high,
+                "Failed high byte at {:X}",
+                boundary
+            );
+
+            // Verify second byte (wrapped)
+            if next_addr > 0xFFFFFF {
+                // Wraps to ROM start 0x000000
+                // write_word writes to ROM are ignored (for the low byte)
+                // So ROM[0] should be 0xAA (initial value)
+                assert_eq!(
+                    bus.read_byte(0x000000),
+                    0xAA,
+                    "Failed ROM write protection at {:X}",
+                    boundary
+                );
+                // RAM[0] should be from previous iteration's read_word test (i=30)
+                // check_low for i=30 is 0x70 + 30 = 142.
+                assert_eq!(
+                    bus.work_ram[0], 142,
+                    "RAM[0] corrupted by ROM wrap write at {:X}",
+                    boundary
+                );
+            } else {
+                // Wraps to next mirror or start of this mirror
+                // actually next_addr is e.g. 0xE10000.
+                // read_byte(0xE10000) -> RAM[0]
+                // So RAM[0] should be val_low.
+                assert_eq!(
+                    bus.work_ram[0], val_low,
+                    "Failed low byte wrap to RAM[0] at {:X}",
+                    boundary
+                );
+
+                // Also check via bus read
+                assert_eq!(
+                    bus.read_byte(next_addr),
+                    val_low,
+                    "Failed low byte read at {:X}",
+                    next_addr
+                );
+            }
+
+            // 2. Test read_word wrapping
+            // Reset RAM with unique values
+            let check_high = (0x50 + i) as u8;
+            let check_low = (0x70 + i) as u8;
+            bus.work_ram[0xFFFF] = check_high;
+            bus.work_ram[0x0000] = check_low;
+
+            let val = bus.read_word(boundary);
+
+            if next_addr > 0xFFFFFF {
+                // Should be RAM[0xFFFF] << 8 | ROM[0]
+                // ROM[0] is 0xAA
+                let expected = ((check_high as u16) << 8) | 0x00AA;
+                assert_eq!(
+                    val, expected,
+                    "Failed read_word wrap to ROM at {:X}",
+                    boundary
+                );
+            } else {
+                // Should be RAM[0xFFFF] << 8 | RAM[0x0000]
+                let expected = ((check_high as u16) << 8) | (check_low as u16);
+                assert_eq!(
+                    val, expected,
+                    "Failed read_word wrap to RAM start at {:X}",
+                    boundary
+                );
+            }
+        }
+    }
 }
