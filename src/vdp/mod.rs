@@ -105,6 +105,56 @@ impl Vdp {
         self.is_pal = is_pal;
     }
 
+    pub fn write_data_bulk(&mut self, data: &[u8]) {
+        self.control_pending = false;
+
+        // Optimized VRAM write for standard increment
+        if (self.control_code & 0x0F) == 1 && self.auto_increment() == 2 {
+            let mut addr = self.control_address as usize;
+            for chunk in data.chunks_exact(2) {
+                if addr < 0x10000 {
+                    // Big-endian source: chunk[0] is high byte, chunk[1] is low byte.
+                    // VRAM is byte array.
+                    // write_data logic:
+                    // self.vram[addr] = (value >> 8) as u8;
+                    // self.vram[addr ^ 1] = (value & 0xFF) as u8;
+
+                    // So:
+                    // self.vram[addr] = chunk[0];
+                    // self.vram[addr ^ 1] = chunk[1];
+
+                    // If addr is even: vram[addr] = chunk[0], vram[addr+1] = chunk[1].
+                    // If addr is odd: vram[addr] = chunk[0], vram[addr-1] = chunk[1].
+
+                    // Since inc=2, addr parity is preserved.
+                    if (addr & 1) == 0 {
+                        self.vram[addr] = chunk[0];
+                        self.vram[addr + 1] = chunk[1];
+                    } else {
+                        self.vram[addr] = chunk[0];
+                        self.vram[addr - 1] = chunk[1];
+                    }
+                }
+                addr = (addr + 2) & 0xFFFF;
+            }
+            self.control_address = addr as u16;
+
+            // Update last_data_write
+            if data.len() >= 2 {
+                let last_idx = data.len() - 2;
+                self.last_data_write =
+                    ((data[last_idx] as u16) << 8) | (data[last_idx + 1] as u16);
+            }
+            return;
+        }
+
+        // Fallback
+        for chunk in data.chunks_exact(2) {
+            let val = ((chunk[0] as u16) << 8) | (chunk[1] as u16);
+            self.write_data(val);
+        }
+    }
+
     pub fn write_data(&mut self, value: u16) {
         self.control_pending = false;
         self.last_data_write = value;

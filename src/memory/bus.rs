@@ -398,6 +398,40 @@ impl Bus {
     }
     // === DMA ===
 
+    /// Get a direct slice of memory for DMA transfer if possible.
+    /// Returns None if the range crosses memory boundaries or is not contiguous.
+    pub fn get_dma_slice(&self, source: u32, length_words: u32) -> Option<&[u8]> {
+        let len = (length_words as usize) * 2;
+        if len == 0 {
+            return Some(&[]);
+        }
+
+        let start_addr = source & 0xFFFFFF;
+        let end_addr_exclusive = (start_addr as usize) + len;
+
+        // ROM: 0x000000 - 0x3FFFFF
+        if start_addr <= 0x3FFFFF {
+            // Check if end is also within loaded ROM
+            if end_addr_exclusive <= self.rom.len() {
+                return Some(&self.rom[(start_addr as usize)..end_addr_exclusive]);
+            }
+            // If ROM is smaller than 4MB, access beyond rom.len() returns 0xFF.
+            // We can't return a slice for that, so fallback to read_word.
+            return None;
+        }
+
+        // Work RAM: 0xE00000 - 0xFFFFFF (Mirrored)
+        if start_addr >= 0xE00000 {
+            let ram_start = (start_addr & 0xFFFF) as usize;
+            // RAM is 64KB (0x10000)
+            if ram_start + len <= 0x10000 {
+                return Some(&self.work_ram[ram_start..(ram_start + len)]);
+            }
+        }
+
+        None
+    }
+
     fn run_dma(&mut self) {
         if !self.vdp.dma_pending {
             return;
@@ -422,6 +456,33 @@ impl Bus {
         }
 
         // Transfer
+
+        // Optimization: Bulk transfer for contiguous ROM/RAM
+        let len_bytes = (length as usize) * 2;
+        let start_addr = source & 0xFFFFFF;
+
+        // Check ROM
+        if start_addr <= 0x3FFFFF {
+            let end_addr = (start_addr as usize) + len_bytes;
+            if end_addr <= self.rom.len() {
+                self.vdp
+                    .write_data_bulk(&self.rom[(start_addr as usize)..end_addr]);
+                self.vdp.dma_pending = false;
+                return;
+            }
+        }
+        // Check RAM (0xE00000-0xFFFFFF)
+        else if start_addr >= 0xE00000 {
+            let ram_start = (start_addr & 0xFFFF) as usize;
+            if ram_start + len_bytes <= 0x10000 {
+                self.vdp
+                    .write_data_bulk(&self.work_ram[ram_start..(ram_start + len_bytes)]);
+                self.vdp.dma_pending = false;
+                return;
+            }
+        }
+
+        // Fallback: Word-by-word transfer
         for _ in 0..length {
             let word = self.read_word(source);
             self.vdp.write_data(word);
