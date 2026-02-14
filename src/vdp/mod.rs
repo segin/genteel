@@ -133,13 +133,19 @@ impl Vdp {
                 }
                 let addr = (self.control_address & 0x7E) as usize;
                 // Pack 9-bit color to RGB565
-                let r = (val & 0xE) << 1; // 3 bits -> 4 bits
-                let g = (val & 0xE0) >> 3; // 3 bits -> 4 bits
-                let b = (val & 0xE00) >> 7; // 3 bits -> 4 bits
-                                            // Expand to 5/6/5
-                let r5 = (r << 1) | (r >> 3);
-                let g6 = (g << 2) | (g >> 2);
-                let b5 = (b << 1) | (b >> 3);
+
+                // Red: 3 bits (at 1..3) -> 5 bits
+                let r_in = (val & 0x00E) >> 1;
+                let r5 = (r_in << 2) | (r_in >> 1);
+
+                // Green: 3 bits (at 5..7) -> 6 bits
+                let g_in = (val & 0x0E0) >> 5;
+                let g6 = (g_in << 3) | g_in;
+
+                // Blue: 3 bits (at 9..11) -> 5 bits
+                let b_in = (val & 0xE00) >> 9;
+                let b5 = (b_in << 2) | (b_in >> 1);
+
                 self.cram_cache[addr >> 1] = ((r5 as u16) << 11) | ((g6 as u16) << 5) | (b5 as u16);
 
                 self.cram[addr] = (val & 0xFF) as u8;
@@ -738,3 +744,9 @@ impl Debuggable for Vdp {
         // Not implemented
     }
 }
+
+#[cfg(test)]
+mod test_command;
+
+#[cfg(test)]
+mod tests_render;
