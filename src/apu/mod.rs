@@ -128,3 +128,4 @@ mod tests {
         assert_eq!(apu.fm.registers[0][0x28], 0xF0);
     }
 }
+pub mod psg;
