@@ -183,6 +183,108 @@ impl Cpu {
     fn execute<M: MemoryInterface>(&mut self, instruction: Instruction, memory: &mut M) -> u32 {
         match instruction {
             // === Data Movement ===
+            inst @ (Instruction::Move { .. }
+            | Instruction::MoveA { .. }
+            | Instruction::MoveQ { .. }
+            | Instruction::Lea { .. }
+            | Instruction::Exg { .. }
+            | Instruction::Clr { .. }
+            | Instruction::Movep { .. }
+            | Instruction::Swap { .. }
+            | Instruction::Ext { .. }
+            | Instruction::Movem { .. }
+            | Instruction::Pea { .. }) => self.execute_data(inst, memory),
+
+            // === Arithmetic ===
+            inst @ (Instruction::Add { .. }
+            | Instruction::AddA { .. }
+            | Instruction::AddI { .. }
+            | Instruction::AddQ { .. }
+            | Instruction::Sub { .. }
+            | Instruction::SubA { .. }
+            | Instruction::SubI { .. }
+            | Instruction::SubQ { .. }
+            | Instruction::Neg { .. }
+            | Instruction::NegX { .. }
+            | Instruction::AddX { .. }
+            | Instruction::SubX { .. }
+            | Instruction::MulU { .. }
+            | Instruction::MulS { .. }
+            | Instruction::DivU { .. }
+            | Instruction::DivS { .. }
+            | Instruction::Abcd { .. }
+            | Instruction::Sbcd { .. }
+            | Instruction::Nbcd { .. }
+            | Instruction::Cmp { .. }
+            | Instruction::CmpA { .. }
+            | Instruction::CmpI { .. }
+            | Instruction::CmpM { .. }
+            | Instruction::Tst { .. }
+            | Instruction::Chk { .. }) => self.execute_arithmetic(inst, memory),
+
+            // === Logical / Shifts / Bit Manipulation ===
+            inst @ (Instruction::And { .. }
+            | Instruction::AndI { .. }
+            | Instruction::Or { .. }
+            | Instruction::OrI { .. }
+            | Instruction::Eor { .. }
+            | Instruction::EorI { .. }
+            | Instruction::Not { .. }
+            | Instruction::Lsl { .. }
+            | Instruction::Lsr { .. }
+            | Instruction::Asl { .. }
+            | Instruction::Asr { .. }
+            | Instruction::Rol { .. }
+            | Instruction::Ror { .. }
+            | Instruction::Roxl { .. }
+            | Instruction::Roxr { .. }
+            | Instruction::Btst { .. }
+            | Instruction::Bset { .. }
+            | Instruction::Bclr { .. }
+            | Instruction::Bchg { .. }
+            | Instruction::Tas { .. }) => self.execute_bits(inst, memory),
+
+            // === System / Branch / Control ===
+            inst @ (Instruction::Bra { .. }
+            | Instruction::Bsr { .. }
+            | Instruction::Bcc { .. }
+            | Instruction::Scc { .. }
+            | Instruction::DBcc { .. }
+            | Instruction::Jmp { .. }
+            | Instruction::Jsr { .. }
+            | Instruction::Rts
+            | Instruction::Nop
+            | Instruction::Link { .. }
+            | Instruction::Unlk { .. }
+            | Instruction::MoveUsp { .. }
+            | Instruction::Trap { .. }
+            | Instruction::Rte
+            | Instruction::Stop
+            | Instruction::Reset
+            | Instruction::TrapV
+            | Instruction::Rtr
+            | Instruction::MoveToSr { .. }
+            | Instruction::MoveFromSr { .. }
+            | Instruction::MoveToCcr { .. }
+            | Instruction::AndiToCcr
+            | Instruction::AndiToSr
+            | Instruction::OriToCcr
+            | Instruction::OriToSr
+            | Instruction::EoriToCcr
+            | Instruction::EoriToSr
+            | Instruction::Illegal
+            | Instruction::LineA { .. }
+            | Instruction::LineF { .. }
+            | Instruction::Unimplemented { .. }) => self.execute_system(inst, memory),
+        }
+    }
+
+    fn execute_data<M: MemoryInterface>(
+        &mut self,
+        instruction: Instruction,
+        memory: &mut M,
+    ) -> u32 {
+        match instruction {
             Instruction::Move { size, src, dst } => {
                 ops::data::exec_move(self, size, src, dst, memory)
             }
@@ -199,8 +301,25 @@ impl Cpu {
                 an,
                 direction,
             } => ops::data::exec_movep(self, size, reg, an, direction, memory),
+            Instruction::Swap { reg } => ops::data::exec_swap(self, reg),
+            Instruction::Ext { size, reg } => ops::data::exec_ext(self, size, reg),
+            Instruction::Movem {
+                size,
+                direction,
+                mask: _,
+                ea,
+            } => ops::data::exec_movem(self, size, direction, ea, memory),
+            Instruction::Pea { src } => ops::data::exec_pea(self, src, memory),
+            _ => unreachable!("Invalid instruction for execute_data"),
+        }
+    }
 
-            // === Arithmetic ===
+    fn execute_arithmetic<M: MemoryInterface>(
+        &mut self,
+        instruction: Instruction,
+        memory: &mut M,
+    ) -> u32 {
+        match instruction {
             Instruction::Add {
                 size,
                 src,
@@ -227,7 +346,6 @@ impl Cpu {
             Instruction::SubQ { size, dst, data } => {
                 ops::arithmetic::exec_subq(self, size, dst, data, memory)
             }
-
             Instruction::Neg { size, dst } => ops::arithmetic::exec_neg(self, size, dst, memory),
             Instruction::NegX { size, dst } => ops::arithmetic::exec_negx(self, size, dst, memory),
             Instruction::AddX {
@@ -265,8 +383,30 @@ impl Cpu {
                 memory_mode,
             } => ops::arithmetic::exec_sbcd(self, src_reg, dst_reg, memory_mode, memory),
             Instruction::Nbcd { dst } => ops::arithmetic::exec_nbcd(self, dst, memory),
+            Instruction::Cmp { size, src, dst_reg } => {
+                ops::arithmetic::exec_cmp(self, size, src, dst_reg, memory)
+            }
+            Instruction::CmpA { size, src, dst_reg } => {
+                ops::arithmetic::exec_cmpa(self, size, src, dst_reg, memory)
+            }
+            Instruction::CmpI { size, dst } => ops::arithmetic::exec_cmpi(self, size, dst, memory),
+            Instruction::CmpM { size, ax, ay } => {
+                ops::arithmetic::exec_cmpm(self, size, ax, ay, memory)
+            }
+            Instruction::Tst { size, dst } => ops::arithmetic::exec_tst(self, size, dst, memory),
+            Instruction::Chk { src, dst_reg } => {
+                ops::arithmetic::exec_chk(self, src, dst_reg, memory)
+            }
+            _ => unreachable!("Invalid instruction for execute_arithmetic"),
+        }
+    }
 
-            // === Logical ===
+    fn execute_bits<M: MemoryInterface>(
+        &mut self,
+        instruction: Instruction,
+        memory: &mut M,
+    ) -> u32 {
+        match instruction {
             Instruction::And {
                 size,
                 src,
@@ -286,8 +426,6 @@ impl Cpu {
             }
             Instruction::EorI { size, dst } => ops::bits::exec_eori(self, size, dst, memory),
             Instruction::Not { size, dst } => ops::bits::exec_not(self, size, dst, memory),
-
-            // === Shifts ===
             Instruction::Lsl { size, dst, count } => {
                 ops::bits::exec_shift(self, size, dst, count, true, false, memory)
             }
@@ -312,27 +450,21 @@ impl Cpu {
             Instruction::Roxr { size, dst, count } => {
                 ops::bits::exec_roxr(self, size, dst, count, memory)
             }
-
-            // === Bit Manipulation ===
             Instruction::Btst { bit, dst } => ops::bits::exec_btst(self, bit, dst, memory),
             Instruction::Bset { bit, dst } => ops::bits::exec_bset(self, bit, dst, memory),
             Instruction::Bclr { bit, dst } => ops::bits::exec_bclr(self, bit, dst, memory),
             Instruction::Bchg { bit, dst } => ops::bits::exec_bchg(self, bit, dst, memory),
+            Instruction::Tas { dst } => ops::bits::exec_tas(self, dst, memory),
+            _ => unreachable!("Invalid instruction for execute_bits"),
+        }
+    }
 
-            // === Compare and Test ===
-            Instruction::Cmp { size, src, dst_reg } => {
-                ops::arithmetic::exec_cmp(self, size, src, dst_reg, memory)
-            }
-            Instruction::CmpA { size, src, dst_reg } => {
-                ops::arithmetic::exec_cmpa(self, size, src, dst_reg, memory)
-            }
-            Instruction::CmpI { size, dst } => ops::arithmetic::exec_cmpi(self, size, dst, memory),
-            Instruction::CmpM { size, ax, ay } => {
-                ops::arithmetic::exec_cmpm(self, size, ax, ay, memory)
-            }
-            Instruction::Tst { size, dst } => ops::arithmetic::exec_tst(self, size, dst, memory),
-
-            // === Branch and Jump ===
+    fn execute_system<M: MemoryInterface>(
+        &mut self,
+        instruction: Instruction,
+        memory: &mut M,
+    ) -> u32 {
+        match instruction {
             Instruction::Bra { displacement } => ops::system::exec_bra(self, displacement, memory),
             Instruction::Bsr { displacement } => ops::system::exec_bsr(self, displacement, memory),
             Instruction::Bcc {
@@ -348,13 +480,7 @@ impl Cpu {
             Instruction::Jmp { dst } => ops::system::exec_jmp(self, dst, memory),
             Instruction::Jsr { dst } => ops::system::exec_jsr(self, dst, memory),
             Instruction::Rts => ops::system::exec_rts(self, memory),
-
-            // === Misc ===
             Instruction::Nop => 4,
-            Instruction::Swap { reg } => ops::data::exec_swap(self, reg),
-            Instruction::Ext { size, reg } => ops::data::exec_ext(self, size, reg),
-
-            // === System Control ===
             Instruction::Link { reg } => {
                 let displacement = self.read_word(self.pc, memory) as i16;
                 self.pc = self.pc.wrapping_add(2);
@@ -367,7 +493,7 @@ impl Cpu {
             Instruction::Trap { vector } => ops::system::exec_trap(self, vector, memory),
             Instruction::Rte => ops::system::exec_rte(self, memory),
             Instruction::Stop => ops::system::exec_stop(self, memory),
-            Instruction::Reset => 132, // Reset external devices, internal state unaffected.
+            Instruction::Reset => 132,
             Instruction::TrapV => {
                 if self.get_flag(flags::OVERFLOW) {
                     self.process_exception(7, memory)
@@ -376,21 +502,6 @@ impl Cpu {
                 }
             }
             Instruction::Rtr => ops::system::exec_rtr(self, memory),
-
-            // === Bounds and Atomic ===
-            Instruction::Chk { src, dst_reg } => {
-                ops::arithmetic::exec_chk(self, src, dst_reg, memory)
-            }
-            Instruction::Tas { dst } => ops::bits::exec_tas(self, dst, memory),
-            Instruction::Movem {
-                size,
-                direction,
-                mask: _,
-                ea,
-            } => ops::data::exec_movem(self, size, direction, ea, memory),
-            Instruction::Pea { src } => ops::data::exec_pea(self, src, memory),
-
-            // === Status Register Operations ===
             Instruction::MoveToSr { src } => ops::system::exec_move_to_sr(self, src, memory),
             Instruction::MoveFromSr { dst } => ops::system::exec_move_from_sr(self, dst, memory),
             Instruction::MoveToCcr { src } => ops::system::exec_move_to_ccr(self, src, memory),
@@ -400,12 +511,11 @@ impl Cpu {
             Instruction::OriToSr => ops::system::exec_ori_to_sr(self, memory),
             Instruction::EoriToCcr => ops::system::exec_eori_to_ccr(self, memory),
             Instruction::EoriToSr => ops::system::exec_eori_to_sr(self, memory),
-
-            // === Illegal/Unimplemented ===
             Instruction::Illegal => self.process_exception(4, memory),
             Instruction::LineA { opcode: _ } => self.process_exception(10, memory),
             Instruction::LineF { opcode: _ } => self.process_exception(11, memory),
             Instruction::Unimplemented { opcode: _ } => self.process_exception(4, memory),
+            _ => unreachable!("Invalid instruction for execute_system"),
         }
     }
 
@@ -424,11 +534,11 @@ impl Cpu {
     }
 
     pub(crate) fn update_nz_flags(&mut self, value: u32, size: Size) {
-        let (negative, zero) = match size {
-            Size::Byte => ((value & 0x80) != 0, (value & 0xFF) == 0),
-            Size::Word => ((value & 0x8000) != 0, (value & 0xFFFF) == 0),
-            Size::Long => ((value & 0x80000000) != 0, value == 0),
-        };
+        let mask = size.mask();
+        let sign_bit = size.sign_bit();
+        let negative = (value & sign_bit) != 0;
+        let zero = (value & mask) == 0;
+
         self.set_flag(flags::NEGATIVE, negative);
         self.set_flag(flags::ZERO, zero);
     }
@@ -460,11 +570,8 @@ impl Cpu {
     }
 
     pub(crate) fn add_with_flags(&self, a: u32, b: u32, size: Size) -> (u32, bool, bool) {
-        let (mask, sign_bit) = match size {
-            Size::Byte => (0xFF, 0x80),
-            Size::Word => (0xFFFF, 0x8000),
-            Size::Long => (0xFFFFFFFF, 0x80000000),
-        };
+        let mask = size.mask();
+        let sign_bit = size.sign_bit();
 
         let a = a & mask;
         let b = b & mask;
@@ -481,11 +588,8 @@ impl Cpu {
     }
 
     pub(crate) fn sub_with_flags(&self, a: u32, b: u32, size: Size) -> (u32, bool, bool) {
-        let (mask, sign_bit) = match size {
-            Size::Byte => (0xFF, 0x80),
-            Size::Word => (0xFFFF, 0x8000),
-            Size::Long => (0xFFFFFFFF, 0x80000000),
-        };
+        let mask = size.mask();
+        let sign_bit = size.sign_bit();
 
         let a = a & mask;
         let b = b & mask;
@@ -508,11 +612,8 @@ impl Cpu {
         x: u32,
         size: Size,
     ) -> (u32, bool, bool) {
-        let (mask, sign_bit) = match size {
-            Size::Byte => (0xFF, 0x80),
-            Size::Word => (0xFFFF, 0x8000),
-            Size::Long => (0xFFFFFFFF, 0x80000000),
-        };
+        let mask = size.mask();
+        let sign_bit = size.sign_bit();
 
         let a = src & mask;
         let b = dst & mask;
@@ -540,11 +641,8 @@ impl Cpu {
         x: u32,
         size: Size,
     ) -> (u32, bool, bool) {
-        let (mask, sign_bit) = match size {
-            Size::Byte => (0xFF, 0x80),
-            Size::Word => (0xFFFF, 0x8000),
-            Size::Long => (0xFFFFFFFF, 0x80000000),
-        };
+        let mask = size.mask();
+        let sign_bit = size.sign_bit();
 
         let a = dst & mask;
         let b = src & mask;
@@ -772,14 +870,6 @@ impl Cpu {
 
         if self.pending_interrupt > current_mask as u8 || self.pending_interrupt == 7 {
             let level = self.pending_interrupt;
-            if level == 6 {
-                let f62a = memory.read_byte(0xFFF62A);
-                let f605 = memory.read_byte(0xFFF605);
-                eprintln!(
-                    "DEBUG: VInt triggered! PC={:06X} F62A={:02X} F605={:02X}",
-                    self.pc, f62a, f605
-                );
-            }
             self.acknowledge_interrupt(level); // Use new queuing system
             self.halted = false; // Wake if halted
 
@@ -806,10 +896,6 @@ impl Cpu {
             let vector = 24 + level as u32;
             let vector_addr = vector * 4;
             let handler_pc = memory.read_long(vector_addr);
-            eprintln!(
-                "DEBUG: Interrupt Level {} Vector {} -> PC={:06X}",
-                level, vector, handler_pc
-            );
             self.pc = handler_pc;
 
             return 44; // Interrupt takes about 44 cycles

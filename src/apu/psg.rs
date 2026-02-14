@@ -76,22 +76,23 @@ impl Default for Psg {
 impl Psg {
     /// Create a new PSG in reset state
     pub fn new() -> Self {
-        Self {
+        let mut psg = Self {
             tones: Default::default(),
             noise: Default::default(),
             latch_channel: 0,
             latch_volume: false,
+        };
+        // Set all volumes to off (15)
+        for tone in &mut psg.tones {
+            tone.volume = 0x0F;
         }
+        psg.noise.volume = 0x0F;
+        psg
     }
     
     /// Reset the chip
     pub fn reset(&mut self) {
         *self = Self::new();
-        // Set all volumes to off
-        for tone in &mut self.tones {
-            tone.volume = 0x0F;
-        }
-        self.noise.volume = 0x0F;
     }
     
     /// Write a command byte to the PSG
@@ -228,7 +229,7 @@ mod tests {
     fn test_psg_new() {
         let psg = Psg::new();
         assert_eq!(psg.tones[0].frequency, 0);
-        assert_eq!(psg.tones[0].volume, 0);
+        assert_eq!(psg.tones[0].volume, 15);
     }
     
     #[test]
