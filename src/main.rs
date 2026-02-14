@@ -465,6 +465,7 @@ impl Emulator {
         Ok(())
     }
 
+    #[cfg(feature = "gui")]
     fn print_debug_info(&self, frame_count: u64) {
         let mut bus = self.bus.borrow_mut();
         let disp_en = bus.vdp.display_enabled();
@@ -509,6 +510,7 @@ impl Emulator {
         }
     }
 
+    #[cfg(feature = "gui")]
     fn render_frame(&self, pixels: &mut pixels::Pixels) -> Result<(), String> {
         let frame = pixels.frame_mut();
         let bus = self.bus.borrow();
@@ -518,6 +520,7 @@ impl Emulator {
         pixels.render().map_err(|e| e.to_string())
     }
 
+    #[cfg(feature = "gui")]
     fn process_audio(&mut self, audio_buffer: &audio::SharedAudioBuffer) {
         if let Ok(mut buf) = audio_buffer.lock() {
             buf.push(&self.audio_buffer);
@@ -526,6 +529,7 @@ impl Emulator {
     }
 
     /// Run with winit window (interactive play mode)
+    #[cfg(feature = "gui")]
     pub fn run_with_frontend(mut self) -> Result<(), String> {
         use pixels::{Pixels, SurfaceTexture};
         use winit::event::{ElementState, Event, KeyEvent, WindowEvent};
@@ -911,8 +915,6 @@ mod tests {
 
         // Check if 0xA01FFD is 0x80
         // We use read_byte on bus.
-        // If hack is present, this passes trivially.
-        // If hack is removed, this passes ONLY if Z80 ran correctly (PC=0 at start).
         let val = emulator.bus.borrow_mut().read_byte(0xA01FFD);
         assert_eq!(val, 0x80, "Z80 should have written 0x80 to 0xA01FFD");
     }
