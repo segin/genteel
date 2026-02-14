@@ -177,21 +177,17 @@ impl Emulator {
     }
 
     /// Step one frame with current input state
-    pub fn step_frame(&mut self) {
+    pub fn step_frame(&mut self, input: Option<input::FrameInput>) {
         // Apply inputs from script or live input
-        let frame_input = self.input.advance_frame();
-        self.step_frame_with_input(frame_input.p1, frame_input.p2);
-    }
+        let frame_input = input.unwrap_or_else(|| self.input.advance_frame());
 
-    /// Step one frame with provided input (for live play)
-    pub fn step_frame_with_input(&mut self, p1: io::ControllerState, p2: io::ControllerState) {
         {
             let mut bus = self.bus.borrow_mut();
             if let Some(ctrl) = bus.io.controller(1) {
-                *ctrl = p1;
+                *ctrl = frame_input.p1;
             }
             if let Some(ctrl) = bus.io.controller(2) {
-                *ctrl = p2;
+                *ctrl = frame_input.p2;
             }
         }
         self.step_frame_internal();
@@ -406,7 +402,7 @@ impl Emulator {
     pub fn run(&mut self, frames: u32) {
         println!("Running {} frames headless...", frames);
         for _ in 0..frames {
-            self.step_frame();
+            self.step_frame(None);
         }
         println!("Done.");
     }
@@ -672,7 +668,7 @@ impl Emulator {
                             }
 
                             // Run one frame of emulation
-                            self.step_frame_with_input(input.p1, input.p2);
+                            self.step_frame(Some(input.clone()));
 
                             // Process audio
                             self.process_audio(&audio_buffer);
@@ -1051,8 +1047,8 @@ mod tests {
     #[test]
     fn test_step_frame_basic() {
         let mut emulator = Emulator::new();
-        emulator.step_frame();
-        emulator.step_frame();
+        emulator.step_frame(None);
+        emulator.step_frame(None);
         assert_eq!(emulator.internal_frame_count, 2);
     }
 }
