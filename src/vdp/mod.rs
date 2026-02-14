@@ -229,21 +229,7 @@ impl Vdp {
         // DMA Fill (Mode 2) check
         // Enabled (Reg 1 bit 4) AND Mode 2 (Reg 23 bits 7,6 = 1,0)
         if (self.registers[1] & 0x10) != 0 && (self.registers[23] & 0xC0) == 0x80 {
-            let length = self.dma_length();
-            let mut addr = self.control_address;
-            let inc = self.auto_increment() as u16;
-            let fill_byte = (value >> 8) as u8;
-
-            // DMA Fill writes bytes. Length register specifies number of bytes.
-            // If length is 0, it is treated as 0x10000 (64KB).
-            let len = if length == 0 { 0x10000 } else { length };
-
-            for _ in 0..len {
-                // VRAM is byte-addressable in this emulator
-                self.vram[addr as usize] = fill_byte;
-                addr = addr.wrapping_add(inc);
-            }
-            self.control_address = addr;
+            self.perform_dma_fill();
             return;
         }
 
@@ -471,16 +457,7 @@ impl Vdp {
                 // VRAM Fill (Mode 2)
                 // This is also handled in write_data, but provided here for completeness
                 // if triggered via control port (non-standard but possible).
-                let data = self.last_data_write;
-                let mut addr = self.control_address;
-                let inc = self.auto_increment() as u16;
-                let fill_byte = (data >> 8) as u8;
-
-                for _ in 0..len {
-                    self.vram[addr as usize] = fill_byte;
-                    addr = addr.wrapping_add(inc);
-                }
-                self.control_address = addr;
+                self.perform_dma_fill();
             }
             0xC0 => {
                 // VRAM Copy (Mode 3)
@@ -501,6 +478,24 @@ impl Vdp {
 
         self.dma_pending = false;
         len
+    }
+
+    fn perform_dma_fill(&mut self) {
+        let length = self.dma_length();
+        let mut addr = self.control_address;
+        let inc = self.auto_increment() as u16;
+        let fill_byte = (self.last_data_write >> 8) as u8;
+
+        // DMA Fill writes bytes. Length register specifies number of bytes.
+        // If length is 0, it is treated as 0x10000 (64KB).
+        let len = if length == 0 { 0x10000 } else { length };
+
+        for _ in 0..len {
+            // VRAM is byte-addressable in this emulator
+            self.vram[addr as usize] = fill_byte;
+            addr = addr.wrapping_add(inc);
+        }
+        self.control_address = addr;
     }
 
     pub fn sprite_table_address(&self) -> u16 {
