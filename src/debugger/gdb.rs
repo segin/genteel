@@ -50,15 +50,25 @@ pub struct GdbServer {
     pub stop_reason: StopReason,
     /// No-ack mode enabled
     no_ack_mode: bool,
+    /// Optional password for authentication
+    password: Option<String>,
+    /// Whether the client is authenticated
+    authenticated: bool,
 }
 
 impl GdbServer {
     /// Create a new GDB server
-    pub fn new(port: u16) -> std::io::Result<Self> {
+    pub fn new(port: u16, password: Option<String>) -> std::io::Result<Self> {
         let listener = TcpListener::bind(format!("127.0.0.1:{}", port))?;
         listener.set_nonblocking(true)?;
 
-        eprintln!("⚠️  SECURITY WARNING: GDB Server listening on 127.0.0.1:{}. This port is accessible to all local users. Only use this on a trusted single-user machine.", port);
+        if password.is_some() {
+            eprintln!("🔒 GDB Server listening on 127.0.0.1:{}. Protected with password.", port);
+        } else {
+            eprintln!("⚠️  SECURITY WARNING: GDB Server listening on 127.0.0.1:{}. This port is accessible to all local users. Only use this on a trusted single-user machine.", port);
+        }
+
+        let authenticated = password.is_none();
 
         Ok(Self {
             listener,
@@ -66,6 +76,8 @@ impl GdbServer {
             breakpoints: HashSet::new(),
             stop_reason: StopReason::Halted,
             no_ack_mode: false,
+            password,
+            authenticated,
         })
     }
 
@@ -211,8 +223,30 @@ impl GdbServer {
         registers: &mut GdbRegisters,
         memory: &mut dyn GdbMemory,
     ) -> String {
+        // Always allow disconnect/kill/interrupt
         if cmd == "INTERRUPT" {
             return format!("S{:02x}", StopReason::Interrupt.signal());
+        }
+        if cmd == "D" {
+            self.client = None;
+            return "OK".to_string();
+        }
+        if cmd == "k" {
+            self.client = None;
+            return "".to_string();
+        }
+
+        // Authentication check
+        if !self.authenticated {
+            let allowed = cmd.starts_with("qSupported")
+                || cmd == "?"
+                || cmd.starts_with("qRcmd,")
+                || cmd.starts_with('H')
+                || cmd == "QStartNoAckMode";
+
+            if !allowed {
+                return "E01".to_string();
+            }
         }
 
         let first_char = cmd.chars().next().unwrap_or('?');
@@ -518,13 +552,48 @@ impl GdbServer {
         } else if cmd == "qAttached" {
             // Attached to existing process
             "1".to_string()
-        } else if cmd.starts_with("qRcmd,") {
+        } else if let Some(stripped) = cmd.strip_prefix("qRcmd,") {
             // Monitor command
-            "OK".to_string()
+            self.handle_monitor_command(stripped)
         } else {
             // Unknown query
             "".to_string()
         }
+    }
+
+    fn handle_monitor_command(&mut self, cmd_hex: &str) -> String {
+        let mut bytes = Vec::new();
+        let mut i = 0;
+        while i + 2 <= cmd_hex.len() {
+            if let Ok(byte) = u8::from_str_radix(&cmd_hex[i..i + 2], 16) {
+                bytes.push(byte);
+            }
+            i += 2;
+        }
+
+        let cmd = String::from_utf8_lossy(&bytes);
+        if let Some(stripped) = cmd.strip_prefix("auth ") {
+            let provided_pass = stripped.trim();
+            if let Some(ref correct_pass) = self.password {
+                if provided_pass == correct_pass {
+                    self.authenticated = true;
+                    return "OK".to_string();
+                } else {
+                    return "E01".to_string(); // Invalid password
+                }
+            } else {
+                // No password set, already authenticated
+                return "OK".to_string();
+            }
+        }
+
+        // Other monitor commands?
+        if !self.authenticated {
+            return "E01".to_string();
+        }
+
+        // Add other monitor commands here if needed
+        "OK".to_string()
     }
 
     fn handle_set(&mut self, cmd: &str) -> String {
@@ -612,6 +681,8 @@ mod tests {
             breakpoints: HashSet::new(),
             stop_reason: StopReason::Halted,
             no_ack_mode: false,
+            password: None,
+            authenticated: true,
         };
 
         // Set breakpoint
@@ -628,7 +699,7 @@ mod tests {
     #[test]
     fn test_security_loopback_accepted() {
         // Bind to random port
-        let mut server = GdbServer::new(0).expect("Failed to create GDB server");
+        let mut server = GdbServer::new(0, None).expect("Failed to create GDB server");
         let port = server
             .listener
             .local_addr()
@@ -654,6 +725,8 @@ mod tests {
             breakpoints: HashSet::new(),
             stop_reason: StopReason::Halted,
             no_ack_mode: false,
+            password: None,
+            authenticated: true,
         };
         let mut regs = GdbRegisters::default();
         let mut mem = MockMemory::new();
@@ -683,6 +756,8 @@ mod tests {
             breakpoints: HashSet::new(),
             stop_reason: StopReason::Halted,
             no_ack_mode: false,
+            password: None,
+            authenticated: true,
         };
         let mut regs = GdbRegisters::default();
         let mut mem = MockMemory::new();
@@ -715,6 +790,8 @@ mod tests {
             breakpoints: HashSet::new(),
             stop_reason: StopReason::Halted,
             no_ack_mode: false,
+            password: None,
+            authenticated: true,
         };
         let mut regs = GdbRegisters::default();
         let mut mem = MockMemory::new();
@@ -746,6 +823,8 @@ mod tests {
             breakpoints: HashSet::new(),
             stop_reason: StopReason::Halted,
             no_ack_mode: false,
+            password: None,
+            authenticated: true,
         };
         let mut regs = GdbRegisters::default();
         let mut mem = MockMemory::new();
@@ -769,6 +848,8 @@ mod tests {
             breakpoints: HashSet::new(),
             stop_reason: StopReason::Halted,
             no_ack_mode: false,
+            password: None,
+            authenticated: true,
         };
         let mut regs = GdbRegisters::default();
         let mut mem = MockMemory::new();
@@ -780,7 +861,7 @@ mod tests {
 
     #[test]
     fn test_oversized_packet_prevention() {
-        let mut server = GdbServer::new(0).expect("Failed to create GDB server");
+        let mut server = GdbServer::new(0, None).expect("Failed to create GDB server");
         let port = server
             .listener
             .local_addr()
@@ -818,5 +899,36 @@ mod tests {
             !server.is_connected(),
             "Server should have disconnected the client after oversized packet"
         );
+    }
+
+    #[test]
+    fn test_authentication_flow() {
+        let password = "secret".to_string();
+        let mut server = GdbServer::new(0, Some(password)).unwrap();
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+
+        assert!(!server.authenticated);
+
+        // Access denied for protected commands
+        assert_eq!(server.process_command("g", &mut regs, &mut mem), "E01");
+        assert_eq!(server.process_command("m100,4", &mut regs, &mut mem), "E01");
+
+        // Allowed commands work
+        assert!(server.process_command("qSupported", &mut regs, &mut mem).contains("PacketSize"));
+        assert_eq!(server.process_command("?", &mut regs, &mut mem), "S05");
+
+        // Authenticate failure
+        // "auth wrong" in hex: 617574682077726f6e67
+        assert_eq!(server.process_command("qRcmd,617574682077726f6e67", &mut regs, &mut mem), "E01");
+        assert!(!server.authenticated);
+
+        // Authenticate success
+        // "auth secret" in hex: 6175746820736563726574
+        assert_eq!(server.process_command("qRcmd,6175746820736563726574", &mut regs, &mut mem), "OK");
+        assert!(server.authenticated);
+
+        // Now commands work
+        assert_eq!(server.process_command("g", &mut regs, &mut mem).len(), (8 + 8 + 1 + 1) * 8);
     }
 }
