@@ -45,7 +45,15 @@ pub struct Ym2612 {
     timer_a_count: i32,
     /// Timer B counter (counts down, Master Cycles)
     timer_b_count: i32,
+
+    /// Busy flag counter (Master Cycles)
+    /// When > 0, status bit 7 is set.
+    busy_count: i32,
 }
+
+// Busy time for data writes in Master Cycles
+// 1344 Master Cycles = 192 M68k Cycles
+const DATA_WRITE_BUSY_CYCLES: i32 = 1344;
 
 impl Ym2612 {
     pub fn new() -> Self {
@@ -56,6 +64,7 @@ impl Ym2612 {
             status: 0,
             timer_a_count: 0,
             timer_b_count: 0,
+            busy_count: 0,
         }
     }
 
@@ -65,16 +74,22 @@ impl Ym2612 {
 
     /// Read Status Register
     pub fn read_status(&self) -> u8 {
-        // In a real implementation, busy flag depends on write timing.
-        // For now, always return status with some timer flags if they are enabled
-        // to prevent sound drivers from hanging.
-        self.status
+        let mut status = self.status;
+        if self.busy_count > 0 {
+            status |= 0x80;
+        }
+        status
     }
 
     /// Update timers based on elapsed M68k cycles
     pub fn step(&mut self, cycles: u32) {
         // Convert M68k cycles to Master Cycles (x7)
         let cycles = (cycles * 7) as i32;
+
+        if self.busy_count > 0 {
+            self.busy_count -= cycles;
+        }
+
         let ctrl = self.registers[0][0x27];
 
         // Timer A
@@ -155,6 +170,9 @@ impl Ym2612 {
 
     /// Write to Data Port 0 (Part I)
     pub fn write_data0(&mut self, val: u8) {
+        // Data write triggers busy flag (1344 Master Cycles)
+        self.busy_count = DATA_WRITE_BUSY_CYCLES;
+
         if self.addr0 == 0x27 {
             let old_val = self.registers[0][0x27];
 
@@ -197,6 +215,8 @@ impl Ym2612 {
 
     /// Write to Data Port 1 (Part II)
     pub fn write_data1(&mut self, val: u8) {
+        // Data write triggers busy flag (1344 Master Cycles)
+        self.busy_count = DATA_WRITE_BUSY_CYCLES;
         self.registers[1][self.addr1 as usize] = val;
     }
 
@@ -400,5 +420,35 @@ mod tests {
 
         ym.step(10); // +70 = 175. Fire.
         assert_eq!(ym.status & 0x01, 0x01);
+    }
+
+    #[test]
+    fn test_busy_flag() {
+        let mut ym = Ym2612::new();
+
+        // Initially not busy
+        assert_eq!(ym.read_status() & 0x80, 0);
+
+        // Write to Data Port 0 triggers busy (1344 Master Cycles)
+        ym.write_data0(0x00);
+        assert_eq!(ym.read_status() & 0x80, 0x80, "Busy flag should be set after write");
+
+        // Step 191 M68k cycles (191 * 7 = 1337 Master Cycles)
+        // Busy duration is 1344. Remaining: 1344 - 1337 = 7.
+        ym.step(191);
+        assert_eq!(ym.read_status() & 0x80, 0x80, "Busy flag should still be set");
+
+        // Step 1 more M68k cycle (1 * 7 = 7 Master Cycles)
+        // Remaining: 7 - 7 = 0.
+        ym.step(1);
+        assert_eq!(ym.read_status() & 0x80, 0, "Busy flag should be cleared");
+
+        // Write to Data Port 1 triggers busy
+        ym.write_data1(0x00);
+        assert_eq!(ym.read_status() & 0x80, 0x80, "Busy flag should be set after write to port 1");
+
+        // Step 192 M68k cycles (192 * 7 = 1344)
+        ym.step(192);
+        assert_eq!(ym.read_status() & 0x80, 0, "Busy flag should be cleared");
     }
 }
