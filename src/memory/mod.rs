@@ -210,7 +210,7 @@ impl Memory {
                     output.push_str("   ");
                 }
             }
-            output.push_str(" "); // Add space before ASCII part
+            output.push(' '); // Add space before ASCII part
 
             for j in 0..16 {
                 if (i + j) <= end {
