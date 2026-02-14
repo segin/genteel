@@ -194,20 +194,15 @@ pub fn exec_sub<M: MemoryInterface>(
     cycles
 }
 
-pub fn exec_addx<M: MemoryInterface>(
+fn fetch_addx_subx_operands<M: MemoryInterface>(
     cpu: &mut Cpu,
     size: Size,
     src_reg: u8,
     dst_reg: u8,
     memory_mode: bool,
     memory: &mut M,
-) -> u32 {
-    let mut cycles = match size {
-        Size::Byte | Size::Word => 4,
-        Size::Long => 8,
-    };
-
-    let (src_val, dst_val, dst_addr) = if memory_mode {
+) -> (u32, u32, Option<u32>, u32) {
+    if memory_mode {
         let src_addr = cpu.a[src_reg as usize].wrapping_sub(size.bytes());
         cpu.a[src_reg as usize] = src_addr;
         let src = cpu.cpu_read_memory(src_addr, size, memory);
@@ -216,14 +211,30 @@ pub fn exec_addx<M: MemoryInterface>(
         cpu.a[dst_reg as usize] = dst_addr;
         let dst = cpu.cpu_read_memory(dst_addr, size, memory);
 
-        cycles = match size {
+        let cycles = match size {
             Size::Byte | Size::Word => 18,
             Size::Long => 30,
         };
-        (src, dst, Some(dst_addr))
+        (src, dst, Some(dst_addr), cycles)
     } else {
-        (cpu.d[src_reg as usize], cpu.d[dst_reg as usize], None)
-    };
+        let cycles = match size {
+            Size::Byte | Size::Word => 4,
+            Size::Long => 8,
+        };
+        (cpu.d[src_reg as usize], cpu.d[dst_reg as usize], None, cycles)
+    }
+}
+
+pub fn exec_addx<M: MemoryInterface>(
+    cpu: &mut Cpu,
+    size: Size,
+    src_reg: u8,
+    dst_reg: u8,
+    memory_mode: bool,
+    memory: &mut M,
+) -> u32 {
+    let (src_val, dst_val, dst_addr, cycles) =
+        fetch_addx_subx_operands(cpu, size, src_reg, dst_reg, memory_mode, memory);
 
     if cpu.pending_exception {
         return cycles;
@@ -263,28 +274,8 @@ pub fn exec_subx<M: MemoryInterface>(
     memory_mode: bool,
     memory: &mut M,
 ) -> u32 {
-    let mut cycles = match size {
-        Size::Byte | Size::Word => 4,
-        Size::Long => 8,
-    };
-
-    let (src_val, dst_val, dst_addr) = if memory_mode {
-        let src_addr = cpu.a[src_reg as usize].wrapping_sub(size.bytes());
-        cpu.a[src_reg as usize] = src_addr;
-        let src = cpu.cpu_read_memory(src_addr, size, memory);
-
-        let dst_addr = cpu.a[dst_reg as usize].wrapping_sub(size.bytes());
-        cpu.a[dst_reg as usize] = dst_addr;
-        let dst = cpu.cpu_read_memory(dst_addr, size, memory);
-
-        cycles = match size {
-            Size::Byte | Size::Word => 18,
-            Size::Long => 30,
-        };
-        (src, dst, Some(dst_addr))
-    } else {
-        (cpu.d[src_reg as usize], cpu.d[dst_reg as usize], None)
-    };
+    let (src_val, dst_val, dst_addr, cycles) =
+        fetch_addx_subx_operands(cpu, size, src_reg, dst_reg, memory_mode, memory);
 
     if cpu.pending_exception {
         return cycles;
