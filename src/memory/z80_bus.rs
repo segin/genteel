@@ -7,10 +7,10 @@
 //! - 7F11h: SN76489 PSG
 //! - 8000h-FFFFh: Banked 68k Memory (32KB window)
 
-use super::{MemoryInterface, SharedBus};
+use super::{MemoryInterface, SharedBus, IoInterface};
 
 /// Z80 Bus adapter that routes memory accesses to Genesis components
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Z80Bus {
     /// Reference to the main Genesis bus
     bus: SharedBus,
@@ -168,6 +168,19 @@ impl MemoryInterface for Z80Bus {
     }
 }
 
+impl IoInterface for Z80Bus {
+    fn read_port(&mut self, _port: u16) -> u8 {
+        // On a real Sega Genesis, the Z80 I/O space is not connected to any internal hardware.
+        // Any IN instruction will result in 0xFF (due to bus pull-ups).
+        0xFF
+    }
+
+    fn write_port(&mut self, _port: u16, _value: u8) {
+        // On a real Sega Genesis, the Z80 I/O space is not connected to any internal hardware.
+        // Any OUT instruction is effectively a no-op.
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -218,5 +231,19 @@ mod tests {
         assert_eq!(z80_bus.read_byte(0x4004), 0xFF); // FM Mirror
         assert_eq!(z80_bus.read_byte(0x6000), 0xFF); // Bank register is write-only
         assert_eq!(z80_bus.read_byte(0x7F11), 0xFF);  // PSG is write-only
+    }
+
+    #[test]
+    fn test_z80_io_ports() {
+        let mut z80_bus = create_test_z80_bus();
+
+        // All I/O port reads should return 0xFF on Genesis
+        assert_eq!(z80_bus.read_port(0x0000), 0xFF);
+        assert_eq!(z80_bus.read_port(0x007F), 0xFF);
+        assert_eq!(z80_bus.read_port(0xFFFF), 0xFF);
+
+        // Writes should not panic
+        z80_bus.write_port(0x0000, 0x42);
+        z80_bus.write_port(0xFFFF, 0xAB);
     }
 }
