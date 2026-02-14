@@ -697,4 +697,62 @@ mod tests {
         assert_eq!(bus.vdp.vram[0], 0x12);
         assert_eq!(bus.vdp.vram[1], 0x34);
     }
+
+    #[test]
+    fn test_z80_bank_register_logic() {
+        let mut bus = Bus::new();
+
+        // Initial state
+        assert_eq!(bus.z80_bank_addr, 0);
+        assert_eq!(bus.z80_bank_bit, 0);
+
+        // We want to write a pattern.
+        // The bank address is constructed from 9 bits.
+        // bit 0 -> addr bit 15
+        // bit 1 -> addr bit 16
+        // ...
+        // bit 8 -> addr bit 23
+
+        // Let's write the pattern: 1, 0, 1, 1, 0, 0, 1, 1, 1
+        // Indices:                 0  1  2  3  4  5  6  7  8
+        // Addr Bits:              15 16 17 18 19 20 21 22 23
+        // Values:              0x8000, 0, 0x20000, 0x40000, 0, 0, 0x200000, 0x400000, 0x800000
+
+        // Sum = 0x8000 + 0x20000 + 0x40000 + 0x200000 + 0x400000 + 0x800000
+        //     = 32768 + 131072 + 262144 + 2097152 + 4194304 + 8388608
+        //     = 15106048 (0xE68000)
+
+        let bits = [1, 0, 1, 1, 0, 0, 1, 1, 1];
+
+        for (i, &bit) in bits.iter().enumerate() {
+            // Write to 0xA06000 (Z80 Bank Register)
+            // Use different addresses in the range to verify mirroring
+            bus.write_byte(0xA06000 + (i as u32 % 0x100), bit);
+
+            assert_eq!(bus.z80_bank_bit, ((i + 1) % 9) as u8);
+        }
+
+        assert_eq!(bus.z80_bank_addr, 0xE68000);
+
+        // Verify wrap-around behavior (next write should affect bit 15 again)
+        // Write 0 to bit 15 (was 1)
+        bus.write_byte(0xA06000, 0);
+        // Expected: 0xE68000 & !(1<<15) = 0xE68000 - 0x8000 = 0xE60000
+        assert_eq!(bus.z80_bank_addr, 0xE60000);
+        assert_eq!(bus.z80_bank_bit, 1);
+
+        // Verify Reset clears bank bit index
+        // Assert current state
+        assert_eq!(bus.z80_bank_bit, 1);
+
+        // Reset Z80 (write 0 to 0xA11200)
+        bus.write_byte(0xA11200, 0x00);
+        assert!(bus.z80_reset);
+        assert_eq!(bus.z80_bank_bit, 0);
+
+        // Unreset (write 1)
+        bus.write_byte(0xA11200, 0x01);
+        assert!(!bus.z80_reset);
+        assert_eq!(bus.z80_bank_bit, 0); // Should stay 0 until next write
+    }
 }
