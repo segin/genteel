@@ -202,28 +202,8 @@ pub fn exec_addx<M: MemoryInterface>(
     memory_mode: bool,
     memory: &mut M,
 ) -> u32 {
-    let mut cycles = match size {
-        Size::Byte | Size::Word => 4,
-        Size::Long => 8,
-    };
-
-    let (src_val, dst_val, dst_addr) = if memory_mode {
-        let src_addr = cpu.a[src_reg as usize].wrapping_sub(size.bytes());
-        cpu.a[src_reg as usize] = src_addr;
-        let src = cpu.cpu_read_memory(src_addr, size, memory);
-
-        let dst_addr = cpu.a[dst_reg as usize].wrapping_sub(size.bytes());
-        cpu.a[dst_reg as usize] = dst_addr;
-        let dst = cpu.cpu_read_memory(dst_addr, size, memory);
-
-        cycles = match size {
-            Size::Byte | Size::Word => 18,
-            Size::Long => 30,
-        };
-        (src, dst, Some(dst_addr))
-    } else {
-        (cpu.d[src_reg as usize], cpu.d[dst_reg as usize], None)
-    };
+    let (src_val, dst_val, dst_addr, cycles) =
+        fetch_operands_with_decrement(cpu, src_reg, dst_reg, memory_mode, size, memory);
 
     if cpu.pending_exception {
         return cycles;
@@ -263,28 +243,8 @@ pub fn exec_subx<M: MemoryInterface>(
     memory_mode: bool,
     memory: &mut M,
 ) -> u32 {
-    let mut cycles = match size {
-        Size::Byte | Size::Word => 4,
-        Size::Long => 8,
-    };
-
-    let (src_val, dst_val, dst_addr) = if memory_mode {
-        let src_addr = cpu.a[src_reg as usize].wrapping_sub(size.bytes());
-        cpu.a[src_reg as usize] = src_addr;
-        let src = cpu.cpu_read_memory(src_addr, size, memory);
-
-        let dst_addr = cpu.a[dst_reg as usize].wrapping_sub(size.bytes());
-        cpu.a[dst_reg as usize] = dst_addr;
-        let dst = cpu.cpu_read_memory(dst_addr, size, memory);
-
-        cycles = match size {
-            Size::Byte | Size::Word => 18,
-            Size::Long => 30,
-        };
-        (src, dst, Some(dst_addr))
-    } else {
-        (cpu.d[src_reg as usize], cpu.d[dst_reg as usize], None)
-    };
+    let (src_val, dst_val, dst_addr, cycles) =
+        fetch_operands_with_decrement(cpu, src_reg, dst_reg, memory_mode, size, memory);
 
     if cpu.pending_exception {
         return cycles;
@@ -488,26 +448,16 @@ pub fn exec_abcd<M: MemoryInterface>(
     memory_mode: bool,
     memory: &mut M,
 ) -> u32 {
-    let mut cycles = 6u32;
+    let (src_val, dst_val, dst_addr, mut cycles) =
+        fetch_operands_with_decrement(cpu, src_reg, dst_reg, memory_mode, Size::Byte, memory);
 
-    let (src_val, dst_val, dst_addr) = if memory_mode {
-        let src_addr = cpu.a[src_reg as usize].wrapping_sub(1);
-        cpu.a[src_reg as usize] = src_addr;
-        let src = memory.read_byte(src_addr);
+    if cpu.pending_exception {
+        return cycles;
+    }
 
-        let dst_addr = cpu.a[dst_reg as usize].wrapping_sub(1);
-        cpu.a[dst_reg as usize] = dst_addr;
-        let dst = memory.read_byte(dst_addr);
-
-        cycles += 12;
-        (src, dst, Some(dst_addr))
-    } else {
-        (
-            cpu.d[src_reg as usize] as u8,
-            cpu.d[dst_reg as usize] as u8,
-            None,
-        )
-    };
+    if !memory_mode {
+        cycles += 2;
+    }
 
     let x = if cpu.get_flag(flags::EXTEND) { 1 } else { 0 };
 
@@ -548,26 +498,16 @@ pub fn exec_sbcd<M: MemoryInterface>(
     memory_mode: bool,
     memory: &mut M,
 ) -> u32 {
-    let mut cycles = 6u32;
+    let (src_val, dst_val, dst_addr, mut cycles) =
+        fetch_operands_with_decrement(cpu, src_reg, dst_reg, memory_mode, Size::Byte, memory);
 
-    let (src_val, dst_val, dst_addr) = if memory_mode {
-        let src_addr = cpu.a[src_reg as usize].wrapping_sub(1);
-        cpu.a[src_reg as usize] = src_addr;
-        let src = memory.read_byte(src_addr);
+    if cpu.pending_exception {
+        return cycles;
+    }
 
-        let dst_addr = cpu.a[dst_reg as usize].wrapping_sub(1);
-        cpu.a[dst_reg as usize] = dst_addr;
-        let dst = memory.read_byte(dst_addr);
-
-        cycles += 12;
-        (src, dst, Some(dst_addr))
-    } else {
-        (
-            cpu.d[src_reg as usize] as u8,
-            cpu.d[dst_reg as usize] as u8,
-            None,
-        )
-    };
+    if !memory_mode {
+        cycles += 2;
+    }
 
     let x = if cpu.get_flag(flags::EXTEND) { 1 } else { 0 };
 
@@ -853,4 +793,49 @@ pub fn exec_chk<M: MemoryInterface>(
     }
 
     cycles
+}
+
+fn fetch_operands_with_decrement<M: MemoryInterface>(
+    cpu: &mut Cpu,
+    src_reg: u8,
+    dst_reg: u8,
+    memory_mode: bool,
+    size: Size,
+    memory: &mut M,
+) -> (u32, u32, Option<u32>, u32) {
+    if memory_mode {
+        let src_addr = cpu.a[src_reg as usize].wrapping_sub(size.bytes());
+        cpu.a[src_reg as usize] = src_addr;
+        let src = cpu.cpu_read_memory(src_addr, size, memory);
+
+        let dst_addr = cpu.a[dst_reg as usize].wrapping_sub(size.bytes());
+        cpu.a[dst_reg as usize] = dst_addr;
+        let dst = cpu.cpu_read_memory(dst_addr, size, memory);
+
+        let cycles = match size {
+            Size::Byte | Size::Word => 18,
+            Size::Long => 30,
+        };
+        (src, dst, Some(dst_addr), cycles)
+    } else {
+        let src = match size {
+            Size::Byte => cpu.d[src_reg as usize] & 0xFF,
+            Size::Word => cpu.d[src_reg as usize] & 0xFFFF,
+            Size::Long => cpu.d[src_reg as usize],
+        };
+        let dst = match size {
+            Size::Byte => cpu.d[dst_reg as usize] & 0xFF,
+            Size::Word => cpu.d[dst_reg as usize] & 0xFFFF,
+            Size::Long => cpu.d[dst_reg as usize],
+        };
+        (
+            src,
+            dst,
+            None,
+            match size {
+                Size::Byte | Size::Word => 4,
+                Size::Long => 8,
+            },
+        )
+    }
 }
