@@ -167,6 +167,29 @@ fn regression_ldir_bc_zero() {
     // BC was 0, now 0xFFFF
     assert_eq!(c.bc(), 0xFFFF);
     assert_eq!(c.memory.read_byte(0x2000 as u32), 0xAA);
+    // HL and DE should be incremented
+    assert_eq!(c.hl(), 0x1001);
+    assert_eq!(c.de(), 0x2001);
+    // PC should loop back to instruction start (0x0000)
+    assert_eq!(c.pc, 0x0000);
+}
+
+#[test]
+fn regression_lddr_bc_zero() {
+    let mut c = z80(&[0xED, 0xB8]); // LDDR
+    c.set_hl(0x1000);
+    c.set_de(0x2000);
+    c.set_bc(0x0000);
+    c.memory.write_byte(0x1000 as u32, 0xBB);
+    c.step();
+    // BC was 0, now 0xFFFF
+    assert_eq!(c.bc(), 0xFFFF);
+    assert_eq!(c.memory.read_byte(0x2000 as u32), 0xBB);
+    // HL and DE should be decremented
+    assert_eq!(c.hl(), 0x0FFF);
+    assert_eq!(c.de(), 0x1FFF);
+    // PC should loop back to instruction start (0x0000)
+    assert_eq!(c.pc, 0x0000);
 }
 
 // Bug: ADD HL, SP affects only C and H flags
