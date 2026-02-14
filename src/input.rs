@@ -18,7 +18,10 @@
 use crate::io::ControllerState;
 use std::collections::HashMap;
 use std::fs;
+use std::io::Read;
 use std::path::Path;
+
+const MAX_SCRIPT_SIZE: u64 = 64 * 1024 * 1024; // 64 MB
 
 /// A single frame's input for both players
 #[derive(Debug, Clone, Default)]
@@ -44,9 +47,36 @@ impl InputScript {
 
     /// Load a script from a file
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, String> {
-        let content =
-            fs::read_to_string(path).map_err(|e| format!("Failed to read input script: {}", e))?;
+        let mut file =
+            fs::File::open(&path).map_err(|e| format!("Failed to read input script: {}", e))?;
+
+        if let Ok(metadata) = file.metadata() {
+            if metadata.len() > MAX_SCRIPT_SIZE {
+                return Err(format!(
+                    "Script size {} exceeds limit of {} bytes",
+                    metadata.len(),
+                    MAX_SCRIPT_SIZE
+                ));
+            }
+        }
+
+        let content = Self::read_script_with_limit(&mut file, MAX_SCRIPT_SIZE)?;
         Self::parse(&content)
+    }
+
+    fn read_script_with_limit<R: Read>(reader: &mut R, limit: u64) -> Result<String, String> {
+        let mut buffer = Vec::new();
+        // Read up to limit + 1 bytes to detect truncation
+        reader
+            .take(limit + 1)
+            .read_to_end(&mut buffer)
+            .map_err(|e| format!("Failed to read script: {}", e))?;
+
+        if buffer.len() as u64 > limit {
+            return Err(format!("Script size exceeds limit of {} bytes", limit));
+        }
+
+        String::from_utf8(buffer).map_err(|e| format!("Invalid UTF-8 in script: {}", e))
     }
 
     /// Parse a script from a string
@@ -537,5 +567,47 @@ mod tests {
         let result = InputScript::parse(content);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "Line 1: invalid frame number");
+    }
+
+    #[test]
+    fn test_read_limit() {
+        use std::io::Cursor;
+
+        // Test with a small limit
+        let data = "1234567890".as_bytes();
+        let mut reader = Cursor::new(data);
+        let limit = 5;
+
+        let result = InputScript::read_script_with_limit(&mut reader, limit);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("Script size exceeds limit of 5 bytes"));
+
+        // Test with exact limit
+        let mut reader = Cursor::new(data);
+        let limit = 10;
+        let result = InputScript::read_script_with_limit(&mut reader, limit);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "1234567890");
+
+        // Test with limit larger than data
+        let mut reader = Cursor::new(data);
+        let limit = 20;
+        let result = InputScript::read_script_with_limit(&mut reader, limit);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "1234567890");
+    }
+
+    #[test]
+    fn test_read_invalid_utf8() {
+        use std::io::Cursor;
+        let data = vec![0xFF, 0xFF]; // Invalid UTF-8
+        let mut reader = Cursor::new(data);
+        let limit = 10;
+
+        let result = InputScript::read_script_with_limit(&mut reader, limit);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid UTF-8"));
     }
 }
