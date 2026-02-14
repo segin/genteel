@@ -169,6 +169,7 @@ impl GdbServer {
                     if buf[0] == b'#' {
                         break;
                     }
+                    // Security: Prevent unbounded memory consumption by disconnecting clients that send oversized packets
                     if data.len() >= MAX_PACKET_SIZE {
                         eprintln!("⚠️  SECURITY ALERT: GDB packet exceeded maximum size of {}. Disconnecting.", MAX_PACKET_SIZE);
                         self.client = None;
