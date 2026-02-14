@@ -303,8 +303,80 @@ fn regression_rlc_parity() {
     c.a = 0x00;
     c.step();
     assert!(c.get_flag(flags::ZERO));
-    assert!(c.get_flag(flags::PARITY)); // Even parity
+    assert!(c.get_flag(flags::PARITY)); // Even parity (0x00 -> 0x00)
 }
+
+#[test]
+fn regression_rrc_parity() {
+    let mut c = z80(&[0xCB, 0x0F]); // RRC A
+    c.a = 0x01;
+    c.step();
+    // 0x01 -> 0x80 (Carry=1)
+    // 0x80 has odd parity? Wait, parity flag is set if EVEN number of bits set?
+    // Z80 "Parity/Overflow" flag acts as Parity for logical ops.
+    // Parity is set (1) if the number of set bits is even.
+    // 0x80 (10000000) has 1 bit set -> Odd parity -> Flag cleared (0).
+    assert!(!c.get_flag(flags::ZERO));
+    assert!(!c.get_flag(flags::PARITY));
+}
+
+#[test]
+fn regression_rl_parity() {
+    let mut c = z80(&[0xCB, 0x17]); // RL A
+    c.a = 0x80;
+    c.set_flag(flags::CARRY, false);
+    c.step();
+    // 0x80 << 1 | 0 = 0x00, Carry = 1
+    // 0x00 has 0 bits set (even) -> Parity flag set (1)
+    assert!(c.get_flag(flags::ZERO));
+    assert!(c.get_flag(flags::PARITY));
+}
+
+#[test]
+fn regression_rr_parity() {
+    let mut c = z80(&[0xCB, 0x1F]); // RR A
+    c.a = 0x01;
+    c.set_flag(flags::CARRY, true);
+    c.step();
+    // 0x01 >> 1 | 0x80 = 0x80, Carry = 1
+    // 0x80 has 1 bit set (odd) -> Parity flag cleared (0)
+    assert!(!c.get_flag(flags::ZERO));
+    assert!(!c.get_flag(flags::PARITY));
+}
+
+#[test]
+fn regression_sla_parity() {
+    let mut c = z80(&[0xCB, 0x27]); // SLA A
+    c.a = 0xFF;
+    c.step();
+    // 0xFF << 1 = 0xFE, Carry = 1
+    // 0xFE (11111110) has 7 bits set (odd) -> Parity flag cleared (0)
+    assert!(!c.get_flag(flags::ZERO));
+    assert!(!c.get_flag(flags::PARITY));
+}
+
+#[test]
+fn regression_sra_parity() {
+    let mut c = z80(&[0xCB, 0x2F]); // SRA A
+    c.a = 0x80;
+    c.step();
+    // 0x80 (10000000) >> 1 | 0x80 = 0xC0 (11000000)
+    // 0xC0 has 2 bits set (even) -> Parity flag set (1)
+    assert!(!c.get_flag(flags::ZERO));
+    assert!(c.get_flag(flags::PARITY));
+}
+
+#[test]
+fn regression_srl_parity() {
+    let mut c = z80(&[0xCB, 0x3F]); // SRL A
+    c.a = 0x01;
+    c.step();
+    // 0x01 >> 1 = 0x00, Carry = 1
+    // 0x00 has 0 bits set (even) -> Parity flag set (1)
+    assert!(c.get_flag(flags::ZERO));
+    assert!(c.get_flag(flags::PARITY));
+}
+
 
 // Bug: SBC HL, BC with no carry shouldn't borrow
 #[test]
