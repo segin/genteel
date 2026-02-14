@@ -400,4 +400,29 @@ mod tests {
         assert_eq!(manager.frame(), 0);
         assert!(!manager.is_complete());
     }
+
+    #[test]
+    fn test_parse_script_error_missing_fields() {
+        let result = InputScript::parse("0");
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Line 1: expected at least 2 fields");
+    }
+
+    #[test]
+    fn test_parse_script_error_invalid_frame() {
+        let result = InputScript::parse("abc,........");
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Line 1: invalid frame number");
+    }
+
+    #[test]
+    fn test_parse_script_error_line_number() {
+        let content = r#"# comment
+0,........
+invalid,........
+"#;
+        let result = InputScript::parse(content);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Line 3: invalid frame number");
+    }
 }
