@@ -953,6 +953,7 @@ impl Vdp {
 
         // Pre-calculate constants
         let plane_w_mask = plane_w - 1;
+        let mut tile_h = (scrolled_h as usize >> 3) & plane_w_mask;
 
         // Prologue: Handle unaligned start
         let pixel_h = scrolled_h % 8;
@@ -960,7 +961,6 @@ impl Vdp {
             let pixels_left_in_tile = 8 - pixel_h;
             let pixels_to_process = std::cmp::min(pixels_left_in_tile, screen_width - screen_x);
 
-            let tile_h = (scrolled_h as usize >> 3) & plane_w_mask;
             let entry = self.fetch_nametable_entry(name_table_base, tile_v, tile_h, plane_w);
 
             let priority = (entry & 0x8000) != 0;
@@ -983,17 +983,18 @@ impl Vdp {
             }
             screen_x += pixels_to_process;
             scrolled_h = scrolled_h.wrapping_add(pixels_to_process);
+            tile_h = (tile_h + 1) & plane_w_mask;
         }
 
         // Main Loop: Process full 8-pixel tiles
         while screen_x + 8 <= screen_width {
-            let tile_h = (scrolled_h as usize >> 3) & plane_w_mask;
             let entry = self.fetch_nametable_entry(name_table_base, tile_v, tile_h, plane_w);
 
             let priority = (entry & 0x8000) != 0;
             if priority != priority_filter {
                 screen_x += 8;
                 scrolled_h = scrolled_h.wrapping_add(8);
+                tile_h = (tile_h + 1) & plane_w_mask;
                 continue;
             }
 
@@ -1064,12 +1065,12 @@ impl Vdp {
 
             screen_x += 8;
             scrolled_h = scrolled_h.wrapping_add(8);
+            tile_h = (tile_h + 1) & plane_w_mask;
         }
 
         // Epilogue: Handle remaining pixels
         if screen_x < screen_width {
-            let count = screen_width - screen_x;
-            let tile_h = (scrolled_h as usize >> 3) & plane_w_mask;
+            let count = (screen_width - screen_x) as u16;
             let entry = self.fetch_nametable_entry(name_table_base, tile_v, tile_h, plane_w);
 
             let priority = (entry & 0x8000) != 0;
@@ -1092,6 +1093,7 @@ impl Vdp {
             }
         }
     }
+
 }
 
 impl Debuggable for Vdp {
