@@ -158,6 +158,12 @@ impl Emulator {
             let name = entry.name().to_lowercase();
             if rom_extensions.iter().any(|ext| name.ends_with(ext)) {
                 let size = entry.size();
+                if size > 32 * 1024 * 1024 {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("ROM size {} exceeds limit of 32MB", size),
+                    ));
+                }
                 let data = Self::read_rom_with_limit(&mut entry, size)?;
                 println!("Extracted ROM: {} ({} bytes)", entry.name(), data.len());
                 return Ok(data);
