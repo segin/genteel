@@ -239,4 +239,35 @@ mod tests {
         assert!((out[0] - 0.5).abs() < 0.001);
         assert!((out[1] + 0.5).abs() < 0.001);
     }
+
+    #[test]
+    fn test_audio_buffer_clear() {
+        let mut buf = AudioBuffer::new(64);
+
+        // Push some data
+        let samples = [100i16, 200, 300, 400];
+        buf.push(&samples);
+
+        assert_eq!(buf.available(), 4);
+        assert_ne!(buf.write_pos, 0);
+
+        // Clear the buffer
+        buf.clear();
+
+        // Verify state reset
+        assert_eq!(buf.available(), 0);
+        assert_eq!(buf.read_pos, 0);
+        assert_eq!(buf.write_pos, 0);
+
+        // Verify pop returns silence
+        let mut out = [0i16; 4];
+        buf.pop(&mut out);
+        assert_eq!(out, [0, 0, 0, 0]);
+
+        // Verify next push starts at 0
+        buf.push(&[500, 600]);
+        assert_eq!(buf.write_pos, 2);
+        assert_eq!(buf.buffer[0], 500);
+        assert_eq!(buf.buffer[1], 600);
+    }
 }
