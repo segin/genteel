@@ -521,4 +521,34 @@ mod tests {
         // Expected: 0x70 | 0x01 = 0x71.
         assert_eq!(port.read_data(), 0x71, "Pulse 5 Fall (Extra Buttons)");
     }
+
+    #[test]
+    fn test_set_controller_type() {
+        let mut io = Io::new();
+
+        // Default: Both 3-button
+        assert_eq!(io.port1.controller_type, ControllerType::ThreeButton);
+        assert_eq!(io.port2.controller_type, ControllerType::ThreeButton);
+
+        // Change Port 1 to 6-button
+        io.set_controller_type(1, ControllerType::SixButton);
+        assert_eq!(io.port1.controller_type, ControllerType::SixButton);
+        // Port 2 should remain unchanged
+        assert_eq!(io.port2.controller_type, ControllerType::ThreeButton);
+
+        // Change Port 2 to None
+        io.set_controller_type(2, ControllerType::None);
+        assert_eq!(io.port2.controller_type, ControllerType::None);
+        // Port 1 should remain unchanged
+        assert_eq!(io.port1.controller_type, ControllerType::SixButton);
+
+        // Invalid port should do nothing
+        io.set_controller_type(3, ControllerType::ThreeButton);
+        assert_eq!(io.port1.controller_type, ControllerType::SixButton);
+        assert_eq!(io.port2.controller_type, ControllerType::None);
+
+        // Change Port 1 back to 3-button
+        io.set_controller_type(1, ControllerType::ThreeButton);
+        assert_eq!(io.port1.controller_type, ControllerType::ThreeButton);
+    }
 }
