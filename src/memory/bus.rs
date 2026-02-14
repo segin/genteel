@@ -450,6 +450,10 @@ impl Bus {
         }
 
         if !self.vdp.is_dma_transfer() {
+            // Mode 2 (Fill) must wait for data write. Mode 3 (Copy) executes immediately.
+            if (self.vdp.dma_mode() & 0xC0) == 0x80 {
+                return;
+            }
             self.vdp.execute_dma();
             self.vdp.dma_pending = false;
             return;

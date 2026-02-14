@@ -227,9 +227,8 @@ impl Vdp {
         self.last_data_write = value;
 
         // DMA Fill (Mode 2) check
-        // Enabled (Reg 1 bit 4) AND Mode 2 (Reg 23 bits 7,6 = 1,0)
-        if (self.registers[1] & 0x10) != 0 && (self.registers[23] & 0xC0) == 0x80 {
-            self.dma_pending = true;
+        // Enabled (Reg 1 bit 4) AND Mode 2 (Reg 23 bits 7,6 = 1,0) AND dma_pending
+        if (self.registers[1] & 0x10) != 0 && (self.registers[23] & 0xC0) == 0x80 && self.dma_pending {
             self.execute_dma();
             return;
         }
@@ -324,10 +323,7 @@ impl Vdp {
             self.control_pending = false;
 
             // DMA initiation check
-            if (self.control_code & CTRL_DMA_BIT) != 0 {
-                // DMA requested
-                self.dma_pending = true;
-            }
+            self.dma_pending = (self.control_code & CTRL_DMA_BIT) != 0;
         } else if (value & REG_WRITE_MASK) == REG_WRITE_TAG {
             // Register write
             let reg = ((value >> REG_IDX_SHIFT) & REG_IDX_MASK) as usize;
