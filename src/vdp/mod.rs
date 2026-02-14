@@ -786,6 +786,75 @@ impl Vdp {
         }
     }
 
+    fn get_scroll_values(&self, is_plane_a: bool) -> (u16, u16) {
+        let vs_addr = if is_plane_a { 0 } else { 2 };
+        let v_scroll =
+            (((self.vsram[vs_addr] as u16) << 8) | (self.vsram[vs_addr + 1] as u16)) & 0x03FF;
+
+        let hs_base = self.hscroll_address();
+        let hs_addr = if is_plane_a { hs_base } else { hs_base + 2 };
+        let hi = self.vram[hs_addr];
+        let lo = self.vram[hs_addr + 1];
+        let h_scroll = (((hi as u16) << 8) | (lo as u16)) & 0x03FF;
+        (v_scroll, h_scroll)
+    }
+
+    fn fetch_nametable_entry(
+        &self,
+        base: usize,
+        tile_v: usize,
+        tile_h: usize,
+        plane_w: usize,
+    ) -> u16 {
+        let nt_entry_addr = base + (tile_v * plane_w + tile_h) * 2;
+        let hi = self.vram[nt_entry_addr & 0xFFFF];
+        let lo = self.vram[(nt_entry_addr + 1) & 0xFFFF];
+        ((hi as u16) << 8) | (lo as u16)
+    }
+
+    fn fetch_tile_pattern(&self, tile_index: u16, pixel_v: u16, v_flip: bool) -> [u8; 4] {
+        let row = if v_flip { 7 - pixel_v } else { pixel_v };
+        let row_addr = (tile_index as usize * 32) + (row as usize * 4);
+
+        let p0 = self.vram[row_addr & 0xFFFF];
+        let p1 = self.vram[(row_addr + 1) & 0xFFFF];
+        let p2 = self.vram[(row_addr + 2) & 0xFFFF];
+        let p3 = self.vram[(row_addr + 3) & 0xFFFF];
+        [p0, p1, p2, p3]
+    }
+
+    fn draw_tile_segment(
+        &mut self,
+        patterns: [u8; 4],
+        palette: u8,
+        h_flip: bool,
+        pixel_h: u16,
+        count: u16,
+        start_idx: usize,
+    ) {
+        for i in 0..count {
+            let current_pixel_h = pixel_h + i;
+            let eff_col = if h_flip {
+                7 - current_pixel_h
+            } else {
+                current_pixel_h
+            };
+
+            let byte = patterns[(eff_col as usize) / 2];
+
+            let col = if eff_col % 2 == 0 {
+                byte >> 4
+            } else {
+                byte & 0x0F
+            };
+
+            if col != 0 {
+                let color = self.get_cram_color(palette, col);
+                self.framebuffer[start_idx + i as usize] = color;
+            }
+        }
+    }
+
     fn render_plane(
         &mut self,
         is_plane_a: bool,
@@ -800,17 +869,8 @@ impl Vdp {
             self.plane_b_address()
         };
 
-        // Get vertical scroll
-        let vs_addr = if is_plane_a { 0 } else { 2 };
-        let v_scroll =
-            (((self.vsram[vs_addr] as u16) << 8) | (self.vsram[vs_addr + 1] as u16)) & 0x03FF;
+        let (v_scroll, h_scroll) = self.get_scroll_values(is_plane_a);
 
-        // Get horizontal scroll (per-screen for now)
-        let hs_base = self.hscroll_address();
-        let hs_addr = if is_plane_a { hs_base } else { hs_base + 2 };
-        let hi = self.vram[hs_addr];
-        let lo = self.vram[hs_addr + 1];
-        let h_scroll = (((hi as u16) << 8) | (lo as u16)) & 0x03FF;
         let scrolled_v = fetch_line.wrapping_add(v_scroll);
         let tile_v = (scrolled_v as usize / 8) % plane_h;
         let pixel_v = scrolled_v % 8;
@@ -828,11 +888,7 @@ impl Vdp {
 
             let tile_h = (scrolled_h as usize / 8) % plane_w;
 
-            // Fetch nametable entry (2 bytes)
-            let nt_entry_addr = name_table_base + (tile_v * plane_w + tile_h) * 2;
-            let hi = self.vram[nt_entry_addr & 0xFFFF];
-            let lo = self.vram[(nt_entry_addr + 1) & 0xFFFF];
-            let entry = ((hi as u16) << 8) | (lo as u16);
+            let entry = self.fetch_nametable_entry(name_table_base, tile_v, tile_h, plane_w);
 
             let priority = (entry & 0x8000) != 0;
             if priority != priority_filter {
@@ -846,37 +902,17 @@ impl Vdp {
             let h_flip = (entry & 0x0800) != 0;
             let tile_index = entry & 0x07FF;
 
-            let row = if v_flip { 7 - pixel_v } else { pixel_v };
-            let row_addr = (tile_index as usize * 32) + (row as usize * 4);
+            let patterns = self.fetch_tile_pattern(tile_index, pixel_v, v_flip);
 
-            // Prefetch the 4 bytes of pattern data for this row
-            let p0 = self.vram[row_addr & 0xFFFF];
-            let p1 = self.vram[(row_addr + 1) & 0xFFFF];
-            let p2 = self.vram[(row_addr + 2) & 0xFFFF];
-            let p3 = self.vram[(row_addr + 3) & 0xFFFF];
-            let patterns = [p0, p1, p2, p3];
+            self.draw_tile_segment(
+                patterns,
+                palette,
+                h_flip,
+                pixel_h,
+                pixels_to_process,
+                line_offset + screen_x as usize,
+            );
 
-            for i in 0..pixels_to_process {
-                let current_pixel_h = pixel_h + i;
-                let eff_col = if h_flip {
-                    7 - current_pixel_h
-                } else {
-                    current_pixel_h
-                };
-
-                let byte = patterns[(eff_col as usize) / 2];
-
-                let col = if eff_col % 2 == 0 {
-                    byte >> 4
-                } else {
-                    byte & 0x0F
-                };
-
-                if col != 0 {
-                    let color = self.get_cram_color(palette, col);
-                    self.framebuffer[line_offset + (screen_x + i) as usize] = color;
-                }
-            }
             screen_x += pixels_to_process;
             scrolled_h = scrolled_h.wrapping_add(pixels_to_process);
         }
