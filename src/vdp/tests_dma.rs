@@ -78,6 +78,10 @@ fn test_dma_fill_vram() {
         assert_eq!(vdp.vram[i], 0xAA, "Mismatch at index 0x{:04X}", i);
     }
     assert_eq!(vdp.vram[0x10], 0x00, "Should stop at 0x10");
+
+    // Verify DMA Length registers are cleared
+    assert_eq!(vdp.registers[19], 0, "DMA Length Low should be 0");
+    assert_eq!(vdp.registers[20], 0, "DMA Length High should be 0");
 }
 
 #[test]
@@ -131,4 +135,8 @@ fn test_dma_copy_vram() {
         let expected = (i as u8) + 1;
         assert_eq!(vdp.vram[i], expected, "Mismatch at index 0x{:04X}", i);
     }
+
+    // Verify DMA Length registers are cleared
+    assert_eq!(vdp.registers[19], 0, "DMA Length Low should be 0");
+    assert_eq!(vdp.registers[20], 0, "DMA Length High should be 0");
 }
