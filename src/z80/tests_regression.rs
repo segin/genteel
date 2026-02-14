@@ -135,7 +135,7 @@ fn regression_neg_80() {
     assert!(c.get_flag(flags::PARITY)); // Overflow
 }
 
-// Bug: NEG with A=0 clears carry
+// Regression: NEG with A=0 should clear carry
 #[test]
 fn regression_neg_00() {
     let mut c = z80(&[0xED, 0x44]);
