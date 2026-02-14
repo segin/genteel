@@ -100,20 +100,20 @@
   },
   {
     "id": "F-012",
-    "title": "Technical Debt (TODO/FIXME)",
-    "severity": "Info",
-    "description": "// TODO: Proper timer implementation.",
-    "file": "src/apu/ym2612.rs",
-    "line": 72,
-    "remediation": "Address the comment."
+    "title": "Unsafe Rust Code",
+    "severity": "Medium",
+    "description": "Usage of `unsafe` block detected. Verify memory safety manually.",
+    "file": "src/memory/bus.rs",
+    "line": 268,
+    "remediation": "Audit unsafe block for soundness."
   },
   {
     "id": "F-013",
     "title": "Unsafe Rust Code",
     "severity": "Medium",
     "description": "Usage of `unsafe` block detected. Verify memory safety manually.",
-    "file": "src/main.rs",
-    "line": 228,
+    "file": "src/memory/bus.rs",
+    "line": 269,
     "remediation": "Audit unsafe block for soundness."
   },
   {
@@ -121,12 +121,39 @@
     "title": "Unsafe Rust Code",
     "severity": "Medium",
     "description": "Usage of `unsafe` block detected. Verify memory safety manually.",
-    "file": "src/main.rs",
-    "line": 240,
+    "file": "src/memory/bus.rs",
+    "line": 356,
     "remediation": "Audit unsafe block for soundness."
   },
   {
     "id": "F-015",
+    "title": "Unsafe Rust Code",
+    "severity": "Medium",
+    "description": "Usage of `unsafe` block detected. Verify memory safety manually.",
+    "file": "src/memory/bus.rs",
+    "line": 357,
+    "remediation": "Audit unsafe block for soundness."
+  },
+  {
+    "id": "F-016",
+    "title": "Unsafe Rust Code",
+    "severity": "Medium",
+    "description": "Usage of `unsafe` block detected. Verify memory safety manually.",
+    "file": "src/memory/bus.rs",
+    "line": 358,
+    "remediation": "Audit unsafe block for soundness."
+  },
+  {
+    "id": "F-017",
+    "title": "Unsafe Rust Code",
+    "severity": "Medium",
+    "description": "Usage of `unsafe` block detected. Verify memory safety manually.",
+    "file": "src/memory/bus.rs",
+    "line": 359,
+    "remediation": "Audit unsafe block for soundness."
+  },
+  {
+    "id": "F-018",
     "title": "Test Failure",
     "severity": "High",
     "description": "Run `cargo test` to see failures.",
