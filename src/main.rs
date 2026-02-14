@@ -279,20 +279,8 @@ impl Emulator {
                 };
 
                 // Z80 reset logic:
-                // Only reset the Z80 when the reset line transitions from asserted to asserted (level)
-                // Wait, typically Z80 is held in reset.
-                // The PR logic was:
-                // if z80_is_reset && !self.last_z80_reset { self.z80.reset(); }
-                // This means "Reset on rising edge of RESET signal"?
-                // Actually reset is usually active low, but here `z80_reset` bool seems to mean "is reset active".
-                // If it means "is reset active", then the PR logic resets only on the *start* of the reset assertion.
-                // It does NOT hold the Z80 in reset (which would mean PC=0 constantly).
-                // If the Z80 is not clocked while in reset, it naturally stays at reset state if we don't step it.
-                // `z80_can_run` checks `!bus.z80_reset`. So if reset is active, `z80_can_run` is false, and we don't step.
-                // So the Z80 effectively stops.
-                // The explicit `reset()` call sets internal registers to default.
-                // Doing it only on edge seems correct if we stop stepping it afterwards.
-
+                // Reset the Z80 on the leading edge of the reset signal.
+                // The Z80 is held in reset (not stepped) as long as z80_reset is true.
                 if z80_is_reset && !self.z80_last_reset {
                     self.z80.reset();
                 }
