@@ -234,6 +234,33 @@ fn regression_ld_a_i_iff2() {
     assert!(c.get_flag(flags::PARITY));
 }
 
+#[test]
+fn regression_ld_a_r_iff2() {
+    let mut c = z80(&[0xED, 0x5F]);
+    c.r = 0x42;
+    c.iff2 = true;
+    c.step();
+    assert!(c.get_flag(flags::PARITY));
+}
+
+#[test]
+fn regression_ld_a_i_iff2_false() {
+    let mut c = z80(&[0xED, 0x57]);
+    c.i = 0x42;
+    c.iff2 = false;
+    c.step();
+    assert!(!c.get_flag(flags::PARITY));
+}
+
+#[test]
+fn regression_ld_a_r_iff2_false() {
+    let mut c = z80(&[0xED, 0x5F]);
+    c.r = 0x42;
+    c.iff2 = false;
+    c.step();
+    assert!(!c.get_flag(flags::PARITY));
+}
+
 // Bug: LDIR/LDDR BC=0 means 64K
 #[test]
 fn regression_ldir_bc_zero() {
