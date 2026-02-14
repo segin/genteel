@@ -699,6 +699,39 @@ mod tests {
     }
 
     #[test]
+    fn test_rom_lifecycle() {
+        let mut bus = Bus::new();
+
+        // 1. Initial state
+        assert_eq!(bus.rom_size(), 0);
+
+        // 2. Load small ROM (should be padded)
+        let small_rom = vec![0x11, 0x22];
+        bus.load_rom(&small_rom);
+        assert_eq!(bus.rom_size(), 512);
+        assert_eq!(bus.read_byte(0), 0x11);
+        assert_eq!(bus.read_byte(1), 0x22);
+        assert_eq!(bus.read_byte(2), 0x00); // Padding
+        assert_eq!(bus.read_byte(511), 0x00); // Padding end
+
+        // 3. Clear ROM
+        bus.clear_rom();
+        assert_eq!(bus.rom_size(), 0);
+        assert_eq!(bus.read_byte(0), 0xFF); // Unmapped
+
+        // 4. Load large ROM
+        let large_rom = vec![0x33; 1024];
+        bus.load_rom(&large_rom);
+        assert_eq!(bus.rom_size(), 1024);
+        assert_eq!(bus.read_byte(0), 0x33);
+        assert_eq!(bus.read_byte(1023), 0x33);
+
+        // 5. Clear again
+        bus.clear_rom();
+        assert_eq!(bus.rom_size(), 0);
+    }
+
+    #[test]
     fn test_z80_bank_register_logic() {
         let mut bus = Bus::new();
 
