@@ -238,12 +238,28 @@ impl Vdp {
             // If length is 0, it is treated as 0x10000 (64KB).
             let len = if length == 0 { 0x10000 } else { length };
 
-            for _ in 0..len {
-                // VRAM is byte-addressable in this emulator
-                self.vram[addr as usize] = fill_byte;
-                addr = addr.wrapping_add(inc);
+            if inc == 1 {
+                let start_addr = addr as usize;
+                let end_addr = start_addr + len as usize;
+
+                if end_addr <= 0x10000 {
+                    self.vram[start_addr..end_addr].fill(fill_byte);
+                } else {
+                    self.vram[start_addr..0x10000].fill(fill_byte);
+                    let remaining = end_addr - 0x10000;
+                    if remaining > 0 {
+                        self.vram[0..remaining].fill(fill_byte);
+                    }
+                }
+                self.control_address = addr.wrapping_add(len as u16);
+            } else {
+                for _ in 0..len {
+                    // VRAM is byte-addressable in this emulator
+                    self.vram[addr as usize] = fill_byte;
+                    addr = addr.wrapping_add(inc);
+                }
+                self.control_address = addr;
             }
-            self.control_address = addr;
             return;
         }
 
@@ -476,11 +492,27 @@ impl Vdp {
                 let inc = self.auto_increment() as u16;
                 let fill_byte = (data >> 8) as u8;
 
-                for _ in 0..len {
-                    self.vram[addr as usize] = fill_byte;
-                    addr = addr.wrapping_add(inc);
+                if inc == 1 {
+                    let start_addr = addr as usize;
+                    let end_addr = start_addr + len as usize;
+
+                    if end_addr <= 0x10000 {
+                        self.vram[start_addr..end_addr].fill(fill_byte);
+                    } else {
+                        self.vram[start_addr..0x10000].fill(fill_byte);
+                        let remaining = end_addr - 0x10000;
+                        if remaining > 0 {
+                            self.vram[0..remaining].fill(fill_byte);
+                        }
+                    }
+                    self.control_address = addr.wrapping_add(len as u16);
+                } else {
+                    for _ in 0..len {
+                        self.vram[addr as usize] = fill_byte;
+                        addr = addr.wrapping_add(inc);
+                    }
+                    self.control_address = addr;
                 }
-                self.control_address = addr;
             }
             0xC0 => {
                 // VRAM Copy (Mode 3)
