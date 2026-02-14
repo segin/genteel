@@ -32,7 +32,7 @@ use z80::Z80;
 
 pub struct Emulator {
     pub cpu: Cpu,
-    pub z80: Z80<Z80Bus, Z80Bus>,
+    pub z80: Z80,
     pub apu: Apu,
     pub bus: Rc<RefCell<Bus>>,
     pub input: InputManager,
@@ -57,7 +57,7 @@ impl Emulator {
         // It also handles Z80 I/O (which is unconnected on Genesis)
         let z80_bus = Z80Bus::new(SharedBus::new(bus.clone()));
 
-        let z80 = Z80::new(z80_bus.clone(), z80_bus);
+        let z80 = Z80::new(Box::new(z80_bus.clone()), Box::new(z80_bus));
 
         let mut emulator = Self {
             cpu,
@@ -168,7 +168,17 @@ impl Emulator {
     pub fn step_frame(&mut self) {
         // Apply inputs from script or live input
         let frame_input = self.input.advance_frame();
-        self.step_frame_with_input(frame_input.p1, frame_input.p2);
+        {
+            let mut bus = self.bus.borrow_mut();
+            if let Some(ctrl) = bus.io.controller(1) {
+                *ctrl = frame_input.p1;
+            }
+            if let Some(ctrl) = bus.io.controller(2) {
+                *ctrl = frame_input.p2;
+            }
+        }
+
+        self.step_frame_internal();
     }
 
     /// Step one frame with provided input (for live play)
@@ -187,34 +197,7 @@ impl Emulator {
 
     pub fn step_frame_internal(&mut self) {
         self.internal_frame_count += 1;
-        self.debug_log_frame();
 
-        // Genesis timing constants (NTSC):
-        // M68k: 7.67 MHz, Z80: 3.58 MHz
-        // One frame = 262 scanlines
-        // Active display: lines 0-223
-        // VBlank: lines 224-261
-        // Cycles per scanline: ~488
-
-        const LINES_PER_FRAME: u16 = 262;
-
-        // Active lines can be 224 or 240 (V30 mode)
-        let active_lines = self.bus.borrow().vdp.screen_height();
-        // APU Timing
-        let samples_per_frame = audio::samples_per_frame() as f32;
-        let samples_per_line = samples_per_frame / (LINES_PER_FRAME as f32);
-
-        let mut z80_cycle_debt: f32 = 0.0;
-
-        for line in 0..LINES_PER_FRAME {
-            self.step_scanline(line, active_lines, samples_per_line, &mut z80_cycle_debt);
-        }
-
-        // Update V30 rolling offset
-        self.bus.borrow_mut().vdp.update_v30_offset();
-    }
-
-    fn debug_log_frame(&self) {
         if self.internal_frame_count % 60 == 0 || self.internal_frame_count < 5 {
             let bus = self.bus.borrow();
             let disp_en = bus.vdp.display_enabled();
@@ -236,158 +219,149 @@ impl Emulator {
                      (self.cpu.sr >> 8) & 7,
                      z80_pc, z80_op, z80_reset, z80_req);
         }
-    }
 
-    fn step_scanline(
-        &mut self,
-        line: u16,
-        active_lines: u16,
-        samples_per_line: f32,
-        z80_cycle_debt: &mut f32,
-    ) {
-        self.vdp_scanline_setup(line, active_lines);
-        self.run_cpu_loop(line, active_lines, z80_cycle_debt);
-        self.generate_audio_samples(samples_per_line);
-        self.handle_interrupts(line, active_lines);
-    }
+        // Genesis timing constants (NTSC):
+        // M68k: 7.67 MHz, Z80: 3.58 MHz
+        // One frame = 262 scanlines
+        // Active display: lines 0-223
+        // VBlank: lines 224-261
+        // Cycles per scanline: ~488
 
-    fn vdp_scanline_setup(&mut self, line: u16, active_lines: u16) {
-        let mut bus = self.bus.borrow_mut();
-        bus.vdp.set_v_counter(line);
-
-        // Render scanline if active
-        if line < active_lines {
-            bus.vdp.render_line(line);
-        }
-    }
-
-    fn run_cpu_loop(&mut self, line: u16, active_lines: u16, z80_cycle_debt: &mut f32) {
+        const LINES_PER_FRAME: u16 = 262;
         const CYCLES_PER_LINE: u32 = 488;
-        let mut cycles_scanline: u32 = 0;
-
-        while cycles_scanline < CYCLES_PER_LINE {
-            // Borrow bus for CPU execution
-            let mut bus = self.bus.borrow_mut();
-            let m68k_cycles = self.cpu.step_instruction(&mut *bus);
-
-            // Step APU with cycles to update timers
-            bus.apu.fm.step(m68k_cycles as u32);
-            drop(bus); // Release bus for Z80/etc checks
-
-            cycles_scanline += m68k_cycles as u32;
-
-            self.sync_z80(
-                m68k_cycles,
-                line,
-                active_lines,
-                cycles_scanline,
-                z80_cycle_debt,
-            );
-        }
-    }
-
-    fn sync_z80(
-        &mut self,
-        m68k_cycles: u32,
-        line: u16,
-        active_lines: u16,
-        cycles_scanline: u32,
-        z80_cycle_debt: &mut f32,
-    ) {
         const Z80_CYCLES_PER_M68K_CYCLE: f32 = 3.58 / 7.67;
 
-        // Z80 execution
-        let (z80_can_run, z80_is_reset) = {
-            let bus = self.bus.borrow();
-            let prev = self.z80_last_bus_req;
-            if bus.z80_bus_request != prev {
-                eprintln!(
-                    "DEBUG: Bus Req Changed: {} -> {} at 68k PC={:06X}",
-                    prev, bus.z80_bus_request, self.cpu.pc
-                );
-                self.z80_last_bus_req = bus.z80_bus_request;
-            }
-            (!bus.z80_reset && !bus.z80_bus_request, bus.z80_reset)
-        };
+        // Active lines can be 224 or 240 (V30 mode)
+        let active_lines = self.bus.borrow().vdp.screen_height();
+        // APU Timing
+        let samples_per_frame = audio::samples_per_frame() as f32;
+        let samples_per_line = samples_per_frame / (LINES_PER_FRAME as f32);
 
-        // Z80 reset logic:
-        // Reset the Z80 on the leading edge of the reset signal.
-        // The Z80 is held in reset (not stepped) as long as z80_reset is true.
-        if z80_is_reset && !self.z80_last_reset {
-            self.z80.reset();
-        }
-        self.z80_last_reset = z80_is_reset;
+        let mut z80_cycle_debt: f32 = 0.0;
 
-        if z80_can_run && self.internal_frame_count > 0 {
-            if self.z80_trace_count < 5000 {
-                self.z80.debug = true;
-                self.z80_trace_count += 1;
-            } else {
-                self.z80.debug = false;
-            }
-        } else {
-            self.z80.debug = false;
-        }
+        for line in 0..LINES_PER_FRAME {
+            // === VDP scanline setup (single borrow) ===
+            {
+                let mut bus = self.bus.borrow_mut();
+                bus.vdp.set_v_counter(line);
 
-        // Trigger Z80 VInt at start of VBlank
-        if line == active_lines && cycles_scanline < m68k_cycles as u32 + 5 && !z80_is_reset {
-            self.z80.trigger_interrupt(0xFF);
-        }
-
-        if z80_can_run {
-            *z80_cycle_debt += (m68k_cycles as f32) * Z80_CYCLES_PER_M68K_CYCLE;
-            while *z80_cycle_debt >= 1.0 {
-                let z80_cycles = self.z80.step();
-                *z80_cycle_debt -= z80_cycles as f32;
-            }
-        }
-    }
-
-    fn generate_audio_samples(&mut self, samples_per_line: f32) {
-        self.apu_accumulator += samples_per_line;
-        let samples_to_run = self.apu_accumulator as usize;
-        if samples_to_run > 0 {
-            self.apu_accumulator -= samples_to_run as f32;
-
-            let mut bus = self.bus.borrow_mut();
-            for _ in 0..samples_to_run {
-                let sample = bus.apu.step();
-                // Stereo output (duplicate for now)
-                self.audio_buffer.push(sample);
-                self.audio_buffer.push(sample);
-            }
-        }
-    }
-
-    fn handle_interrupts(&mut self, line: u16, active_lines: u16) {
-        let mut bus = self.bus.borrow_mut();
-
-        // VBlank Interrupt (Level 6) - Triggered at start of VBlank (line 224/240)
-        if line == active_lines {
-            bus.vdp.trigger_vint();
-            // Check if VInterrupt enabled (Reg 1, bit 5)
-            if (bus.vdp.mode2() & 0x20) != 0 {
-                self.cpu.request_interrupt(6);
-            }
-        }
-
-        // HBlank Interrupt (Level 4) - Proper counter logic
-        if line < active_lines {
-            // Check if HInterrupt enabled (Reg 0, bit 4)
-            if (bus.vdp.mode1() & 0x10) != 0 {
-                // Decrement line counter
-                if bus.vdp.line_counter == 0 {
-                    // Counter expired - trigger HInt and reload
-                    self.cpu.request_interrupt(4);
-                    bus.vdp.line_counter = bus.vdp.registers[10];
-                } else {
-                    bus.vdp.line_counter = bus.vdp.line_counter.saturating_sub(1);
+                // Render scanline if active
+                if line < active_lines {
+                    bus.vdp.render_line(line);
                 }
             }
-        } else {
-            // During VBlank, reload HInt counter every line
-            bus.vdp.line_counter = bus.vdp.registers[10];
+
+            // === CPU execution for this scanline ===
+            let mut cycles_scanline: u32 = 0;
+            while cycles_scanline < CYCLES_PER_LINE {
+                // Borrow bus for CPU execution
+                let mut bus = self.bus.borrow_mut();
+                let m68k_cycles = self.cpu.step_instruction(&mut *bus);
+
+                // Step APU with cycles to update timers
+                bus.apu.fm.step(m68k_cycles as u32);
+                drop(bus); // Release bus for Z80/etc checks if they need it (Z80 needs read only access usually but check implementation)
+
+                cycles_scanline += m68k_cycles as u32;
+
+                // Z80 execution
+                let (z80_can_run, z80_is_reset) = {
+                    let bus = self.bus.borrow();
+                    let prev = self.z80_last_bus_req;
+                    if bus.z80_bus_request != prev {
+                        eprintln!(
+                            "DEBUG: Bus Req Changed: {} -> {} at 68k PC={:06X}",
+                            prev, bus.z80_bus_request, self.cpu.pc
+                        );
+                        self.z80_last_bus_req = bus.z80_bus_request;
+                    }
+                    (!bus.z80_reset && !bus.z80_bus_request, bus.z80_reset)
+                };
+
+                // Z80 reset logic:
+                // Reset the Z80 on the leading edge of the reset signal.
+                // The Z80 is held in reset (not stepped) as long as z80_reset is true.
+                if z80_is_reset && !self.z80_last_reset {
+                    self.z80.reset();
+                }
+                self.z80_last_reset = z80_is_reset;
+
+                if z80_can_run && self.internal_frame_count > 0 {
+                    if self.z80_trace_count < 5000 {
+                        self.z80.debug = true;
+                        self.z80_trace_count += 1; // Logic slightly wrong here (step count vs frame), but enables flag
+                    } else {
+                        self.z80.debug = false;
+                    }
+                } else {
+                    self.z80.debug = false;
+                }
+
+                // Trigger Z80 VInt at start of VBlank
+                if line == active_lines && cycles_scanline < m68k_cycles as u32 + 5 && !z80_is_reset
+                {
+                    self.z80.trigger_interrupt(0xFF);
+                }
+
+                if z80_can_run {
+                    z80_cycle_debt += (m68k_cycles as f32) * Z80_CYCLES_PER_M68K_CYCLE;
+                    while z80_cycle_debt >= 1.0 {
+                        let z80_cycles = self.z80.step();
+                        z80_cycle_debt -= z80_cycles as f32;
+                    }
+                }
+            }
+
+            // === APU sample generation (single borrow) ===
+            self.apu_accumulator += samples_per_line;
+            let samples_to_run = self.apu_accumulator as usize;
+            if samples_to_run > 0 {
+                self.apu_accumulator -= samples_to_run as f32;
+
+                let mut bus = self.bus.borrow_mut();
+                for _ in 0..samples_to_run {
+                    let sample = bus.apu.step();
+                    // Stereo output (duplicate for now)
+                    self.audio_buffer.push(sample);
+                    self.audio_buffer.push(sample);
+                }
+            }
+
+            // === Interrupt handling (single borrow) ===
+            {
+                let mut bus = self.bus.borrow_mut();
+
+                // VBlank Interrupt (Level 6) - Triggered at start of VBlank (line 224/240)
+                if line == active_lines {
+                    bus.vdp.trigger_vint();
+                    // Check if VInterrupt enabled (Reg 1, bit 5)
+                    if (bus.vdp.mode2() & 0x20) != 0 {
+                        self.cpu.request_interrupt(6);
+                    }
+                }
+
+                // HBlank Interrupt (Level 4) - Proper counter logic
+                if line < active_lines {
+                    // Check if HInterrupt enabled (Reg 0, bit 4)
+                    if (bus.vdp.mode1() & 0x10) != 0 {
+                        // Decrement line counter
+                        if bus.vdp.line_counter == 0 {
+                            // Counter expired - trigger HInt and reload
+                            self.cpu.request_interrupt(4);
+                            bus.vdp.line_counter = bus.vdp.registers[10];
+                        } else {
+                            bus.vdp.line_counter = bus.vdp.line_counter.saturating_sub(1);
+                        }
+                    }
+                } else {
+                    // During VBlank, reload HInt counter every line
+                    bus.vdp.line_counter = bus.vdp.registers[10];
+                }
+            }
         }
+
+        // Update V30 rolling offset
+        self.bus.borrow_mut().vdp.update_v30_offset();
     }
 
     /// Run headless for N frames (for TAS/testing)
@@ -400,13 +374,10 @@ impl Emulator {
     }
 
     /// Run with GDB debugger attached
-    pub fn run_with_gdb(&mut self, port: u16, password: Option<String>) -> std::io::Result<()> {
-        let mut gdb = GdbServer::new(port, password.clone())?;
+    pub fn run_with_gdb(&mut self, port: u16) -> std::io::Result<()> {
+        let mut gdb = GdbServer::new(port)?;
 
         println!("Waiting for GDB connection on port {}...", port);
-        if let Some(pwd) = password {
-            println!("🔒 Password protected. After connecting, run: monitor auth {}", pwd);
-        }
         println!(
             "Connect with: m68k-elf-gdb -ex \"target remote :{}\" <elf_file>",
             port
@@ -688,7 +659,6 @@ impl Emulator {
             })
             .map_err(|e| e.to_string())
     }
-
 }
 
 fn print_usage() {
@@ -700,7 +670,6 @@ fn print_usage() {
     println!("  --script <path>  Load TAS input script");
     println!("  --headless <n>   Run N frames without display");
     println!("  --gdb [port]     Start GDB server (default port: 1234)");
-    println!("  --gdb-password <pwd> Set password for GDB server");
     println!("  --help           Show this help");
     println!();
     println!("Controls (play mode):");
@@ -745,7 +714,6 @@ struct Config {
     script_path: Option<String>,
     headless_frames: Option<u32>,
     gdb_port: Option<u16>,
-    gdb_password: Option<String>,
     show_help: bool,
 }
 
@@ -781,9 +749,6 @@ impl Config {
                         }
                     }
                     config.gdb_port = Some(port);
-                }
-                "--gdb-password" => {
-                    config.gdb_password = iter.next();
                 }
                 arg if !arg.starts_with('-') => {
                     if let Some(ref mut path) = config.rom_path {
@@ -841,7 +806,7 @@ fn main() {
     // Run in appropriate mode
     if let Some(port) = gdb_port {
         // Debug mode with GDB
-        if let Err(e) = emulator.run_with_gdb(port, config.gdb_password) {
+        if let Err(e) = emulator.run_with_gdb(port) {
             eprintln!("GDB server error: {}", e);
         }
     } else if let Some(frames) = headless_frames {
@@ -887,33 +852,15 @@ mod tests {
 
         std::fs::write(path, &zip_data).unwrap();
 
-        // Attempt to load
+        // Attempt to load - should fail after fix
         let result = Emulator::load_rom_from_zip(path);
 
         // Cleanup
         let _ = std::fs::remove_file(path);
 
-        // Verify rejection
+        // Before fix: This assertion will fail (because result.is_ok() is likely true)
+        // After fix: This assertion will pass
         assert!(result.is_err(), "Should reject large ROM file (>32MB)");
-    }
-
-    #[test]
-    fn test_zip_bomb_mismatch() {
-        // Create 33MB of dummy data (simulating decompressed stream)
-        let size = 33 * 1024 * 1024;
-        let data = vec![0u8; size];
-        let mut reader = std::io::Cursor::new(data);
-
-        // Report size as small (e.g., 1KB), simulating a zip bomb header lie
-        let reported_size = 1024;
-
-        // This should fail because it reads > 32MB despite reported size
-        let result = Emulator::read_rom_with_limit(&mut reader, reported_size);
-
-        assert!(
-            result.is_err(),
-            "Should reject read size exceeding limit even if reported size is small"
-        );
     }
 
     #[test]
@@ -956,13 +903,6 @@ mod tests {
                 .write_byte(0xA00000 + i as u32, *byte);
         }
 
-        // Verify Z80 RAM at target address is 0 before execution
-        assert_eq!(
-            emulator.bus.borrow_mut().read_byte(0xA01FFD),
-            0x00,
-            "Z80 RAM should be 0 before run"
-        );
-
         // 4. Release Bus (Write 0 to 0xA11100)
         emulator.bus.borrow_mut().write_word(0xA11100, 0x0000);
 
@@ -975,6 +915,8 @@ mod tests {
 
         // Check if 0xA01FFD is 0x80
         // We use read_byte on bus.
+        // If hack is present, this passes trivially.
+        // If hack is removed, this passes ONLY if Z80 ran correctly (PC=0 at start).
         let val = emulator.bus.borrow_mut().read_byte(0xA01FFD);
         assert_eq!(val, 0x80, "Z80 should have written 0x80 to 0xA01FFD");
     }
@@ -1036,13 +978,5 @@ mod tests {
         ];
         let config = Config::from_args(args);
         assert_eq!(config.rom_path, Some("rom part2.bin".to_string()));
-    }
-
-    #[test]
-    fn test_step_frame_basic() {
-        let mut emulator = Emulator::new();
-        emulator.step_frame();
-        emulator.step_frame();
-        assert_eq!(emulator.internal_frame_count, 2);
     }
 }

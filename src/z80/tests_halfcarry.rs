@@ -1,12 +1,13 @@
+#![allow(unused_imports)]
 //! Z80 Half-Carry Flag Tests
 //!
 //! The Half-Carry (H) flag indicates carry from bit 3 to bit 4.
 //! It's critical for DAA and often implemented incorrectly.
 
-use super::*;
+use super::*; use crate::memory::{MemoryInterface, IoInterface};
 use crate::memory::Memory;
 
-fn z80(program: &[u8]) -> Z80 {
+fn z80(program: &[u8]) -> Z80<Box<crate::memory::Memory>, Box<crate::z80::test_utils::TestIo>> {
     let mut m = Memory::new(0x10000);
     for (i, &b) in program.iter().enumerate() {
         m.data[i] = b;

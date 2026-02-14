@@ -42,6 +42,33 @@ impl Size {
             Size::Long => 4,
         }
     }
+
+    /// Returns the bitmask for this size
+    pub fn mask(self) -> u32 {
+        match self {
+            Size::Byte => 0xFF,
+            Size::Word => 0xFFFF,
+            Size::Long => 0xFFFFFFFF,
+        }
+    }
+
+    /// Returns the sign bit (MSB) for this size
+    pub fn sign_bit(self) -> u32 {
+        match self {
+            Size::Byte => 0x80,
+            Size::Word => 0x8000,
+            Size::Long => 0x80000000,
+        }
+    }
+
+    /// Returns the number of bits for this size
+    pub fn bits(self) -> u32 {
+        match self {
+            Size::Byte => 8,
+            Size::Word => 16,
+            Size::Long => 32,
+        }
+    }
 }
 
 impl fmt::Display for Size {
@@ -584,59 +611,12 @@ pub enum BitSource {
     Register(u8), // Bit number in Dn
 }
 
-/// Decode a single M68k instruction from an opcode
-pub fn decode(opcode: u16) -> Instruction {
-    // Extract the top 4 bits to determine instruction group
-    let group = (opcode >> 12) & 0x0F;
 
-    match group {
-        0x0 => decode_group_0(opcode),
-        0x1 => decode_move_byte(opcode),
-        0x2 => decode_move_long(opcode),
-        0x3 => decode_move_word(opcode),
-        0x4 => decode_group_4(opcode),
-        0x5 => decode_group_5(opcode),
-        0x6 => decode_group_6(opcode),
-        0x7 => decode_moveq(opcode),
-        0x8 => decode_group_8(opcode),
-        0x9 => decode_sub(opcode),
-        0xA => Instruction::LineA { opcode },
-        0xB => decode_group_b(opcode),
-        0xC => decode_group_c(opcode),
-        0xD => decode_add(opcode),
-        0xE => decode_shifts(opcode),
-        0xF => Instruction::LineF { opcode },
-        _ => unreachable!(),
-    }
-}
+type DecoderFn = fn(u16) -> Instruction;const GROUP_DECODERS: [DecoderFn; 16] = [    decode_group_0,    decode_move_byte,    decode_move_long,    decode_move_word,    decode_group_4,    decode_group_5,    decode_group_6,    decode_moveq,    decode_group_8,    decode_sub,    decode_line_a,    decode_group_b,    decode_group_c,    decode_add,    decode_shifts,    decode_line_f,];fn decode_group_0(opcode: u16) -> Instruction {    decode_movep(opcode)        .or_else(|| decode_bit_dynamic(opcode))        .or_else(|| decode_immediate_and_static_bit(opcode))        .unwrap_or(Instruction::Unimplemented { opcode })}fn decode_movep(opcode: u16) -> Option<Instruction> {
+>>>>>>> origin/main
 
-// === Group decoders ===
-
-fn decode_group_0(opcode: u16) -> Instruction {
-    // Bit manipulation, MOVEP, and immediate operations
-    let bit8 = (opcode >> 8) & 0x01;
-
-    if opcode & 0x0138 == 0x0108 {
-        let reg = ((opcode >> 9) & 0x07) as u8;
-        let op = (opcode >> 6) & 0x07;
-        let an = (opcode & 0x07) as u8;
-        if op >= 4 {
-            let size = if op & 0x01 != 0 {
-                Size::Long
-            } else {
-                Size::Word
-            };
-            let direction = (op & 0x02) != 0; // 0 = mem to reg, 1 = reg to mem
-            return Instruction::Movep {
-                size,
-                reg,
-                an,
-                direction,
-            };
-        }
-    }
-
-    if opcode & 0x0100 != 0 {
+fn decode_bit_dynamic(opcode: u16) -> Option<Instruction> {
+    if opcode & 0x0100 \!= 0 {
         // Bit manipulation with register
         let reg = ((opcode >> 9) & 0x07) as u8;
         let mode = ((opcode >> 3) & 0x07) as u8;
@@ -646,17 +626,21 @@ fn decode_group_0(opcode: u16) -> Instruction {
             let op = (opcode >> 6) & 0x03;
             let bit = BitSource::Register(reg);
 
-            return match op {
+            return Some(match op {
                 0b00 => Instruction::Btst { bit, dst },
                 0b01 => Instruction::Bchg { bit, dst },
                 0b10 => Instruction::Bclr { bit, dst },
                 0b11 => Instruction::Bset { bit, dst },
-                _ => unreachable!(),
-            };
+                _ => unreachable\!(),
+            });
         }
     }
+    None
+}
 
+fn decode_immediate_and_static_bit(opcode: u16) -> Option<Instruction> {
     // Check for immediate operations and Static Bit Ops
+    let bit8 = (opcode >> 8) & 0x01;
     if bit8 == 0 {
         let op = (opcode >> 9) & 0x07;
         let mode = ((opcode >> 3) & 0x07) as u8;
@@ -667,13 +651,13 @@ fn decode_group_0(opcode: u16) -> Instruction {
             if let Some(dst) = AddressingMode::from_mode_reg(mode, reg) {
                 let bit_op = (opcode >> 6) & 0x03;
                 let bit = BitSource::Immediate;
-                return match bit_op {
+                return Some(match bit_op {
                     0b00 => Instruction::Btst { bit, dst },
                     0b01 => Instruction::Bchg { bit, dst },
                     0b10 => Instruction::Bclr { bit, dst },
                     0b11 => Instruction::Bset { bit, dst },
-                    _ => unreachable!(),
-                };
+                    _ => unreachable\!(),
+                });
             }
         }
 
@@ -686,7 +670,7 @@ fn decode_group_0(opcode: u16) -> Instruction {
         // 0000 101 0 01 111 100 = EORI to SR  (0A7C)
         if mode == 7 && reg == 4 {
             let size_bits = ((opcode >> 6) & 0x03) as u8;
-            return match (op, size_bits) {
+            return Some(match (op, size_bits) {
                 (0b000, 0b00) => Instruction::OriToCcr,
                 (0b000, 0b01) => Instruction::OriToSr,
                 (0b001, 0b00) => Instruction::AndiToCcr,
@@ -694,14 +678,14 @@ fn decode_group_0(opcode: u16) -> Instruction {
                 (0b101, 0b00) => Instruction::EoriToCcr,
                 (0b101, 0b01) => Instruction::EoriToSr,
                 _ => Instruction::Unimplemented { opcode },
-            };
+            });
         }
 
         // Immediate Instructions (ORI, ANDI, SUBI, ADDI, EORI, CMPI)
         let size_bits = ((opcode >> 6) & 0x03) as u8;
         if let Some(size) = Size::from_bits(size_bits) {
             if let Some(dst) = AddressingMode::from_mode_reg(mode, reg) {
-                return match op {
+                return Some(match op {
                     0b000 => Instruction::OrI { size, dst },
                     0b001 => Instruction::AndI { size, dst },
                     0b010 => Instruction::SubI { size, dst },
@@ -710,14 +694,12 @@ fn decode_group_0(opcode: u16) -> Instruction {
                     0b101 => Instruction::EorI { size, dst },
                     0b110 => Instruction::CmpI { size, dst },
                     _ => Instruction::Unimplemented { opcode },
-                };
+                });
             }
         }
     }
-
-    Instruction::Unimplemented { opcode }
+    None
 }
-
 fn decode_move_byte(opcode: u16) -> Instruction {
     decode_move(opcode, Size::Byte)
 }
@@ -769,18 +751,22 @@ fn decode_move(opcode: u16, size: Size) -> Instruction {
     Instruction::Move { size, src, dst }
 }
 
+    None
 fn decode_group_4(opcode: u16) -> Instruction {
-    // Miscellaneous instructions: NEG, CLR, NOT, TST, JSR, JMP, LEA, PEA, EXT, SWAP, etc.
+    decode_group_4_misc(opcode)
+        .or_else(|| decode_group_4_control(opcode))
+        .or_else(|| decode_group_4_movem(opcode))
+        .or_else(|| decode_group_4_arithmetic(opcode))
+        .unwrap_or(Instruction::Unimplemented { opcode })
+}
 
-    let bits_11_8 = (opcode >> 8) & 0x0F;
-    let bits_7_6 = (opcode >> 6) & 0x03;
-    let mode = ((opcode >> 3) & 0x07) as u8;
+fn decode_group_4_misc(opcode: u16) -> Option<Instruction> {
     let reg = (opcode & 0x07) as u8;
 
     // Check for specific instructions first
     match opcode & 0xFFF8 {
         0x4E70 => {
-            return match reg {
+            return Some(match reg {
                 0 => Instruction::Reset,
                 1 => Instruction::Nop,
                 2 => Instruction::Stop,
@@ -788,29 +774,116 @@ fn decode_group_4(opcode: u16) -> Instruction {
                 5 => Instruction::Rts,
                 6 => Instruction::TrapV,
                 7 => Instruction::Rtr,
-                _ => Instruction::Unimplemented { opcode },
-            }
+                _ => return None,
+            })
         }
-        0x4E50 => return Instruction::Link { reg },
-        0x4E58 => return Instruction::Unlk { reg },
-        0x4E60 => return Instruction::MoveUsp { reg, to_usp: true },
-        0x4E68 => return Instruction::MoveUsp { reg, to_usp: false },
-        0x4840 => return Instruction::Swap { reg },
+        0x4E50 => return Some(Instruction::Link { reg }),
+        0x4E58 => return Some(Instruction::Unlk { reg }),
+        0x4E60 => return Some(Instruction::MoveUsp { reg, to_usp: true }),
+        0x4E68 => return Some(Instruction::MoveUsp { reg, to_usp: false }),
+        0x4840 => return Some(Instruction::Swap { reg }),
         0x4880 => {
-            return Instruction::Ext {
+            return Some(Instruction::Ext {
                 size: Size::Word,
                 reg,
-            }
+            })
         }
         0x48C0 => {
-            return Instruction::Ext {
+            return Some(Instruction::Ext {
                 size: Size::Long,
                 reg,
-            }
+            })
         }
 
         _ => {}
     }
+
+    // TRAP
+    if opcode & 0xFFF0 == 0x4E40 {
+        return Some(Instruction::Trap {
+            vector: (opcode & 0x0F) as u8,
+        });
+    }
+
+    // ILLEGAL - 4AFC
+    if opcode == 0x4AFC {
+        return Some(Instruction::Illegal);
+    }
+    None
+}
+
+fn decode_group_4_control(opcode: u16) -> Option<Instruction> {
+    let mode = ((opcode >> 3) & 0x07) as u8;
+    let reg = (opcode & 0x07) as u8;
+
+    // LEA
+    if opcode & 0xF1C0 == 0x41C0 {
+        let dst_reg = ((opcode >> 9) & 0x07) as u8;
+        if let Some(src) = AddressingMode::from_mode_reg(mode, reg) {
+            return Some(Instruction::Lea { src, dst_reg });
+        }
+    }
+
+    // PEA
+    if opcode & 0xFFC0 == 0x4840 && mode != 0 {
+        if let Some(src) = AddressingMode::from_mode_reg(mode, reg) {
+            return Some(Instruction::Pea { src });
+        }
+    }
+
+    // JMP
+    if opcode & 0xFFC0 == 0x4EC0 {
+        if let Some(dst) = AddressingMode::from_mode_reg(mode, reg) {
+            return Some(Instruction::Jmp { dst });
+        }
+    }
+
+    // JSR
+    if opcode & 0xFFC0 == 0x4E80 {
+        if let Some(dst) = AddressingMode::from_mode_reg(mode, reg) {
+            return Some(Instruction::Jsr { dst });
+        }
+    }
+
+    // CHK - 0100 rrr 1s0 mmm xxx (s=0 word, s=1 long for 68020+)
+    // 68000: only word size (bits 7-6 = 10)
+    if opcode & 0xF1C0 == 0x4180 {
+        let dst_reg = ((opcode >> 9) & 0x07) as u8;
+        if let Some(src) = AddressingMode::from_mode_reg(mode, reg) {
+            return Some(Instruction::Chk { src, dst_reg });
+        }
+    }
+    None
+}
+
+fn decode_group_4_movem(opcode: u16) -> Option<Instruction> {
+    // MOVEM - Register to Memory: 0100 1000 1s mmm rrr (s=0 word, s=1 long)
+    //       - Memory to Register: 0100 1100 1s mmm rrr
+    if opcode & 0xFB80 == 0x4880 {
+        let to_memory = (opcode & 0x0400) == 0; // bit 10: 0=to mem, 1=from mem
+        let size = if (opcode & 0x0040) != 0 {
+            Size::Long
+        } else {
+            Size::Word
+        };
+        let mode = ((opcode >> 3) & 0x07) as u8;
+        let reg = (opcode & 0x07) as u8;
+        if let Some(ea) = AddressingMode::from_mode_reg(mode, reg) {
+            // Mask is in extension word, but we'll read it during execution
+            return Some(Instruction::Movem {
+                size,
+                direction: to_memory,
+                mask: 0,
+                ea,
+            });
+        }
+    }
+    None
+}
+
+fn decode_group_4_arithmetic(opcode: u16) -> Option<Instruction> {
+    let mode = ((opcode >> 3) & 0x07) as u8;
+    let reg = (opcode & 0x07) as u8;
 
     // NBCD
     if opcode & 0xFFC0 == 0x4800 {
@@ -826,7 +899,7 @@ fn decode_group_4(opcode: u16) -> Instruction {
                         | AddressingMode::AbsoluteLong
                 )
             {
-                return Instruction::Nbcd { dst };
+                return Some(Instruction::Nbcd { dst });
             }
             // Nbcd requires data alterable. is_valid_destination checks mostly immediate logic.
             // Check manual: NBCD <ea>. <ea> is Data Alterable.
@@ -841,98 +914,30 @@ fn decode_group_4(opcode: u16) -> Instruction {
                     | AddressingMode::PcDisplacement
                     | AddressingMode::PcIndex
             ) {
-                return Instruction::Nbcd { dst };
+                return Some(Instruction::Nbcd { dst });
             }
         }
-    }
-
-    // TRAP
-    if opcode & 0xFFF0 == 0x4E40 {
-        return Instruction::Trap {
-            vector: (opcode & 0x0F) as u8,
-        };
-    }
-
-    // LEA
-    if opcode & 0xF1C0 == 0x41C0 {
-        let dst_reg = ((opcode >> 9) & 0x07) as u8;
-        if let Some(src) = AddressingMode::from_mode_reg(mode, reg) {
-            return Instruction::Lea { src, dst_reg };
-        }
-    }
-
-    // PEA
-    if opcode & 0xFFC0 == 0x4840 && mode != 0 {
-        if let Some(src) = AddressingMode::from_mode_reg(mode, reg) {
-            return Instruction::Pea { src };
-        }
-    }
-
-    // JMP
-    if opcode & 0xFFC0 == 0x4EC0 {
-        if let Some(dst) = AddressingMode::from_mode_reg(mode, reg) {
-            return Instruction::Jmp { dst };
-        }
-    }
-
-    // JSR
-    if opcode & 0xFFC0 == 0x4E80 {
-        if let Some(dst) = AddressingMode::from_mode_reg(mode, reg) {
-            return Instruction::Jsr { dst };
-        }
-    }
-
-    // CHK - 0100 rrr 1s0 mmm xxx (s=0 word, s=1 long for 68020+)
-    // 68000: only word size (bits 7-6 = 10)
-    if opcode & 0xF1C0 == 0x4180 {
-        let dst_reg = ((opcode >> 9) & 0x07) as u8;
-        if let Some(src) = AddressingMode::from_mode_reg(mode, reg) {
-            return Instruction::Chk { src, dst_reg };
-        }
-    }
-
-    // ILLEGAL - 4AFC
-    if opcode == 0x4AFC {
-        return Instruction::Illegal;
     }
 
     // TAS - 0100 1010 11 mmm rrr (4AC0)
     if opcode & 0xFFC0 == 0x4AC0 {
         if let Some(dst) = AddressingMode::from_mode_reg(mode, reg) {
-            return Instruction::Tas { dst };
-        }
-    }
-
-    // MOVEM - Register to Memory: 0100 1000 1s mmm rrr (s=0 word, s=1 long)
-    //       - Memory to Register: 0100 1100 1s mmm rrr
-    if opcode & 0xFB80 == 0x4880 {
-        let to_memory = (opcode & 0x0400) == 0; // bit 10: 0=to mem, 1=from mem
-        let size = if (opcode & 0x0040) != 0 {
-            Size::Long
-        } else {
-            Size::Word
-        };
-        if let Some(ea) = AddressingMode::from_mode_reg(mode, reg) {
-            // Mask is in extension word, but we'll read it during execution
-            return Instruction::Movem {
-                size,
-                direction: to_memory,
-                mask: 0,
-                ea,
-            };
+            return Some(Instruction::Tas { dst });
         }
     }
 
     // CLR, NEG, NOT, TST
+    let bits_11_8 = (opcode >> 8) & 0x0F;
+    let bits_7_6 = (opcode >> 6) & 0x03;
     if let Some(size) = Size::from_bits(bits_7_6 as u8) {
         if let Some(dst) = AddressingMode::from_mode_reg(mode, reg) {
-            return match bits_11_8 {
-                0x0 => Instruction::NegX { size, dst },
-                0x2 => Instruction::Clr { size, dst },
-                0x4 => Instruction::Neg { size, dst },
-                0x6 => Instruction::Not { size, dst },
-                0xA => Instruction::Tst { size, dst },
-                _ => Instruction::Unimplemented { opcode },
+            match bits_11_8 {
+                0x0 => return Some(Instruction::NegX { size, dst }),
+                0x2 => return Some(Instruction::Clr { size, dst }),
+                0x4 => return Some(Instruction::Neg { size, dst }),
+                0x6 => return Some(Instruction::Not { size, dst }),
+                0xA => return Some(Instruction::Tst { size, dst }),
+                _ => {}
             };
         }
     }
@@ -940,25 +945,25 @@ fn decode_group_4(opcode: u16) -> Instruction {
     // MOVE from SR
     if opcode & 0xFFC0 == 0x40C0 {
         if let Some(dst) = AddressingMode::from_mode_reg(mode, reg) {
-            return Instruction::MoveFromSr { dst };
+            return Some(Instruction::MoveFromSr { dst });
         }
     }
 
     // MOVE to CCR
     if opcode & 0xFFC0 == 0x44C0 {
         if let Some(src) = AddressingMode::from_mode_reg(mode, reg) {
-            return Instruction::MoveToCcr { src };
+            return Some(Instruction::MoveToCcr { src });
         }
     }
 
     // MOVE to SR
     if opcode & 0xFFC0 == 0x46C0 {
         if let Some(src) = AddressingMode::from_mode_reg(mode, reg) {
-            return Instruction::MoveToSr { src };
+            return Some(Instruction::MoveToSr { src });
         }
     }
-
-    Instruction::Unimplemented { opcode }
+    None
+}
 }
 
 fn decode_group_5(opcode: u16) -> Instruction {
