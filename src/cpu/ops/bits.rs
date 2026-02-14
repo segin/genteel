@@ -398,40 +398,66 @@ pub fn exec_roxr<M: MemoryInterface>(
     cycles + 6 + 2 * count_val
 }
 
+enum BitOp {
+    Test,
+    Set,
+    Clear,
+    Change,
+}
+
+fn exec_bit_instruction<M: MemoryInterface>(
+    cpu: &mut Cpu,
+    bit: BitSource,
+    dst: AddressingMode,
+    memory: &mut M,
+    op: BitOp,
+) -> u32 {
+    let bit_num = cpu.fetch_bit_num(bit, memory);
+    let is_memory = !matches!(dst, AddressingMode::DataRegister(_));
+    let size = if is_memory { Size::Byte } else { Size::Long };
+
+    let mut cycles = if matches!(op, BitOp::Test) { 4u32 } else { 8u32 };
+    let (dst_ea, dst_cycles) = calculate_ea(dst, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
+    cycles += dst_cycles;
+
+    let val = cpu.cpu_read_ea(dst_ea, size, memory);
+    let bit_idx = cpu.resolve_bit_index(bit_num, is_memory);
+    let bit_val = (val >> bit_idx) & 1;
+
+    cpu.set_flag(flags::ZERO, bit_val == 0);
+
+    match op {
+        BitOp::Test => {
+            if is_memory {
+                cycles += 4;
+            } else {
+                cycles += 6;
+            }
+        }
+        BitOp::Set => {
+            let new_val = val | (1 << bit_idx);
+            cpu.cpu_write_ea(dst_ea, size, new_val, memory);
+        }
+        BitOp::Clear => {
+            let new_val = val & !(1 << bit_idx);
+            cpu.cpu_write_ea(dst_ea, size, new_val, memory);
+        }
+        BitOp::Change => {
+            let new_val = val ^ (1 << bit_idx);
+            cpu.cpu_write_ea(dst_ea, size, new_val, memory);
+        }
+    }
+
+    cycles
+}
+
 pub fn exec_btst<M: MemoryInterface>(
     cpu: &mut Cpu,
     bit: BitSource,
     dst: AddressingMode,
     memory: &mut M,
 ) -> u32 {
-    let bit_num = cpu.fetch_bit_num(bit, memory);
-    let is_memory = !matches!(dst, AddressingMode::DataRegister(_));
-    let size = if is_memory { Size::Byte } else { Size::Long };
-
-    let mut cycles = 4u32;
-    let (dst_ea, dst_cycles) = calculate_ea(dst, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
-    cycles += dst_cycles;
-
-    let val = if matches!(dst, AddressingMode::Immediate) {
-        // Immediate data for BTST is valid? No, destination EA.
-        // BTST #n, #m is not valid.
-        // But BTST #n, (xxx) is.
-        cpu.cpu_read_ea(dst_ea, size, memory)
-    } else {
-        cpu.cpu_read_ea(dst_ea, size, memory)
-    };
-
-    let bit_idx = cpu.resolve_bit_index(bit_num, is_memory);
-    let bit_val = (val >> bit_idx) & 1;
-
-    cpu.set_flag(flags::ZERO, bit_val == 0);
-
-    if is_memory {
-        cycles += 4;
-    } else {
-        cycles += 6;
-    } // Timing approx
-    cycles
+    exec_bit_instruction(cpu, bit, dst, memory, BitOp::Test)
 }
 
 pub fn exec_bset<M: MemoryInterface>(
@@ -440,24 +466,7 @@ pub fn exec_bset<M: MemoryInterface>(
     dst: AddressingMode,
     memory: &mut M,
 ) -> u32 {
-    let bit_num = cpu.fetch_bit_num(bit, memory);
-    let is_memory = !matches!(dst, AddressingMode::DataRegister(_));
-    let size = if is_memory { Size::Byte } else { Size::Long };
-
-    let mut cycles = 8u32;
-    let (dst_ea, dst_cycles) = calculate_ea(dst, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
-    cycles += dst_cycles;
-
-    let val = cpu.cpu_read_ea(dst_ea, size, memory);
-    let bit_idx = cpu.resolve_bit_index(bit_num, is_memory);
-    let bit_val = (val >> bit_idx) & 1;
-
-    cpu.set_flag(flags::ZERO, bit_val == 0);
-
-    let new_val = val | (1 << bit_idx);
-    cpu.cpu_write_ea(dst_ea, size, new_val, memory);
-
-    cycles
+    exec_bit_instruction(cpu, bit, dst, memory, BitOp::Set)
 }
 
 pub fn exec_bclr<M: MemoryInterface>(
@@ -466,24 +475,7 @@ pub fn exec_bclr<M: MemoryInterface>(
     dst: AddressingMode,
     memory: &mut M,
 ) -> u32 {
-    let bit_num = cpu.fetch_bit_num(bit, memory);
-    let is_memory = !matches!(dst, AddressingMode::DataRegister(_));
-    let size = if is_memory { Size::Byte } else { Size::Long };
-
-    let mut cycles = 8u32;
-    let (dst_ea, dst_cycles) = calculate_ea(dst, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
-    cycles += dst_cycles;
-
-    let val = cpu.cpu_read_ea(dst_ea, size, memory);
-    let bit_idx = cpu.resolve_bit_index(bit_num, is_memory);
-    let bit_val = (val >> bit_idx) & 1;
-
-    cpu.set_flag(flags::ZERO, bit_val == 0);
-
-    let new_val = val & !(1 << bit_idx);
-    cpu.cpu_write_ea(dst_ea, size, new_val, memory);
-
-    cycles
+    exec_bit_instruction(cpu, bit, dst, memory, BitOp::Clear)
 }
 
 pub fn exec_bchg<M: MemoryInterface>(
@@ -492,24 +484,7 @@ pub fn exec_bchg<M: MemoryInterface>(
     dst: AddressingMode,
     memory: &mut M,
 ) -> u32 {
-    let bit_num = cpu.fetch_bit_num(bit, memory);
-    let is_memory = !matches!(dst, AddressingMode::DataRegister(_));
-    let size = if is_memory { Size::Byte } else { Size::Long };
-
-    let mut cycles = 8u32;
-    let (dst_ea, dst_cycles) = calculate_ea(dst, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
-    cycles += dst_cycles;
-
-    let val = cpu.cpu_read_ea(dst_ea, size, memory);
-    let bit_idx = cpu.resolve_bit_index(bit_num, is_memory);
-    let bit_val = (val >> bit_idx) & 1;
-
-    cpu.set_flag(flags::ZERO, bit_val == 0);
-
-    let new_val = val ^ (1 << bit_idx);
-    cpu.cpu_write_ea(dst_ea, size, new_val, memory);
-
-    cycles
+    exec_bit_instruction(cpu, bit, dst, memory, BitOp::Change)
 }
 
 pub fn exec_tas<M: MemoryInterface>(cpu: &mut Cpu, dst: AddressingMode, memory: &mut M) -> u32 {

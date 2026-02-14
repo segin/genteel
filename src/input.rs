@@ -428,4 +428,28 @@ mod tests {
         let input0 = manager.advance_frame();
         assert!(!input0.p1.a);
     }
+
+    #[test]
+    fn test_load_nonexistent_file() {
+        let result = InputScript::load("non_existent_file.txt");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("Failed to read input script"));
+    }
+
+    #[test]
+    fn test_parse_missing_fields() {
+        let content = "0";
+        let result = InputScript::parse(content);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Line 1: expected at least 2 fields");
+    }
+
+    #[test]
+    fn test_parse_invalid_frame_number() {
+        let content = "invalid,........";
+        let result = InputScript::parse(content);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Line 1: invalid frame number");
+    }
 }
