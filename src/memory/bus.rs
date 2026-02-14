@@ -644,14 +644,20 @@ mod tests {
     }
 
     #[test]
-    fn test_clear_rom() {
+    fn test_rom_lifecycle() {
         let mut bus = Bus::new();
         let rom_data = vec![0x12, 0x34, 0x56, 0x78];
         bus.load_rom(&rom_data);
 
         // Verify ROM is loaded and padded
         assert_eq!(bus.read_byte(0x000000), 0x12);
-        assert_eq!(bus.rom_size(), 512);
+        assert_eq!(bus.read_word(0x000000), 0x1234);
+        assert_eq!(bus.read_long(0x000000), 0x12345678);
+        assert_eq!(bus.rom_size(), 512); // Padded to minimum size
+        assert_eq!(bus.rom.len(), 512);
+
+        // Verify DMA slice is accessible
+        assert!(bus.get_dma_slice(0x000000, 2).is_some());
 
         // Clear ROM
         bus.clear_rom();
@@ -660,8 +666,24 @@ mod tests {
         assert_eq!(bus.rom_size(), 0);
         assert!(bus.rom.is_empty());
 
-        // Verify reading from ROM area now returns 0xFF (unmapped)
+        // Verify reading from ROM area now returns unmapped values
         assert_eq!(bus.read_byte(0x000000), 0xFF);
+        assert_eq!(bus.read_word(0x000000), 0xFFFF);
+        assert_eq!(bus.read_long(0x000000), 0xFFFFFFFF);
+
+        // Verify DMA slice is no longer accessible
+        assert!(bus.get_dma_slice(0x000000, 2).is_none());
+
+        // Reload a new ROM
+        let new_rom = vec![0xAA, 0xBB];
+        bus.load_rom(&new_rom);
+
+        // Verify new ROM content and padding
+        assert_eq!(bus.read_byte(0x000000), 0xAA);
+        // Verify padding with zeros
+        assert_eq!(bus.read_byte(0x000002), 0x00);
+        assert_eq!(bus.read_word(0x000000), 0xAABB);
+        assert_eq!(bus.rom_size(), 512);
     }
     #[test]
     fn test_dma_transfer_ram_to_vram() {
