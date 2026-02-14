@@ -743,24 +743,28 @@ impl Z80 {
                     // LD (BC), A
                     let addr = self.bc();
                     self.write_byte(addr, self.a);
+                    self.memptr = ((self.a as u16) << 8) | (addr.wrapping_add(1) & 0xFF);
                     7
                 }
                 (0, 1) => {
                     // LD A, (BC)
                     let addr = self.bc();
                     self.a = self.read_byte(addr);
+                    self.memptr = addr.wrapping_add(1);
                     7
                 }
                 (1, 0) => {
                     // LD (DE), A
                     let addr = self.de();
                     self.write_byte(addr, self.a);
+                    self.memptr = ((self.a as u16) << 8) | (addr.wrapping_add(1) & 0xFF);
                     7
                 }
                 (1, 1) => {
                     // LD A, (DE)
                     let addr = self.de();
                     self.a = self.read_byte(addr);
+                    self.memptr = addr.wrapping_add(1);
                     7
                 }
                 (2, 0) => {
@@ -1026,6 +1030,7 @@ impl Z80 {
                     let n = self.fetch_byte();
                     let port = (n as u16) | ((self.a as u16) << 8);
                     self.write_port(port, self.a);
+                    self.memptr = port.wrapping_add(1);
                     11
                 }
                 3 => {
@@ -1033,6 +1038,7 @@ impl Z80 {
                     let n = self.fetch_byte();
                     let port = (n as u16) | ((self.a as u16) << 8);
                     self.a = self.read_port(port);
+                    self.memptr = port.wrapping_add(1);
                     11
                 }
                 4 => {
@@ -1040,6 +1046,7 @@ impl Z80 {
                     let val = self.read_word(self.sp);
                     self.write_word(self.sp, self.hl());
                     self.set_hl(val);
+                    self.memptr = val;
                     19
                 }
                 5 => {
@@ -1283,6 +1290,7 @@ impl Z80 {
                     self.set_parity_flag(val);
                     self.set_flag(flags::HALF_CARRY, false);
                     self.set_flag(flags::ADD_SUB, false);
+                    self.memptr = port.wrapping_add(1);
                     12
                 }
                 1 => {
@@ -1290,6 +1298,7 @@ impl Z80 {
                     let port = self.bc();
                     let val = if y == 6 { 0 } else { self.get_reg(y) };
                     self.write_port(port, val);
+                    self.memptr = port.wrapping_add(1);
                     12
                 }
                 2 => {
@@ -2310,6 +2319,9 @@ mod tests_torture;
 
 #[cfg(test)]
 mod tests_gaps;
+
+#[cfg(test)]
+mod tests_memptr;
 
 #[cfg(test)]
 pub mod test_utils {
