@@ -10,10 +10,10 @@
 pub mod sn76489;
 pub mod ym2612;
 
-use sn76489::Sn76489;
-use ym2612::Ym2612;
 use crate::debugger::Debuggable;
 use serde_json::{json, Value};
+use sn76489::Sn76489;
+use ym2612::Ym2612;
 
 #[derive(Debug)]
 pub struct Apu {
@@ -65,7 +65,7 @@ impl Apu {
     pub fn step(&mut self) -> i16 {
         // Step the components
         self.fm.step(1); // 1 "cycle" per sample step (simplified)
-        
+
         // Placeholder: Return silence
         0
     }

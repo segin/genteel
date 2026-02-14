@@ -21,7 +21,7 @@ pub trait MemoryInterface: std::fmt::Debug {
     fn write_word(&mut self, address: u32, value: u16);
     fn read_long(&mut self, address: u32) -> u32;
     fn write_long(&mut self, address: u32, value: u32);
-    
+
     fn read_size(&mut self, address: u32, size: Size) -> u32 {
         match size {
             Size::Byte => self.read_byte(address) as u32,
@@ -29,7 +29,7 @@ pub trait MemoryInterface: std::fmt::Debug {
             Size::Long => self.read_long(address),
         }
     }
-    
+
     fn write_size(&mut self, address: u32, value: u32, size: Size) {
         match size {
             Size::Byte => self.write_byte(address, value as u8),
@@ -164,7 +164,6 @@ impl MemoryInterface for Memory {
 }
 
 impl Memory {
-
     #[cfg(test)]
     pub fn hex_dump(&self, start: u32, end: u32) -> String {
         let mut output = String::new();
@@ -205,7 +204,7 @@ mod tests {
         for i in 0..32 {
             memory.data[i] = 'A' as u8 + i as u8;
         }
-        
+
         let dump = memory.hex_dump(0, 31);
         let expected_lines: Vec<&str> = vec![
             "00000000: 41 42 43 44 45 46 47 48 49 4A 4B 4C 4D 4E 4F 50  ABCDEFGHIJKLMNOP",
@@ -253,8 +252,16 @@ mod tests {
         // Write Word and verify
         let word_val: u16 = 0xAABB;
         mem.write_word(addr + 4, word_val);
-        assert_eq!(mem.data[addr as usize + 4], 0xAA, "Word write byte 0 mismatch");
-        assert_eq!(mem.data[addr as usize + 5], 0xBB, "Word write byte 1 mismatch");
+        assert_eq!(
+            mem.data[addr as usize + 4],
+            0xAA,
+            "Word write byte 0 mismatch"
+        );
+        assert_eq!(
+            mem.data[addr as usize + 5],
+            0xBB,
+            "Word write byte 1 mismatch"
+        );
         assert_eq!(mem.read_word(addr + 4), word_val, "Read word mismatch");
     }
 }

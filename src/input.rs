@@ -44,8 +44,8 @@ impl InputScript {
 
     /// Load a script from a file
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, String> {
-        let content = fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read input script: {}", e))?;
+        let content =
+            fs::read_to_string(path).map_err(|e| format!("Failed to read input script: {}", e))?;
         Self::parse(&content)
     }
 
@@ -66,7 +66,9 @@ impl InputScript {
                 return Err(format!("Line {}: expected at least 2 fields", line_num + 1));
             }
 
-            let frame: u64 = parts[0].trim().parse()
+            let frame: u64 = parts[0]
+                .trim()
+                .parse()
                 .map_err(|_| format!("Line {}: invalid frame number", line_num + 1))?;
 
             let p1 = Self::parse_buttons(parts[1].trim());
@@ -90,19 +92,19 @@ impl InputScript {
         let mut state = ControllerState::default();
         let mut chars = s.chars();
 
-        state.up    = chars.next() == Some('U');
-        state.down  = chars.next() == Some('D');
-        state.left  = chars.next() == Some('L');
+        state.up = chars.next() == Some('U');
+        state.down = chars.next() == Some('D');
+        state.left = chars.next() == Some('L');
         state.right = chars.next() == Some('R');
-        state.a     = chars.next() == Some('A');
-        state.b     = chars.next() == Some('B');
-        state.c     = chars.next() == Some('C');
+        state.a = chars.next() == Some('A');
+        state.b = chars.next() == Some('B');
+        state.c = chars.next() == Some('C');
         state.start = chars.next() == Some('S');
 
         // 6-button extension
-        state.x    = chars.next() == Some('X');
-        state.y    = chars.next() == Some('Y');
-        state.z    = chars.next() == Some('Z');
+        state.x = chars.next() == Some('X');
+        state.y = chars.next() == Some('Y');
+        state.z = chars.next() == Some('Z');
         state.mode = chars.next() == Some('M');
 
         state
@@ -260,12 +262,15 @@ mod tests {
 
     #[test]
     fn test_parse_script() {
-        let script = InputScript::parse(r#"
+        let script = InputScript::parse(
+            r#"
 # Test script
 0,........,........
 60,....A...,........
 120,.....B..,....A...
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
         assert_eq!(script.max_frame, 120);
 

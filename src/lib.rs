@@ -13,7 +13,7 @@ pub mod memory;
 pub mod vdp;
 pub mod z80;
 
-pub use audio::{AudioBuffer, SharedAudioBuffer, create_audio_buffer};
+pub use audio::{create_audio_buffer, AudioBuffer, SharedAudioBuffer};
 pub use cpu::Cpu;
 pub use input::{InputManager, InputScript};
 pub use memory::Memory;

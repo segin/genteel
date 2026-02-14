@@ -36,16 +36,16 @@ fn test_divs_neg_neg() {
     let (mut cpu, mut memory) = create_test_cpu();
     // DIVS.W D1, D0
     write_program(&mut memory, &[0x81C1]);
-    
-    cpu.d[0] = (-1000i32) as u32;  // -1000
-    cpu.d[1] = (-10i16) as u32 & 0xFFFF;  // -10
-    
+
+    cpu.d[0] = (-1000i32) as u32; // -1000
+    cpu.d[1] = (-10i16) as u32 & 0xFFFF; // -10
+
     cpu.step_instruction(&mut memory);
-    
+
     // -1000 / -10 = 100, remainder = 0
     let quotient = (cpu.d[0] & 0xFFFF) as i16;
     let remainder = ((cpu.d[0] >> 16) & 0xFFFF) as i16;
-    
+
     assert_eq!(quotient, 100, "Quotient should be 100");
     assert_eq!(remainder, 0, "Remainder should be 0");
     assert!(!cpu.get_flag(flags::NEGATIVE), "N should be clear");
@@ -58,13 +58,13 @@ fn test_divu_overflow() {
     let (mut cpu, mut memory) = create_test_cpu();
     // DIVU.W D1, D0
     write_program(&mut memory, &[0x80C1]);
-    
-    cpu.d[0] = 0x10000;  // 65536
-    cpu.d[1] = 1;        // Divide by 1 -> quotient = 65536 > 0xFFFF
-    
+
+    cpu.d[0] = 0x10000; // 65536
+    cpu.d[1] = 1; // Divide by 1 -> quotient = 65536 > 0xFFFF
+
     let original_d0 = cpu.d[0];
     cpu.step_instruction(&mut memory);
-    
+
     // Overflow: V set, result unchanged
     assert!(cpu.get_flag(flags::OVERFLOW), "V should be set on overflow");
     assert_eq!(cpu.d[0], original_d0, "D0 should be unchanged on overflow");
@@ -76,13 +76,13 @@ fn test_divs_overflow_positive() {
     let (mut cpu, mut memory) = create_test_cpu();
     // DIVS.W D1, D0
     write_program(&mut memory, &[0x81C1]);
-    
-    cpu.d[0] = 0x8000;  // 32768
-    cpu.d[1] = 1;       // Divide by 1 -> quotient = 32768 > 32767
-    
+
+    cpu.d[0] = 0x8000; // 32768
+    cpu.d[1] = 1; // Divide by 1 -> quotient = 32768 > 32767
+
     let original_d0 = cpu.d[0];
     cpu.step_instruction(&mut memory);
-    
+
     assert!(cpu.get_flag(flags::OVERFLOW), "V should be set");
     assert_eq!(cpu.d[0], original_d0, "D0 unchanged on overflow");
 }
@@ -93,12 +93,12 @@ fn test_divu_dividend_zero() {
     let (mut cpu, mut memory) = create_test_cpu();
     // DIVU.W D1, D0
     write_program(&mut memory, &[0x80C1]);
-    
+
     cpu.d[0] = 0;
     cpu.d[1] = 5;
-    
+
     cpu.step_instruction(&mut memory);
-    
+
     // 0 / 5 = 0 remainder 0
     assert_eq!(cpu.d[0] & 0xFFFF, 0, "Quotient should be 0");
     assert_eq!(cpu.d[0] >> 16, 0, "Remainder should be 0");
@@ -111,12 +111,12 @@ fn test_muls_max_neg_squared() {
     let (mut cpu, mut memory) = create_test_cpu();
     // MULS.W D1, D0
     write_program(&mut memory, &[0xC1C1]);
-    
-    cpu.d[0] = 0x8000;  // -32768
-    cpu.d[1] = 0x8000;  // -32768
-    
+
+    cpu.d[0] = 0x8000; // -32768
+    cpu.d[1] = 0x8000; // -32768
+
     cpu.step_instruction(&mut memory);
-    
+
     // -32768 * -32768 = 1073741824 = 0x40000000
     assert_eq!(cpu.d[0], 0x40000000);
     assert!(!cpu.get_flag(flags::NEGATIVE), "Result is positive");
@@ -133,14 +133,14 @@ fn test_abcd_carry_chain() {
     let (mut cpu, mut memory) = create_test_cpu();
     // ABCD D1, D0
     write_program(&mut memory, &[0xC101]);
-    
-    cpu.d[0] = 0x99;  // 99 BCD
-    cpu.d[1] = 0x00;  // 0 BCD
-    cpu.set_flag(flags::EXTEND, true);  // X=1
-    cpu.set_flag(flags::ZERO, true);    // Preset Z
-    
+
+    cpu.d[0] = 0x99; // 99 BCD
+    cpu.d[1] = 0x00; // 0 BCD
+    cpu.set_flag(flags::EXTEND, true); // X=1
+    cpu.set_flag(flags::ZERO, true); // Preset Z
+
     cpu.step_instruction(&mut memory);
-    
+
     // 99 + 00 + 1 = 100 -> 00 with carry
     assert_eq!(cpu.d[0] & 0xFF, 0x00);
     assert!(cpu.get_flag(flags::CARRY), "C should be set");
@@ -153,14 +153,14 @@ fn test_sbcd_borrow_high_nibble() {
     let (mut cpu, mut memory) = create_test_cpu();
     // SBCD D1, D0
     write_program(&mut memory, &[0x8101]);
-    
-    cpu.d[0] = 0x10;  // 10 BCD
-    cpu.d[1] = 0x01;  // 1 BCD
-    cpu.set_flag(flags::EXTEND, true);  // X=1
+
+    cpu.d[0] = 0x10; // 10 BCD
+    cpu.d[1] = 0x01; // 1 BCD
+    cpu.set_flag(flags::EXTEND, true); // X=1
     cpu.set_flag(flags::ZERO, true);
-    
+
     cpu.step_instruction(&mut memory);
-    
+
     // 10 - 01 - 1 = 08 BCD
     assert_eq!(cpu.d[0] & 0xFF, 0x08);
     assert!(!cpu.get_flag(flags::CARRY), "No borrow needed");
@@ -172,13 +172,13 @@ fn test_nbcd_zero() {
     let (mut cpu, mut memory) = create_test_cpu();
     // NBCD D0
     write_program(&mut memory, &[0x4800]);
-    
+
     cpu.d[0] = 0x00;
     cpu.set_flag(flags::EXTEND, false);
     cpu.set_flag(flags::ZERO, true);
-    
+
     cpu.step_instruction(&mut memory);
-    
+
     // 0 - 00 = 0, no borrow
     assert_eq!(cpu.d[0] & 0xFF, 0x00);
 }
@@ -189,16 +189,16 @@ fn test_abcd_memory_mode() {
     let (mut cpu, mut memory) = create_test_cpu();
     // ABCD -(A1), -(A0)
     write_program(&mut memory, &[0xC109]);
-    
-    cpu.a[0] = 0x2001;  // Points to dst+1
-    cpu.a[1] = 0x2003;  // Points to src+1
-    memory.write_byte(0x2000, 0x01);  // dst: 01 BCD
-    memory.write_byte(0x2002, 0x02);  // src: 02 BCD
+
+    cpu.a[0] = 0x2001; // Points to dst+1
+    cpu.a[1] = 0x2003; // Points to src+1
+    memory.write_byte(0x2000, 0x01); // dst: 01 BCD
+    memory.write_byte(0x2002, 0x02); // src: 02 BCD
     cpu.set_flag(flags::EXTEND, false);
     cpu.set_flag(flags::ZERO, true);
-    
+
     cpu.step_instruction(&mut memory);
-    
+
     // Pre-decrement: A0->0x2000, A1->0x2002
     // 01 + 02 = 03
     assert_eq!(cpu.a[0], 0x2000);
@@ -218,17 +218,17 @@ fn test_movem_pc_relative() {
     // MOVEM.L (d16,PC), D0
     // Opcode: 0x4CBA (MOVEM.L from mem), mask 0x0001 (D0 only), displacement 0x0006
     write_program(&mut memory, &[0x4CBA, 0x0001, 0x0006]);
-    
+
     // PC-relative displacement is from PC after extension words
     // PC at instruction = 0x1000
-    // After reading opcode = 0x1002  
+    // After reading opcode = 0x1002
     // After reading mask = 0x1004
     // After reading displacement = 0x1006
     // Effective address = 0x1002 + 0x0006 = 0x1008 (displacement is from PC after opcode)
     memory.write_long(0x1008, 0x12345678);
-    
+
     cpu.step_instruction(&mut memory);
-    
+
     // Just verify it executed without panic - actual behavior may vary by implementation
     // If D0 is updated, it should contain data from the calculated address
     assert!(cpu.pc > 0x1000, "PC should advance");
@@ -240,12 +240,12 @@ fn test_a7_postinc_byte_word_aligned() {
     let (mut cpu, mut memory) = create_test_cpu();
     // MOVE.B (A7)+, D0
     write_program(&mut memory, &[0x101F]);
-    
+
     cpu.a[7] = 0x8000;
     memory.write_byte(0x8000, 0x42);
-    
+
     cpu.step_instruction(&mut memory);
-    
+
     // A7 should increment by 2, not 1 (word alignment)
     assert_eq!(cpu.a[7], 0x8002, "A7 should be word-aligned after byte op");
     assert_eq!(cpu.d[0] & 0xFF, 0x42);
@@ -257,14 +257,17 @@ fn test_a7_predec_byte_word_aligned() {
     let (mut cpu, mut memory) = create_test_cpu();
     // MOVE.B D0, -(A7)
     write_program(&mut memory, &[0x1F00]);
-    
+
     cpu.a[7] = 0x8002;
     cpu.d[0] = 0x42;
-    
+
     cpu.step_instruction(&mut memory);
-    
+
     // A7 should decrement by 2, not 1
-    assert_eq!(cpu.a[7], 0x8000, "A7 should be word-aligned after byte predec");
+    assert_eq!(
+        cpu.a[7], 0x8000,
+        "A7 should be word-aligned after byte predec"
+    );
 }
 
 // ============================================================================
@@ -277,11 +280,11 @@ fn test_dbcc_counter_zero() {
     let (mut cpu, mut memory) = create_test_cpu();
     // DBF D0, label (displacement -4 from PC+2)
     write_program(&mut memory, &[0x51C8, 0xFFFC]);
-    
-    cpu.d[0] = 0;  // Counter = 0
-    
+
+    cpu.d[0] = 0; // Counter = 0
+
     cpu.step_instruction(&mut memory);
-    
+
     // DBcc decrements first: 0 -> 0xFFFF
     // Then checks if == -1 (0xFFFF). It IS, so NO branch.
     // Actually DBcc branches if counter != -1 after decrement.
@@ -297,13 +300,13 @@ fn test_chk_dn_zero_valid() {
     let (mut cpu, mut memory) = create_test_cpu();
     // CHK D1, D0
     write_program(&mut memory, &[0x4181]);
-    
-    cpu.d[0] = 0;     // Dn = 0
-    cpu.d[1] = 100;   // Bound = 100
-    
+
+    cpu.d[0] = 0; // Dn = 0
+    cpu.d[1] = 100; // Bound = 100
+
     let start_pc = cpu.pc;
     cpu.step_instruction(&mut memory);
-    
+
     // 0 >= 0 and 0 <= 100, so no trap
     // PC should advance normally
     assert_eq!(cpu.pc, start_pc + 2, "Should not trap");
@@ -315,13 +318,13 @@ fn test_chk_dn_equals_bound() {
     let (mut cpu, mut memory) = create_test_cpu();
     // CHK D1, D0
     write_program(&mut memory, &[0x4181]);
-    
-    cpu.d[0] = 100;   // Dn = 100
-    cpu.d[1] = 100;   // Bound = 100
-    
+
+    cpu.d[0] = 100; // Dn = 100
+    cpu.d[1] = 100; // Bound = 100
+
     let start_pc = cpu.pc;
     cpu.step_instruction(&mut memory);
-    
+
     // 100 >= 0 and 100 <= 100, so no trap
     assert_eq!(cpu.pc, start_pc + 2, "Should not trap");
 }
@@ -332,12 +335,12 @@ fn test_trapv_v_clear() {
     let (mut cpu, mut memory) = create_test_cpu();
     // TRAPV
     write_program(&mut memory, &[0x4E76]);
-    
+
     cpu.set_flag(flags::OVERFLOW, false);
     let start_pc = cpu.pc;
-    
+
     cpu.step_instruction(&mut memory);
-    
+
     // V=0, no trap, just advance
     assert_eq!(cpu.pc, start_pc + 2);
 }
@@ -346,24 +349,27 @@ fn test_trapv_v_clear() {
 #[test]
 fn test_rte_user_mode_trap() {
     let (mut cpu, mut memory) = create_test_cpu();
-    
+
     // Set up SSP for exception handling (before switching to user mode)
     cpu.ssp = 0x9000;
-    
+
     // Set up privilege violation vector
     memory.write_long(0x20, 0x2000); // Vector 8
-    
+
     // Switch to user mode properly
     cpu.set_sr(cpu.sr & !flags::SUPERVISOR);
-    
+
     // RTE
     write_program(&mut memory, &[0x4E73]);
-    
+
     cpu.step_instruction(&mut memory);
-    
+
     // Should have trapped to privilege violation handler
     assert_eq!(cpu.pc, 0x2000, "Should jump to privilege violation handler");
-    assert!(cpu.sr & flags::SUPERVISOR != 0, "Should be in supervisor mode");
+    assert!(
+        cpu.sr & flags::SUPERVISOR != 0,
+        "Should be in supervisor mode"
+    );
 }
 
 // ============================================================================
@@ -374,21 +380,21 @@ fn test_rte_user_mode_trap() {
 #[test]
 fn test_move_to_sr_user_mode() {
     let (mut cpu, mut memory) = create_test_cpu();
-    
+
     // Set up SSP for exception handling (before switching to user mode)
     cpu.ssp = 0x9000;
-    
+
     // Set up privilege violation vector
     memory.write_long(0x20, 0x3000);
-    
+
     // Switch to user mode properly
     cpu.set_sr(cpu.sr & !flags::SUPERVISOR);
-    
+
     // MOVE #$2700, SR
     write_program(&mut memory, &[0x46FC, 0x2700]);
-    
+
     cpu.step_instruction(&mut memory);
-    
+
     // Should trap
     assert_eq!(cpu.pc, 0x3000, "Should privilege trap");
 }
@@ -397,12 +403,12 @@ fn test_move_to_sr_user_mode() {
 #[test]
 fn test_stop_instruction() {
     let (mut cpu, mut memory) = create_test_cpu();
-    
+
     // STOP #$2000 (set SR to 0x2000, supervisor mode)
     write_program(&mut memory, &[0x4E72, 0x2000]);
-    
+
     cpu.step_instruction(&mut memory);
-    
+
     assert!(cpu.halted, "CPU should be halted");
     assert_eq!(cpu.sr, 0x2000, "SR should be updated");
 }

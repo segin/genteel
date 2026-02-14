@@ -7,8 +7,13 @@ use crate::memory::Memory;
 
 fn z80(program: &[u8]) -> Z80 {
     let mut m = Memory::new(0x10000);
-    for (i, &b) in program.iter().enumerate() { m.data[i] = b; }
-    Z80::new(Box::new(m), Box::new(crate::z80::test_utils::TestIo::default()))
+    for (i, &b) in program.iter().enumerate() {
+        m.data[i] = b;
+    }
+    Z80::new(
+        Box::new(m),
+        Box::new(crate::z80::test_utils::TestIo::default()),
+    )
 }
 
 // ============ RRD: Rotate Right Decimal ============
@@ -102,7 +107,7 @@ fn rrd_pc() {
     assert_eq!(c.pc, 2);
 }
 
-// ============ RLD: Rotate Left Decimal ============  
+// ============ RLD: Rotate Left Decimal ============
 // A low nibble -> (HL) low nibble -> (HL) high nibble -> A low nibble
 
 #[test]
@@ -201,14 +206,14 @@ fn rrd_rld_roundtrip() {
     c.a = 0x12;
     c.set_hl(0x1000);
     c.memory.write_byte(0x1000 as u32, 0x34);
-    
+
     // Store original
     let orig_a = c.a;
     let orig_mem = c.memory.read_byte(0x1000 as u32);
-    
+
     c.step(); // RRD
     c.step(); // RLD
-    
+
     assert_eq!(c.a, orig_a);
     assert_eq!(c.memory.read_byte(0x1000 as u32), orig_mem);
 }
@@ -220,13 +225,13 @@ fn rld_rrd_roundtrip() {
     c.a = 0x56;
     c.set_hl(0x1000);
     c.memory.write_byte(0x1000 as u32, 0x78);
-    
+
     let orig_a = c.a;
     let orig_mem = c.memory.read_byte(0x1000 as u32);
-    
+
     c.step(); // RLD
     c.step(); // RRD
-    
+
     assert_eq!(c.a, orig_a);
     assert_eq!(c.memory.read_byte(0x1000 as u32), orig_mem);
 }

@@ -7,8 +7,9 @@ mod tests {
         let mut memory = Memory::new(0x10000);
         // Initial SP and PC
         memory.write_long(0, 0x1000); // SP
-        memory.write_long(4, 0x100);  // PC
-        let cpu = Cpu::new(&mut memory); (cpu, memory)
+        memory.write_long(4, 0x100); // PC
+        let cpu = Cpu::new(&mut memory);
+        (cpu, memory)
     }
 
     #[test]
@@ -86,7 +87,10 @@ mod tests {
         // If it raises exception: PC will be 0x4000.
 
         if cpu.pc != 0x4000 {
-             panic!("ADDQ.B to An did not raise Illegal Instruction exception! PC={:X}", cpu.pc);
+            panic!(
+                "ADDQ.B to An did not raise Illegal Instruction exception! PC={:X}",
+                cpu.pc
+            );
         }
     }
 }

@@ -146,7 +146,9 @@ impl Sn76489 {
             // For Volume or Noise: Data bytes are generally ignored or update low bits (uncommon).
             // Standard behavior: Data byte updates the high 6 bits of the *latched tone frequency*.
 
-            if self.latched_type == RegisterType::ToneNoise && self.latched_channel != Channel::Noise {
+            if self.latched_type == RegisterType::ToneNoise
+                && self.latched_channel != Channel::Noise
+            {
                 let value = (data & 0x3F) as u16;
                 match self.latched_channel {
                     Channel::Tone1 => {

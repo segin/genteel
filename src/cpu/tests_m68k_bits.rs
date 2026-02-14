@@ -20,7 +20,10 @@ fn create_cpu() -> (Cpu, Memory) {
 
 fn write_op(memory: &mut Memory, opcodes: &[u16]) {
     let mut addr = 0x1000u32;
-    for &op in opcodes { memory.write_word(addr, op); addr += 2; }
+    for &op in opcodes {
+        memory.write_word(addr, op);
+        addr += 2;
+    }
 }
 
 // ============================================================================
@@ -32,7 +35,7 @@ fn test_btst_register_bit_0() {
     let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0x0300]); // BTST D1, D0 (bit number in D1, test D0)
     cpu.d[0] = 0x01; // Bit 0 set
-    cpu.d[1] = 0;    // Test bit 0
+    cpu.d[1] = 0; // Test bit 0
     cpu.step_instruction(&mut memory);
     assert!(!cpu.get_flag(flags::ZERO)); // Bit 0 is set
 }
@@ -42,7 +45,7 @@ fn test_btst_register_bit_clear() {
     let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0x0300]); // BTST D1, D0
     cpu.d[0] = 0x02; // Bit 1 set, bit 0 clear
-    cpu.d[1] = 0;    // Test bit 0
+    cpu.d[1] = 0; // Test bit 0
     cpu.step_instruction(&mut memory);
     assert!(cpu.get_flag(flags::ZERO)); // Bit 0 is clear
 }
@@ -100,7 +103,7 @@ fn test_bclr_register() {
     let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0x0380]); // BCLR D1, D0 (bit number in D1, clear in D0)
     cpu.d[0] = 0x10; // Bit 4 set
-    cpu.d[1] = 4;    // Clear bit 4
+    cpu.d[1] = 4; // Clear bit 4
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.d[0] & 0x10, 0); // Bit 4 cleared
     assert!(!cpu.get_flag(flags::ZERO)); // Was set before

@@ -21,10 +21,10 @@
 //! | 0xE00000-0xFFFFFF  | 2 MB   | Work RAM (64KB mirrored)       |
 
 use super::MemoryInterface;
-use crate::vdp::Vdp;
-use crate::io::Io;
 use crate::apu::Apu;
 use crate::debugger::Debuggable;
+use crate::io::Io;
+use crate::vdp::Vdp;
 use serde_json::{json, Value};
 
 /// Sega Genesis Memory Bus
@@ -46,7 +46,7 @@ pub struct Bus {
 
     /// I/O ports (A10000-A1001F)
     pub io: Io,
-    
+
     /// Audio Processing Unit (YM2612 + PSG)
     pub apu: Apu,
 
@@ -79,7 +79,6 @@ impl Bus {
             tmss_unlocked: false,
         }
     }
-
 
     /// Load a ROM into the bus
     pub fn load_rom(&mut self, data: &[u8]) {
@@ -121,27 +120,31 @@ impl Bus {
                 self.z80_ram[(addr & 0x1FFF) as usize]
             }
             // YM2612 from 68k: 0xA04000-0xA04003
-            0xA04000..=0xA04003 => {
-                self.apu.fm.read((addr & 3) as u8)
-            }
+            0xA04000..=0xA04003 => self.apu.fm.read((addr & 3) as u8),
             0xA02000..=0xA0FFFF => {
                 // Z80 area bank registers and other hardware
                 0xFF
             }
 
             // I/O Ports: 0xA10000-0xA1001F
-            0xA10000..=0xA1001F => {
-                self.io.read(addr)
-            }
+            0xA10000..=0xA1001F => self.io.read(addr),
 
             // Z80 Bus Request: 0xA11100
             0xA11100..=0xA11101 => {
-                if self.z80_bus_request { 0x00 } else { 0x01 }
+                if self.z80_bus_request {
+                    0x00
+                } else {
+                    0x01
+                }
             }
 
             // Z80 Reset: 0xA11200
             0xA11200..=0xA11201 => {
-                if self.z80_reset { 0x00 } else { 0x01 }
+                if self.z80_reset {
+                    0x00
+                } else {
+                    0x01
+                }
             }
 
             // VDP Ports: 0xC00000-0xC0001F
@@ -153,9 +156,7 @@ impl Bus {
                 // VDP status
                 (self.vdp.read_status() >> 8) as u8
             }
-            0xC00006..=0xC00007 => {
-                (self.vdp.read_status() & 0xFF) as u8
-            }
+            0xC00006..=0xC00007 => (self.vdp.read_status() & 0xFF) as u8,
             0xC00008..=0xC0000F => {
                 // HV counter
                 (self.vdp.read_hv_counter() >> 8) as u8 // Just a stub for byte read
@@ -168,9 +169,7 @@ impl Bus {
             }
 
             // Work RAM: 0xE00000-0xFFFFFF (64KB mirrored)
-            0xE00000..=0xFFFFFF => {
-                self.work_ram[(addr & 0xFFFF) as usize]
-            }
+            0xE00000..=0xFFFFFF => self.work_ram[(addr & 0xFFFF) as usize],
 
             // Unmapped regions
             _ => 0xFF,
@@ -191,7 +190,7 @@ impl Bus {
             0xA00000..=0xA01FFF => {
                 self.z80_ram[(addr & 0x1FFF) as usize] = value;
             }
-            
+
             // YM2612 FM Chip: 0xA04000-0xA04003
             0xA04000..=0xA04003 => {
                 let port = (addr & 2) >> 1;
@@ -260,7 +259,7 @@ impl Bus {
     /// Read a word (16-bit, big-endian) from the memory map
     pub fn read_word(&mut self, address: u32) -> u16 {
         let addr = address & 0xFFFFFF;
-        
+
         // ROM Fast Path
         if addr <= 0x3FFFFF {
             let idx = addr as usize;
@@ -362,15 +361,14 @@ impl Bus {
             }
         }
 
-
         // Optimize Work RAM access
         if addr >= 0xE00000 {
             let r_addr = (addr & 0xFFFF) as usize;
             if r_addr <= 0xFFFC {
-                return ((self.work_ram[r_addr] as u32) << 24) |
-                       ((self.work_ram[r_addr + 1] as u32) << 16) |
-                       ((self.work_ram[r_addr + 2] as u32) << 8) |
-                       (self.work_ram[r_addr + 3] as u32);
+                return ((self.work_ram[r_addr] as u32) << 24)
+                    | ((self.work_ram[r_addr + 1] as u32) << 16)
+                    | ((self.work_ram[r_addr + 2] as u32) << 8)
+                    | (self.work_ram[r_addr + 3] as u32);
             }
         }
 
@@ -417,12 +415,12 @@ impl Bus {
 
         // If it's a 68k transfer (mode bit 7=0), bit 22 decides if it's ROM or RAM
         // Register 23 bit 6 MUST be 0 for 68k DMA.
-        // A22 is bit 22 of source. If A22=1, it's RAM. 
+        // A22 is bit 22 of source. If A22=1, it's RAM.
         // On Genesis, RAM is at $FF0000-$FFFFFF. VDP DMA forces A23=1.
         if (source & 0x400000) != 0 {
             source |= 0xFF0000; // Map to RAM range (0xFF0000-0xFFFFFF)
         }
-        
+
         // Transfer
         for _ in 0..length {
             let word = self.read_word(source);
@@ -541,7 +539,6 @@ mod tests {
         assert_eq!(bus.read_byte(0xFF0000), 0x42);
     }
 
-
     #[test]
     fn test_z80_ram() {
         let mut bus = Bus::new();
@@ -605,7 +602,6 @@ mod tests {
         // Verify reading from ROM area now returns 0xFF (unmapped)
         assert_eq!(bus.read_byte(0x000000), 0xFF);
     }
-
     #[test]
     fn test_dma_transfer_ram_to_vram() {
         let mut bus = Bus::new();

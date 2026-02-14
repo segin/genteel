@@ -2,7 +2,7 @@ use serde_json::Value;
 
 pub mod gdb;
 
-pub use gdb::{GdbServer, GdbRegisters, GdbMemory, StopReason, DEFAULT_PORT};
+pub use gdb::{GdbMemory, GdbRegisters, GdbServer, StopReason, DEFAULT_PORT};
 
 /// A trait for components that can be debugged.
 pub trait Debuggable {
@@ -12,4 +12,3 @@ pub trait Debuggable {
     /// Writes the component's state from a JSON value.
     fn write_state(&mut self, state: &Value);
 }
-

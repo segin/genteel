@@ -9,26 +9,26 @@ macro_rules! println_safe {
     }};
 }
 
-pub mod cpu;
 pub mod apu;
-pub mod vdp;
-pub mod memory;
-pub mod io;
-pub mod z80;
-pub mod debugger;
-pub mod input;
-pub mod frontend;
 pub mod audio;
+pub mod cpu;
+pub mod debugger;
+pub mod frontend;
+pub mod input;
+pub mod io;
+pub mod memory;
+pub mod vdp;
+pub mod z80;
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use apu::Apu;
 use cpu::Cpu;
-use z80::Z80;
+use debugger::{GdbMemory, GdbRegisters, GdbServer, StopReason};
+use input::InputManager;
 use memory::bus::Bus;
 use memory::{SharedBus, Z80Bus};
-use apu::Apu;
-use input::InputManager;
-use debugger::{GdbServer, GdbRegisters, GdbMemory, StopReason};
+use std::cell::RefCell;
+use std::rc::Rc;
+use z80::Z80;
 
 pub struct Emulator {
     pub cpu: Cpu,
@@ -73,7 +73,10 @@ impl Emulator {
             z80_trace_count: 0,
         };
 
-        { let mut bus = emulator.bus.borrow_mut(); emulator.cpu.reset(&mut *bus); }
+        {
+            let mut bus = emulator.bus.borrow_mut();
+            emulator.cpu.reset(&mut *bus);
+        }
         emulator.z80.reset();
 
         emulator
@@ -97,22 +100,25 @@ impl Emulator {
         Ok(())
     }
 
-    fn read_rom_with_limit<R: std::io::Read>(reader: &mut R, size: u64) -> std::io::Result<Vec<u8>> {
+    fn read_rom_with_limit<R: std::io::Read>(
+        reader: &mut R,
+        size: u64,
+    ) -> std::io::Result<Vec<u8>> {
         use std::io::Read;
         const MAX_ROM_SIZE: u64 = 32 * 1024 * 1024; // 32 MB
 
         if size > MAX_ROM_SIZE {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("ROM size {} exceeds limit of {} bytes", size, MAX_ROM_SIZE)
+                format!("ROM size {} exceeds limit of {} bytes", size, MAX_ROM_SIZE),
             ));
         }
 
         // Check if size fits in usize (for 32-bit/16-bit systems)
         if size > usize::MAX as u64 {
-             return Err(std::io::Error::new(
+            return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                "ROM size too large for memory address space"
+                "ROM size too large for memory address space",
             ));
         }
 
@@ -122,7 +128,7 @@ impl Emulator {
         if data.len() as u64 > MAX_ROM_SIZE {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                "Decompressed ROM size exceeds limit"
+                "Decompressed ROM size exceeds limit",
             ));
         }
 
@@ -131,8 +137,6 @@ impl Emulator {
 
     /// Load ROM from a zip file (finds first .bin, .md, .gen, or .smd file)
     fn load_rom_from_zip(path: &str) -> std::io::Result<Vec<u8>> {
-
-
         let file = std::fs::File::open(path)?;
         let mut archive = zip::ZipArchive::new(file)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
@@ -142,7 +146,8 @@ impl Emulator {
 
         // Find first ROM file in archive
         for i in 0..archive.len() {
-            let mut entry = archive.by_index(i)
+            let mut entry = archive
+                .by_index(i)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
             let name = entry.name().to_lowercase();
             if rom_extensions.iter().any(|ext| name.ends_with(ext)) {
@@ -155,7 +160,7 @@ impl Emulator {
 
         Err(std::io::Error::new(
             std::io::ErrorKind::NotFound,
-            "No ROM file found in zip archive"
+            "No ROM file found in zip archive",
         ))
     }
 
@@ -193,24 +198,27 @@ impl Emulator {
     pub fn step_frame_internal(&mut self) {
         self.internal_frame_count += 1;
 
-
         if self.internal_frame_count % 60 == 0 || self.internal_frame_count < 5 {
-                 let bus = self.bus.borrow();
-                 let disp_en = bus.vdp.display_enabled();
-                 let dma_en = bus.vdp.dma_enabled();
+            let bus = self.bus.borrow();
+            let disp_en = bus.vdp.display_enabled();
+            let dma_en = bus.vdp.dma_enabled();
 
-                 let cram_sum: u32 = bus.vdp.cram.iter().take(128).map(|&b| b as u32).sum();
+            let cram_sum: u32 = bus.vdp.cram.iter().take(128).map(|&b| b as u32).sum();
 
-                 let z80_pc = self.z80.pc;
-                 let z80_reset = bus.z80_reset;
-                 let z80_req = bus.z80_bus_request;
-                 let z80_op = if (z80_pc as usize) < bus.z80_ram.len() { bus.z80_ram[z80_pc as usize] } else { 0 };
+            let z80_pc = self.z80.pc;
+            let z80_reset = bus.z80_reset;
+            let z80_req = bus.z80_bus_request;
+            let z80_op = if (z80_pc as usize) < bus.z80_ram.len() {
+                bus.z80_ram[z80_pc as usize]
+            } else {
+                0
+            };
 
-                 eprintln!("Frame {}: 68k={:06X} Disp={} DMA={} CRAM_SUM={} IntMask={} | Z80={:04X} [{:02X}] Rst={} Req={}",
+            eprintln!("Frame {}: 68k={:06X} Disp={} DMA={} CRAM_SUM={} IntMask={} | Z80={:04X} [{:02X}] Rst={} Req={}",
                      self.internal_frame_count, self.cpu.pc, disp_en, dma_en, cram_sum,
                      (self.cpu.sr >> 8) & 7,
                      z80_pc, z80_op, z80_reset, z80_req);
-            }
+        }
 
         // Genesis timing constants (NTSC):
         // M68k: 7.67 MHz, Z80: 3.58 MHz
@@ -261,8 +269,11 @@ impl Emulator {
                     let bus = self.bus.borrow();
                     let prev = self.z80_last_bus_req;
                     if bus.z80_bus_request != prev {
-                         eprintln!("DEBUG: Bus Req Changed: {} -> {} at 68k PC={:06X}", prev, bus.z80_bus_request, self.cpu.pc);
-                         self.z80_last_bus_req = bus.z80_bus_request;
+                        eprintln!(
+                            "DEBUG: Bus Req Changed: {} -> {} at 68k PC={:06X}",
+                            prev, bus.z80_bus_request, self.cpu.pc
+                        );
+                        self.z80_last_bus_req = bus.z80_bus_request;
                     }
                     (!bus.z80_reset && !bus.z80_bus_request, bus.z80_reset)
                 };
@@ -288,18 +299,19 @@ impl Emulator {
                 self.z80_last_reset = z80_is_reset;
 
                 if z80_can_run && self.internal_frame_count > 0 {
-                     if self.z80_trace_count < 5000 {
-                         self.z80.debug = true;
-                         self.z80_trace_count += 1; // Logic slightly wrong here (step count vs frame), but enables flag
-                     } else {
-                         self.z80.debug = false;
-                     }
+                    if self.z80_trace_count < 5000 {
+                        self.z80.debug = true;
+                        self.z80_trace_count += 1; // Logic slightly wrong here (step count vs frame), but enables flag
+                    } else {
+                        self.z80.debug = false;
+                    }
                 } else {
-                     self.z80.debug = false;
+                    self.z80.debug = false;
                 }
 
                 // Trigger Z80 VInt at start of VBlank
-                if line == active_lines && cycles_scanline < m68k_cycles as u32 + 5 && !z80_is_reset {
+                if line == active_lines && cycles_scanline < m68k_cycles as u32 + 5 && !z80_is_reset
+                {
                     self.z80.trigger_interrupt(0xFF);
                 }
 
@@ -378,7 +390,10 @@ impl Emulator {
         let mut gdb = GdbServer::new(port)?;
 
         println!("Waiting for GDB connection on port {}...", port);
-        println!("Connect with: m68k-elf-gdb -ex \"target remote :{}\" <elf_file>", port);
+        println!(
+            "Connect with: m68k-elf-gdb -ex \"target remote :{}\" <elf_file>",
+            port
+        );
 
         // Wait for connection
         while !gdb.accept() {
@@ -399,9 +414,10 @@ impl Emulator {
                     pc: self.cpu.pc,
                 };
 
-
                 // Create memory accessor
-                let mut mem_access = BusGdbMemory { bus: self.bus.clone() };
+                let mut mem_access = BusGdbMemory {
+                    bus: self.bus.clone(),
+                };
 
                 let response = gdb.process_command(&cmd, &mut regs, &mut mem_access);
 
@@ -437,11 +453,13 @@ impl Emulator {
                 // Check for breakpoint
                 if gdb.is_breakpoint(self.cpu.pc) {
                     gdb.stop_reason = StopReason::Breakpoint;
-                    gdb.send_packet(&format!("S{:02x}", StopReason::Breakpoint.signal())).ok();
+                    gdb.send_packet(&format!("S{:02x}", StopReason::Breakpoint.signal()))
+                        .ok();
                     running = false;
                 } else if stepping {
                     gdb.stop_reason = StopReason::Step;
-                    gdb.send_packet(&format!("S{:02x}", StopReason::Step.signal())).ok();
+                    gdb.send_packet(&format!("S{:02x}", StopReason::Step.signal()))
+                        .ok();
                     running = false;
                 }
             } else {
@@ -521,11 +539,11 @@ impl Emulator {
 
     /// Run with winit window (interactive play mode)
     pub fn run_with_frontend(mut self) -> Result<(), String> {
-        use winit::event::{Event, WindowEvent, ElementState, KeyEvent};
+        use pixels::{Pixels, SurfaceTexture};
+        use winit::event::{ElementState, Event, KeyEvent, WindowEvent};
         use winit::event_loop::{ControlFlow, EventLoop};
         use winit::keyboard::{KeyCode, PhysicalKey};
         use winit::window::WindowBuilder;
-        use pixels::{Pixels, SurfaceTexture};
         println!("Controls: Arrow keys=D-pad, Z=A, X=B, C=C, Enter=Start");
 
         println!("Press Escape to quit.");
@@ -550,16 +568,14 @@ impl Emulator {
 
         let mut pixels = {
             let window_size = window.inner_size();
-            let surface_texture = SurfaceTexture::new(
-                window_size.width,
-                window_size.height,
-                &window
-            );
+            let surface_texture =
+                SurfaceTexture::new(window_size.width, window_size.height, &window);
             Pixels::new(
                 frontend::GENESIS_WIDTH,
                 frontend::GENESIS_HEIGHT,
-                surface_texture
-            ).map_err(|e| e.to_string())?
+                surface_texture,
+            )
+            .map_err(|e| e.to_string())?
         };
 
         // Audio setup
@@ -571,77 +587,86 @@ impl Emulator {
         let mut frame_count: u64 = 0;
 
         println!("Starting event loop...");
-        event_loop.run(move |event, target| {
-            target.set_control_flow(ControlFlow::Poll);
+        event_loop
+            .run(move |event, target| {
+                target.set_control_flow(ControlFlow::Poll);
 
-            match event {
-                Event::Resumed => {
-                     println!("Event::Resumed");
-                }
-
-                Event::WindowEvent { event, .. } => match event {
-                    WindowEvent::CloseRequested => {
-                         println!("Using CloseRequested to exit");
-                        target.exit();
+                match event {
+                    Event::Resumed => {
+                        println!("Event::Resumed");
                     }
 
-                    WindowEvent::KeyboardInput { event: KeyEvent { physical_key, state, .. }, .. } => {
-                        if let PhysicalKey::Code(keycode) = physical_key {
-                            let pressed = state == ElementState::Pressed;
-
-                            if keycode == KeyCode::Escape && pressed {
-                                println!("Escape pressed, exiting");
-                                target.exit();
-                                return;
-                            }
-
-                            if let Some((button, _)) = frontend::keycode_to_button(keycode) {
-                                input.p1.set_button(button, pressed);
-                            }
-                        }
-                    }
-
-                    WindowEvent::Resized(size) => {
-                         if size.width > 0 && size.height > 0 {
-                            pixels.resize_surface(size.width, size.height).ok();
-                        }
-                    }
-
-                    WindowEvent::RedrawRequested => {
-                        frame_count += 1;
-
-                        // Debug: Print every 60 frames (about once per second)
-                        if frame_count % 60 == 1 {
-                            self.print_debug_info(frame_count);
-                        }
-
-                        // Run one frame of emulation
-                        self.step_frame_with_input(input.p1.clone(), input.p2.clone());
-                        
-                        // Process audio
-                        self.process_audio(&audio_buffer);
-                        
-                        // Render
-                        if let Err(e) = self.render_frame(&mut pixels) {
-                            eprintln!("Render error: {}", e);
+                    Event::WindowEvent { event, .. } => match event {
+                        WindowEvent::CloseRequested => {
+                            println!("Using CloseRequested to exit");
                             target.exit();
                         }
+
+                        WindowEvent::KeyboardInput {
+                            event:
+                                KeyEvent {
+                                    physical_key,
+                                    state,
+                                    ..
+                                },
+                            ..
+                        } => {
+                            if let PhysicalKey::Code(keycode) = physical_key {
+                                let pressed = state == ElementState::Pressed;
+
+                                if keycode == KeyCode::Escape && pressed {
+                                    println!("Escape pressed, exiting");
+                                    target.exit();
+                                    return;
+                                }
+
+                                if let Some((button, _)) = frontend::keycode_to_button(keycode) {
+                                    input.p1.set_button(button, pressed);
+                                }
+                            }
+                        }
+
+                        WindowEvent::Resized(size) => {
+                            if size.width > 0 && size.height > 0 {
+                                pixels.resize_surface(size.width, size.height).ok();
+                            }
+                        }
+
+                        WindowEvent::RedrawRequested => {
+                            frame_count += 1;
+
+                            // Debug: Print every 60 frames (about once per second)
+                            if frame_count % 60 == 1 {
+                                self.print_debug_info(frame_count);
+                            }
+
+                            // Run one frame of emulation
+                            self.step_frame_with_input(input.p1.clone(), input.p2.clone());
+
+                            // Process audio
+                            self.process_audio(&audio_buffer);
+
+                            // Render
+                            if let Err(e) = self.render_frame(&mut pixels) {
+                                eprintln!("Render error: {}", e);
+                                target.exit();
+                            }
+                        }
+
+                        _ => {}
+                    },
+
+                    Event::AboutToWait => {
+                        // Request a redraw just before waiting for events, only on redraw
+                        // println!("AboutToWait - requesting redraw"); // Too spammy?
+                        window.request_redraw();
                     }
 
                     _ => {}
-                },
-
-                Event::AboutToWait => {
-                    // Request a redraw just before waiting for events, only on redraw
-                    // println!("AboutToWait - requesting redraw"); // Too spammy?
-                    window.request_redraw();
                 }
-
-                _ => {}
-            }
-        }).map_err(|e| e.to_string())
+            })
+            .map_err(|e| e.to_string())
     }
-
 }
 
 fn print_usage() {
@@ -680,65 +705,88 @@ impl GdbMemory for BusGdbMemory {
         // If the intent was to log Z80Bus's internal write, that function is not in this file.
         // For now, applying the eprintln to the GDB memory write if it targets Z80 RAM.
         // This assumes the GDB server can write directly to Z80 RAM via the main bus.
-        if addr < 0x2000 { // This condition is a guess based on the user's snippet
-            eprintln!("DEBUG: GDB Z80 RAM WRITE: addr=0x{:04X} val=0x{:02X}", addr, value);
+        if addr < 0x2000 {
+            // This condition is a guess based on the user's snippet
+            eprintln!(
+                "DEBUG: GDB Z80 RAM WRITE: addr=0x{:04X} val=0x{:02X}",
+                addr, value
+            );
         }
         self.bus.borrow_mut().write_byte(addr, value);
     }
 }
 
-fn main() {
-    let args: Vec<String> = std::env::args().collect();
+#[derive(Debug, Default)]
+struct Config {
+    rom_path: Option<String>,
+    script_path: Option<String>,
+    headless_frames: Option<u32>,
+    gdb_port: Option<u16>,
+    show_help: bool,
+}
 
-    let mut rom_path: Option<String> = None;
-    let mut script_path: Option<String> = None;
-    let mut headless_frames: Option<u32> = None;
-    let mut gdb_port: Option<u16> = None;
+impl Config {
+    fn from_args<I>(args: I) -> Self
+    where
+        I: IntoIterator<Item = String>,
+    {
+        let mut config = Config::default();
+        let mut iter = args.into_iter().skip(1).peekable();
 
-    let mut i = 1;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--help" | "-h" => {
-                print_usage();
-                return;
-            }
-            "--script" => {
-                i += 1;
-                if i < args.len() {
-                    script_path = Some(args[i].clone());
+        while let Some(arg) = iter.next() {
+            match arg.as_str() {
+                "--help" | "-h" => {
+                    config.show_help = true;
                 }
-            }
-            "--headless" => {
-                i += 1;
-                if i < args.len() {
-                    headless_frames = args[i].parse().ok();
+                "--script" => {
+                    config.script_path = iter.next();
                 }
-            }
-            "--gdb" => {
-                let mut port = debugger::DEFAULT_PORT;
-                // Check if next arg is a number
-                if i + 1 < args.len() && !args[i + 1].starts_with('-') {
-                    if let Ok(p) = args[i + 1].parse() {
-                        port = p;
-                        i += 1;
+                "--headless" => {
+                    if let Some(next) = iter.next() {
+                        config.headless_frames = next.parse().ok();
                     }
                 }
-                gdb_port = Some(port);
-            }
-            arg if !arg.starts_with('-') => {
-                if let Some(ref mut path) = rom_path {
-                    path.push(' ');
-                    path.push_str(arg);
-                } else {
-                    rom_path = Some(arg.to_string());
+                "--gdb" => {
+                    let mut port = debugger::DEFAULT_PORT;
+                    if let Some(next) = iter.peek() {
+                        if !next.starts_with('-') {
+                            if let Ok(p) = next.parse() {
+                                port = p;
+                                iter.next(); // consume it
+                            }
+                        }
+                    }
+                    config.gdb_port = Some(port);
+                }
+                arg if !arg.starts_with('-') => {
+                    if let Some(ref mut path) = config.rom_path {
+                        path.push(' ');
+                        path.push_str(arg);
+                    } else {
+                        config.rom_path = Some(arg.to_string());
+                    }
+                }
+                _ => {
+                    eprintln!("Unknown option: {}", arg);
                 }
             }
-            _ => {
-                eprintln!("Unknown option: {}", args[i]);
-            }
         }
-        i += 1;
+        config
     }
+}
+
+fn main() {
+    let config = Config::from_args(std::env::args());
+
+    if config.show_help {
+        print_usage();
+        return;
+    }
+
+    let mut rom_path = config.rom_path;
+    let script_path = config.script_path;
+    let headless_frames = config.headless_frames;
+    let gdb_port = config.gdb_port;
 
     let mut emulator = Emulator::new();
 
@@ -786,7 +834,6 @@ fn main() {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -832,11 +879,7 @@ mod tests {
         // LD A, 0x80      (3E 80)
         // LD (0x1FFD), A  (32 FD 1F)
         // HALT            (76)
-        let z80_code = vec![
-            0x3E, 0x80,
-            0x32, 0xFD, 0x1F,
-            0x76
-        ];
+        let z80_code = vec![0x3E, 0x80, 0x32, 0xFD, 0x1F, 0x76];
 
         // Ensure Z80 RAM is clear initially (Emulator::new clears it)
         // First, let Z80 run to dirty the PC (simulate running garbage or previous code)
@@ -862,7 +905,10 @@ mod tests {
 
         // 3. Load Code to Z80 RAM (0xA00000)
         for (i, byte) in z80_code.iter().enumerate() {
-            emulator.bus.borrow_mut().write_byte(0xA00000 + i as u32, *byte);
+            emulator
+                .bus
+                .borrow_mut()
+                .write_byte(0xA00000 + i as u32, *byte);
         }
 
         // 4. Release Bus (Write 0 to 0xA11100)
@@ -881,5 +927,64 @@ mod tests {
         // If hack is removed, this passes ONLY if Z80 ran correctly (PC=0 at start).
         let val = emulator.bus.borrow_mut().read_byte(0xA01FFD);
         assert_eq!(val, 0x80, "Z80 should have written 0x80 to 0xA01FFD");
+    }
+
+    #[test]
+    fn test_config_parsing() {
+        let args = vec!["genteel".to_string(), "rom.bin".to_string()];
+        let config = Config::from_args(args);
+        assert_eq!(config.rom_path, Some("rom.bin".to_string()));
+        assert!(!config.show_help);
+
+        let args = vec!["genteel".to_string(), "--help".to_string()];
+        let config = Config::from_args(args);
+        assert!(config.show_help);
+
+        let args = vec![
+            "genteel".to_string(),
+            "--script".to_string(),
+            "script.txt".to_string(),
+            "rom.bin".to_string(),
+        ];
+        let config = Config::from_args(args);
+        assert_eq!(config.script_path, Some("script.txt".to_string()));
+        assert_eq!(config.rom_path, Some("rom.bin".to_string()));
+
+        let args = vec![
+            "genteel".to_string(),
+            "--headless".to_string(),
+            "60".to_string(),
+            "rom.bin".to_string(),
+        ];
+        let config = Config::from_args(args);
+        assert_eq!(config.headless_frames, Some(60));
+        assert_eq!(config.rom_path, Some("rom.bin".to_string()));
+
+        let args = vec![
+            "genteel".to_string(),
+            "--gdb".to_string(),
+            "rom.bin".to_string(),
+        ];
+        let config = Config::from_args(args);
+        assert_eq!(config.gdb_port, Some(crate::debugger::DEFAULT_PORT));
+        assert_eq!(config.rom_path, Some("rom.bin".to_string()));
+
+        let args = vec![
+            "genteel".to_string(),
+            "--gdb".to_string(),
+            "1234".to_string(),
+            "rom.bin".to_string(),
+        ];
+        let config = Config::from_args(args);
+        assert_eq!(config.gdb_port, Some(1234));
+        assert_eq!(config.rom_path, Some("rom.bin".to_string()));
+
+        let args = vec![
+            "genteel".to_string(),
+            "rom".to_string(),
+            "part2.bin".to_string(),
+        ];
+        let config = Config::from_args(args);
+        assert_eq!(config.rom_path, Some("rom part2.bin".to_string()));
     }
 }

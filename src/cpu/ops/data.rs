@@ -1,25 +1,37 @@
-use crate::cpu::Cpu;
-use crate::cpu::decoder::{Size, AddressingMode};
 use crate::cpu::addressing::{calculate_ea, EffectiveAddress};
+use crate::cpu::decoder::{AddressingMode, Size};
 use crate::cpu::flags;
+use crate::cpu::Cpu;
 use crate::memory::MemoryInterface;
 
-pub fn exec_move<M: MemoryInterface>(cpu: &mut Cpu, size: Size, src: AddressingMode, dst: AddressingMode, memory: &mut M) -> u32 {
+pub fn exec_move<M: MemoryInterface>(
+    cpu: &mut Cpu,
+    size: Size,
+    src: AddressingMode,
+    dst: AddressingMode,
+    memory: &mut M,
+) -> u32 {
     let mut cycles = 4u32;
 
     // Calculate source EA
     let (src_ea, src_cycles) = calculate_ea(src, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     cycles += src_cycles;
-    if cpu.pending_exception { return cycles; }
+    if cpu.pending_exception {
+        return cycles;
+    }
 
     // Read source value
     let value = cpu.cpu_read_ea(src_ea, size, memory);
-    if cpu.pending_exception { return cycles; }
+    if cpu.pending_exception {
+        return cycles;
+    }
 
     // Calculate destination EA
     let (dst_ea, dst_cycles) = calculate_ea(dst, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     cycles += dst_cycles;
-    if cpu.pending_exception { return cycles; }
+    if cpu.pending_exception {
+        return cycles;
+    }
 
     // Write to destination
     cpu.cpu_write_ea(dst_ea, size, value, memory);
@@ -32,7 +44,13 @@ pub fn exec_move<M: MemoryInterface>(cpu: &mut Cpu, size: Size, src: AddressingM
     cycles
 }
 
-pub fn exec_movea<M: MemoryInterface>(cpu: &mut Cpu, size: Size, src: AddressingMode, dst_reg: u8, memory: &mut M) -> u32 {
+pub fn exec_movea<M: MemoryInterface>(
+    cpu: &mut Cpu,
+    size: Size,
+    src: AddressingMode,
+    dst_reg: u8,
+    memory: &mut M,
+) -> u32 {
     let mut cycles = 4u32;
 
     let (src_ea, src_cycles) = calculate_ea(src, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
@@ -64,7 +82,12 @@ pub fn exec_moveq(cpu: &mut Cpu, dst_reg: u8, data: i8) -> u32 {
     4
 }
 
-pub fn exec_lea<M: MemoryInterface>(cpu: &mut Cpu, src: AddressingMode, dst_reg: u8, memory: &mut M) -> u32 {
+pub fn exec_lea<M: MemoryInterface>(
+    cpu: &mut Cpu,
+    src: AddressingMode,
+    dst_reg: u8,
+    memory: &mut M,
+) -> u32 {
     let (ea, cycles) = calculate_ea(src, Size::Long, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
 
     if let EffectiveAddress::Memory(addr) = ea {
@@ -74,7 +97,12 @@ pub fn exec_lea<M: MemoryInterface>(cpu: &mut Cpu, src: AddressingMode, dst_reg:
     4 + cycles
 }
 
-pub fn exec_clr<M: MemoryInterface>(cpu: &mut Cpu, size: Size, dst: AddressingMode, memory: &mut M) -> u32 {
+pub fn exec_clr<M: MemoryInterface>(
+    cpu: &mut Cpu,
+    size: Size,
+    dst: AddressingMode,
+    memory: &mut M,
+) -> u32 {
     let (dst_ea, cycles) = calculate_ea(dst, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
 
     cpu.cpu_write_ea(dst_ea, size, 0, memory);
@@ -85,7 +113,14 @@ pub fn exec_clr<M: MemoryInterface>(cpu: &mut Cpu, size: Size, dst: AddressingMo
     4 + cycles
 }
 
-pub fn exec_movep<M: MemoryInterface>(cpu: &mut Cpu, size: Size, reg: u8, an: u8, reg_to_mem: bool, memory: &mut M) -> u32 {
+pub fn exec_movep<M: MemoryInterface>(
+    cpu: &mut Cpu,
+    size: Size,
+    reg: u8,
+    an: u8,
+    reg_to_mem: bool,
+    memory: &mut M,
+) -> u32 {
     let disp = cpu.read_word(cpu.pc, memory) as i16;
     cpu.pc = cpu.pc.wrapping_add(2);
 
@@ -117,7 +152,8 @@ pub fn exec_movep<M: MemoryInterface>(cpu: &mut Cpu, size: Size, reg: u8, an: u8
                 let b2 = memory.read_byte(addr.wrapping_add(2));
                 let b1 = memory.read_byte(addr.wrapping_add(4));
                 let b0 = memory.read_byte(addr.wrapping_add(6));
-                cpu.d[reg as usize] = ((b3 as u32) << 24) | ((b2 as u32) << 16) | ((b1 as u32) << 8) | (b0 as u32);
+                cpu.d[reg as usize] =
+                    ((b3 as u32) << 24) | ((b2 as u32) << 16) | ((b1 as u32) << 8) | (b0 as u32);
             }
             24
         }
@@ -125,7 +161,13 @@ pub fn exec_movep<M: MemoryInterface>(cpu: &mut Cpu, size: Size, reg: u8, an: u8
     }
 }
 
-pub fn exec_movem<M: MemoryInterface>(cpu: &mut Cpu, size: Size, to_memory: bool, ea: AddressingMode, memory: &mut M) -> u32 {
+pub fn exec_movem<M: MemoryInterface>(
+    cpu: &mut Cpu,
+    size: Size,
+    to_memory: bool,
+    ea: AddressingMode,
+    memory: &mut M,
+) -> u32 {
     let mask = cpu.read_word(cpu.pc, memory);
     cpu.pc = cpu.pc.wrapping_add(2);
 
@@ -144,7 +186,8 @@ pub fn exec_movem<M: MemoryInterface>(cpu: &mut Cpu, size: Size, to_memory: bool
             addr
         }
         _ => {
-            let (ea_result, ea_cycles) = calculate_ea(ea, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
+            let (ea_result, ea_cycles) =
+                calculate_ea(ea, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
             cycles += ea_cycles;
             match ea_result {
                 EffectiveAddress::Memory(addr) => addr,
@@ -229,7 +272,8 @@ pub fn exec_movem<M: MemoryInterface>(cpu: &mut Cpu, size: Size, to_memory: bool
 
 pub fn exec_pea<M: MemoryInterface>(cpu: &mut Cpu, src: AddressingMode, memory: &mut M) -> u32 {
     let mut cycles = 12u32;
-    let (src_ea, src_cycles) = calculate_ea(src, Size::Long, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
+    let (src_ea, src_cycles) =
+        calculate_ea(src, Size::Long, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     cycles += src_cycles;
 
     let addr = match src_ea {
@@ -248,17 +292,20 @@ pub fn exec_exg(cpu: &mut Cpu, rx: u8, ry: u8, mode: u8) -> u32 {
     // 10001 (17): Dx, Ay
 
     match mode {
-        0x08 => { // Dx, Dy
+        0x08 => {
+            // Dx, Dy
             let tmp = cpu.d[rx as usize];
             cpu.d[rx as usize] = cpu.d[ry as usize];
             cpu.d[ry as usize] = tmp;
         }
-        0x09 => { // Ax, Ay
+        0x09 => {
+            // Ax, Ay
             let tmp = cpu.a[rx as usize];
             cpu.a[rx as usize] = cpu.a[ry as usize];
             cpu.a[ry as usize] = tmp;
         }
-        0x11 => { // Dx, Ay
+        0x11 => {
+            // Dx, Ay
             let tmp = cpu.d[rx as usize];
             cpu.d[rx as usize] = cpu.a[ry as usize];
             cpu.a[ry as usize] = tmp;
@@ -266,7 +313,7 @@ pub fn exec_exg(cpu: &mut Cpu, rx: u8, ry: u8, mode: u8) -> u32 {
         _ => {
             // Should not happen if decoder is correct
             #[cfg(debug_assertions)]
-             eprintln!("Invalid EXG mode: {:02X}", mode);
+            eprintln!("Invalid EXG mode: {:02X}", mode);
         }
     }
 
