@@ -185,11 +185,32 @@ fn regression_add_hl_sp_flags() {
     assert!(c.get_flag(flags::PARITY));
 }
 
-// Bug: BIT instruction H flag is always set
+// Bug: BIT instruction H flag should always be set
 #[test]
-fn regression_bit_h_flag() {
-    let mut c = z80(&[0xCB, 0x47]); // BIT 0, A
+fn regression_bit_sets_h_flag() {
+    // BIT 0, A
+    let mut c = z80(&[0xCB, 0x47]);
     c.a = 0x00;
+    c.step();
+    assert!(c.get_flag(flags::HALF_CARRY));
+
+    // BIT 7, B
+    let mut c = z80(&[0xCB, 0x78]);
+    c.b = 0x00;
+    c.step();
+    assert!(c.get_flag(flags::HALF_CARRY));
+
+    // BIT 0, (HL)
+    let mut c = z80(&[0xCB, 0x46]);
+    c.set_hl(0x1000);
+    c.memory.write_byte(0x1000 as u32, 0x00);
+    c.step();
+    assert!(c.get_flag(flags::HALF_CARRY));
+
+    // BIT 4, (IX+5) -> DD CB 05 66
+    let mut c = z80(&[0xDD, 0xCB, 0x05, 0x66]);
+    c.ix = 0x2000;
+    c.memory.write_byte(0x2005 as u32, 0x00);
     c.step();
     assert!(c.get_flag(flags::HALF_CARRY));
 }
