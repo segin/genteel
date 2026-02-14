@@ -400,4 +400,29 @@ mod tests {
         assert_eq!(manager.frame(), 0);
         assert!(!manager.is_complete());
     }
+
+    #[test]
+    fn test_input_manager_reset() {
+        let mut manager = InputManager::new();
+
+        // Manually set state to simulate playback
+        manager.current_frame = 100;
+        manager.last_input.p1.a = true;
+        manager.last_input.p2.start = true;
+
+        // Verify setup
+        assert_eq!(manager.frame(), 100);
+        assert!(manager.last_input.p1.a);
+
+        // Perform reset
+        manager.reset();
+
+        // Verify reset
+        assert_eq!(manager.frame(), 0);
+
+        // Verify last_input is cleared (default)
+        // We check a few buttons to ensure it's reset
+        assert!(!manager.last_input.p1.a);
+        assert!(!manager.last_input.p2.start);
+    }
 }
