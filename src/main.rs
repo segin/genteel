@@ -44,6 +44,12 @@ pub struct Emulator {
     pub z80_trace_count: u32,
 }
 
+impl Default for Emulator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Emulator {
     pub fn new() -> Self {
         let bus = Rc::new(RefCell::new(Bus::new()));
@@ -215,7 +221,7 @@ impl Emulator {
     }
 
     fn debug_log_frame(&self) {
-        if self.internal_frame_count % 60 == 0 || self.internal_frame_count < 5 {
+        if self.internal_frame_count.is_multiple_of(60) || self.internal_frame_count < 5 {
             let bus = self.bus.borrow();
             let disp_en = bus.vdp.display_enabled();
             let dma_en = bus.vdp.dma_enabled();
@@ -271,10 +277,10 @@ impl Emulator {
             let m68k_cycles = self.cpu.step_instruction(&mut *bus);
 
             // Step APU with cycles to update timers
-            bus.apu.fm.step(m68k_cycles as u32);
+            bus.apu.fm.step(m68k_cycles);
             drop(bus); // Release bus for Z80/etc checks
 
-            cycles_scanline += m68k_cycles as u32;
+            cycles_scanline += m68k_cycles;
 
             self.sync_z80(
                 m68k_cycles,
@@ -330,7 +336,7 @@ impl Emulator {
         }
 
         // Trigger Z80 VInt at start of VBlank
-        if line == active_lines && cycles_scanline < m68k_cycles as u32 + 5 && !z80_is_reset {
+        if line == active_lines && cycles_scanline < m68k_cycles + 5 && !z80_is_reset {
             self.z80.trigger_interrupt(0xFF);
         }
 
@@ -626,24 +632,22 @@ impl Emulator {
                         WindowEvent::KeyboardInput {
                             event:
                                 KeyEvent {
-                                    physical_key,
+                                    physical_key: PhysicalKey::Code(keycode),
                                     state,
                                     ..
                                 },
                             ..
                         } => {
-                            if let PhysicalKey::Code(keycode) = physical_key {
-                                let pressed = state == ElementState::Pressed;
+                            let pressed = state == ElementState::Pressed;
 
-                                if keycode == KeyCode::Escape && pressed {
-                                    println!("Escape pressed, exiting");
-                                    target.exit();
-                                    return;
-                                }
+                            if keycode == KeyCode::Escape && pressed {
+                                println!("Escape pressed, exiting");
+                                target.exit();
+                                return;
+                            }
 
-                                if let Some((button, _)) = frontend::keycode_to_button(keycode) {
-                                    input.p1.set_button(button, pressed);
-                                }
+                            if let Some((button, _)) = frontend::keycode_to_button(keycode) {
+                                input.p1.set_button(button, pressed);
                             }
                         }
 
@@ -662,7 +666,7 @@ impl Emulator {
                             }
 
                             // Run one frame of emulation
-                            self.step_frame_with_input(input.p1.clone(), input.p2.clone());
+                            self.step_frame_with_input(input.p1, input.p2);
 
                             // Process audio
                             self.process_audio(&audio_buffer);

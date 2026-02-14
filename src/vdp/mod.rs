@@ -120,6 +120,12 @@ pub struct Vdp {
     pub framebuffer: Vec<u16>,
 }
 
+impl Default for Vdp {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Vdp {
     pub fn new() -> Self {
         Vdp {
@@ -237,7 +243,7 @@ impl Vdp {
                 // Write CRAM
                 let mut val = value;
                 if (self.control_address & 0x01) != 0 {
-                    val = (val >> 8) | (val << 8);
+                    val = val.rotate_left(8);
                 }
                 let addr = (self.control_address & 0x7E) as usize;
                 // Pack 9-bit color to RGB565
@@ -248,7 +254,7 @@ impl Vdp {
                 let r5 = (r << 1) | (r >> 3);
                 let g6 = (g << 2) | (g >> 2);
                 let b5 = (b << 1) | (b >> 3);
-                self.cram_cache[addr >> 1] = ((r5 as u16) << 11) | ((g6 as u16) << 5) | (b5 as u16);
+                self.cram_cache[addr >> 1] = (r5 << 11) | (g6 << 5) | b5;
 
                 self.cram[addr] = (val & 0xFF) as u8;
                 self.cram[addr + 1] = (val >> 8) as u8;
@@ -316,20 +322,18 @@ impl Vdp {
                 // DMA requested
                 self.dma_pending = true;
             }
-        } else {
-            if (value & 0xC000) == 0x8000 {
-                // Register write
-                let reg = ((value >> 8) & 0x1F) as usize;
-                let val = (value & 0xFF) as u8;
-                if reg < 24 {
-                    self.registers[reg] = val;
-                }
-            } else {
-                // First word of command
-                self.control_code = ((value >> 14) & 0x03) as u8;
-                self.control_address = (value & 0x3FFF) as u16;
-                self.control_pending = true;
+        } else if (value & 0xC000) == 0x8000 {
+            // Register write
+            let reg = ((value >> 8) & 0x1F) as usize;
+            let val = (value & 0xFF) as u8;
+            if reg < 24 {
+                self.registers[reg] = val;
             }
+        } else {
+            // First word of command
+            self.control_code = ((value >> 14) & 0x03) as u8;
+            self.control_address = value & 0x3FFF;
+            self.control_pending = true;
         }
     }
 
@@ -777,8 +781,8 @@ impl Vdp {
         // Get horizontal scroll (per-screen for now)
         let hs_base = self.hscroll_address();
         let hs_addr = if is_plane_a { hs_base } else { hs_base + 2 };
-        let hi = self.vram[hs_addr as usize];
-        let lo = self.vram[hs_addr as usize + 1];
+        let hi = self.vram[hs_addr];
+        let lo = self.vram[hs_addr + 1];
         let h_scroll = (((hi as u16) << 8) | (lo as u16)) & 0x03FF;
         let scrolled_v = fetch_line.wrapping_add(v_scroll);
         let tile_v = (scrolled_v as usize / 8) % plane_h;
