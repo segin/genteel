@@ -110,9 +110,32 @@ impl Vdp {
         self.last_data_write = value;
 
         // DMA fill check (if configured)
-        if (self.registers[1] & 0x10) != 0 && (self.registers[23] & 0x80) != 0 {
-            // DMA fill implementation would go here
-            // For now, just handle normal write
+        // Reg 1 Bit 4 = DMA Enable
+        // Reg 23 Bit 7 = Mode (1=Fill/Copy)
+        // Reg 23 Bit 6 = Type (0=Fill, 1=Copy) - only if Bit 7 is 1
+        if (self.registers[1] & 0x10) != 0 && (self.registers[23] & 0xC0) == 0x80 {
+            // DMA Fill
+            self.dma_pending = false;
+            let mut length = self.dma_length();
+            if length == 0 {
+                length = 0x10000;
+            }
+            let fill_data = (value >> 8) as u8;
+            let inc = self.auto_increment() as u16;
+
+            let mut addr = self.control_address;
+
+            // The fill operation writes bytes to VRAM
+            for _ in 0..length {
+                if (addr as usize) < 0x10000 {
+                    self.vram[addr as usize] = fill_data;
+                }
+                addr = addr.wrapping_add(inc);
+            }
+            self.control_address = addr;
+
+            // Return early to avoid normal write logic
+            return;
         }
 
         match self.control_code & 0x0F {
@@ -309,35 +332,35 @@ impl Vdp {
     }
 
     pub fn execute_dma(&mut self) -> u32 {
-        // Simple VRAM fill implementation for now
-        let length = self.dma_length();
+        // Handle DMA operations that are triggered by Control Port writes (Copy)
+        // or CPU Bus transfers (handled by caller, but could be here if we had access to bus)
+
+        let mut length = self.dma_length();
+        if length == 0 {
+            length = 0x10000;
+        }
         let mode = self.registers[23] & 0xC0;
 
-        if mode == 0x80 {
-            // VRAM Fill
-            let data = self.last_data_write;
-            // Byte write to VRAM
-            let mut addr = self.control_address;
+        if mode == 0xC0 {
+            // VRAM Copy (Source VRAM -> Dest VRAM)
+            self.dma_pending = false;
+            let source_base = (self.dma_source() & 0xFFFF) as u16;
+            let mut source = source_base;
+            let mut dest = self.control_address;
             let inc = self.auto_increment() as u16;
 
             for _ in 0..length {
-                if (addr as usize) < 0x10000 {
-                    // VRAM fill writes the lower byte of data to the VRAM address
-                    // If address is even, it writes high byte of word?
-                    // VRAM is bytes.
-                    // Actually VRAM fill repeats the data to the VRAM port.
-                    // For now, simple implementation
-                    let val = if (addr & 1) == 0 {
-                        (data >> 8) as u8
-                    } else {
-                        (data & 0xFF) as u8
-                    };
-                    self.vram[addr as usize] = val;
+                if (source as usize) < 0x10000 && (dest as usize) < 0x10000 {
+                    let val = self.vram[source as usize];
+                    self.vram[dest as usize] = val;
                 }
-                addr = addr.wrapping_add(inc);
+                source = source.wrapping_add(1);
+                dest = dest.wrapping_add(inc);
             }
-            self.control_address = addr;
+            self.control_address = dest;
         }
+        // Note: Mode 0x80 (Fill) is handled in write_data() upon data write.
+        // Mode 0x00/0x40 (Transfer) is handled by the Bus/Main loop.
 
         length // Return cycles used (placeholder)
     }
@@ -738,3 +761,6 @@ impl Debuggable for Vdp {
         // Not implemented
     }
 }
+
+#[cfg(test)]
+mod tests_dma;

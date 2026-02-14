@@ -62,41 +62,21 @@ fn test_dma_fill_vram() {
     assert!(vdp.dma_pending, "DMA pending should be true after command");
 
     // 6. Write Fill Data (e.g. 0xAA)
-    // Writing to data port triggers the fill in hardware, but here we just prepare data.
-    // Also, this write modifies VRAM at 0x0000 and increments address to 0x0001.
+    // Writing to data port triggers the fill in hardware.
     vdp.write_data(0xAA00);
 
-    assert!(vdp.dma_pending, "DMA pending should persist after data write");
-
-    // 7. Execute DMA
-    let cycles = vdp.execute_dma();
-
-    assert!(!vdp.dma_pending, "DMA pending should be false after execution");
-    assert_eq!(cycles, 0x10, "Should return length as cycles/bytes transferred");
+    assert!(!vdp.dma_pending, "DMA pending should be false after fill execution");
 
     // Verify VRAM
-    // 0x0000: Written by write_data (0xAA)
-    // 0x0001: Written by write_data (0x00) -> Overwritten by DMA?
-    // DMA starts at 0x0001 (since auto-inc=1).
+    // DMA Fill starts at 0x0000.
     // DMA length 0x10.
     // Writes 16 bytes.
-    // Addresses: 0x0001 to 0x0010 (inclusive).
-    // So 0x0000 is 0xAA.
-    // 0x0001..0x0010 is 0xAA.
-    // Total 17 bytes of 0xAA?
-    // Wait. `write_data` writes 0xAA at 0x0000, 0x00 at 0x0001.
-    // DMA starts at 0x0001.
-    // Iteration 0: Writes 0xAA at 0x0001.
-    // ...
-    // Iteration 15: Writes 0xAA at 0x0010.
-    // So 0x0000 is AA.
-    // 0x0001..0x0010 is AA.
-    // 0x0011 is 00.
+    // Addresses: 0x0000 to 0x000F.
 
-    for i in 0..=0x10 {
+    for i in 0..0x10 {
         assert_eq!(vdp.vram[i], 0xAA, "Mismatch at index 0x{:04X}", i);
     }
-    assert_eq!(vdp.vram[0x11], 0x00, "Should stop at 0x11");
+    assert_eq!(vdp.vram[0x10], 0x00, "Should stop at 0x10");
 }
 
 #[test]
