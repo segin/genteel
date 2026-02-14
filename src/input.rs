@@ -364,4 +364,35 @@ mod tests {
         let f2 = script.get(2).unwrap();
         assert!(f2.p1.start);
     }
+
+    #[test]
+    fn test_input_manager_completion() {
+        let mut manager = InputManager::new();
+
+        // No script - should not be complete
+        assert!(!manager.is_complete());
+
+        // Load a script with 2 frames (0 and 1)
+        let script = InputScript::parse("0,........,........\n1,....A...,........").unwrap();
+        manager.set_script(script);
+        assert_eq!(manager.frame(), 0);
+
+        // Frame 0 - not complete
+        assert!(!manager.is_complete());
+        manager.advance_frame();
+        assert_eq!(manager.frame(), 1);
+
+        // Frame 1 - not complete (this is the max_frame)
+        assert!(!manager.is_complete());
+        manager.advance_frame();
+        assert_eq!(manager.frame(), 2);
+
+        // Now it should be complete (current_frame 2 > max_frame 1)
+        assert!(manager.is_complete());
+
+        // Reset should make it not complete again
+        manager.reset();
+        assert_eq!(manager.frame(), 0);
+        assert!(!manager.is_complete());
+    }
 }
