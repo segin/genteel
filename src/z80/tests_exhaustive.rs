@@ -4,8 +4,9 @@
 //! "Golden Reference" model for Z80 ALU.
 //! Verifies standard and undocumented flags (X/Y).
 
-use super::*; use crate::memory::{MemoryInterface, IoInterface};
+use super::*;
 use crate::memory::Memory;
+use crate::memory::{IoInterface, MemoryInterface};
 
 // fast rng
 struct XorShift64 {

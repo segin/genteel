@@ -3,8 +3,9 @@
 //!
 //! Known edge cases and common emulator bugs.
 
-use super::*; use crate::memory::{MemoryInterface, IoInterface};
+use super::*;
 use crate::memory::Memory;
+use crate::memory::{IoInterface, MemoryInterface};
 
 fn z80(program: &[u8]) -> Z80<Box<crate::memory::Memory>, Box<crate::z80::test_utils::TestIo>> {
     let mut m = Memory::new(0x10000);
@@ -38,6 +39,16 @@ fn regression_djnz_decrements_first() {
     c.step();
     assert_eq!(c.b, 0);
     assert_eq!(c.pc, 2); // Not taken
+}
+
+// Bug: DJNZ wrapping behavior (decrement then test)
+#[test]
+fn regression_djnz_wrap() {
+    let mut c = z80(&[0x10, 0x05]);
+    c.b = 0;
+    c.step();
+    assert_eq!(c.b, 0xFF);
+    assert_eq!(c.pc, 7); // Taken (2 + 5)
 }
 
 // Bug: JR displacement is signed

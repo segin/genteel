@@ -58,7 +58,9 @@ impl<'a> Iterator for SpriteIterator<'a> {
             return None;
         }
 
-        let attr = self.vdp.fetch_sprite_attributes(self.sat_base, self.next_idx);
+        let attr = self
+            .vdp
+            .fetch_sprite_attributes(self.sat_base, self.next_idx);
 
         self.count += 1;
         let link = attr.link;
@@ -209,8 +211,7 @@ impl Vdp {
             // Update last_data_write
             if data.len() >= 2 {
                 let last_idx = data.len() - 2;
-                self.last_data_write =
-                    ((data[last_idx] as u16) << 8) | (data[last_idx + 1] as u16);
+                self.last_data_write = ((data[last_idx] as u16) << 8) | (data[last_idx + 1] as u16);
             }
             return;
         }
@@ -350,7 +351,8 @@ impl Vdp {
             }
         } else {
             // First word of command
-            self.control_code = ((value >> CTRL_CODE_LOW_SHIFT) & (CTRL_CODE_LOW_MASK as u16)) as u8;
+            self.control_code =
+                ((value >> CTRL_CODE_LOW_SHIFT) & (CTRL_CODE_LOW_MASK as u16)) as u8;
             self.control_address = value & CTRL_ADDR_LO_MASK;
             self.control_pending = true;
         }

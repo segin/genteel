@@ -63,7 +63,10 @@ impl GdbServer {
         listener.set_nonblocking(true)?;
 
         if password.is_some() {
-            eprintln!("🔒 GDB Server listening on 127.0.0.1:{}. Protected with password.", port);
+            eprintln!(
+                "🔒 GDB Server listening on 127.0.0.1:{}. Protected with password.",
+                port
+            );
         } else {
             eprintln!("⚠️  SECURITY WARNING: GDB Server listening on 127.0.0.1:{}. This port is accessible to all local users. Only use this on a trusted single-user machine.", port);
         }
@@ -915,20 +918,31 @@ mod tests {
         assert_eq!(server.process_command("m100,4", &mut regs, &mut mem), "E01");
 
         // Allowed commands work
-        assert!(server.process_command("qSupported", &mut regs, &mut mem).contains("PacketSize"));
+        assert!(server
+            .process_command("qSupported", &mut regs, &mut mem)
+            .contains("PacketSize"));
         assert_eq!(server.process_command("?", &mut regs, &mut mem), "S05");
 
         // Authenticate failure
         // "auth wrong" in hex: 617574682077726f6e67
-        assert_eq!(server.process_command("qRcmd,617574682077726f6e67", &mut regs, &mut mem), "E01");
+        assert_eq!(
+            server.process_command("qRcmd,617574682077726f6e67", &mut regs, &mut mem),
+            "E01"
+        );
         assert!(!server.authenticated);
 
         // Authenticate success
         // "auth secret" in hex: 6175746820736563726574
-        assert_eq!(server.process_command("qRcmd,6175746820736563726574", &mut regs, &mut mem), "OK");
+        assert_eq!(
+            server.process_command("qRcmd,6175746820736563726574", &mut regs, &mut mem),
+            "OK"
+        );
         assert!(server.authenticated);
 
         // Now commands work
-        assert_eq!(server.process_command("g", &mut regs, &mut mem).len(), (8 + 8 + 1 + 1) * 8);
+        assert_eq!(
+            server.process_command("g", &mut regs, &mut mem).len(),
+            (8 + 8 + 1 + 1) * 8
+        );
     }
 }
