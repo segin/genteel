@@ -31,6 +31,8 @@ metrics = {
     "test_results": "Not Run"
 }
 
+TRACKED_FILES = None
+
 def run_command(command, cwd=None, capture_output=True):
     try:
         result = subprocess.run(
@@ -56,8 +58,11 @@ def add_finding(title, severity, description, filepath=None, line=None, remediat
     }
     findings.append(finding)
 
-def enumerate_files():
-    print("[*] Enumerating files...")
+def get_tracked_files():
+    global TRACKED_FILES
+    if TRACKED_FILES is not None:
+        return TRACKED_FILES
+
     files = []
     # Use git ls-files to get tracked files
     out, err, _ = run_command(["git", "ls-files"])
@@ -73,6 +78,13 @@ def enumerate_files():
 
     # Filter out audit_reports from files if git ls-files included them (unlikely if not committed yet, but possible)
     files = [f for f in files if not f.startswith("audit_reports/")]
+
+    TRACKED_FILES = files
+    return files
+
+def enumerate_files():
+    print("[*] Enumerating files...")
+    files = get_tracked_files()
 
     metrics["file_count"] = len(files)
 
@@ -137,10 +149,7 @@ def run_sast_clippy():
 def run_sast_cppcheck():
     print("[*] Running Cppcheck...")
     # specific for vdp_io.cpp or all cpp files
-    # Re-list files
-    out, _, _ = run_command(["git", "ls-files"])
-    files = out.splitlines() if out else []
-    files = [f for f in files if not f.startswith("audit_reports/")]
+    files = get_tracked_files()
     cpp_files = [f for f in files if f.endswith(".cpp") or f.endswith(".c")]
 
     for f in cpp_files:
@@ -158,18 +167,16 @@ def run_sast_cppcheck():
 
 def scan_text_patterns():
     print("[*] Scanning for secrets and unsafe patterns...")
-    out, _, _ = run_command(["git", "ls-files"])
-    files = out.splitlines() if out else []
-    files = [f for f in files if not f.startswith("audit_reports/")]
+    files = get_tracked_files()
 
     secret_patterns = {
-        "AWS Key": r"AKIA[0-9A-Z]{16}",
-        "Private Key": r"-----BEGIN .* PRIVATE KEY-----",
-        "Generic Token": r"token\s*=\s*['\"][a-zA-Z0-9]{20,}['\"]",
+        "AWS Key": re.compile(r"AKIA[0-9A-Z]{16}"),
+        "Private Key": re.compile(r"-----BEGIN .* PRIVATE KEY-----"),
+        "Generic Token": re.compile(r"token\s*=\s*['\"][a-zA-Z0-9]{20,}['\"]"),
     }
 
-    unsafe_pattern = r"unsafe\s*\{"
-    todo_pattern = r"(TODO|FIXME|XXX):"
+    unsafe_pattern = re.compile(r"unsafe\s*\{")
+    todo_pattern = re.compile(r"(TODO|FIXME|XXX):")
 
     for f in files:
         if not os.path.exists(f): continue
@@ -180,7 +187,7 @@ def scan_text_patterns():
                 for i, line_content in enumerate(fp):
                     # Secrets
                     for name, pattern in secret_patterns.items():
-                        if re.search(pattern, line_content):
+                        if pattern.search(line_content):
                             add_finding(
                                 title=f"Potential Secret: {name}",
                                 severity="Critical",
@@ -192,7 +199,7 @@ def scan_text_patterns():
                             metrics["secrets_found"] += 1
 
                     # Unsafe
-                    if re.search(unsafe_pattern, line_content):
+                    if unsafe_pattern.search(line_content):
                         add_finding(
                             title="Unsafe Rust Code",
                             severity="Medium",
@@ -203,7 +210,7 @@ def scan_text_patterns():
                         )
 
                     # TODOs
-                    if re.search(todo_pattern, line_content):
+                    if todo_pattern.search(line_content):
                         add_finding(
                             title="Technical Debt (TODO/FIXME)",
                             severity="Info",
