@@ -66,8 +66,40 @@ impl MemoryInterface for Box<dyn MemoryInterface> {
     }
 }
 
+// Blanket impl for Box<T> where T: MemoryInterface
+impl<T: MemoryInterface> MemoryInterface for Box<T> {
+    fn read_byte(&mut self, address: u32) -> u8 {
+        (**self).read_byte(address)
+    }
+    fn write_byte(&mut self, address: u32, value: u8) {
+        (**self).write_byte(address, value);
+    }
+    fn read_word(&mut self, address: u32) -> u16 {
+        (**self).read_word(address)
+    }
+    fn write_word(&mut self, address: u32, value: u16) {
+        (**self).write_word(address, value);
+    }
+    fn read_long(&mut self, address: u32) -> u32 {
+        (**self).read_long(address)
+    }
+    fn write_long(&mut self, address: u32, value: u32) {
+        (**self).write_long(address, value);
+    }
+}
+
 // Blanket impl for Box<dyn IoInterface>
 impl IoInterface for Box<dyn IoInterface> {
+    fn read_port(&mut self, port: u16) -> u8 {
+        (**self).read_port(port)
+    }
+    fn write_port(&mut self, port: u16, value: u8) {
+        (**self).write_port(port, value);
+    }
+}
+
+// Blanket impl for Box<T> where T: IoInterface
+impl<T: IoInterface> IoInterface for Box<T> {
     fn read_port(&mut self, port: u16) -> u8 {
         (**self).read_port(port)
     }

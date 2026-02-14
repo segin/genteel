@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 //! Z80 Undocumented Instruction Tests
 //!
 //! Tests for undocumented but commonly used Z80 instructions:
@@ -5,10 +6,10 @@
 //! - ED mirror opcodes (multiple encodings for same instruction)
 //! - IXH/IXL/IYH/IYL access via DD/FD prefixes
 
-use super::*;
+use super::*; use crate::memory::{MemoryInterface, IoInterface};
 use crate::memory::Memory;
 
-fn z80(program: &[u8]) -> Z80 {
+fn z80(program: &[u8]) -> Z80<Box<crate::memory::Memory>, Box<crate::z80::test_utils::TestIo>> {
     let mut m = Memory::new(0x10000);
     for (i, &b) in program.iter().enumerate() {
         m.data[i] = b;

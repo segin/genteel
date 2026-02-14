@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 //! Z80 CPU Implementation for Genesis Sound Co-processor
 //!
 //! The Z80 is used as a sound co-processor in the Sega Genesis, running at 3.58 MHz.
@@ -22,7 +23,7 @@ use serde_json::{json, Value};
 
 /// Z80 CPU
 #[derive(Debug)]
-pub struct Z80 {
+pub struct Z80<M: MemoryInterface, I: IoInterface> {
     // Main registers
     pub a: u8,
     pub f: u8,
@@ -72,10 +73,10 @@ pub struct Z80 {
     pub pending_ei: bool,
 
     // Memory (trait object for flexibility)
-    pub memory: Box<dyn MemoryInterface>,
+    pub memory: M,
 
     // I/O (trait object for flexibility)
-    pub io: Box<dyn IoInterface>,
+    pub io: I,
 
     // Cycle counter for timing
     pub cycles: u64,
@@ -84,8 +85,8 @@ pub struct Z80 {
     pub debug: bool,
 }
 
-impl Z80 {
-    pub fn new(memory: Box<dyn MemoryInterface>, io: Box<dyn IoInterface>) -> Self {
+impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
+    pub fn new(memory: M, io: I) -> Self {
         Self {
             a: 0xFF,
             f: 0xFF,
@@ -2324,7 +2325,7 @@ pub mod test_utils {
     }
 }
 
-impl Debuggable for Z80 {
+impl<M: MemoryInterface, I: IoInterface> Debuggable for Z80<M, I> {
     fn read_state(&self) -> Value {
         json!({
             "a": self.a,
