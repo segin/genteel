@@ -438,6 +438,11 @@ impl Bus {
         }
 
         if !self.vdp.is_dma_transfer() {
+            if self.vdp.is_dma_fill() {
+                // VRAM Fill (Mode 2) waits for data port write.
+                // Do not execute yet, and keep dma_pending true.
+                return;
+            }
             self.vdp.execute_dma();
             self.vdp.dma_pending = false;
             return;

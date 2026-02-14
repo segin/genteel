@@ -51,14 +51,14 @@ fn test_dma_fill_vram() {
     // Command: VRAM Write (0x1).
     // Addr 0x0000.
     // Word 1: 0x4000.
-    // Word 2: DMA bit (CD5) is NOT set for Fill. (0x0000).
+    // Word 2: DMA bit (CD5) IS set for Fill (0x0080 in second word = 0x20 in control code).
 
     vdp.write_control(0x4000);
-    vdp.write_control(0x0000);
+    vdp.write_control(0x0080);
 
     // Check if dma_pending is set
-    // It should NOT be set because CD5 is 0
-    assert!(!vdp.dma_pending, "DMA pending should be false for Fill setup");
+    // It should be set because CD5 is 1
+    assert!(vdp.dma_pending, "DMA pending should be true for Fill setup");
 
     // 6. Write Fill Data (e.g. 0xAA)
     // Writing to data port triggers the fill in hardware.

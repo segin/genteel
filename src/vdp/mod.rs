@@ -194,13 +194,8 @@ impl Vdp {
                     // If addr is odd: vram[addr] = chunk[0], vram[addr-1] = chunk[1].
 
                     // Since inc=2, addr parity is preserved.
-                    if (addr & 1) == 0 {
-                        self.vram[addr] = chunk[0];
-                        self.vram[addr + 1] = chunk[1];
-                    } else {
-                        self.vram[addr] = chunk[0];
-                        self.vram[addr - 1] = chunk[1];
-                    }
+                    self.vram[addr] = chunk[0];
+                    self.vram[addr ^ 1] = chunk[1];
                 }
                 addr = (addr + 2) & 0xFFFF;
             }
@@ -228,7 +223,8 @@ impl Vdp {
 
         // DMA Fill (Mode 2) check
         // Enabled (Reg 1 bit 4) AND Mode 2 (Reg 23 bits 7,6 = 1,0)
-        if (self.registers[1] & 0x10) != 0 && (self.registers[23] & 0xC0) == 0x80 {
+        // Must also be pending (CD5 bit set)
+        if self.dma_pending && (self.registers[1] & 0x10) != 0 && self.is_dma_fill() {
             let length = self.dma_length();
             let mut addr = self.control_address;
             let inc = self.auto_increment() as u16;
@@ -244,6 +240,7 @@ impl Vdp {
                 addr = addr.wrapping_add(inc);
             }
             self.control_address = addr;
+            self.dma_pending = false;
             return;
         }
 
@@ -457,6 +454,11 @@ impl Vdp {
         // Bit 6: Type (0=fill, 1=copy) - only if Bit 7 is 1
         // So for transfer, Bit 7 must be 0.
         (self.registers[23] & 0x80) == 0
+    }
+
+    pub fn is_dma_fill(&self) -> bool {
+        // Bit 7=1, Bit 6=0
+        (self.registers[23] & 0xC0) == 0x80
     }
 
     pub fn execute_dma(&mut self) -> u32 {
