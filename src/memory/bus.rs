@@ -20,6 +20,7 @@
 //! | 0xC00000-0xC0001F  | 32 B   | VDP Ports                      |
 //! | 0xE00000-0xFFFFFF  | 2 MB   | Work RAM (64KB mirrored)       |
 
+use super::byte_utils;
 use super::MemoryInterface;
 use crate::apu::Apu;
 use crate::debugger::Debuggable;
@@ -271,14 +272,14 @@ impl Bus {
             let idx = addr as usize;
             if idx + 1 < self.rom.len() {
                 // SAFETY: We checked bounds above
-                let high = unsafe { *self.rom.get_unchecked(idx) } as u16;
-                let low = unsafe { *self.rom.get_unchecked(idx + 1) } as u16;
-                return (high << 8) | low;
+                let high = unsafe { *self.rom.get_unchecked(idx) };
+                let low = unsafe { *self.rom.get_unchecked(idx + 1) };
+                return byte_utils::join_u16(high, low);
             } else if idx < self.rom.len() {
                 // Partial read at end of ROM
-                let high = self.rom[idx] as u16;
+                let high = self.rom[idx];
                 let low = 0xFF; // Unmapped
-                return (high << 8) | low;
+                return byte_utils::join_u16(high, low);
             } else {
                 return 0xFFFF; // Unmapped
             }
@@ -301,7 +302,7 @@ impl Bus {
         if addr <= 0x3FFFFE {
             let rom_addr = addr as usize;
             if rom_addr + 1 < self.rom.len() {
-                return ((self.rom[rom_addr] as u16) << 8) | (self.rom[rom_addr + 1] as u16);
+                return byte_utils::join_u16(self.rom[rom_addr], self.rom[rom_addr + 1]);
             }
         }
 
@@ -309,13 +310,13 @@ impl Bus {
         if addr >= 0xE00000 {
             let r_addr = (addr & 0xFFFF) as usize;
             if r_addr < 0xFFFF {
-                return ((self.work_ram[r_addr] as u16) << 8) | (self.work_ram[r_addr + 1] as u16);
+                return byte_utils::join_u16(self.work_ram[r_addr], self.work_ram[r_addr + 1]);
             }
         }
 
-        let high = self.read_byte(address) as u16;
-        let low = self.read_byte(address.wrapping_add(1)) as u16;
-        (high << 8) | low
+        let high = self.read_byte(address);
+        let low = self.read_byte(address.wrapping_add(1));
+        byte_utils::join_u16(high, low)
     }
 
     /// Write a word (16-bit, big-endian) to the memory map
@@ -340,14 +341,16 @@ impl Bus {
         if addr >= 0xE00000 {
             let r_addr = (addr & 0xFFFF) as usize;
             if r_addr < 0xFFFF {
-                self.work_ram[r_addr] = (value >> 8) as u8;
-                self.work_ram[r_addr + 1] = value as u8;
+                let (high, low) = byte_utils::split_u16(value);
+                self.work_ram[r_addr] = high;
+                self.work_ram[r_addr + 1] = low;
                 return;
             }
         }
 
-        self.write_byte(address, (value >> 8) as u8);
-        self.write_byte(address.wrapping_add(1), value as u8);
+        let (high, low) = byte_utils::split_u16(value);
+        self.write_byte(address, high);
+        self.write_byte(address.wrapping_add(1), low);
     }
 
     /// Read a long word (32-bit, big-endian) from the memory map
@@ -359,11 +362,11 @@ impl Bus {
             let idx = addr as usize;
             if idx + 3 < self.rom.len() {
                 // SAFETY: We checked bounds above
-                let b0 = unsafe { *self.rom.get_unchecked(idx) } as u32;
-                let b1 = unsafe { *self.rom.get_unchecked(idx + 1) } as u32;
-                let b2 = unsafe { *self.rom.get_unchecked(idx + 2) } as u32;
-                let b3 = unsafe { *self.rom.get_unchecked(idx + 3) } as u32;
-                return (b0 << 24) | (b1 << 16) | (b2 << 8) | b3;
+                let b0 = unsafe { *self.rom.get_unchecked(idx) };
+                let b1 = unsafe { *self.rom.get_unchecked(idx + 1) };
+                let b2 = unsafe { *self.rom.get_unchecked(idx + 2) };
+                let b3 = unsafe { *self.rom.get_unchecked(idx + 3) };
+                return byte_utils::join_u32(b0, b1, b2, b3);
             }
         }
 
@@ -371,10 +374,12 @@ impl Bus {
         if addr >= 0xE00000 {
             let r_addr = (addr & 0xFFFF) as usize;
             if r_addr <= 0xFFFC {
-                return ((self.work_ram[r_addr] as u32) << 24)
-                    | ((self.work_ram[r_addr + 1] as u32) << 16)
-                    | ((self.work_ram[r_addr + 2] as u32) << 8)
-                    | (self.work_ram[r_addr + 3] as u32);
+                return byte_utils::join_u32(
+                    self.work_ram[r_addr],
+                    self.work_ram[r_addr + 1],
+                    self.work_ram[r_addr + 2],
+                    self.work_ram[r_addr + 3],
+                );
             }
         }
 
@@ -391,10 +396,11 @@ impl Bus {
         if addr >= 0xE00000 {
             let r_addr = (addr & 0xFFFF) as usize;
             if r_addr <= 0xFFFC {
-                self.work_ram[r_addr] = (value >> 24) as u8;
-                self.work_ram[r_addr + 1] = (value >> 16) as u8;
-                self.work_ram[r_addr + 2] = (value >> 8) as u8;
-                self.work_ram[r_addr + 3] = value as u8;
+                let (b0, b1, b2, b3) = byte_utils::split_u32(value);
+                self.work_ram[r_addr] = b0;
+                self.work_ram[r_addr + 1] = b1;
+                self.work_ram[r_addr + 2] = b2;
+                self.work_ram[r_addr + 3] = b3;
                 return;
             }
         }
