@@ -93,7 +93,10 @@ impl Emulator {
             // Extract ROM from zip file
             Self::load_rom_from_zip(path)?
         } else {
-            std::fs::read(path)?
+            let mut file = std::fs::File::open(path)?;
+            let metadata = file.metadata()?;
+            let size = metadata.len();
+            Self::read_rom_with_limit(&mut file, size)?
         };
 
         let mut bus = self.bus.borrow_mut();
@@ -1056,3 +1059,21 @@ mod tests {
         assert_eq!(emulator.internal_frame_count, 2);
     }
 }
+
+    #[test]
+    fn test_large_raw_rom_prevention() {
+        let path = "large_rom.bin";
+        // Create 33MB of dummy data
+        let size = 33 * 1024 * 1024;
+        let data = vec![0u8; size];
+        std::fs::write(path, &data).unwrap();
+
+        let mut emulator = Emulator::new();
+        let result = emulator.load_rom(path);
+
+        // Cleanup
+        let _ = std::fs::remove_file(path);
+
+        // Verify rejection
+        assert!(result.is_err(), "Should reject large ROM file (>32MB)");
+    }
