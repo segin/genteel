@@ -133,6 +133,7 @@ fn regression_neg_80() {
     c.step();
     assert_eq!(c.a, 0x80);
     assert!(c.get_flag(flags::PARITY)); // Overflow
+    assert!(c.get_flag(flags::CARRY)); // Carry should be set (A!=0)
 }
 
 // Bug: NEG with A=0 clears carry
@@ -143,6 +144,26 @@ fn regression_neg_00() {
     c.step();
     assert_eq!(c.a, 0x00);
     assert!(!c.get_flag(flags::CARRY));
+}
+
+#[test]
+fn regression_neg_normal() {
+    let mut c = z80(&[0xED, 0x44]);
+    c.a = 0x01;
+    c.step();
+    assert_eq!(c.a, 0xFF);
+    assert!(!c.get_flag(flags::PARITY)); // No overflow
+    assert!(c.get_flag(flags::CARRY)); // Carry set
+
+    // Reuse c for another test
+    c.reset();
+    c.memory.write_byte(0, 0xED);
+    c.memory.write_byte(1, 0x44);
+    c.a = 0x7F;
+    c.step();
+    assert_eq!(c.a, 0x81);
+    assert!(!c.get_flag(flags::PARITY)); // No overflow
+    assert!(c.get_flag(flags::CARRY)); // Carry set
 }
 
 // Bug: LD A, I/R should set P/V from IFF2
