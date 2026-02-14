@@ -267,4 +267,123 @@ mod tests {
         assert!(psg.noise.white_noise);
         assert_eq!(psg.noise.shift_rate, 3);
     }
+
+    #[test]
+    fn test_psg_step_tone_generation() {
+        let mut psg = Psg::new();
+
+        // Channel 0: freq = 4, volume = 0 (max)
+        psg.tones[0].frequency = 4;
+        psg.tones[0].volume = 0;
+        psg.tones[0].counter = 0; // Ensure starts at 0
+        psg.tones[0].output = false; // Ensure starts low
+
+        // Counter = 0 -> reset to 4, flip output (true)
+        // Step 1: output becomes high (true)
+        let sample = psg.step();
+        assert_eq!(sample, VOLUME_TABLE[0]);
+
+        // Counter was reset to 4.
+        // Steps 2, 3, 4, 5: counter decrements 4->3, 3->2, 2->1, 1->0
+        // Output remains high.
+        for _ in 0..4 {
+             let s = psg.step();
+             assert_eq!(s, VOLUME_TABLE[0]);
+        }
+
+        // Step 6: counter is 0. Reset to 4, flip output (false).
+        // Output becomes low.
+        let sample = psg.step();
+        assert_eq!(sample, 0); // When output is low (false), tone logic doesn't add volume.
+
+        // Steps 7, 8, 9, 10: counter decrements 4->3, 3->2, 2->1, 1->0
+        for _ in 0..4 {
+             let s = psg.step();
+             assert_eq!(s, 0);
+        }
+
+        // Step 11: counter is 0. Reset to 4, flip output (true).
+        let sample = psg.step();
+        assert_eq!(sample, VOLUME_TABLE[0]);
+    }
+
+    #[test]
+    fn test_psg_step_mixing() {
+        let mut psg = Psg::new();
+
+        // Channel 0: freq 10, vol 0 (max ~8191)
+        psg.tones[0].frequency = 10;
+        psg.tones[0].volume = 0;
+        psg.tones[0].output = true; // Force high
+        psg.tones[0].counter = 5;
+
+        // Channel 1: freq 20, vol 4 (~3261)
+        psg.tones[1].frequency = 20;
+        psg.tones[1].volume = 4;
+        psg.tones[1].output = true; // Force high
+        psg.tones[1].counter = 5;
+
+        // Mute others
+        psg.tones[2].volume = 15;
+        psg.noise.volume = 15;
+
+        let sample = psg.step();
+        let expected = VOLUME_TABLE[0] as i32 + VOLUME_TABLE[4] as i32;
+        assert_eq!(sample as i32, expected);
+    }
+
+    #[test]
+    fn test_psg_step_volume_cutoff() {
+        let mut psg = Psg::new();
+        psg.tones[0].frequency = 10;
+        psg.tones[0].output = true;
+        psg.tones[0].counter = 5; // Non-zero so it doesn't flip immediately
+
+        // Volume 15 = off
+        psg.tones[0].volume = 15;
+        // Step decrements counter to 4, output stays true.
+        assert_eq!(psg.step(), 0);
+
+        // Volume 0 = max
+        psg.tones[0].volume = 0;
+        // Step decrements counter to 3, output stays true.
+        assert_eq!(psg.step(), VOLUME_TABLE[0]);
+    }
+
+    #[test]
+    fn test_psg_step_noise_generation() {
+        let mut psg = Psg::new();
+        // Setup noise: White noise, Rate 0 (N/512 => 0x10 = 16)
+        psg.noise.white_noise = true;
+        psg.noise.shift_rate = 0;
+        psg.noise.volume = 0; // Max volume
+        psg.noise.lfsr = 0x8000; // Seed
+        psg.noise.counter = 0;
+
+        // Step 1: counter 0 -> reload 16. Shift LFSR.
+        // LFSR 0x8000 (1000...0000). Bit 0 is 0.
+        // White noise feedback: (bit0 ^ bit3). 0^0 = 0.
+        // New LFSR = (0x8000 >> 1) | (0 << 14) = 0x4000.
+        // Output checks (lfsr & 1). 0x4000 & 1 = 0. Output 0.
+        let s1 = psg.step();
+        assert_eq!(s1, 0);
+
+        // We need to advance enough to get a 1 in bit 0.
+        // The LFSR shifts right. The feedback goes into bit 14.
+        // Eventually a 1 will reach bit 0.
+
+        // Let's just run for a while and verify we get non-zero output at some point.
+        let mut saw_high = false;
+        let mut saw_low = false;
+
+        // Run enough cycles.
+        for _ in 0..1000 {
+            let s = psg.step();
+            if s > 0 { saw_high = true; }
+            if s == 0 { saw_low = true; }
+        }
+
+        assert!(saw_high, "Noise should produce high output");
+        assert!(saw_low, "Noise should produce low output");
+    }
 }
