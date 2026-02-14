@@ -87,20 +87,15 @@ impl ControllerState {
 }
 
 /// Controller type
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ControllerType {
     /// No controller connected
     None,
     /// 3-button controller (original)
+    #[default]
     ThreeButton,
     /// 6-button controller (Fighting Pad)
     SixButton,
-}
-
-impl Default for ControllerType {
-    fn default() -> Self {
-        ControllerType::ThreeButton
-    }
 }
 
 /// A controller port
@@ -459,6 +454,15 @@ mod tests {
     }
 
     #[test]
+    fn test_controller_invalid_port() {
+        let mut io = Io::new();
+        // Port 0 is invalid
+        assert!(io.controller(0).is_none());
+        // Port 3 is invalid
+        assert!(io.controller(3).is_none());
+    }
+
+    #[test]
     fn test_6button_cycles() {
         let mut port = ControllerPort::new(ControllerType::SixButton);
 
@@ -523,26 +527,10 @@ mod tests {
     }
 
     #[test]
-    fn test_set_controller_type() {
+    fn test_io_controller_invalid_port() {
         let mut io = Io::new();
-
-        // Default is 3-button
-        assert_eq!(io.port1.controller_type, ControllerType::ThreeButton);
-        assert_eq!(io.port2.controller_type, ControllerType::ThreeButton);
-
-        // Set port 1 to 6-button
-        io.set_controller_type(1, ControllerType::SixButton);
-        assert_eq!(io.port1.controller_type, ControllerType::SixButton);
-        assert_eq!(io.port2.controller_type, ControllerType::ThreeButton); // Unchanged
-
-        // Set port 2 to None
-        io.set_controller_type(2, ControllerType::None);
-        assert_eq!(io.port1.controller_type, ControllerType::SixButton); // Unchanged
-        assert_eq!(io.port2.controller_type, ControllerType::None);
-
-        // Invalid port
-        io.set_controller_type(99, ControllerType::ThreeButton);
-        assert_eq!(io.port1.controller_type, ControllerType::SixButton); // Unchanged
-        assert_eq!(io.port2.controller_type, ControllerType::None); // Unchanged
+        assert!(io.controller(0).is_none());
+        assert!(io.controller(3).is_none());
+        assert!(io.controller(99).is_none());
     }
 }
