@@ -636,4 +636,31 @@ mod tests {
         assert_eq!(bus.vdp.vram[0], 0x12);
         assert_eq!(bus.vdp.vram[1], 0x34);
     }
+
+    #[test]
+    fn test_z80_bank_register() {
+        let mut bus = Bus::new();
+
+        // Initial state
+        assert_eq!(bus.z80_bank_addr, 0);
+        assert_eq!(bus.z80_bank_bit, 0);
+
+        // Write pattern: 1, 0, 1, 0, 1, 0, 1, 0, 1
+        // This should set bits 15, 17, 19, 21, 23
+        // Result: 0xAA8000
+        let pattern = [1, 0, 1, 0, 1, 0, 1, 0, 1];
+        for &bit in &pattern {
+            bus.write_byte(0xA06000, bit);
+        }
+
+        assert_eq!(bus.z80_bank_addr, 0xAA8000);
+        assert_eq!(bus.z80_bank_bit, 0); // Wrapped around
+
+        // Write one more bit (0) to verify it affects bit 15
+        bus.write_byte(0xA06000, 0);
+        // Bit 15 was 1, now should be 0.
+        // 0xAA8000 - 0x008000 = 0xAA0000
+        assert_eq!(bus.z80_bank_addr, 0xAA0000);
+        assert_eq!(bus.z80_bank_bit, 1);
+    }
 }
