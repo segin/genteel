@@ -400,4 +400,38 @@ mod tests {
         assert_eq!(manager.frame(), 0);
         assert!(!manager.is_complete());
     }
+
+    #[test]
+    fn test_input_manager_reset() {
+        let mut manager = InputManager::new();
+        let script = InputScript::parse("0,....A...,........\n1,.....B..,........").unwrap();
+        manager.set_script(script);
+
+        // Advance to frame 1, which should set last_input to have A pressed
+        let input = manager.advance_frame();
+        assert!(input.p1.a);
+        assert_eq!(manager.frame(), 1);
+
+        // Advance to frame 2, which should set last_input to have B pressed
+        let input = manager.advance_frame();
+        assert!(input.p1.b);
+        assert_eq!(manager.frame(), 2);
+
+        // Verify internal state is not default
+        assert!(manager.last_input.p1.b);
+
+        // Reset
+        manager.reset();
+
+        // Verify frame is 0
+        assert_eq!(manager.frame(), 0);
+
+        // Verify last_input is default (all false)
+        // Since FrameInput doesn't implement PartialEq, we can check debug string representation
+        let default_input = FrameInput::default();
+        assert_eq!(
+            format!("{:?}", manager.last_input),
+            format!("{:?}", default_input)
+        );
+    }
 }
