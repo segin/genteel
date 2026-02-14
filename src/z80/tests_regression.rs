@@ -88,6 +88,7 @@ fn regression_ex_sp_hl() {
 }
 
 // Bug: INC/DEC not affecting V flag correctly
+// Confirmed fixed: implementation correctly sets P/V flag on overflow.
 #[test]
 fn regression_inc_overflow() {
     let mut c = z80(&[0x3C]); // INC A
