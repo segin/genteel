@@ -585,6 +585,26 @@ mod tests {
         assert_eq!(bus.read_byte(0x800000), 0xFF);
     }
 
+    #[test]
+    fn test_clear_rom() {
+        let mut bus = Bus::new();
+        let rom_data = vec![0x12, 0x34, 0x56, 0x78];
+        bus.load_rom(&rom_data);
+
+        // Verify ROM is loaded and padded
+        assert_eq!(bus.read_byte(0x000000), 0x12);
+        assert_eq!(bus.rom_size(), 512);
+
+        // Clear ROM
+        bus.clear_rom();
+
+        // Verify ROM is empty
+        assert_eq!(bus.rom_size(), 0);
+        assert!(bus.rom.is_empty());
+
+        // Verify reading from ROM area now returns 0xFF (unmapped)
+        assert_eq!(bus.read_byte(0x000000), 0xFF);
+    }
 
     #[test]
     fn test_dma_transfer_ram_to_vram() {
