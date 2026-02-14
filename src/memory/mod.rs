@@ -5,6 +5,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 pub mod bus;
+pub mod byte_utils;
 pub mod tests_performance;
 pub mod z80_bus;
 use bus::Bus;
