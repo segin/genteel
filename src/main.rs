@@ -197,7 +197,34 @@ impl Emulator {
 
     pub fn step_frame_internal(&mut self) {
         self.internal_frame_count += 1;
+        self.debug_log_frame();
 
+        // Genesis timing constants (NTSC):
+        // M68k: 7.67 MHz, Z80: 3.58 MHz
+        // One frame = 262 scanlines
+        // Active display: lines 0-223
+        // VBlank: lines 224-261
+        // Cycles per scanline: ~488
+
+        const LINES_PER_FRAME: u16 = 262;
+
+        // Active lines can be 224 or 240 (V30 mode)
+        let active_lines = self.bus.borrow().vdp.screen_height();
+        // APU Timing
+        let samples_per_frame = audio::samples_per_frame() as f32;
+        let samples_per_line = samples_per_frame / (LINES_PER_FRAME as f32);
+
+        let mut z80_cycle_debt: f32 = 0.0;
+
+        for line in 0..LINES_PER_FRAME {
+            self.step_scanline(line, active_lines, samples_per_line, &mut z80_cycle_debt);
+        }
+
+        // Update V30 rolling offset
+        self.bus.borrow_mut().vdp.update_v30_offset();
+    }
+
+    fn debug_log_frame(&self) {
         if self.internal_frame_count % 60 == 0 || self.internal_frame_count < 5 {
             let bus = self.bus.borrow();
             let disp_en = bus.vdp.display_enabled();
@@ -219,149 +246,158 @@ impl Emulator {
                      (self.cpu.sr >> 8) & 7,
                      z80_pc, z80_op, z80_reset, z80_req);
         }
+    }
 
-        // Genesis timing constants (NTSC):
-        // M68k: 7.67 MHz, Z80: 3.58 MHz
-        // One frame = 262 scanlines
-        // Active display: lines 0-223
-        // VBlank: lines 224-261
-        // Cycles per scanline: ~488
+    fn step_scanline(
+        &mut self,
+        line: u16,
+        active_lines: u16,
+        samples_per_line: f32,
+        z80_cycle_debt: &mut f32,
+    ) {
+        self.vdp_scanline_setup(line, active_lines);
+        self.run_cpu_loop(line, active_lines, z80_cycle_debt);
+        self.generate_audio_samples(samples_per_line);
+        self.handle_interrupts(line, active_lines);
+    }
 
-        const LINES_PER_FRAME: u16 = 262;
+    fn vdp_scanline_setup(&mut self, line: u16, active_lines: u16) {
+        let mut bus = self.bus.borrow_mut();
+        bus.vdp.set_v_counter(line);
+
+        // Render scanline if active
+        if line < active_lines {
+            bus.vdp.render_line(line);
+        }
+    }
+
+    fn run_cpu_loop(&mut self, line: u16, active_lines: u16, z80_cycle_debt: &mut f32) {
         const CYCLES_PER_LINE: u32 = 488;
+        let mut cycles_scanline: u32 = 0;
+
+        while cycles_scanline < CYCLES_PER_LINE {
+            // Borrow bus for CPU execution
+            let mut bus = self.bus.borrow_mut();
+            let m68k_cycles = self.cpu.step_instruction(&mut *bus);
+
+            // Step APU with cycles to update timers
+            bus.apu.fm.step(m68k_cycles as u32);
+            drop(bus); // Release bus for Z80/etc checks
+
+            cycles_scanline += m68k_cycles as u32;
+
+            self.sync_z80(
+                m68k_cycles,
+                line,
+                active_lines,
+                cycles_scanline,
+                z80_cycle_debt,
+            );
+        }
+    }
+
+    fn sync_z80(
+        &mut self,
+        m68k_cycles: u32,
+        line: u16,
+        active_lines: u16,
+        cycles_scanline: u32,
+        z80_cycle_debt: &mut f32,
+    ) {
         const Z80_CYCLES_PER_M68K_CYCLE: f32 = 3.58 / 7.67;
 
-        // Active lines can be 224 or 240 (V30 mode)
-        let active_lines = self.bus.borrow().vdp.screen_height();
-        // APU Timing
-        let samples_per_frame = audio::samples_per_frame() as f32;
-        let samples_per_line = samples_per_frame / (LINES_PER_FRAME as f32);
-
-        let mut z80_cycle_debt: f32 = 0.0;
-
-        for line in 0..LINES_PER_FRAME {
-            // === VDP scanline setup (single borrow) ===
-            {
-                let mut bus = self.bus.borrow_mut();
-                bus.vdp.set_v_counter(line);
-
-                // Render scanline if active
-                if line < active_lines {
-                    bus.vdp.render_line(line);
-                }
+        // Z80 execution
+        let (z80_can_run, z80_is_reset) = {
+            let bus = self.bus.borrow();
+            let prev = self.z80_last_bus_req;
+            if bus.z80_bus_request != prev {
+                eprintln!(
+                    "DEBUG: Bus Req Changed: {} -> {} at 68k PC={:06X}",
+                    prev, bus.z80_bus_request, self.cpu.pc
+                );
+                self.z80_last_bus_req = bus.z80_bus_request;
             }
+            (!bus.z80_reset && !bus.z80_bus_request, bus.z80_reset)
+        };
 
-            // === CPU execution for this scanline ===
-            let mut cycles_scanline: u32 = 0;
-            while cycles_scanline < CYCLES_PER_LINE {
-                // Borrow bus for CPU execution
-                let mut bus = self.bus.borrow_mut();
-                let m68k_cycles = self.cpu.step_instruction(&mut *bus);
+        // Z80 reset logic:
+        // Reset the Z80 on the leading edge of the reset signal.
+        // The Z80 is held in reset (not stepped) as long as z80_reset is true.
+        if z80_is_reset && !self.z80_last_reset {
+            self.z80.reset();
+        }
+        self.z80_last_reset = z80_is_reset;
 
-                // Step APU with cycles to update timers
-                bus.apu.fm.step(m68k_cycles as u32);
-                drop(bus); // Release bus for Z80/etc checks if they need it (Z80 needs read only access usually but check implementation)
-
-                cycles_scanline += m68k_cycles as u32;
-
-                // Z80 execution
-                let (z80_can_run, z80_is_reset) = {
-                    let bus = self.bus.borrow();
-                    let prev = self.z80_last_bus_req;
-                    if bus.z80_bus_request != prev {
-                        eprintln!(
-                            "DEBUG: Bus Req Changed: {} -> {} at 68k PC={:06X}",
-                            prev, bus.z80_bus_request, self.cpu.pc
-                        );
-                        self.z80_last_bus_req = bus.z80_bus_request;
-                    }
-                    (!bus.z80_reset && !bus.z80_bus_request, bus.z80_reset)
-                };
-
-                // Z80 reset logic:
-                // Reset the Z80 on the leading edge of the reset signal.
-                // The Z80 is held in reset (not stepped) as long as z80_reset is true.
-                if z80_is_reset && !self.z80_last_reset {
-                    self.z80.reset();
-                }
-                self.z80_last_reset = z80_is_reset;
-
-                if z80_can_run && self.internal_frame_count > 0 {
-                    if self.z80_trace_count < 5000 {
-                        self.z80.debug = true;
-                        self.z80_trace_count += 1; // Logic slightly wrong here (step count vs frame), but enables flag
-                    } else {
-                        self.z80.debug = false;
-                    }
-                } else {
-                    self.z80.debug = false;
-                }
-
-                // Trigger Z80 VInt at start of VBlank
-                if line == active_lines && cycles_scanline < m68k_cycles as u32 + 5 && !z80_is_reset
-                {
-                    self.z80.trigger_interrupt(0xFF);
-                }
-
-                if z80_can_run {
-                    z80_cycle_debt += (m68k_cycles as f32) * Z80_CYCLES_PER_M68K_CYCLE;
-                    while z80_cycle_debt >= 1.0 {
-                        let z80_cycles = self.z80.step();
-                        z80_cycle_debt -= z80_cycles as f32;
-                    }
-                }
+        if z80_can_run && self.internal_frame_count > 0 {
+            if self.z80_trace_count < 5000 {
+                self.z80.debug = true;
+                self.z80_trace_count += 1;
+            } else {
+                self.z80.debug = false;
             }
+        } else {
+            self.z80.debug = false;
+        }
 
-            // === APU sample generation (single borrow) ===
-            self.apu_accumulator += samples_per_line;
-            let samples_to_run = self.apu_accumulator as usize;
-            if samples_to_run > 0 {
-                self.apu_accumulator -= samples_to_run as f32;
+        // Trigger Z80 VInt at start of VBlank
+        if line == active_lines && cycles_scanline < m68k_cycles as u32 + 5 && !z80_is_reset {
+            self.z80.trigger_interrupt(0xFF);
+        }
 
-                let mut bus = self.bus.borrow_mut();
-                for _ in 0..samples_to_run {
-                    let sample = bus.apu.step();
-                    // Stereo output (duplicate for now)
-                    self.audio_buffer.push(sample);
-                    self.audio_buffer.push(sample);
-                }
+        if z80_can_run {
+            *z80_cycle_debt += (m68k_cycles as f32) * Z80_CYCLES_PER_M68K_CYCLE;
+            while *z80_cycle_debt >= 1.0 {
+                let z80_cycles = self.z80.step();
+                *z80_cycle_debt -= z80_cycles as f32;
             }
+        }
+    }
 
-            // === Interrupt handling (single borrow) ===
-            {
-                let mut bus = self.bus.borrow_mut();
+    fn generate_audio_samples(&mut self, samples_per_line: f32) {
+        self.apu_accumulator += samples_per_line;
+        let samples_to_run = self.apu_accumulator as usize;
+        if samples_to_run > 0 {
+            self.apu_accumulator -= samples_to_run as f32;
 
-                // VBlank Interrupt (Level 6) - Triggered at start of VBlank (line 224/240)
-                if line == active_lines {
-                    bus.vdp.trigger_vint();
-                    // Check if VInterrupt enabled (Reg 1, bit 5)
-                    if (bus.vdp.mode2() & 0x20) != 0 {
-                        self.cpu.request_interrupt(6);
-                    }
-                }
+            let mut bus = self.bus.borrow_mut();
+            for _ in 0..samples_to_run {
+                let sample = bus.apu.step();
+                // Stereo output (duplicate for now)
+                self.audio_buffer.push(sample);
+                self.audio_buffer.push(sample);
+            }
+        }
+    }
 
-                // HBlank Interrupt (Level 4) - Proper counter logic
-                if line < active_lines {
-                    // Check if HInterrupt enabled (Reg 0, bit 4)
-                    if (bus.vdp.mode1() & 0x10) != 0 {
-                        // Decrement line counter
-                        if bus.vdp.line_counter == 0 {
-                            // Counter expired - trigger HInt and reload
-                            self.cpu.request_interrupt(4);
-                            bus.vdp.line_counter = bus.vdp.registers[10];
-                        } else {
-                            bus.vdp.line_counter = bus.vdp.line_counter.saturating_sub(1);
-                        }
-                    }
-                } else {
-                    // During VBlank, reload HInt counter every line
-                    bus.vdp.line_counter = bus.vdp.registers[10];
-                }
+    fn handle_interrupts(&mut self, line: u16, active_lines: u16) {
+        let mut bus = self.bus.borrow_mut();
+
+        // VBlank Interrupt (Level 6) - Triggered at start of VBlank (line 224/240)
+        if line == active_lines {
+            bus.vdp.trigger_vint();
+            // Check if VInterrupt enabled (Reg 1, bit 5)
+            if (bus.vdp.mode2() & 0x20) != 0 {
+                self.cpu.request_interrupt(6);
             }
         }
 
-        // Update V30 rolling offset
-        self.bus.borrow_mut().vdp.update_v30_offset();
+        // HBlank Interrupt (Level 4) - Proper counter logic
+        if line < active_lines {
+            // Check if HInterrupt enabled (Reg 0, bit 4)
+            if (bus.vdp.mode1() & 0x10) != 0 {
+                // Decrement line counter
+                if bus.vdp.line_counter == 0 {
+                    // Counter expired - trigger HInt and reload
+                    self.cpu.request_interrupt(4);
+                    bus.vdp.line_counter = bus.vdp.registers[10];
+                } else {
+                    bus.vdp.line_counter = bus.vdp.line_counter.saturating_sub(1);
+                }
+            }
+        } else {
+            // During VBlank, reload HInt counter every line
+            bus.vdp.line_counter = bus.vdp.registers[10];
+        }
     }
 
     /// Run headless for N frames (for TAS/testing)
@@ -465,6 +501,7 @@ impl Emulator {
         Ok(())
     }
 
+    #[cfg(feature = "gui")]
     fn print_debug_info(&self, frame_count: u64) {
         let mut bus = self.bus.borrow_mut();
         let disp_en = bus.vdp.display_enabled();
@@ -509,6 +546,7 @@ impl Emulator {
         }
     }
 
+    #[cfg(feature = "gui")]
     fn render_frame(&self, pixels: &mut pixels::Pixels) -> Result<(), String> {
         let frame = pixels.frame_mut();
         let bus = self.bus.borrow();
@@ -518,6 +556,7 @@ impl Emulator {
         pixels.render().map_err(|e| e.to_string())
     }
 
+    #[cfg(feature = "gui")]
     fn process_audio(&mut self, audio_buffer: &audio::SharedAudioBuffer) {
         if let Ok(mut buf) = audio_buffer.lock() {
             buf.push(&self.audio_buffer);
@@ -526,6 +565,7 @@ impl Emulator {
     }
 
     /// Run with winit window (interactive play mode)
+    #[cfg(feature = "gui")]
     pub fn run_with_frontend(mut self) -> Result<(), String> {
         use pixels::{Pixels, SurfaceTexture};
         use winit::event::{ElementState, Event, KeyEvent, WindowEvent};
