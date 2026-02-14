@@ -69,6 +69,9 @@ proptest! {
     #[test]
     fn prop_z80_ram_access(addr in 0xA00000..0xA01FFFu32, val in 0..=255u8) {
         let mut bus = Bus::new();
+        // Request bus
+        bus.write_byte(0xA11100, 0x01);
+
         bus.write_byte(addr, val);
         prop_assert_eq!(bus.read_byte(addr), val);
     }

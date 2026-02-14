@@ -983,6 +983,9 @@ mod tests {
         emulator.step_frame_internal();
         emulator.step_frame_internal();
 
+        // Request bus to read result (Z80 RAM is only accessible when Z80 is stopped)
+        emulator.bus.borrow_mut().write_word(0xA11100, 0x0100);
+
         // Check if 0xA01FFD is 0x80
         // We use read_byte on bus.
         let val = emulator.bus.borrow_mut().read_byte(0xA01FFD);
