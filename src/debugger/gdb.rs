@@ -3,9 +3,12 @@
 //! Implements a GDB stub for debugging M68k code running in the emulator.
 //! Connect with: `m68k-elf-gdb -ex "target remote :1234"`
 
+use std::collections::hash_map::RandomState;
 use std::collections::HashSet;
+use std::hash::{BuildHasher, Hasher};
 use std::io::{BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::time::SystemTime;
 
 /// Default GDB server port
 pub const DEFAULT_PORT: u16 = 1234;
@@ -56,19 +59,43 @@ pub struct GdbServer {
     authenticated: bool,
 }
 
+fn generate_token() -> String {
+    let s = RandomState::new();
+    let mut hasher = s.build_hasher();
+    hasher.write_usize(std::process::id() as usize);
+    hasher.write_u64(
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64,
+    );
+    format!("{:016x}", hasher.finish())
+}
+
 impl GdbServer {
     /// Create a new GDB server
     pub fn new(port: u16, password: Option<String>) -> std::io::Result<Self> {
         let listener = TcpListener::bind(format!("127.0.0.1:{}", port))?;
         listener.set_nonblocking(true)?;
 
-        if password.is_some() {
-            eprintln!("🔒 GDB Server listening on 127.0.0.1:{}. Protected with password.", port);
+        let final_password = if let Some(pwd) = password {
+            eprintln!(
+                "🔒 GDB Server listening on 127.0.0.1:{}. Protected with password.",
+                port
+            );
+            Some(pwd)
         } else {
-            eprintln!("⚠️  SECURITY WARNING: GDB Server listening on 127.0.0.1:{}. This port is accessible to all local users. Only use this on a trusted single-user machine.", port);
-        }
+            let token = generate_token();
+            eprintln!(
+                "🔒 GDB Server listening on 127.0.0.1:{}. Protected with auto-generated token: {}",
+                port, token
+            );
+            eprintln!("   Authenticate with: monitor auth {}", token);
+            Some(token)
+        };
 
-        let authenticated = password.is_none();
+        // Always start unauthenticated to enforce token check
+        let authenticated = false;
 
         Ok(Self {
             listener,
@@ -76,7 +103,7 @@ impl GdbServer {
             breakpoints: HashSet::new(),
             stop_reason: StopReason::Halted,
             no_ack_mode: false,
-            password,
+            password: final_password,
             authenticated,
         })
     }
@@ -930,5 +957,31 @@ mod tests {
 
         // Now commands work
         assert_eq!(server.process_command("g", &mut regs, &mut mem).len(), (8 + 8 + 1 + 1) * 8);
+    }
+
+    #[test]
+    fn test_auto_generated_token() {
+        // Create server without password - should generate one and enforce auth
+        let mut server = GdbServer::new(0, None).unwrap();
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+
+        assert!(!server.authenticated, "Server should not be authenticated by default");
+        assert!(server.password.is_some(), "Password should be auto-generated");
+
+        let token = server.password.as_ref().unwrap().clone();
+        assert!(!token.is_empty());
+
+        // Access denied
+        assert_eq!(server.process_command("g", &mut regs, &mut mem), "E01");
+
+        // Authenticate with generated token
+        // "auth " + token
+        let auth_cmd = format!("auth {}", token);
+        let auth_hex: String = auth_cmd.bytes().map(|b| format!("{:02x}", b)).collect();
+        let cmd = format!("qRcmd,{}", auth_hex);
+
+        assert_eq!(server.process_command(&cmd, &mut regs, &mut mem), "OK");
+        assert!(server.authenticated);
     }
 }
