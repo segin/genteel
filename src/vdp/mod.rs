@@ -726,7 +726,6 @@ impl Vdp {
         line_offset: usize,
         screen_width: u16,
     ) {
-        let sprite_h_px = (attr.h_size as u16) * 8;
         let sprite_v_px = (attr.v_size as u16) * 8;
 
         let py = line - attr.v_pos;
@@ -739,38 +738,56 @@ impl Vdp {
         let tile_v_offset = fetch_py / 8;
         let pixel_v = fetch_py % 8;
 
-        for px in 0..sprite_h_px {
-            let screen_x = attr.h_pos.wrapping_add(px);
-            if screen_x >= screen_width {
-                continue;
-            }
+        let sprite_h_tiles = attr.h_size as u16;
 
-            let fetch_px = if attr.h_flip {
-                (sprite_h_px - 1) - px
+        for t in 0..sprite_h_tiles {
+            // Determine which tile column we are fetching from the sprite definition
+            let fetch_tile_idx = if attr.h_flip {
+                (sprite_h_tiles - 1) - t
             } else {
-                px
+                t
             };
-            let tile_h_offset = fetch_px / 8;
-            let pixel_h = fetch_px % 8;
 
             // In a multi-tile sprite, tiles are arranged vertically first
-            let tile_idx = attr.base_tile + (tile_h_offset * attr.v_size as u16) + tile_v_offset;
+            let tile_idx = attr.base_tile + (fetch_tile_idx * attr.v_size as u16) + tile_v_offset;
 
-            let pattern_addr = (tile_idx * 32) + (pixel_v * 4) + (pixel_h / 2);
-            if pattern_addr as usize + 4 > 0x10000 {
+            // Calculate row address for this tile
+            let row_addr = (tile_idx as usize * 32) + (pixel_v as usize * 4);
+
+            // Bounds check for the row
+            if row_addr + 4 > 0x10000 {
                 continue;
             }
 
-            let byte = self.vram[pattern_addr as usize];
-            let color_idx = if pixel_h % 2 == 0 {
-                byte >> 4
-            } else {
-                byte & 0x0F
-            };
+            // Prefetch the 4 bytes of pattern data for this row
+            let p0 = self.vram[row_addr];
+            let p1 = self.vram[row_addr + 1];
+            let p2 = self.vram[row_addr + 2];
+            let p3 = self.vram[row_addr + 3];
+            let patterns = [p0, p1, p2, p3];
 
-            if color_idx != 0 {
-                let color = self.get_cram_color(attr.palette, color_idx);
-                self.framebuffer[line_offset + screen_x as usize] = color;
+            for i in 0..8 {
+                let px_in_sprite = t * 8 + i;
+                let screen_x = attr.h_pos.wrapping_add(px_in_sprite);
+
+                if screen_x >= screen_width {
+                    continue;
+                }
+
+                // Pixel index within the tile (0-7)
+                let sub_px = if attr.h_flip { 7 - i } else { i };
+
+                let byte = patterns[sub_px as usize / 2];
+                let color_idx = if sub_px % 2 == 0 {
+                    byte >> 4
+                } else {
+                    byte & 0x0F
+                };
+
+                if color_idx != 0 {
+                    let color = self.get_cram_color(attr.palette, color_idx);
+                    self.framebuffer[line_offset + screen_x as usize] = color;
+                }
             }
         }
     }
