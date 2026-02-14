@@ -20,7 +20,10 @@ fn create_cpu() -> (Cpu, Memory) {
 
 fn write_op(memory: &mut Memory, opcodes: &[u16]) {
     let mut addr = 0x1000u32;
-    for &op in opcodes { memory.write_word(addr, op); addr += 2; }
+    for &op in opcodes {
+        memory.write_word(addr, op);
+        addr += 2;
+    }
 }
 
 // ============================================================================
@@ -207,12 +210,14 @@ fn test_dbf_loop() {
     // At -1 (0xFFFF), it exits. So 4 iterations from counter=3.
     write_op(&mut memory, &[0x51C8, 0xFFFE]); // DBF D0, -2 (back to start)
     cpu.d[0] = 3;
-    
+
     let mut iterations = 0;
     while iterations < 10 {
         cpu.step_instruction(&mut memory);
         iterations += 1;
-        if cpu.pc == 0x1004 { break; } // Fell through
+        if cpu.pc == 0x1004 {
+            break;
+        } // Fell through
         cpu.pc = 0x1000; // Reset for next iteration
     }
     assert_eq!(iterations, 4);
@@ -302,11 +307,11 @@ fn test_jsr_rts_roundtrip() {
     write_op(&mut memory, &[0x4EB8, 0x2000]);
     // Put RTS at $2000
     memory.write_word(0x2000, 0x4E75);
-    
+
     cpu.step_instruction(&mut memory); // JSR
     assert_eq!(cpu.pc, 0x2000);
     assert_eq!(cpu.a[7], 0x7FFC); // Stack pushed
-    
+
     cpu.step_instruction(&mut memory); // RTS
     assert_eq!(cpu.pc, 0x1004); // Return address
     assert_eq!(cpu.a[7], 0x8000);
@@ -317,10 +322,10 @@ fn test_bsr_rts() {
     let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0x6100, 0x0012]); // BSR.W +18 (from PC of ext word 0x1002 -> 0x1014)
     memory.write_word(0x1014, 0x4E75); // RTS at target (0x1002 + 0x12 = 0x1014)
-    
+
     cpu.step_instruction(&mut memory); // BSR
     assert_eq!(cpu.pc, 0x1014);
-    
+
     cpu.step_instruction(&mut memory); // RTS
     assert_eq!(cpu.pc, 0x1004);
 }
@@ -336,12 +341,12 @@ fn test_link_unlk() {
     write_op(&mut memory, &[0x4E56, 0xFFF8]);
     cpu.a[6] = 0x11111111;
     cpu.a[7] = 0x8000;
-    
+
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.a[7], 0x7FF4); // SP - 4 - 8
     assert_eq!(cpu.a[6], 0x7FFC); // Old SP - 4
     assert_eq!(memory.read_long(0x7FFC), 0x11111111);
-    
+
     // UNLK A6
     write_op(&mut memory, &[0x4E5E]);
     cpu.pc = 0x1000;

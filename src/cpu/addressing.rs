@@ -87,19 +87,19 @@ pub fn calculate_ea<M: MemoryInterface>(
     memory: &mut M,
 ) -> (EffectiveAddress, u32) {
     match mode {
-        AddressingMode::DataRegister(reg) => {
-            (EffectiveAddress::DataRegister(reg), 0)
-        }
-        AddressingMode::AddressRegister(reg) => {
-            (EffectiveAddress::AddressRegister(reg), 0)
-        }
-        AddressingMode::AddressIndirect(reg) => {
-            (EffectiveAddress::Memory(a[reg as usize]), 4)
-        }
+        AddressingMode::DataRegister(reg) => (EffectiveAddress::DataRegister(reg), 0),
+        AddressingMode::AddressRegister(reg) => (EffectiveAddress::AddressRegister(reg), 0),
+        AddressingMode::AddressIndirect(reg) => (EffectiveAddress::Memory(a[reg as usize]), 4),
         AddressingMode::AddressPostIncrement(reg) => {
             let addr = a[reg as usize];
             let increment = match size {
-                Size::Byte => if reg == 7 { 2 } else { 1 },
+                Size::Byte => {
+                    if reg == 7 {
+                        2
+                    } else {
+                        1
+                    }
+                }
                 Size::Word => 2,
                 Size::Long => 4,
             };
@@ -108,7 +108,13 @@ pub fn calculate_ea<M: MemoryInterface>(
         }
         AddressingMode::AddressPreDecrement(reg) => {
             let decrement = match size {
-                Size::Byte => if reg == 7 { 2 } else { 1 },
+                Size::Byte => {
+                    if reg == 7 {
+                        2
+                    } else {
+                        1
+                    }
+                }
                 Size::Word => 2,
                 Size::Long => 4,
             };

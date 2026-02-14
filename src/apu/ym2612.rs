@@ -84,7 +84,8 @@ impl Ym2612 {
             if self.timer_a_count <= 0 {
                 // Calculate period: (1024 - N) * 144
                 // N = (Reg 0x24 << 2) | (Reg 0x25 & 0x03)
-                let n = ((self.registers[0][0x24] as u32) << 2) | (self.registers[0][0x25] as u32 & 0x03);
+                let n = ((self.registers[0][0x24] as u32) << 2)
+                    | (self.registers[0][0x25] as u32 & 0x03);
                 let period = (1024 - n as i32) * 144;
 
                 // If period is 0 or very small, force minimum to avoid infinite loops
@@ -170,16 +171,17 @@ impl Ym2612 {
             // Handle Load Transitions (Reload Counters)
             // Load A (Bit 0) 0->1
             if (val & 0x01) != 0 && (old_val & 0x01) == 0 {
-                 let n = ((self.registers[0][0x24] as u32) << 2) | (self.registers[0][0x25] as u32 & 0x03);
-                 let period = (1024 - n as i32) * 144;
-                 self.timer_a_count = if period < 144 { 144 } else { period };
+                let n = ((self.registers[0][0x24] as u32) << 2)
+                    | (self.registers[0][0x25] as u32 & 0x03);
+                let period = (1024 - n as i32) * 144;
+                self.timer_a_count = if period < 144 { 144 } else { period };
             }
 
             // Load B (Bit 1) 0->1
             if (val & 0x02) != 0 && (old_val & 0x02) == 0 {
-                 let n = self.registers[0][0x26] as u32;
-                 let period = (256 - n as i32) * 2304;
-                 self.timer_b_count = if period < 2304 { 2304 } else { period };
+                let n = self.registers[0][0x26] as u32;
+                let period = (256 - n as i32) * 2304;
+                self.timer_b_count = if period < 2304 { 2304 } else { period };
             }
 
             self.registers[0][0x27] = val;
@@ -202,7 +204,11 @@ impl Ym2612 {
 
     /// Get frequency block and f-number for a channel (0-2 for Bank0, 3-5 for Bank1)
     pub fn get_frequency(&self, channel: usize) -> (u8, u16) {
-        let (bank, offset) = if channel < 3 { (0, channel) } else { (1, channel - 3) };
+        let (bank, offset) = if channel < 3 {
+            (0, channel)
+        } else {
+            (1, channel - 3)
+        };
         let addr_hi = 0xA4 + offset;
         let addr_lo = 0xA0 + offset;
 

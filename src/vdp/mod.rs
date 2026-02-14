@@ -116,71 +116,81 @@ impl Vdp {
         }
 
         match self.control_code & 0x0F {
-            1 => { // Write VRAM
+            1 => {
+                // Write VRAM
                 let addr = self.control_address as usize;
                 if addr < 0x10000 {
                     // Byte swap needed? VRAM is accessed as bytes usually
                     self.vram[addr] = (value >> 8) as u8;
                     self.vram[addr ^ 1] = (value & 0xFF) as u8;
                 }
-            },
-            3 => { // Write CRAM
+            }
+            3 => {
+                // Write CRAM
                 let mut val = value;
                 if (self.control_address & 0x01) != 0 {
                     val = (val >> 8) | (val << 8);
                 }
                 let addr = (self.control_address & 0x7E) as usize;
                 // Pack 9-bit color to RGB565
-                let r = (val & 0xE) << 1;  // 3 bits -> 4 bits
+                let r = (val & 0xE) << 1; // 3 bits -> 4 bits
                 let g = (val & 0xE0) >> 3; // 3 bits -> 4 bits
-                let b = (val & 0xE00) >> 7;// 3 bits -> 4 bits
-                // Expand to 5/6/5
+                let b = (val & 0xE00) >> 7; // 3 bits -> 4 bits
+                                            // Expand to 5/6/5
                 let r5 = (r << 1) | (r >> 3);
                 let g6 = (g << 2) | (g >> 2);
                 let b5 = (b << 1) | (b >> 3);
                 self.cram_cache[addr >> 1] = ((r5 as u16) << 11) | ((g6 as u16) << 5) | (b5 as u16);
-                
+
                 self.cram[addr] = (val & 0xFF) as u8;
                 self.cram[addr + 1] = (val >> 8) as u8;
-            },
-            5 => { // Write VSRAM
+            }
+            5 => {
+                // Write VSRAM
                 let addr = (self.control_address & 0x7F) as usize;
                 if addr < 80 {
                     self.vsram[addr] = (value >> 8) as u8;
                     self.vsram[addr + 1] = (value & 0xFF) as u8;
                 }
-            },
+            }
             _ => {}
         }
-        
-        self.control_address = self.control_address.wrapping_add(self.auto_increment() as u16);
+
+        self.control_address = self
+            .control_address
+            .wrapping_add(self.auto_increment() as u16);
     }
 
     pub fn read_data(&mut self) -> u16 {
         self.control_pending = false;
         match self.control_code & 0x0F {
-            0 => { // Read VRAM
+            0 => {
+                // Read VRAM
                 let addr = self.control_address as usize;
                 let val = if addr < 0x10000 {
                     ((self.vram[addr] as u16) << 8) | (self.vram[addr ^ 1] as u16)
                 } else {
                     0
                 };
-                self.control_address = self.control_address.wrapping_add(self.auto_increment() as u16);
+                self.control_address = self
+                    .control_address
+                    .wrapping_add(self.auto_increment() as u16);
                 val
-            },
-            8 => { // Read CRAM
-                 let addr = (self.control_address & 0x7F) as usize;
-                 ((self.cram[addr + 1] as u16) << 8) | (self.cram[addr] as u16)
-            },
-            4 => { // Read VSRAM
+            }
+            8 => {
+                // Read CRAM
+                let addr = (self.control_address & 0x7F) as usize;
+                ((self.cram[addr + 1] as u16) << 8) | (self.cram[addr] as u16)
+            }
+            4 => {
+                // Read VSRAM
                 let addr = (self.control_address & 0x7F) as usize;
                 if addr < 80 {
-                     ((self.vsram[addr] as u16) << 8) | (self.vsram[addr + 1] as u16)
+                    ((self.vsram[addr] as u16) << 8) | (self.vsram[addr + 1] as u16)
                 } else {
                     0
                 }
-            },
+            }
             _ => 0,
         }
     }
@@ -237,11 +247,19 @@ impl Vdp {
     }
 
     pub fn screen_width(&self) -> u16 {
-        if self.h40_mode() { 320 } else { 256 }
+        if self.h40_mode() {
+            320
+        } else {
+            256
+        }
     }
 
     pub fn screen_height(&self) -> u16 {
-        if self.v30_mode() { 240 } else { 224 }
+        if self.v30_mode() {
+            240
+        } else {
+            224
+        }
     }
 
     pub fn v30_mode(&self) -> bool {
@@ -251,7 +269,7 @@ impl Vdp {
     pub fn display_enabled(&self) -> bool {
         (self.registers[1] & 0x40) != 0
     }
-    
+
     pub fn dma_enabled(&self) -> bool {
         (self.registers[1] & 0x10) != 0
     }
@@ -264,13 +282,13 @@ impl Vdp {
     }
 
     pub fn dma_source(&self) -> u32 {
-        ((self.registers[23] as u32) << 17) |
-        ((self.registers[22] as u32) << 9) |
-        ((self.registers[21] as u32) << 1)
+        ((self.registers[23] as u32) << 17)
+            | ((self.registers[22] as u32) << 9)
+            | ((self.registers[21] as u32) << 1)
     }
 
     pub fn dma_length(&self) -> u32 {
-         ((self.registers[20] as u32) << 8) | (self.registers[19] as u32)
+        ((self.registers[20] as u32) << 8) | (self.registers[19] as u32)
     }
 
     pub fn dma_source_transfer(&self) -> u32 {
@@ -294,28 +312,33 @@ impl Vdp {
         // Simple VRAM fill implementation for now
         let length = self.dma_length();
         let mode = self.registers[23] & 0xC0;
-        
-        if mode == 0x80 { // VRAM Fill
+
+        if mode == 0x80 {
+            // VRAM Fill
             let data = self.last_data_write;
             // Byte write to VRAM
             let mut addr = self.control_address;
             let inc = self.auto_increment() as u16;
-            
+
             for _ in 0..length {
                 if (addr as usize) < 0x10000 {
-                   // VRAM fill writes the lower byte of data to the VRAM address
-                   // If address is even, it writes high byte of word?
-                   // VRAM is bytes.
-                   // Actually VRAM fill repeats the data to the VRAM port.
-                   // For now, simple implementation
-                   let val = if (addr & 1) == 0 { (data >> 8) as u8 } else { (data & 0xFF) as u8 };
-                   self.vram[addr as usize] = val;
+                    // VRAM fill writes the lower byte of data to the VRAM address
+                    // If address is even, it writes high byte of word?
+                    // VRAM is bytes.
+                    // Actually VRAM fill repeats the data to the VRAM port.
+                    // For now, simple implementation
+                    let val = if (addr & 1) == 0 {
+                        (data >> 8) as u8
+                    } else {
+                        (data & 0xFF) as u8
+                    };
+                    self.vram[addr as usize] = val;
                 }
                 addr = addr.wrapping_add(inc);
             }
             self.control_address = addr;
         }
-        
+
         length // Return cycles used (placeholder)
     }
 
@@ -331,11 +354,11 @@ impl Vdp {
     pub fn plane_b_address(&self) -> usize {
         ((self.registers[4] as usize) & 0x07) << 13
     }
-    
+
     pub fn hscroll_address(&self) -> usize {
         ((self.registers[13] as usize) & 0x3F) << 10
     }
-    
+
     pub fn plane_size(&self) -> (usize, usize) {
         let w = match self.registers[16] & 0x03 {
             0 => 32,
@@ -375,7 +398,7 @@ impl Vdp {
     pub fn vblank_pending(&self) -> bool {
         (self.status & 0x0008) != 0 && (self.registers[1] & 0x20) != 0
     }
-    
+
     /// Set VBlank status
     pub fn set_vblank(&mut self, active: bool) {
         if active {
@@ -386,7 +409,7 @@ impl Vdp {
             self.status &= !0x0080;
         }
     }
-    
+
     pub fn trigger_vint(&mut self) {
         self.status |= 0x0080;
     }
@@ -396,7 +419,7 @@ impl Vdp {
         // Simplified
         (self.registers[0] & 0x10) != 0
     }
-    
+
     /// Update V30 rolling offset for NTSC mode
     pub fn update_v30_offset(&mut self) {
         if !self.is_pal && self.v30_mode() {
@@ -411,7 +434,7 @@ impl Vdp {
     pub fn dump_vram(&self) -> Vec<u8> {
         self.vram.to_vec()
     }
-    
+
     pub fn dump_cram(&self) -> Vec<u8> {
         self.cram.to_vec()
     }
@@ -476,15 +499,15 @@ impl Vdp {
 
         // Plane rendering (Low priority)
         self.render_plane(false, fetch_line, draw_line, false); // Plane B low
-        self.render_plane(true, fetch_line, draw_line, false);  // Plane A low
+        self.render_plane(true, fetch_line, draw_line, false); // Plane A low
 
         // Sprites low priority
         self.render_sprites(fetch_line, draw_line, false);
 
         // Plane rendering (High priority)
         self.render_plane(false, fetch_line, draw_line, true); // Plane B high
-        self.render_plane(true, fetch_line, draw_line, true);  // Plane A high
-        // Sprites high priority
+        self.render_plane(true, fetch_line, draw_line, true); // Plane A high
+                                                              // Sprites high priority
         self.render_sprites(fetch_line, draw_line, true);
     }
 
@@ -524,21 +547,37 @@ impl Vdp {
         }
     }
 
-    fn render_sprite_scanline(&mut self, line: u16, attr: &SpriteAttributes, line_offset: usize, screen_width: u16) {
+    fn render_sprite_scanline(
+        &mut self,
+        line: u16,
+        attr: &SpriteAttributes,
+        line_offset: usize,
+        screen_width: u16,
+    ) {
         let sprite_h_px = (attr.h_size as u16) * 8;
         let sprite_v_px = (attr.v_size as u16) * 8;
 
         let py = line - attr.v_pos;
-        let fetch_py = if attr.v_flip { (sprite_v_px - 1) - py } else { py };
+        let fetch_py = if attr.v_flip {
+            (sprite_v_px - 1) - py
+        } else {
+            py
+        };
 
         let tile_v_offset = fetch_py / 8;
         let pixel_v = fetch_py % 8;
 
         for px in 0..sprite_h_px {
             let screen_x = attr.h_pos.wrapping_add(px);
-            if screen_x >= screen_width { continue; }
+            if screen_x >= screen_width {
+                continue;
+            }
 
-            let fetch_px = if attr.h_flip { (sprite_h_px - 1) - px } else { px };
+            let fetch_px = if attr.h_flip {
+                (sprite_h_px - 1) - px
+            } else {
+                px
+            };
             let tile_h_offset = fetch_px / 8;
             let pixel_h = fetch_px % 8;
 
@@ -546,10 +585,16 @@ impl Vdp {
             let tile_idx = attr.base_tile + (tile_h_offset * attr.v_size as u16) + tile_v_offset;
 
             let pattern_addr = (tile_idx * 32) + (pixel_v * 4) + (pixel_h / 2);
-            if pattern_addr as usize + 4 > 0x10000 { continue; }
+            if pattern_addr as usize + 4 > 0x10000 {
+                continue;
+            }
 
             let byte = self.vram[pattern_addr as usize];
-            let color_idx = if pixel_h % 2 == 0 { byte >> 4 } else { byte & 0x0F };
+            let color_idx = if pixel_h % 2 == 0 {
+                byte >> 4
+            } else {
+                byte & 0x0F
+            };
 
             if color_idx != 0 {
                 let color = self.get_cram_color(attr.palette, color_idx);
@@ -571,13 +616,18 @@ impl Vdp {
         // We follow the 'link' pointer starting from sprite 0
         loop {
             // Check SAT boundary
-            if sat_base + (sprite_idx as usize * 8) + 8 > 0x10000 { break; }
+            if sat_base + (sprite_idx as usize * 8) + 8 > 0x10000 {
+                break;
+            }
 
             let attr = self.fetch_sprite_attributes(sat_base, sprite_idx as u8);
 
             // Check if sprite is visible on this line
             let sprite_v_px = (attr.v_size as u16) * 8;
-            if attr.priority == priority_filter && fetch_line >= attr.v_pos && fetch_line < attr.v_pos + sprite_v_px {
+            if attr.priority == priority_filter
+                && fetch_line >= attr.v_pos
+                && fetch_line < attr.v_pos + sprite_v_px
+            {
                 self.render_sprite_scanline(fetch_line, &attr, line_offset, screen_width);
             }
 
@@ -589,13 +639,24 @@ impl Vdp {
         }
     }
 
-    fn render_plane(&mut self, is_plane_a: bool, fetch_line: u16, draw_line: u16, priority_filter: bool) {
+    fn render_plane(
+        &mut self,
+        is_plane_a: bool,
+        fetch_line: u16,
+        draw_line: u16,
+        priority_filter: bool,
+    ) {
         let (plane_w, plane_h) = self.plane_size();
-        let name_table_base = if is_plane_a { self.plane_a_address() } else { self.plane_b_address() };
+        let name_table_base = if is_plane_a {
+            self.plane_a_address()
+        } else {
+            self.plane_b_address()
+        };
 
         // Get vertical scroll
         let vs_addr = if is_plane_a { 0 } else { 2 };
-        let v_scroll = (((self.vsram[vs_addr] as u16) << 8) | (self.vsram[vs_addr + 1] as u16)) & 0x03FF;
+        let v_scroll =
+            (((self.vsram[vs_addr] as u16) << 8) | (self.vsram[vs_addr + 1] as u16)) & 0x03FF;
 
         // Get horizontal scroll (per-screen for now)
         let hs_base = self.hscroll_address();
@@ -632,13 +693,22 @@ impl Vdp {
             let tile_index = entry & 0x07FF;
 
             let row = if v_flip { 7 - pixel_v } else { pixel_v };
-            let pattern_addr = (tile_index as usize * 32) + (row as usize * 4) + (pixel_h as usize / 2);
+            let pattern_addr =
+                (tile_index as usize * 32) + (row as usize * 4) + (pixel_h as usize / 2);
 
             let byte = self.vram[pattern_addr % 0x10000];
             let col = if h_flip {
-                if pixel_h % 2 == 0 { byte & 0x0F } else { byte >> 4 }
+                if pixel_h % 2 == 0 {
+                    byte & 0x0F
+                } else {
+                    byte >> 4
+                }
             } else {
-                if pixel_h % 2 == 0 { byte >> 4 } else { byte & 0x0F }
+                if pixel_h % 2 == 0 {
+                    byte >> 4
+                } else {
+                    byte & 0x0F
+                }
             };
 
             if col != 0 {

@@ -1,15 +1,18 @@
 //! Property-based tests for Z80 CPU using proptest
 
-use proptest::prelude::*;
 use super::*;
 use crate::memory::Memory;
+use proptest::prelude::*;
 
 fn create_z80_with_program(program: &[u8]) -> Z80 {
     let mut memory = Memory::new(0x10000);
     for (i, &byte) in program.iter().enumerate() {
         memory.data[i] = byte;
     }
-    Z80::new(Box::new(memory), Box::new(crate::z80::test_utils::TestIo::default()))
+    Z80::new(
+        Box::new(memory),
+        Box::new(crate::z80::test_utils::TestIo::default()),
+    )
 }
 
 proptest! {

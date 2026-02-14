@@ -1,24 +1,36 @@
-use crate::memory::MemoryInterface;
-use crate::cpu::Cpu;
-use crate::cpu::decoder::{Size, AddressingMode};
 use crate::cpu::addressing::{calculate_ea, read_ea, write_ea};
+use crate::cpu::decoder::{AddressingMode, Size};
 use crate::cpu::flags;
+use crate::cpu::Cpu;
+use crate::memory::MemoryInterface;
 
-pub fn exec_add<M: MemoryInterface>(cpu: &mut Cpu, size: Size, src: AddressingMode, dst: AddressingMode, direction: bool, memory: &mut M) -> u32 {
+pub fn exec_add<M: MemoryInterface>(
+    cpu: &mut Cpu,
+    size: Size,
+    src: AddressingMode,
+    dst: AddressingMode,
+    direction: bool,
+    memory: &mut M,
+) -> u32 {
     let mut cycles = 4u32;
 
     // Source is always the EA when direction=false, Dn when direction=true
     let (src_mode, dst_mode) = if direction {
-        (AddressingMode::DataRegister(((cpu.pc.wrapping_sub(2) >> 9) & 7) as u8), dst)
+        (
+            AddressingMode::DataRegister(((cpu.pc.wrapping_sub(2) >> 9) & 7) as u8),
+            dst,
+        )
     } else {
         (src, dst)
     };
 
-    let (src_ea, src_cycles) = calculate_ea(src_mode, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
+    let (src_ea, src_cycles) =
+        calculate_ea(src_mode, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     cycles += src_cycles;
     let src_val = cpu.cpu_read_ea(src_ea, size, memory);
 
-    let (dst_ea, dst_cycles) = calculate_ea(dst_mode, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
+    let (dst_ea, dst_cycles) =
+        calculate_ea(dst_mode, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     cycles += dst_cycles;
     let dst_val = cpu.cpu_read_ea(dst_ea, size, memory);
 
@@ -34,7 +46,13 @@ pub fn exec_add<M: MemoryInterface>(cpu: &mut Cpu, size: Size, src: AddressingMo
     cycles
 }
 
-pub fn exec_adda<M: MemoryInterface>(cpu: &mut Cpu, size: Size, src: AddressingMode, dst_reg: u8, memory: &mut M) -> u32 {
+pub fn exec_adda<M: MemoryInterface>(
+    cpu: &mut Cpu,
+    size: Size,
+    src: AddressingMode,
+    dst_reg: u8,
+    memory: &mut M,
+) -> u32 {
     let mut cycles = 4u32;
 
     let (src_ea, src_cycles) = calculate_ea(src, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
@@ -55,7 +73,13 @@ pub fn exec_adda<M: MemoryInterface>(cpu: &mut Cpu, size: Size, src: AddressingM
     cycles + if size == Size::Long { 4 } else { 0 }
 }
 
-pub fn exec_addq<M: MemoryInterface>(cpu: &mut Cpu, size: Size, dst: AddressingMode, data: u8, memory: &mut M) -> u32 {
+pub fn exec_addq<M: MemoryInterface>(
+    cpu: &mut Cpu,
+    size: Size,
+    dst: AddressingMode,
+    data: u8,
+    memory: &mut M,
+) -> u32 {
     let (dst_ea, cycles) = calculate_ea(dst, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     let dst_val = cpu.cpu_read_ea(dst_ea, size, memory);
 
@@ -74,7 +98,12 @@ pub fn exec_addq<M: MemoryInterface>(cpu: &mut Cpu, size: Size, dst: AddressingM
     4 + cycles
 }
 
-pub fn exec_addi<M: MemoryInterface>(cpu: &mut Cpu, size: Size, dst: AddressingMode, memory: &mut M) -> u32 {
+pub fn exec_addi<M: MemoryInterface>(
+    cpu: &mut Cpu,
+    size: Size,
+    dst: AddressingMode,
+    memory: &mut M,
+) -> u32 {
     // Read immediate value from extension word(s)
     let imm = match size {
         Size::Byte => (cpu.read_word(cpu.pc, memory) & 0xFF) as u32,
@@ -97,7 +126,12 @@ pub fn exec_addi<M: MemoryInterface>(cpu: &mut Cpu, size: Size, dst: AddressingM
     8 + cycles
 }
 
-pub fn exec_subi<M: MemoryInterface>(cpu: &mut Cpu, size: Size, dst: AddressingMode, memory: &mut M) -> u32 {
+pub fn exec_subi<M: MemoryInterface>(
+    cpu: &mut Cpu,
+    size: Size,
+    dst: AddressingMode,
+    memory: &mut M,
+) -> u32 {
     let imm = match size {
         Size::Byte => (cpu.read_word(cpu.pc, memory) & 0xFF) as u32,
         Size::Word => cpu.read_word(cpu.pc, memory) as u32,
@@ -119,21 +153,32 @@ pub fn exec_subi<M: MemoryInterface>(cpu: &mut Cpu, size: Size, dst: AddressingM
     8 + cycles
 }
 
-pub fn exec_sub<M: MemoryInterface>(cpu: &mut Cpu, size: Size, src: AddressingMode, dst: AddressingMode, direction: bool, memory: &mut M) -> u32 {
-
+pub fn exec_sub<M: MemoryInterface>(
+    cpu: &mut Cpu,
+    size: Size,
+    src: AddressingMode,
+    dst: AddressingMode,
+    direction: bool,
+    memory: &mut M,
+) -> u32 {
     let mut cycles = 4u32;
 
     let (src_mode, dst_mode) = if direction {
-        (AddressingMode::DataRegister(((cpu.pc.wrapping_sub(2) >> 9) & 7) as u8), dst)
+        (
+            AddressingMode::DataRegister(((cpu.pc.wrapping_sub(2) >> 9) & 7) as u8),
+            dst,
+        )
     } else {
         (src, dst)
     };
 
-    let (src_ea, src_cycles) = calculate_ea(src_mode, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
+    let (src_ea, src_cycles) =
+        calculate_ea(src_mode, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     cycles += src_cycles;
     let src_val = cpu.cpu_read_ea(src_ea, size, memory);
 
-    let (dst_ea, dst_cycles) = calculate_ea(dst_mode, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
+    let (dst_ea, dst_cycles) =
+        calculate_ea(dst_mode, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     cycles += dst_cycles;
     let dst_val = cpu.cpu_read_ea(dst_ea, size, memory);
 
@@ -149,7 +194,14 @@ pub fn exec_sub<M: MemoryInterface>(cpu: &mut Cpu, size: Size, src: AddressingMo
     cycles
 }
 
-pub fn exec_addx<M: MemoryInterface>(cpu: &mut Cpu, size: Size, src_reg: u8, dst_reg: u8, memory_mode: bool, memory: &mut M) -> u32 {
+pub fn exec_addx<M: MemoryInterface>(
+    cpu: &mut Cpu,
+    size: Size,
+    src_reg: u8,
+    dst_reg: u8,
+    memory_mode: bool,
+    memory: &mut M,
+) -> u32 {
     let mut cycles = match size {
         Size::Byte | Size::Word => 4,
         Size::Long => 8,
@@ -173,7 +225,9 @@ pub fn exec_addx<M: MemoryInterface>(cpu: &mut Cpu, size: Size, src_reg: u8, dst
         (cpu.d[src_reg as usize], cpu.d[dst_reg as usize], None)
     };
 
-    if cpu.pending_exception { return cycles; }
+    if cpu.pending_exception {
+        return cycles;
+    }
 
     let x = if cpu.get_flag(flags::EXTEND) { 1 } else { 0 };
     let (result, carry, overflow) = cpu.addx_with_flags(src_val, dst_val, x, size);
@@ -201,7 +255,14 @@ pub fn exec_addx<M: MemoryInterface>(cpu: &mut Cpu, size: Size, src_reg: u8, dst
     cycles
 }
 
-pub fn exec_subx<M: MemoryInterface>(cpu: &mut Cpu, size: Size, src_reg: u8, dst_reg: u8, memory_mode: bool, memory: &mut M) -> u32 {
+pub fn exec_subx<M: MemoryInterface>(
+    cpu: &mut Cpu,
+    size: Size,
+    src_reg: u8,
+    dst_reg: u8,
+    memory_mode: bool,
+    memory: &mut M,
+) -> u32 {
     let mut cycles = match size {
         Size::Byte | Size::Word => 4,
         Size::Long => 8,
@@ -225,7 +286,9 @@ pub fn exec_subx<M: MemoryInterface>(cpu: &mut Cpu, size: Size, src_reg: u8, dst
         (cpu.d[src_reg as usize], cpu.d[dst_reg as usize], None)
     };
 
-    if cpu.pending_exception { return cycles; }
+    if cpu.pending_exception {
+        return cycles;
+    }
 
     let x = if cpu.get_flag(flags::EXTEND) { 1 } else { 0 };
     let (result, borrow, overflow) = cpu.subx_with_flags(dst_val, src_val, x, size);
@@ -253,7 +316,12 @@ pub fn exec_subx<M: MemoryInterface>(cpu: &mut Cpu, size: Size, src_reg: u8, dst
     cycles
 }
 
-pub fn exec_negx<M: MemoryInterface>(cpu: &mut Cpu, size: Size, dst: AddressingMode, memory: &mut M) -> u32 {
+pub fn exec_negx<M: MemoryInterface>(
+    cpu: &mut Cpu,
+    size: Size,
+    dst: AddressingMode,
+    memory: &mut M,
+) -> u32 {
     let (dst_ea, cycles) = calculate_ea(dst, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     let dst_val = cpu.cpu_read_ea(dst_ea, size, memory);
 
@@ -276,15 +344,22 @@ pub fn exec_negx<M: MemoryInterface>(cpu: &mut Cpu, size: Size, dst: AddressingM
     cpu.set_flag(flags::CARRY, borrow);
     cpu.set_flag(flags::EXTEND, borrow);
 
-    cycles + match size {
-        Size::Long => 8,
-        _ => 4,
-    }
+    cycles
+        + match size {
+            Size::Long => 8,
+            _ => 4,
+        }
 }
 
-pub fn exec_mulu<M: MemoryInterface>(cpu: &mut Cpu, src: AddressingMode, dst_reg: u8, memory: &mut M) -> u32 {
+pub fn exec_mulu<M: MemoryInterface>(
+    cpu: &mut Cpu,
+    src: AddressingMode,
+    dst_reg: u8,
+    memory: &mut M,
+) -> u32 {
     let mut cycles = 4u32;
-    let (src_ea, src_cycles) = calculate_ea(src, Size::Word, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
+    let (src_ea, src_cycles) =
+        calculate_ea(src, Size::Word, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     cycles += src_cycles;
 
     let src_val = cpu.cpu_read_ea(src_ea, Size::Word, memory) as u16;
@@ -300,9 +375,15 @@ pub fn exec_mulu<M: MemoryInterface>(cpu: &mut Cpu, src: AddressingMode, dst_reg
     cycles + 70
 }
 
-pub fn exec_muls<M: MemoryInterface>(cpu: &mut Cpu, src: AddressingMode, dst_reg: u8, memory: &mut M) -> u32 {
+pub fn exec_muls<M: MemoryInterface>(
+    cpu: &mut Cpu,
+    src: AddressingMode,
+    dst_reg: u8,
+    memory: &mut M,
+) -> u32 {
     let mut cycles = 4u32;
-    let (src_ea, src_cycles) = calculate_ea(src, Size::Word, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
+    let (src_ea, src_cycles) =
+        calculate_ea(src, Size::Word, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     cycles += src_cycles;
 
     let src_val = read_ea(src_ea, Size::Word, &cpu.d, &cpu.a, memory) as i16;
@@ -318,9 +399,15 @@ pub fn exec_muls<M: MemoryInterface>(cpu: &mut Cpu, src: AddressingMode, dst_reg
     cycles + 70
 }
 
-pub fn exec_divu<M: MemoryInterface>(cpu: &mut Cpu, src: AddressingMode, dst_reg: u8, memory: &mut M) -> u32 {
+pub fn exec_divu<M: MemoryInterface>(
+    cpu: &mut Cpu,
+    src: AddressingMode,
+    dst_reg: u8,
+    memory: &mut M,
+) -> u32 {
     let mut cycles = 4u32;
-    let (src_ea, src_cycles) = calculate_ea(src, Size::Word, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
+    let (src_ea, src_cycles) =
+        calculate_ea(src, Size::Word, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     cycles += src_cycles;
 
     let src_val = cpu.cpu_read_ea(src_ea, Size::Word, memory) as u16;
@@ -354,9 +441,15 @@ pub fn exec_divu<M: MemoryInterface>(cpu: &mut Cpu, src: AddressingMode, dst_reg
     cycles + 140
 }
 
-pub fn exec_divs<M: MemoryInterface>(cpu: &mut Cpu, src: AddressingMode, dst_reg: u8, memory: &mut M) -> u32 {
+pub fn exec_divs<M: MemoryInterface>(
+    cpu: &mut Cpu,
+    src: AddressingMode,
+    dst_reg: u8,
+    memory: &mut M,
+) -> u32 {
     let mut cycles = 4u32;
-    let (src_ea, src_cycles) = calculate_ea(src, Size::Word, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
+    let (src_ea, src_cycles) =
+        calculate_ea(src, Size::Word, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     cycles += src_cycles;
 
     let src_val = read_ea(src_ea, Size::Word, &cpu.d, &cpu.a, memory) as i16;
@@ -388,7 +481,13 @@ pub fn exec_divs<M: MemoryInterface>(cpu: &mut Cpu, src: AddressingMode, dst_reg
     cycles + 158
 }
 
-pub fn exec_abcd<M: MemoryInterface>(cpu: &mut Cpu, src_reg: u8, dst_reg: u8, memory_mode: bool, memory: &mut M) -> u32 {
+pub fn exec_abcd<M: MemoryInterface>(
+    cpu: &mut Cpu,
+    src_reg: u8,
+    dst_reg: u8,
+    memory_mode: bool,
+    memory: &mut M,
+) -> u32 {
     let mut cycles = 6u32;
 
     let (src_val, dst_val, dst_addr) = if memory_mode {
@@ -403,17 +502,25 @@ pub fn exec_abcd<M: MemoryInterface>(cpu: &mut Cpu, src_reg: u8, dst_reg: u8, me
         cycles += 12;
         (src, dst, Some(dst_addr))
     } else {
-        (cpu.d[src_reg as usize] as u8, cpu.d[dst_reg as usize] as u8, None)
+        (
+            cpu.d[src_reg as usize] as u8,
+            cpu.d[dst_reg as usize] as u8,
+            None,
+        )
     };
 
     let x = if cpu.get_flag(flags::EXTEND) { 1 } else { 0 };
 
     let mut tmp = (src_val & 0x0F) as u16 + (dst_val & 0x0F) as u16 + x as u16;
-    if tmp > 9 { tmp += 6; }
+    if tmp > 9 {
+        tmp += 6;
+    }
     tmp += (src_val & 0xF0) as u16 + (dst_val & 0xF0) as u16;
 
     let carry = tmp > 0x99;
-    if carry { tmp += 0x60; }
+    if carry {
+        tmp += 0x60;
+    }
 
     let res = (tmp & 0xFF) as u8;
 
@@ -434,7 +541,13 @@ pub fn exec_abcd<M: MemoryInterface>(cpu: &mut Cpu, src_reg: u8, dst_reg: u8, me
     cycles
 }
 
-pub fn exec_sbcd<M: MemoryInterface>(cpu: &mut Cpu, src_reg: u8, dst_reg: u8, memory_mode: bool, memory: &mut M) -> u32 {
+pub fn exec_sbcd<M: MemoryInterface>(
+    cpu: &mut Cpu,
+    src_reg: u8,
+    dst_reg: u8,
+    memory_mode: bool,
+    memory: &mut M,
+) -> u32 {
     let mut cycles = 6u32;
 
     let (src_val, dst_val, dst_addr) = if memory_mode {
@@ -449,17 +562,25 @@ pub fn exec_sbcd<M: MemoryInterface>(cpu: &mut Cpu, src_reg: u8, dst_reg: u8, me
         cycles += 12;
         (src, dst, Some(dst_addr))
     } else {
-        (cpu.d[src_reg as usize] as u8, cpu.d[dst_reg as usize] as u8, None)
+        (
+            cpu.d[src_reg as usize] as u8,
+            cpu.d[dst_reg as usize] as u8,
+            None,
+        )
     };
 
     let x = if cpu.get_flag(flags::EXTEND) { 1 } else { 0 };
 
     let mut tmp = (dst_val & 0x0F) as i16 - (src_val & 0x0F) as i16 - x as i16;
-    if tmp < 0 { tmp -= 6; }
+    if tmp < 0 {
+        tmp -= 6;
+    }
     tmp += (dst_val & 0xF0) as i16 - (src_val & 0xF0) as i16;
 
     let carry = tmp < 0;
-    if carry { tmp -= 0x60; }
+    if carry {
+        tmp -= 0x60;
+    }
 
     let res = (tmp & 0xFF) as u8;
 
@@ -482,18 +603,23 @@ pub fn exec_sbcd<M: MemoryInterface>(cpu: &mut Cpu, src_reg: u8, dst_reg: u8, me
 
 pub fn exec_nbcd<M: MemoryInterface>(cpu: &mut Cpu, dst: AddressingMode, memory: &mut M) -> u32 {
     let mut cycles = 6u32;
-    let (dst_ea, dst_cycles) = calculate_ea(dst, Size::Byte, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
+    let (dst_ea, dst_cycles) =
+        calculate_ea(dst, Size::Byte, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     cycles += dst_cycles;
 
     let dst_val = cpu.cpu_read_ea(dst_ea, Size::Byte, memory) as u8;
     let x = if cpu.get_flag(flags::EXTEND) { 1 } else { 0 };
 
     let mut tmp = 0 - (dst_val & 0x0F) as i16 - x as i16;
-    if tmp < 0 { tmp -= 6; }
+    if tmp < 0 {
+        tmp -= 6;
+    }
     tmp += 0 - (dst_val & 0xF0) as i16;
 
     let carry = tmp < 0;
-    if carry { tmp -= 0x60; }
+    if carry {
+        tmp -= 0x60;
+    }
 
     let res = (tmp & 0xFF) as u8;
 
@@ -510,7 +636,13 @@ pub fn exec_nbcd<M: MemoryInterface>(cpu: &mut Cpu, dst: AddressingMode, memory:
     cycles
 }
 
-pub fn exec_cmp<M: MemoryInterface>(cpu: &mut Cpu, size: Size, src: AddressingMode, dst_reg: u8, memory: &mut M) -> u32 {
+pub fn exec_cmp<M: MemoryInterface>(
+    cpu: &mut Cpu,
+    size: Size,
+    src: AddressingMode,
+    dst_reg: u8,
+    memory: &mut M,
+) -> u32 {
     let (src_ea, cycles) = calculate_ea(src, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     let src_val = cpu.cpu_read_ea(src_ea, size, memory);
 
@@ -529,7 +661,13 @@ pub fn exec_cmp<M: MemoryInterface>(cpu: &mut Cpu, size: Size, src: AddressingMo
     4 + cycles
 }
 
-pub fn exec_cmpa<M: MemoryInterface>(cpu: &mut Cpu, size: Size, src: AddressingMode, dst_reg: u8, memory: &mut M) -> u32 {
+pub fn exec_cmpa<M: MemoryInterface>(
+    cpu: &mut Cpu,
+    size: Size,
+    src: AddressingMode,
+    dst_reg: u8,
+    memory: &mut M,
+) -> u32 {
     let (src_ea, cycles) = calculate_ea(src, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     let src_val = read_ea(src_ea, size, &cpu.d, &cpu.a, memory);
 
@@ -551,7 +689,12 @@ pub fn exec_cmpa<M: MemoryInterface>(cpu: &mut Cpu, size: Size, src: AddressingM
     6 + cycles
 }
 
-pub fn exec_cmpi<M: MemoryInterface>(cpu: &mut Cpu, size: Size, dst: AddressingMode, memory: &mut M) -> u32 {
+pub fn exec_cmpi<M: MemoryInterface>(
+    cpu: &mut Cpu,
+    size: Size,
+    dst: AddressingMode,
+    memory: &mut M,
+) -> u32 {
     let imm = match size {
         Size::Byte => (cpu.read_word(cpu.pc, memory) & 0xFF) as u32,
         Size::Word => cpu.read_word(cpu.pc, memory) as u32,
@@ -572,7 +715,13 @@ pub fn exec_cmpi<M: MemoryInterface>(cpu: &mut Cpu, size: Size, dst: AddressingM
     8 + cycles
 }
 
-pub fn exec_cmpm<M: MemoryInterface>(cpu: &mut Cpu, size: Size, ax: u8, ay: u8, memory: &mut M) -> u32 {
+pub fn exec_cmpm<M: MemoryInterface>(
+    cpu: &mut Cpu,
+    size: Size,
+    ax: u8,
+    ay: u8,
+    memory: &mut M,
+) -> u32 {
     let ay_addr = cpu.a[ay as usize];
     let src_val = cpu.cpu_read_memory(ay_addr, size, memory);
     cpu.a[ay as usize] = ay_addr.wrapping_add(size.bytes());
@@ -594,7 +743,12 @@ pub fn exec_cmpm<M: MemoryInterface>(cpu: &mut Cpu, size: Size, ax: u8, ay: u8, 
     }
 }
 
-pub fn exec_tst<M: MemoryInterface>(cpu: &mut Cpu, size: Size, dst: AddressingMode, memory: &mut M) -> u32 {
+pub fn exec_tst<M: MemoryInterface>(
+    cpu: &mut Cpu,
+    size: Size,
+    dst: AddressingMode,
+    memory: &mut M,
+) -> u32 {
     let (dst_ea, cycles) = calculate_ea(dst, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     let val = cpu.cpu_read_ea(dst_ea, size, memory);
 
@@ -605,7 +759,13 @@ pub fn exec_tst<M: MemoryInterface>(cpu: &mut Cpu, size: Size, dst: AddressingMo
     4 + cycles
 }
 
-pub fn exec_suba<M: MemoryInterface>(cpu: &mut Cpu, size: Size, src: AddressingMode, dst_reg: u8, memory: &mut M) -> u32 {
+pub fn exec_suba<M: MemoryInterface>(
+    cpu: &mut Cpu,
+    size: Size,
+    src: AddressingMode,
+    dst_reg: u8,
+    memory: &mut M,
+) -> u32 {
     let mut cycles = 4u32;
 
     let (src_ea, src_cycles) = calculate_ea(src, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
@@ -624,7 +784,13 @@ pub fn exec_suba<M: MemoryInterface>(cpu: &mut Cpu, size: Size, src: AddressingM
     cycles + if size == Size::Long { 4 } else { 0 }
 }
 
-pub fn exec_subq<M: MemoryInterface>(cpu: &mut Cpu, size: Size, dst: AddressingMode, data: u8, memory: &mut M) -> u32 {
+pub fn exec_subq<M: MemoryInterface>(
+    cpu: &mut Cpu,
+    size: Size,
+    dst: AddressingMode,
+    data: u8,
+    memory: &mut M,
+) -> u32 {
     let (dst_ea, cycles) = calculate_ea(dst, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     let dst_val = cpu.cpu_read_ea(dst_ea, size, memory);
 
@@ -642,7 +808,12 @@ pub fn exec_subq<M: MemoryInterface>(cpu: &mut Cpu, size: Size, dst: AddressingM
     4 + cycles
 }
 
-pub fn exec_neg<M: MemoryInterface>(cpu: &mut Cpu, size: Size, dst: AddressingMode, memory: &mut M) -> u32 {
+pub fn exec_neg<M: MemoryInterface>(
+    cpu: &mut Cpu,
+    size: Size,
+    dst: AddressingMode,
+    memory: &mut M,
+) -> u32 {
     let (dst_ea, cycles) = calculate_ea(dst, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     let val = cpu.cpu_read_ea(dst_ea, size, memory);
 
@@ -658,9 +829,15 @@ pub fn exec_neg<M: MemoryInterface>(cpu: &mut Cpu, size: Size, dst: AddressingMo
     4 + cycles
 }
 
-pub fn exec_chk<M: MemoryInterface>(cpu: &mut Cpu, src: AddressingMode, dst_reg: u8, memory: &mut M) -> u32 {
+pub fn exec_chk<M: MemoryInterface>(
+    cpu: &mut Cpu,
+    src: AddressingMode,
+    dst_reg: u8,
+    memory: &mut M,
+) -> u32 {
     let mut cycles = 10u32;
-    let (src_ea, src_cycles) = calculate_ea(src, Size::Word, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
+    let (src_ea, src_cycles) =
+        calculate_ea(src, Size::Word, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     cycles += src_cycles;
 
     let bound = cpu.cpu_read_ea(src_ea, Size::Word, memory) as i16;

@@ -150,13 +150,9 @@ impl ControllerPort {
         match self.controller_type {
             ControllerType::None => 0x7F, // No controller = all inputs high
 
-            ControllerType::ThreeButton => {
-                self.read_3button()
-            }
+            ControllerType::ThreeButton => self.read_3button(),
 
-            ControllerType::SixButton => {
-                self.read_6button()
-            }
+            ControllerType::SixButton => self.read_6button(),
         }
     }
 
@@ -167,23 +163,43 @@ impl ControllerPort {
             // TH=1: Return Up, Down, Left, Right, B, C (and TH=1)
             let mut data = 0x7F; // All released + TH high
 
-            if self.state.up    { data &= !0x01; }
-            if self.state.down  { data &= !0x02; }
-            if self.state.left  { data &= !0x04; }
-            if self.state.right { data &= !0x08; }
-            if self.state.b     { data &= !0x10; }
-            if self.state.c     { data &= !0x20; }
+            if self.state.up {
+                data &= !0x01;
+            }
+            if self.state.down {
+                data &= !0x02;
+            }
+            if self.state.left {
+                data &= !0x04;
+            }
+            if self.state.right {
+                data &= !0x08;
+            }
+            if self.state.b {
+                data &= !0x10;
+            }
+            if self.state.c {
+                data &= !0x20;
+            }
 
             data
         } else {
             // TH=0: Return Up, Down, 0, 0, A, Start (TH=0)
             let mut data = 0x33; // Up, Down, A, Start released; bits 2-3 low
 
-            if self.state.up    { data &= !0x01; }
-            if self.state.down  { data &= !0x02; }
+            if self.state.up {
+                data &= !0x01;
+            }
+            if self.state.down {
+                data &= !0x02;
+            }
             // Bits 2-3 are always 0 when TH=0 (used to detect controller type)
-            if self.state.a     { data &= !0x10; }
-            if self.state.start { data &= !0x20; }
+            if self.state.a {
+                data &= !0x10;
+            }
+            if self.state.start {
+                data &= !0x20;
+            }
 
             data
         }
