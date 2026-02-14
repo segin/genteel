@@ -1,10 +1,10 @@
 # Comprehensive Codebase Audit Findings
 
-**Date:** 2026-02-12T02:34:15.680233
-**Commit:** 1a5dbeffc6f165b694ca72fa3a9f56b474e76aa2
+**Date:** 2026-02-14T07:55:12.326925
+**Commit:** 691acb04962f4d8cba6b2aa319e7e78289a2f289
 
 ## Metrics
-- **Files:** 399
+- **Files:** 409
 - **Dependencies:** 322
 - **Secrets Found:** 1
 - **Tests:** Fail
@@ -76,25 +76,43 @@
 - **Description:** Usage of `unsafe` block detected. Verify memory safety manually.
 - **Remediation:** Audit unsafe block for soundness.
 
-### [F-012] Technical Debt (TODO/FIXME)
-- **Severity:** Info
-- **Location:** `src/apu/ym2612.rs:72`
-- **Description:** // TODO: Proper timer implementation.
-- **Remediation:** Address the comment.
+### [F-012] Unsafe Rust Code
+- **Severity:** Medium
+- **Location:** `src/memory/bus.rs:268`
+- **Description:** Usage of `unsafe` block detected. Verify memory safety manually.
+- **Remediation:** Audit unsafe block for soundness.
 
 ### [F-013] Unsafe Rust Code
 - **Severity:** Medium
-- **Location:** `src/main.rs:228`
+- **Location:** `src/memory/bus.rs:269`
 - **Description:** Usage of `unsafe` block detected. Verify memory safety manually.
 - **Remediation:** Audit unsafe block for soundness.
 
 ### [F-014] Unsafe Rust Code
 - **Severity:** Medium
-- **Location:** `src/main.rs:240`
+- **Location:** `src/memory/bus.rs:356`
 - **Description:** Usage of `unsafe` block detected. Verify memory safety manually.
 - **Remediation:** Audit unsafe block for soundness.
 
-### [F-015] Test Failure
+### [F-015] Unsafe Rust Code
+- **Severity:** Medium
+- **Location:** `src/memory/bus.rs:357`
+- **Description:** Usage of `unsafe` block detected. Verify memory safety manually.
+- **Remediation:** Audit unsafe block for soundness.
+
+### [F-016] Unsafe Rust Code
+- **Severity:** Medium
+- **Location:** `src/memory/bus.rs:358`
+- **Description:** Usage of `unsafe` block detected. Verify memory safety manually.
+- **Remediation:** Audit unsafe block for soundness.
+
+### [F-017] Unsafe Rust Code
+- **Severity:** Medium
+- **Location:** `src/memory/bus.rs:359`
+- **Description:** Usage of `unsafe` block detected. Verify memory safety manually.
+- **Remediation:** Audit unsafe block for soundness.
+
+### [F-018] Test Failure
 - **Severity:** High
 - **Location:** `None:None`
 - **Description:** Run `cargo test` to see failures.
