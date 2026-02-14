@@ -1786,7 +1786,7 @@ impl Z80 {
                 self.set_reg(r, val);
                 19
             }
-            0x70..=0x77 => {
+            0x70..=0x75 | 0x77 => {
                 let d = self.fetch_byte() as i8;
                 let addr = (self.ix as i16 + d as i16) as u16;
                 self.memptr = addr;
@@ -1797,18 +1797,12 @@ impl Z80 {
             }
 
             // Generic Undocumented LD r, r' (involving IXH/IXL if 4/5)
-            // Note: 0x76 (HALT) is handled here as LD (HL), (HL) which is NOP or HALT?
-            // HALT is 76. In DD prefix, DD 76 is undefined/unstable or same as HALT.
-            // But 0x40..0x7F logic maps 6 to IXH/IXL access??
-            // Wait, get_index_byte(6) returns 0.
-            // DD 76 -> LD H, (HL) -> ???
-            // Actually DD 76 is NOT LD (HL), (HL). It is HALT.
-            // We should treat 76 as HALT if possible, or fall through.
-            // But let's keep the generic logic for now.
+            // Note: DD 76 is HALT.
             0x40..=0x7F => {
                 if opcode == 0x76 {
-                    return 4;
-                } // HALT (Timing?)
+                    self.halted = true;
+                    return 8;
+                }
                 let r_src = opcode & 0x07;
                 let r_dest = (opcode >> 3) & 0x07;
                 let val = self.get_index_byte(r_src, true);
@@ -2057,7 +2051,7 @@ impl Z80 {
                 self.set_reg(r, val);
                 19
             }
-            0x70..=0x77 => {
+            0x70..=0x75 | 0x77 => {
                 let d = self.fetch_byte() as i8;
                 let addr = (self.iy as i16 + d as i16) as u16;
                 self.memptr = addr;
@@ -2068,9 +2062,11 @@ impl Z80 {
             }
 
             // Generic Undocumented (IY)
+            // Note: FD 76 is HALT.
             0x40..=0x7F => {
                 if opcode == 0x76 {
-                    return 4;
+                    self.halted = true;
+                    return 8;
                 }
                 let r_src = opcode & 0x07;
                 let r_dest = (opcode >> 3) & 0x07;
