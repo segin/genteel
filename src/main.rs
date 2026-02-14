@@ -168,17 +168,7 @@ impl Emulator {
     pub fn step_frame(&mut self) {
         // Apply inputs from script or live input
         let frame_input = self.input.advance_frame();
-        {
-            let mut bus = self.bus.borrow_mut();
-            if let Some(ctrl) = bus.io.controller(1) {
-                *ctrl = frame_input.p1;
-            }
-            if let Some(ctrl) = bus.io.controller(2) {
-                *ctrl = frame_input.p2;
-            }
-        }
-
-        self.step_frame_internal();
+        self.step_frame_with_input(frame_input.p1, frame_input.p2);
     }
 
     /// Step one frame with provided input (for live play)
@@ -659,6 +649,7 @@ impl Emulator {
             })
             .map_err(|e| e.to_string())
     }
+
 }
 
 fn print_usage() {
@@ -996,5 +987,13 @@ mod tests {
         ];
         let config = Config::from_args(args);
         assert_eq!(config.rom_path, Some("rom part2.bin".to_string()));
+    }
+
+    #[test]
+    fn test_step_frame_basic() {
+        let mut emulator = Emulator::new();
+        emulator.step_frame();
+        emulator.step_frame();
+        assert_eq!(emulator.internal_frame_count, 2);
     }
 }
