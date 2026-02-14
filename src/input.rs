@@ -17,8 +17,12 @@
 
 use crate::io::ControllerState;
 use std::collections::HashMap;
-use std::fs;
+use std::fs::File;
+use std::io::Read;
 use std::path::Path;
+
+/// Maximum script size in bytes (50MB) to prevent OOM
+const MAX_SCRIPT_SIZE: u64 = 50 * 1024 * 1024;
 
 /// A single frame's input for both players
 #[derive(Debug, Clone, Default)]
@@ -44,8 +48,35 @@ impl InputScript {
 
     /// Load a script from a file
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, String> {
-        let content =
-            fs::read_to_string(path).map_err(|e| format!("Failed to read input script: {}", e))?;
+        let file = File::open(path).map_err(|e| format!("Failed to open input script: {}", e))?;
+
+        // Check metadata size first for quick fail
+        if let Ok(metadata) = file.metadata() {
+            if metadata.len() > MAX_SCRIPT_SIZE {
+                return Err(format!(
+                    "Input script too large: {} bytes (max {} bytes)",
+                    metadata.len(),
+                    MAX_SCRIPT_SIZE
+                ));
+            }
+        }
+
+        // Read with limit to prevent OOM from streams/lying metadata
+        let mut buffer = Vec::new();
+        file.take(MAX_SCRIPT_SIZE + 1)
+            .read_to_end(&mut buffer)
+            .map_err(|e| format!("Failed to read input script: {}", e))?;
+
+        if buffer.len() as u64 > MAX_SCRIPT_SIZE {
+            return Err(format!(
+                "Input script too large: exceeds {} bytes",
+                MAX_SCRIPT_SIZE
+            ));
+        }
+
+        let content = String::from_utf8(buffer)
+            .map_err(|e| format!("Input script is not valid UTF-8: {}", e))?;
+
         Self::parse(&content)
     }
 
@@ -520,7 +551,7 @@ mod tests {
         let result = InputScript::load("non_existent_file.txt");
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.contains("Failed to read input script"));
+        assert!(err.contains("Failed to open input script"));
     }
 
     #[test]
@@ -537,5 +568,31 @@ mod tests {
         let result = InputScript::parse(content);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "Line 1: invalid frame number");
+    }
+
+    #[test]
+    fn test_load_too_large_file() {
+        use std::fs;
+        use std::io::Write;
+        let path = "test_large_script.txt";
+        let mut file = File::create(path).unwrap();
+
+        // Create a file just over the limit (50MB + 1 byte)
+        // We write in chunks to avoid OOM in test runner if it were to hold it all
+        let chunk_size = 1024 * 1024;
+        let chunk = vec![b' '; chunk_size];
+        for _ in 0..50 {
+            file.write_all(&chunk).unwrap();
+        }
+        file.write_all(&[b' ']).unwrap(); // +1 byte
+
+        let result = InputScript::load(path);
+
+        // Cleanup
+        let _ = fs::remove_file(path);
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("Input script too large"));
     }
 }
