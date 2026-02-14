@@ -275,21 +275,28 @@ impl Emulator {
 
     fn run_cpu_loop(&mut self, line: u16, active_lines: u16, z80_cycle_debt: &mut f32) {
         const CYCLES_PER_LINE: u32 = 488;
+        const CPU_BATCH_CYCLES: u32 = 128;
         let mut cycles_scanline: u32 = 0;
 
         while cycles_scanline < CYCLES_PER_LINE {
-            // Borrow bus for CPU execution
-            let mut bus = self.bus.borrow_mut();
-            let m68k_cycles = self.cpu.step_instruction(&mut *bus);
+            let mut batch_cycles = 0;
 
-            // Step APU with cycles to update timers
-            bus.apu.fm.step(m68k_cycles);
-            drop(bus); // Release bus for Z80/etc checks
+            // Borrow bus for CPU execution (batch)
+            {
+                let mut bus = self.bus.borrow_mut();
+                while batch_cycles < CPU_BATCH_CYCLES && cycles_scanline + batch_cycles < CYCLES_PER_LINE {
+                    let m68k_cycles = self.cpu.step_instruction(&mut *bus);
 
-            cycles_scanline += m68k_cycles;
+                    // Step APU with cycles to update timers
+                    bus.apu.fm.step(m68k_cycles);
+                    batch_cycles += m68k_cycles;
+                }
+            } // Release bus for Z80/etc checks
+
+            cycles_scanline += batch_cycles;
 
             self.sync_z80(
-                m68k_cycles,
+                batch_cycles,
                 line,
                 active_lines,
                 cycles_scanline,
