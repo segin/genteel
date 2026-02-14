@@ -424,11 +424,11 @@ impl Cpu {
     }
 
     pub(crate) fn update_nz_flags(&mut self, value: u32, size: Size) {
-        let (negative, zero) = match size {
-            Size::Byte => ((value & 0x80) != 0, (value & 0xFF) == 0),
-            Size::Word => ((value & 0x8000) != 0, (value & 0xFFFF) == 0),
-            Size::Long => ((value & 0x80000000) != 0, value == 0),
-        };
+        let mask = size.mask();
+        let sign_bit = size.sign_bit();
+        let negative = (value & sign_bit) != 0;
+        let zero = (value & mask) == 0;
+
         self.set_flag(flags::NEGATIVE, negative);
         self.set_flag(flags::ZERO, zero);
     }
@@ -460,11 +460,8 @@ impl Cpu {
     }
 
     pub(crate) fn add_with_flags(&self, a: u32, b: u32, size: Size) -> (u32, bool, bool) {
-        let (mask, sign_bit) = match size {
-            Size::Byte => (0xFF, 0x80),
-            Size::Word => (0xFFFF, 0x8000),
-            Size::Long => (0xFFFFFFFF, 0x80000000),
-        };
+        let mask = size.mask();
+        let sign_bit = size.sign_bit();
 
         let a = a & mask;
         let b = b & mask;
@@ -481,11 +478,8 @@ impl Cpu {
     }
 
     pub(crate) fn sub_with_flags(&self, a: u32, b: u32, size: Size) -> (u32, bool, bool) {
-        let (mask, sign_bit) = match size {
-            Size::Byte => (0xFF, 0x80),
-            Size::Word => (0xFFFF, 0x8000),
-            Size::Long => (0xFFFFFFFF, 0x80000000),
-        };
+        let mask = size.mask();
+        let sign_bit = size.sign_bit();
 
         let a = a & mask;
         let b = b & mask;
@@ -508,11 +502,8 @@ impl Cpu {
         x: u32,
         size: Size,
     ) -> (u32, bool, bool) {
-        let (mask, sign_bit) = match size {
-            Size::Byte => (0xFF, 0x80),
-            Size::Word => (0xFFFF, 0x8000),
-            Size::Long => (0xFFFFFFFF, 0x80000000),
-        };
+        let mask = size.mask();
+        let sign_bit = size.sign_bit();
 
         let a = src & mask;
         let b = dst & mask;
@@ -540,11 +531,8 @@ impl Cpu {
         x: u32,
         size: Size,
     ) -> (u32, bool, bool) {
-        let (mask, sign_bit) = match size {
-            Size::Byte => (0xFF, 0x80),
-            Size::Word => (0xFFFF, 0x8000),
-            Size::Long => (0xFFFFFFFF, 0x80000000),
-        };
+        let mask = size.mask();
+        let sign_bit = size.sign_bit();
 
         let a = dst & mask;
         let b = src & mask;
