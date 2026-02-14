@@ -62,13 +62,28 @@ impl GdbServer {
         let listener = TcpListener::bind(format!("127.0.0.1:{}", port))?;
         listener.set_nonblocking(true)?;
 
-        if password.is_some() {
-            eprintln!("🔒 GDB Server listening on 127.0.0.1:{}. Protected with password.", port);
+        let (password, authenticated) = if let Some(pwd) = password {
+            eprintln!(
+                "🔒 GDB Server listening on 127.0.0.1:{}. Protected with provided password.",
+                port
+            );
+            (Some(pwd), false)
         } else {
-            eprintln!("⚠️  SECURITY WARNING: GDB Server listening on 127.0.0.1:{}. This port is accessible to all local users. Only use this on a trusted single-user machine.", port);
-        }
+            // Generate random 16-byte hex token (8 bytes -> 16 hex chars)
+            // Using a simple random generation
+            let token: String = (0..8)
+                .map(|_| format!("{:02x}", rand::random::<u8>()))
+                .collect();
 
-        let authenticated = password.is_none();
+            eprintln!(
+                "🔒 GDB Server listening on 127.0.0.1:{}. Protected with GENERATED password.",
+                port
+            );
+            eprintln!("   Authentication required. Run this command in GDB:");
+            eprintln!("   monitor auth {}", token);
+
+            (Some(token), false)
+        };
 
         Ok(Self {
             listener,
@@ -930,5 +945,66 @@ mod tests {
 
         // Now commands work
         assert_eq!(server.process_command("g", &mut regs, &mut mem).len(), (8 + 8 + 1 + 1) * 8);
+    }
+
+    #[test]
+    fn test_auto_generated_password() {
+        // Create server with NO password (should generate one)
+        let mut server = GdbServer::new(0, None).unwrap();
+
+        // Should be unauthenticated
+        assert!(
+            !server.authenticated,
+            "Server should be unauthenticated by default when no password provided"
+        );
+
+        // Should have a generated password
+        assert!(
+            server.password.is_some(),
+            "Server should have generated a password"
+        );
+        let generated_pwd = server.password.as_ref().unwrap().clone();
+
+        // Check password format (16 chars hex)
+        assert_eq!(generated_pwd.len(), 16, "Generated password should be 16 chars");
+        assert!(
+            generated_pwd.chars().all(|c| c.is_digit(16)),
+            "Generated password should be hex"
+        );
+
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+
+        // Commands should be rejected
+        assert_eq!(server.process_command("g", &mut regs, &mut mem), "E01");
+
+        // Helper to hex encode
+        fn to_hex(s: &str) -> String {
+            s.bytes().map(|b| format!("{:02x}", b)).collect()
+        }
+
+        // Authenticate with WRONG password
+        let wrong_cmd_str = "auth wrong";
+        let wrong_packet = format!("qRcmd,{}", to_hex(wrong_cmd_str));
+        assert_eq!(
+            server.process_command(&wrong_packet, &mut regs, &mut mem),
+            "E01"
+        );
+        assert!(!server.authenticated);
+
+        // Authenticate with CORRECT password
+        let right_cmd_str = format!("auth {}", generated_pwd);
+        let right_packet = format!("qRcmd,{}", to_hex(&right_cmd_str));
+        assert_eq!(
+            server.process_command(&right_packet, &mut regs, &mut mem),
+            "OK"
+        );
+        assert!(server.authenticated);
+
+        // Now commands work
+        assert_eq!(
+            server.process_command("g", &mut regs, &mut mem).len(),
+            (8 + 8 + 1 + 1) * 8
+        );
     }
 }
