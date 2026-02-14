@@ -7,24 +7,24 @@
 //!
 //! It handles routing of register writes and audio sample generation.
 
-pub mod sn76489;
+pub mod psg;
 pub mod ym2612;
 
 use crate::debugger::Debuggable;
 use serde_json::{json, Value};
-use sn76489::Sn76489;
+use psg::Psg;
 use ym2612::Ym2612;
 
 #[derive(Debug)]
 pub struct Apu {
-    pub psg: Sn76489,
+    pub psg: Psg,
     pub fm: Ym2612,
 }
 
 impl Apu {
     pub fn new() -> Self {
         Self {
-            psg: Sn76489::new(),
+            psg: Psg::new(),
             fm: Ym2612::new(),
         }
     }
@@ -66,8 +66,7 @@ impl Apu {
         // Step the components
         self.fm.step(1); // 1 "cycle" per sample step (simplified)
 
-        // Placeholder: Return silence
-        0
+        self.psg.step()
     }
 }
 
@@ -75,11 +74,12 @@ impl Debuggable for Apu {
     fn read_state(&self) -> Value {
         json!({
             "psg": {
-                "tone1_freq": self.psg.tone1_freq,
-                "tone1_vol": self.psg.tone1_vol,
-                "tone2_freq": self.psg.tone2_freq,
-                "tone3_freq": self.psg.tone3_freq,
-                "noise_ctrl": self.psg.noise_ctrl,
+                "tone1_freq": self.psg.tones[0].frequency,
+                "tone1_vol": self.psg.tones[0].volume,
+                "tone2_freq": self.psg.tones[1].frequency,
+                "tone3_freq": self.psg.tones[2].frequency,
+                "noise_white": self.psg.noise.white_noise,
+                "noise_rate": self.psg.noise.shift_rate,
             },
             "fm": {
                 "status": self.fm.status,
@@ -107,7 +107,7 @@ mod tests {
     fn test_initialization() {
         let apu = Apu::new();
         // PSG should be silent
-        assert_eq!(apu.psg.tone1_vol, 0x0F);
+        assert_eq!(apu.psg.tones[0].volume, 0x0F);
         // FM status should be clean
         assert_eq!(apu.fm.status, 0);
     }
@@ -117,7 +117,7 @@ mod tests {
         let mut apu = Apu::new();
         apu.write_psg(0x8F); // Latch Tone 1 Vol to 15 (Silent)
         apu.write_psg(0x90); // Latch Tone 1 Vol to 0 (Loud)
-        assert_eq!(apu.psg.tone1_vol, 0);
+        assert_eq!(apu.psg.tones[0].volume, 0);
     }
 
     #[test]
