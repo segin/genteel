@@ -87,20 +87,15 @@ impl ControllerState {
 }
 
 /// Controller type
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ControllerType {
     /// No controller connected
     None,
     /// 3-button controller (original)
+    #[default]
     ThreeButton,
     /// 6-button controller (Fighting Pad)
     SixButton,
-}
-
-impl Default for ControllerType {
-    fn default() -> Self {
-        ControllerType::ThreeButton
-    }
 }
 
 /// A controller port
@@ -520,5 +515,13 @@ mod tests {
         // X, Mode Released -> Bits 2, 3 clear.
         // Expected: 0x70 | 0x01 = 0x71.
         assert_eq!(port.read_data(), 0x71, "Pulse 5 Fall (Extra Buttons)");
+    }
+
+    #[test]
+    fn test_io_controller_invalid_port() {
+        let mut io = Io::new();
+        assert!(io.controller(0).is_none());
+        assert!(io.controller(3).is_none());
+        assert!(io.controller(99).is_none());
     }
 }
