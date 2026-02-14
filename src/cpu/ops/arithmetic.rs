@@ -583,7 +583,7 @@ pub fn exec_divs<M: MemoryInterface>(
     let quotient = dividend / (divisor as i32);
     let remainder = dividend % (divisor as i32);
 
-    if quotient > 32767 || quotient < -32768 {
+    if !(-32768..=32767).contains(&quotient) {
         cpu.set_flag(flags::OVERFLOW, true);
     } else {
         cpu.d[dst_reg as usize] =
