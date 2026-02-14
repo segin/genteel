@@ -527,6 +527,40 @@ mod tests {
     }
 
     #[test]
+    fn test_6button_timeout() {
+        let mut port = ControllerPort::new(ControllerType::SixButton);
+
+        // Initial state
+        assert_eq!(port.th_counter, 0);
+        assert_eq!(port.th_timer, 0);
+
+        // Increment counter by toggling TH (1 -> 0)
+        port.write_data(0x00);
+        assert_eq!(port.th_counter, 1);
+        assert_eq!(port.th_timer, 0);
+
+        // Update with cycles <= 1500
+        port.update(1000);
+        assert_eq!(port.th_counter, 1);
+        assert_eq!(port.th_timer, 1000);
+
+        port.update(500);
+        assert_eq!(port.th_counter, 1);
+        assert_eq!(port.th_timer, 1500);
+
+        // Timeout: th_timer > 1500
+        port.update(1);
+        assert_eq!(port.th_counter, 0);
+        assert_eq!(port.th_timer, 1501);
+
+        // Verify write_data resets th_timer
+        port.write_data(0x40); // TH high
+        port.write_data(0x00); // TH low
+        assert_eq!(port.th_counter, 1);
+        assert_eq!(port.th_timer, 0);
+    }
+
+    #[test]
     fn test_io_controller_invalid_port() {
         let mut io = Io::new();
         assert!(io.controller(0).is_none());
