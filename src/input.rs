@@ -231,6 +231,7 @@ impl InputManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn test_parse_buttons_basic() {
@@ -512,5 +513,37 @@ mod tests {
         let result = InputScript::parse(content);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "Line 1: invalid frame number");
+    }
+
+    proptest! {
+        #[test]
+        fn test_is_complete_property(
+            max_frame in 0..u64::MAX,
+            delta in -2i64..=2i64, // Test around the boundary
+            random_frame in 0..u64::MAX // And random frames
+        ) {
+            let mut manager = InputManager::new();
+
+            // Case 1: No script
+            prop_assert!(!manager.is_complete());
+
+            // Case 2: With script
+            let mut script = InputScript::new();
+            script.max_frame = max_frame;
+            manager.set_script(script);
+
+            // Check boundary conditions
+            let boundary_frame = (max_frame as i128 + delta as i128).max(0) as u64;
+            manager.current_frame = boundary_frame;
+            let expected_boundary = boundary_frame > max_frame;
+            prop_assert_eq!(manager.is_complete(), expected_boundary,
+                "Failed boundary check: max_frame={}, current_frame={}", max_frame, boundary_frame);
+
+            // Check random frame
+            manager.current_frame = random_frame;
+            let expected_random = random_frame > max_frame;
+            prop_assert_eq!(manager.is_complete(), expected_random,
+                "Failed random check: max_frame={}, current_frame={}", max_frame, random_frame);
+        }
     }
 }
