@@ -123,9 +123,6 @@ impl MemoryInterface for Z80Bus {
             0x8000..=0xFFFF => {
                 let bank_addr = self.bus.bus.borrow().z80_bank_addr;
                 let effective_addr = bank_addr | ((addr as u32) & 0x7FFF);
-                if effective_addr == 0xFFF605 || effective_addr == 0xFFF62A {
-                    // eprintln!("DEBUG: Z80 SYNC WRITE: addr=0x{:06X} val=0x{:02X}", effective_addr, value);
-                }
                 self.bus.bus.borrow_mut().write_byte(effective_addr, value);
             }
         }
