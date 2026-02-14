@@ -324,27 +324,27 @@ impl Cpu {
                 size,
                 src,
                 dst,
-                direction,
-            } => ops::arithmetic::exec_add(self, size, src, dst, direction, memory),
+                direction: _,
+            } => ops::arithmetic::exec_add(self, size, src, dst, memory),
             Instruction::AddA { size, src, dst_reg } => {
                 ops::arithmetic::exec_adda(self, size, src, dst_reg, memory)
             }
             Instruction::AddI { size, dst } => ops::arithmetic::exec_addi(self, size, dst, memory),
             Instruction::AddQ { size, dst, data } => {
-                ops::arithmetic::exec_addq(self, size, dst, data, memory)
+                ops::arithmetic::exec_addq(self, size, data, dst, memory)
             }
             Instruction::Sub {
                 size,
                 src,
                 dst,
-                direction,
-            } => ops::arithmetic::exec_sub(self, size, src, dst, direction, memory),
+                direction: _,
+            } => ops::arithmetic::exec_sub(self, size, src, dst, memory),
             Instruction::SubA { size, src, dst_reg } => {
                 ops::arithmetic::exec_suba(self, size, src, dst_reg, memory)
             }
             Instruction::SubI { size, dst } => ops::arithmetic::exec_subi(self, size, dst, memory),
             Instruction::SubQ { size, dst, data } => {
-                ops::arithmetic::exec_subq(self, size, dst, data, memory)
+                ops::arithmetic::exec_subq(self, size, data, dst, memory)
             }
             Instruction::Neg { size, dst } => ops::arithmetic::exec_neg(self, size, dst, memory),
             Instruction::NegX { size, dst } => ops::arithmetic::exec_negx(self, size, dst, memory),
@@ -783,13 +783,6 @@ impl Cpu {
         }
     }
 
-    pub(crate) fn write_data_reg(&mut self, reg: u8, size: Size, val: u32) {
-        match size {
-            Size::Byte => self.d[reg as usize] = (self.d[reg as usize] & !0xFF) | (val & 0xFF),
-            Size::Word => self.d[reg as usize] = (self.d[reg as usize] & !0xFFFF) | (val & 0xFFFF),
-            Size::Long => self.d[reg as usize] = val,
-        }
-    }
 
     pub(crate) fn cpu_read_ea<M: MemoryInterface>(
         &mut self,
