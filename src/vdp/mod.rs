@@ -906,7 +906,6 @@ impl Vdp {
         let mut scrolled_h = (0u16).wrapping_sub(h_scroll);
 
         // Pre-calculate constants
-        let row_base = name_table_base + (tile_v * plane_w) * 2;
         let plane_w_mask = plane_w - 1;
 
         // Prologue: Handle unaligned start
