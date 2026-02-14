@@ -3,9 +3,9 @@
 //! Implements a GDB stub for debugging M68k code running in the emulator.
 //! Connect with: `m68k-elf-gdb -ex "target remote :1234"`
 
-use std::io::{Read, Write, BufReader};
-use std::net::{TcpListener, TcpStream};
 use std::collections::HashSet;
+use std::io::{BufReader, Read, Write};
+use std::net::{TcpListener, TcpStream};
 
 /// Default GDB server port
 pub const DEFAULT_PORT: u16 = 1234;
@@ -27,10 +27,10 @@ impl StopReason {
     /// Convert to GDB signal number
     pub fn signal(&self) -> u8 {
         match self {
-            StopReason::Halted => 5,      // SIGTRAP
-            StopReason::Breakpoint => 5,  // SIGTRAP
-            StopReason::Step => 5,        // SIGTRAP
-            StopReason::Interrupt => 2,   // SIGINT
+            StopReason::Halted => 5,     // SIGTRAP
+            StopReason::Breakpoint => 5, // SIGTRAP
+            StopReason::Step => 5,       // SIGTRAP
+            StopReason::Interrupt => 2,  // SIGINT
         }
     }
 }
@@ -54,9 +54,9 @@ impl GdbServer {
     pub fn new(port: u16) -> std::io::Result<Self> {
         let listener = TcpListener::bind(format!("127.0.0.1:{}", port))?;
         listener.set_nonblocking(true)?;
-        
+
         eprintln!("⚠️  SECURITY WARNING: GDB Server listening on 127.0.0.1:{}. This port is accessible to all local users. Only use this on a trusted single-user machine.", port);
-        
+
         Ok(Self {
             listener,
             client: None,
@@ -65,18 +65,21 @@ impl GdbServer {
             no_ack_mode: false,
         })
     }
-    
+
     /// Check for new connections (non-blocking)
     pub fn accept(&mut self) -> bool {
         if self.client.is_some() {
             return true;
         }
-        
+
         match self.listener.accept() {
             Ok((stream, addr)) => {
                 // Security check: Only allow loopback connections
                 if !addr.ip().is_loopback() {
-                    eprintln!("⚠️  SECURITY ALERT: Rejected GDB connection from non-loopback address: {}", addr);
+                    eprintln!(
+                        "⚠️  SECURITY ALERT: Rejected GDB connection from non-loopback address: {}",
+                        addr
+                    );
                     return false;
                 }
 
@@ -88,12 +91,12 @@ impl GdbServer {
             Err(_) => false,
         }
     }
-    
+
     /// Check if client is connected
     pub fn is_connected(&self) -> bool {
         self.client.is_some()
     }
-    
+
     /// Send a packet to the client
     pub fn send_packet(&mut self, data: &str) -> std::io::Result<()> {
         if let Some(ref mut client) = self.client {
@@ -104,14 +107,14 @@ impl GdbServer {
         }
         Ok(())
     }
-    
+
     /// Receive a packet from the client (non-blocking)
     pub fn receive_packet(&mut self) -> Option<String> {
         let client = self.client.as_mut()?;
         let mut reader = BufReader::new(client.try_clone().ok()?);
-        
+
         let mut buf = [0u8; 1];
-        
+
         // Look for packet start
         loop {
             match reader.read(&mut buf) {
@@ -142,7 +145,7 @@ impl GdbServer {
                 _ => {}
             }
         }
-        
+
         // Read until #
         let mut data = String::new();
         loop {
@@ -160,61 +163,68 @@ impl GdbServer {
                 _ => return None,
             }
         }
-        
+
         // Read checksum (2 chars)
         let mut checksum_buf = [0u8; 2];
         if reader.read_exact(&mut checksum_buf).is_err() {
             return None;
         }
-        
+
         // Validate checksum
-        let received_checksum = u8::from_str_radix(
-            std::str::from_utf8(&checksum_buf).unwrap_or("00"),
-            16
-        ).unwrap_or(0);
-        
+        let received_checksum =
+            u8::from_str_radix(std::str::from_utf8(&checksum_buf).unwrap_or("00"), 16).unwrap_or(0);
+
         let calculated_checksum = data.bytes().fold(0u8, |acc, b| acc.wrapping_add(b));
-        
+
         // Send ACK/NAK
         if !self.no_ack_mode {
             if let Some(ref mut c) = self.client {
-                let ack = if received_checksum == calculated_checksum { b'+' } else { b'-' };
+                let ack = if received_checksum == calculated_checksum {
+                    b'+'
+                } else {
+                    b'-'
+                };
                 c.write_all(&[ack]).ok();
                 c.flush().ok();
             }
         }
-        
+
         if received_checksum == calculated_checksum {
             Some(data)
         } else {
             None
         }
     }
-    
+
     /// Process a GDB command and return the response
-    pub fn process_command(&mut self, cmd: &str, registers: &mut GdbRegisters, memory: &mut dyn GdbMemory) -> String {
+    pub fn process_command(
+        &mut self,
+        cmd: &str,
+        registers: &mut GdbRegisters,
+        memory: &mut dyn GdbMemory,
+    ) -> String {
         if cmd == "INTERRUPT" {
             return format!("S{:02x}", StopReason::Interrupt.signal());
         }
-        
+
         let first_char = cmd.chars().next().unwrap_or('?');
-        
+
         match first_char {
             '?' => {
                 // Stop reason
                 format!("S{:02x}", self.stop_reason.signal())
             }
-            
+
             'g' => {
                 // Read all registers
                 self.read_registers(registers)
             }
-            
+
             'G' => {
                 // Write all registers
                 self.write_registers(&cmd[1..], registers)
             }
-            
+
             'p' => {
                 // Read single register
                 if let Ok(reg_num) = u32::from_str_radix(&cmd[1..], 16) {
@@ -223,137 +233,138 @@ impl GdbServer {
                     "E01".to_string()
                 }
             }
-            
+
             'P' => {
                 // Write single register
                 self.write_register(&cmd[1..], registers)
             }
-            
+
             'm' => {
                 // Read memory
                 self.read_memory(&cmd[1..], memory)
             }
-            
+
             'M' => {
                 // Write memory
                 self.write_memory(&cmd[1..], memory)
             }
-            
+
             'c' => {
                 // Continue
                 "CONTINUE".to_string()
             }
-            
+
             's' => {
                 // Single step
                 "STEP".to_string()
             }
-            
+
             'Z' => {
                 // Set breakpoint
                 self.set_breakpoint(&cmd[1..])
             }
-            
+
             'z' => {
                 // Remove breakpoint
                 self.remove_breakpoint(&cmd[1..])
             }
-            
+
             'q' => {
                 // Query
                 self.handle_query(cmd)
             }
-            
+
             'Q' => {
                 // Set
                 self.handle_set(cmd)
             }
-            
+
             'H' => {
                 // Set thread (we only have one, just acknowledge)
                 "OK".to_string()
             }
-            
+
             'D' => {
                 // Detach
                 self.client = None;
                 "OK".to_string()
             }
-            
+
             'k' => {
                 // Kill
                 self.client = None;
                 "".to_string()
             }
-            
+
             _ => {
                 // Unknown command
                 "".to_string()
             }
         }
     }
-    
+
     fn read_registers(&self, registers: &GdbRegisters) -> String {
         let mut result = String::new();
-        
+
         // D0-D7
         for &d in &registers.d {
             result.push_str(&format!("{:08x}", d));
         }
-        
+
         // A0-A7
         for &a in &registers.a {
             result.push_str(&format!("{:08x}", a));
         }
-        
+
         // SR
         result.push_str(&format!("{:08x}", registers.sr as u32));
-        
+
         // PC
         result.push_str(&format!("{:08x}", registers.pc));
-        
+
         result
     }
-    
+
     fn write_registers(&self, data: &str, registers: &mut GdbRegisters) -> String {
-        if data.len() < 72 { // 18 registers * 8 hex chars minimum
+        if data.len() < 72 {
+            // 18 registers * 8 hex chars minimum
             return "E01".to_string();
         }
-        
+
         let mut pos = 0;
-        
+
         // D0-D7
         for i in 0..8 {
-            if let Ok(v) = u32::from_str_radix(&data[pos..pos+8], 16) {
+            if let Ok(v) = u32::from_str_radix(&data[pos..pos + 8], 16) {
                 registers.d[i] = v;
             }
             pos += 8;
         }
-        
+
         // A0-A7
         for i in 0..8 {
-            if let Ok(v) = u32::from_str_radix(&data[pos..pos+8], 16) {
+            if let Ok(v) = u32::from_str_radix(&data[pos..pos + 8], 16) {
                 registers.a[i] = v;
             }
             pos += 8;
         }
-        
+
         // SR
-        if let Ok(v) = u32::from_str_radix(&data[pos..pos+8], 16) {
+        if let Ok(v) = u32::from_str_radix(&data[pos..pos + 8], 16) {
             registers.sr = v as u16;
         }
         pos += 8;
-        
+
         // PC
         if pos + 8 <= data.len() {
-            if let Ok(v) = u32::from_str_radix(&data[pos..pos+8], 16) {
+            if let Ok(v) = u32::from_str_radix(&data[pos..pos + 8], 16) {
                 registers.pc = v;
             }
         }
-        
+
         "OK".to_string()
     }
-    
+
     fn read_register(&self, reg_num: u32, registers: &GdbRegisters) -> String {
         match reg_num {
             0..=7 => format!("{:08x}", registers.d[reg_num as usize]),
@@ -363,23 +374,23 @@ impl GdbServer {
             _ => "E01".to_string(),
         }
     }
-    
+
     fn write_register(&self, cmd: &str, registers: &mut GdbRegisters) -> String {
         let parts: Vec<&str> = cmd.split('=').collect();
         if parts.len() != 2 {
             return "E01".to_string();
         }
-        
+
         let reg_num = match u32::from_str_radix(parts[0], 16) {
             Ok(n) => n,
             Err(_) => return "E01".to_string(),
         };
-        
+
         let value = match u32::from_str_radix(parts[1], 16) {
             Ok(v) => v,
             Err(_) => return "E01".to_string(),
         };
-        
+
         match reg_num {
             0..=7 => registers.d[reg_num as usize] = value,
             8..=15 => registers.a[(reg_num - 8) as usize] = value,
@@ -387,102 +398,102 @@ impl GdbServer {
             17 => registers.pc = value,
             _ => return "E01".to_string(),
         }
-        
+
         "OK".to_string()
     }
-    
+
     fn read_memory(&self, cmd: &str, memory: &mut dyn GdbMemory) -> String {
         let parts: Vec<&str> = cmd.split(',').collect();
         if parts.len() != 2 {
             return "E01".to_string();
         }
-        
+
         let addr = match u32::from_str_radix(parts[0], 16) {
             Ok(a) => a,
             Err(_) => return "E01".to_string(),
         };
-        
+
         let len = match usize::from_str_radix(parts[1], 16) {
             Ok(l) => l,
             Err(_) => return "E01".to_string(),
         };
-        
+
         let mut result = String::new();
         for i in 0..len {
             let byte = memory.read_byte(addr.wrapping_add(i as u32));
             result.push_str(&format!("{:02x}", byte));
         }
-        
+
         result
     }
-    
+
     fn write_memory(&self, cmd: &str, memory: &mut dyn GdbMemory) -> String {
         let parts: Vec<&str> = cmd.split(':').collect();
         if parts.len() != 2 {
             return "E01".to_string();
         }
-        
+
         let addr_len: Vec<&str> = parts[0].split(',').collect();
         if addr_len.len() != 2 {
             return "E01".to_string();
         }
-        
+
         let addr = match u32::from_str_radix(addr_len[0], 16) {
             Ok(a) => a,
             Err(_) => return "E01".to_string(),
         };
-        
+
         let data = parts[1];
         let mut i = 0;
         while i + 2 <= data.len() {
-            if let Ok(byte) = u8::from_str_radix(&data[i..i+2], 16) {
+            if let Ok(byte) = u8::from_str_radix(&data[i..i + 2], 16) {
                 memory.write_byte(addr.wrapping_add((i / 2) as u32), byte);
             }
             i += 2;
         }
-        
+
         "OK".to_string()
     }
-    
+
     fn set_breakpoint(&mut self, cmd: &str) -> String {
         let parts: Vec<&str> = cmd.split(',').collect();
         if parts.len() < 2 {
             return "E01".to_string();
         }
-        
+
         // Type 0 = software breakpoint
         if parts[0] != "0" {
             return "".to_string(); // Not supported
         }
-        
+
         let addr = match u32::from_str_radix(parts[1], 16) {
             Ok(a) => a,
             Err(_) => return "E01".to_string(),
         };
-        
+
         self.breakpoints.insert(addr);
         "OK".to_string()
     }
-    
+
     fn remove_breakpoint(&mut self, cmd: &str) -> String {
         let parts: Vec<&str> = cmd.split(',').collect();
         if parts.len() < 2 {
             return "E01".to_string();
         }
-        
+
         if parts[0] != "0" {
             return "".to_string();
         }
-        
+
         let addr = match u32::from_str_radix(parts[1], 16) {
             Ok(a) => a,
             Err(_) => return "E01".to_string(),
         };
-        
+
         self.breakpoints.remove(&addr);
         "OK".to_string()
     }
-    
+
     fn handle_query(&mut self, cmd: &str) -> String {
         if cmd.starts_with("qSupported") {
             // Report supported features
@@ -507,7 +518,7 @@ impl GdbServer {
             "".to_string()
         }
     }
-    
+
     fn handle_set(&mut self, cmd: &str) -> String {
         if cmd == "QStartNoAckMode" {
             self.no_ack_mode = true;
@@ -516,7 +527,7 @@ impl GdbServer {
             "".to_string()
         }
     }
-    
+
     /// Check if address is a breakpoint
     pub fn is_breakpoint(&self, addr: u32) -> bool {
         self.breakpoints.contains(&addr)
@@ -570,13 +581,13 @@ mod tests {
         let checksum = data.bytes().fold(0u8, |acc, b| acc.wrapping_add(b));
         assert_eq!(checksum, 0x9a);
     }
-    
+
     #[test]
     fn test_stop_reason() {
         let sr = StopReason::Breakpoint;
         assert_eq!(sr.signal(), 5);
     }
-    
+
     #[test]
     fn test_gdb_registers_default() {
         let regs = GdbRegisters::default();
@@ -584,7 +595,7 @@ mod tests {
         assert_eq!(regs.a[7], 0);
         assert_eq!(regs.pc, 0);
     }
-    
+
     #[test]
     fn test_breakpoint_management() {
         let mut server = GdbServer {
@@ -594,12 +605,12 @@ mod tests {
             stop_reason: StopReason::Halted,
             no_ack_mode: false,
         };
-        
+
         // Set breakpoint
         let result = server.set_breakpoint("0,1000,4");
         assert_eq!(result, "OK");
         assert!(server.is_breakpoint(0x1000));
-        
+
         // Remove breakpoint
         let result = server.remove_breakpoint("0,1000,4");
         assert_eq!(result, "OK");
@@ -610,7 +621,11 @@ mod tests {
     fn test_security_loopback_accepted() {
         // Bind to random port
         let mut server = GdbServer::new(0).expect("Failed to create GDB server");
-        let port = server.listener.local_addr().expect("Failed to get local addr").port();
+        let port = server
+            .listener
+            .local_addr()
+            .expect("Failed to get local addr")
+            .port();
 
         // Connect via loopback
         let _stream = TcpStream::connect(format!("127.0.0.1:{}", port)).expect("Failed to connect");
@@ -639,7 +654,10 @@ mod tests {
         assert_eq!(server.process_command("?", &mut regs, &mut mem), "S05");
 
         // Test custom INTERRUPT
-        assert_eq!(server.process_command("INTERRUPT", &mut regs, &mut mem), "S02");
+        assert_eq!(
+            server.process_command("INTERRUPT", &mut regs, &mut mem),
+            "S02"
+        );
 
         // Test continue and step
         assert_eq!(server.process_command("c", &mut regs, &mut mem), "CONTINUE");
@@ -675,7 +693,10 @@ mod tests {
 
         // Test malformed memory commands
         assert_eq!(server.process_command("m1000", &mut regs, &mut mem), "E01");
-        assert_eq!(server.process_command("M1000,4", &mut regs, &mut mem), "E01");
+        assert_eq!(
+            server.process_command("M1000,4", &mut regs, &mut mem),
+            "E01"
+        );
     }
 
     #[test]
@@ -721,9 +742,14 @@ mod tests {
         let mut regs = GdbRegisters::default();
         let mut mem = MockMemory::new();
 
-        assert!(server.process_command("qSupported", &mut regs, &mut mem).contains("PacketSize"));
+        assert!(server
+            .process_command("qSupported", &mut regs, &mut mem)
+            .contains("PacketSize"));
         assert_eq!(server.process_command("qC", &mut regs, &mut mem), "QC1");
-        assert_eq!(server.process_command("QStartNoAckMode", &mut regs, &mut mem), "OK");
+        assert_eq!(
+            server.process_command("QStartNoAckMode", &mut regs, &mut mem),
+            "OK"
+        );
         assert!(server.no_ack_mode);
     }
 

@@ -20,7 +20,10 @@ fn create_cpu() -> (Cpu, Memory) {
 
 fn write_op(memory: &mut Memory, opcodes: &[u16]) {
     let mut addr = 0x1000u32;
-    for &op in opcodes { memory.write_word(addr, op); addr += 2; }
+    for &op in opcodes {
+        memory.write_word(addr, op);
+        addr += 2;
+    }
 }
 
 // ============================================================================
@@ -277,7 +280,7 @@ fn test_roxl_9_bit_rotation() {
     let (mut cpu, mut memory) = create_cpu();
     cpu.d[0] = 0x80;
     cpu.set_flag(flags::EXTEND, false);
-    
+
     // Rotate 9 times to complete full cycle
     for _ in 0..9 {
         write_op(&mut memory, &[0xE310]); // ROXL.B #1, D0

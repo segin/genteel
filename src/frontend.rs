@@ -41,10 +41,10 @@ pub fn rgb565_to_rgba8(framebuffer_565: &[u16], output: &mut [u8]) {
         let b5 = (pixel & 0x1F) as u8;
 
         // Scale to 8-bit
-        chunk[0] = (r5 << 3) | (r5 >> 2);     // R
+        chunk[0] = (r5 << 3) | (r5 >> 2); // R
         chunk[1] = (g6 << 2) | (g6 >> 4); // G
         chunk[2] = (b5 << 3) | (b5 >> 2); // B
-        chunk[3] = 255;                    // A
+        chunk[3] = 255; // A
     }
 }
 

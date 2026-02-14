@@ -1,5 +1,5 @@
 //! Z80 Torture Tests - Extreme Architectural Nuances
-//! 
+//!
 //! These tests verify undocumented and cycle-accurate behaviors:
 //! 1. IM 2 Vector Fetching (Bus Interaction)
 //! 2. EI Latency (Interrupt Shadowing)
@@ -12,8 +12,13 @@ use crate::memory::Memory;
 
 fn z80(program: &[u8]) -> Z80 {
     let mut m = Memory::new(0x10000);
-    for (i, &b) in program.iter().enumerate() { m.data[i] = b; }
-    Z80::new(Box::new(m), Box::new(crate::z80::test_utils::TestIo::default()))
+    for (i, &b) in program.iter().enumerate() {
+        m.data[i] = b;
+    }
+    Z80::new(
+        Box::new(m),
+        Box::new(crate::z80::test_utils::TestIo::default()),
+    )
 }
 
 // ============ 1. IM 2 Vector Fetching ============
@@ -23,14 +28,14 @@ fn torture_im2_vector_fetch() {
     c.i = 0x10;
     c.iff1 = true;
     c.step(); // IM 2
-    
+
     // Setup vector table at 0x10FF
     // Vector provided by bus is 0xFF
     c.memory.write_byte(0x10FF as u32, 0x30);
-    c.memory.write_byte(0x1100 as u32, 0x20); 
-    
+    c.memory.write_byte(0x1100 as u32, 0x20);
+
     c.trigger_interrupt(0xFF);
-    
+
     assert_eq!(c.pc, 0x2030); // Jumped to handler!
     assert!(!c.iff1); // Interrupts disabled
 }
@@ -43,16 +48,16 @@ fn torture_ei_latency_shadow() {
     c.step(); // EI
     assert!(c.iff1);
     assert!(c.pending_ei); // Internal shadow flag set
-    
+
     // Attempt interrupt during shadow: MUST FAIL (return 0 cycles)
     let cycles = c.trigger_interrupt(0xFF);
     assert_eq!(cycles, 0);
     assert_eq!(c.pc, 0x0001); // Still at first INC A
-    
+
     // After one instruction, shadow is gone
     c.step(); // INC A
     assert!(!c.pending_ei);
-    
+
     // Now interrupt should fire
     c.memory.write_byte(0x0038 as u32, 0x00); // Handler at 0x0038 is NOP
     let cycles = c.trigger_interrupt(0x00);
@@ -72,7 +77,7 @@ fn torture_r_reg_bit7_preservation() {
 
 #[test]
 fn torture_r_reg_7bit_wrap() {
-    let mut c = z80(&[0x00]); 
+    let mut c = z80(&[0x00]);
     c.r = 0x7F; // Max for lower 7 bits
     c.step();
     assert_eq!(c.r & 0x7F, 0x00); // Should wrap to 0, not 0x80
@@ -86,8 +91,8 @@ fn torture_bit_hl_memptr_leakage() {
     c.set_hl(0x8000);
     c.memory.write_byte(0x8000 as u32, 0x00);
     c.step();
-    assert!(c.get_flag(flags::X_FLAG)); 
-    assert!(c.get_flag(flags::Y_FLAG)); 
+    assert!(c.get_flag(flags::X_FLAG));
+    assert!(c.get_flag(flags::Y_FLAG));
 }
 
 #[test]
@@ -95,10 +100,10 @@ fn torture_bit_ix_ea_leakage() {
     // BIT 0, (IX+0x28)
     // EA = IX + 0x28. If high byte of EA is 0x28, X/Y flags come from bits 3/5 of 0x28.
     // 0x28 = 0010 1000. Bit 5=1, Bit 3=1.
-    let mut c = z80(&[0xDD, 0xCB, 0x28, 0x46]); 
+    let mut c = z80(&[0xDD, 0xCB, 0x28, 0x46]);
     c.ix = 0x2800; // EA = 0x2800 + 0x28 = 0x2828. High byte is 0x28.
     c.memory.write_byte(0x2828 as u32, 0x00);
-    c.step(); 
+    c.step();
     assert!(c.get_flag(flags::X_FLAG));
     assert!(c.get_flag(flags::Y_FLAG));
 }
@@ -126,7 +131,7 @@ fn torture_flag_leakage_scf() {
     c.step();
     assert!(c.get_flag(flags::X_FLAG));
     assert!(c.get_flag(flags::Y_FLAG));
-    
+
     c.a = 0x00;
     c.step(); // Execute second SCF with A=0
     assert!(!c.get_flag(flags::X_FLAG));
@@ -136,7 +141,7 @@ fn torture_flag_leakage_scf() {
 #[test]
 fn torture_flag_leakage_ccf() {
     let mut c = z80(&[0x3F]); // CCF
-    c.a = 0x28; 
+    c.a = 0x28;
     c.step();
     assert!(c.get_flag(flags::X_FLAG));
     assert!(c.get_flag(flags::Y_FLAG));

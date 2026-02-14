@@ -2,7 +2,6 @@
 //!
 //! Contains 100+ unit and property-based tests covering the M68k instruction set.
 
-
 use crate::cpu::flags;
 use crate::cpu::Cpu;
 use crate::memory::{Memory, MemoryInterface};
@@ -13,18 +12,20 @@ use proptest::prelude::*;
 fn create_test_cpu() -> (Cpu, Memory) {
     let mut memory = Memory::new(0x10000);
     memory.write_long(0, 0x1000); // SP
-    memory.write_long(4, 0x100);  // PC
-    let cpu = Cpu::new(&mut memory); (cpu, memory)
+    memory.write_long(4, 0x100); // PC
+    let cpu = Cpu::new(&mut memory);
+    (cpu, memory)
 }
 
 fn _create_cpu_with_program(opcodes: &[u16]) -> (Cpu, Memory) {
     let mut memory = Memory::new(0x10000);
     memory.write_long(0, 0x1000); // SP
-    memory.write_long(4, 0x100);  // PC
+    memory.write_long(4, 0x100); // PC
     for (i, &opcode) in opcodes.iter().enumerate() {
         memory.write_word(0x100 + (i * 2) as u32, opcode);
     }
-    let cpu = Cpu::new(&mut memory); (cpu, memory)
+    let cpu = Cpu::new(&mut memory);
+    (cpu, memory)
 }
 
 // === Data Movement Tests ===
@@ -70,15 +71,15 @@ fn test_move_w_all_registers() {
             let (mut cpu, mut memory) = create_test_cpu();
             let opcode = 0x3000 | ((dst_reg as u16) << 9) | (src_reg as u16);
             memory.write_word(0x100, opcode);
-            
+
             // Set Dst first
             cpu.d[dst_reg as usize] = 0xFFFFFFFF;
-            
+
             // Set Src (overwriting Dst if same register)
             cpu.d[src_reg as usize] = 0xCAFEBABE;
-            
+
             cpu.step_instruction(&mut memory);
-            
+
             if src_reg == dst_reg {
                 assert_eq!(cpu.d[dst_reg as usize] & 0xFFFF, 0xBABE);
             } else {
@@ -155,18 +156,18 @@ fn test_sub_borrow_detection() {
 fn test_neg_all_sizes() {
     // NEG.B D0
     let (mut cpu, mut memory) = create_test_cpu();
-    memory.write_word(0x100, 0x4400); 
+    memory.write_word(0x100, 0x4400);
     cpu.d[0] = 0x01;
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.d[0] & 0xFF, 0xFF);
-    
+
     // NEG.W D0
     let (mut cpu, mut memory) = create_test_cpu();
     memory.write_word(0x100, 0x4440);
     cpu.d[0] = 0x0001;
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.d[0] & 0xFFFF, 0xFFFF);
-    
+
     // NEG.L D0
     let (mut cpu, mut memory) = create_test_cpu();
     memory.write_word(0x100, 0x4480);
@@ -189,7 +190,7 @@ fn test_and_all_combinations() {
         (0x12345678, 0xFFFFFFFF, 0x12345678),
         (0xABCDEF01, 0xF0F0F0F0, 0xA0C0E000),
     ];
-    
+
     for (a, b, expected) in test_values {
         let (mut cpu, mut memory) = create_test_cpu();
         memory.write_word(0x100, 0xC081); // AND.L D1, D0
@@ -212,7 +213,7 @@ fn test_or_all_combinations() {
         (0x12345678, 0x00000000, 0x12345678),
         (0xABCDEF01, 0x0F0F0F0F, 0xAFCFEF0F),
     ];
-    
+
     for (a, b, expected) in test_values {
         let (mut cpu, mut memory) = create_test_cpu();
         memory.write_word(0x100, 0x8081); // OR.L D1, D0
@@ -235,7 +236,7 @@ fn test_eor_all_combinations() {
         (0x12345678, 0x12345678, 0x00000000),
         (0xABCDEF01, 0x0F0F0F0F, 0xA4C2E00E),
     ];
-    
+
     for (a, b, expected) in test_values {
         let (mut cpu, mut memory) = create_test_cpu();
         // EOR.L D0, D1 = 0xB181
@@ -255,14 +256,14 @@ fn test_not_all_sizes() {
     cpu.d[0] = 0x000000AA;
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.d[0] & 0xFF, 0x55);
-    
+
     // NOT.W D0
     let (mut cpu, mut memory) = create_test_cpu();
     memory.write_word(0x100, 0x4640);
     cpu.d[0] = 0x0000AAAA;
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.d[0] & 0xFFFF, 0x5555);
-    
+
     // NOT.L D0
     let (mut cpu, mut memory) = create_test_cpu();
     memory.write_word(0x100, 0x4680);
@@ -302,7 +303,7 @@ fn test_bcc_all_conditions() {
     cpu.set_flag(flags::ZERO, false);
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.pc, 0x106);
-    
+
     // BLS (C=1 or Z=1)
     let (mut cpu, mut memory) = create_test_cpu();
     memory.write_word(0x100, 0x6304); // BLS +4
@@ -310,42 +311,42 @@ fn test_bcc_all_conditions() {
     cpu.set_flag(flags::ZERO, false);
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.pc, 0x106);
-    
+
     // BCC (C=0)
     let (mut cpu, mut memory) = create_test_cpu();
     memory.write_word(0x100, 0x6404); // BCC +4
     cpu.set_flag(flags::CARRY, false);
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.pc, 0x106);
-    
+
     // BCS (C=1)
     let (mut cpu, mut memory) = create_test_cpu();
     memory.write_word(0x100, 0x6504); // BCS +4
     cpu.set_flag(flags::CARRY, true);
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.pc, 0x106);
-    
+
     // BNE (Z=0)
     let (mut cpu, mut memory) = create_test_cpu();
     memory.write_word(0x100, 0x6604); // BNE +4
     cpu.set_flag(flags::ZERO, false);
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.pc, 0x106);
-    
+
     // BEQ (Z=1)
     let (mut cpu, mut memory) = create_test_cpu();
     memory.write_word(0x100, 0x6704); // BEQ +4
     cpu.set_flag(flags::ZERO, true);
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.pc, 0x106);
-    
+
     // BPL (N=0)
     let (mut cpu, mut memory) = create_test_cpu();
     memory.write_word(0x100, 0x6A04); // BPL +4
     cpu.set_flag(flags::NEGATIVE, false);
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.pc, 0x106);
-    
+
     // BMI (N=1)
     let (mut cpu, mut memory) = create_test_cpu();
     memory.write_word(0x100, 0x6B04); // BMI +4
@@ -365,7 +366,7 @@ fn test_btst_all_bits() {
         cpu.d[0] = 1 << bit;
         cpu.step_instruction(&mut memory);
         assert!(!cpu.get_flag(flags::ZERO), "bit {} should be set", bit);
-        
+
         let (mut cpu, mut memory) = create_test_cpu();
         memory.write_word(0x100, 0x0800);
         memory.write_word(0x102, bit as u16);
@@ -432,7 +433,7 @@ fn test_asr_sign_extension() {
     cpu.d[0] = 0x8000; // Negative word
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.d[0] & 0xFFFF, 0xC000); // Sign extended
-    
+
     let (mut cpu, mut memory) = create_test_cpu();
     memory.write_word(0x100, 0xE440); // ASR.W #2, D0
     cpu.d[0] = 0x8000;
@@ -446,14 +447,14 @@ fn test_asr_sign_extension() {
 fn test_push_pop_long_sequence() {
     let (mut cpu, mut memory) = create_test_cpu();
     cpu.a[7] = 0x2000;
-    
+
     // Push sequence
     let values = [0x11111111u32, 0x22222222, 0x33333333, 0x44444444];
     for (_i, &val) in values.iter().enumerate() {
         cpu.a[7] = cpu.a[7].wrapping_sub(4);
         memory.write_long(cpu.a[7], val);
     }
-    
+
     // Verify stack order
     assert_eq!(memory.read_long(0x1FF0), 0x44444444);
     assert_eq!(memory.read_long(0x1FF4), 0x33333333);
@@ -473,7 +474,7 @@ fn test_mulu_boundary_values() {
         (0xFFFF, 0xFFFF, 0xFFFE0001),
         (0x100, 0x100, 0x10000),
     ];
-    
+
     for (a, b, expected) in test_cases {
         let (mut cpu, mut memory) = create_test_cpu();
         memory.write_word(0x100, 0xC0C1); // MULU D1, D0
@@ -494,26 +495,30 @@ fn test_muls_signed_values() {
         (-1, -1, 1),
         (-32768, 2, -65536),
     ];
-    
+
     for (a, b, expected) in test_cases {
         let (mut cpu, mut memory) = create_test_cpu();
         memory.write_word(0x100, 0xC1C1); // MULS D1, D0
         cpu.d[0] = a as u16 as u32;
         cpu.d[1] = b as u16 as u32;
         cpu.step_instruction(&mut memory);
-        assert_eq!(cpu.d[0] as i32, expected, "MULS {} * {} = {}", a, b, expected);
+        assert_eq!(
+            cpu.d[0] as i32, expected,
+            "MULS {} * {} = {}",
+            a, b, expected
+        );
     }
 }
 
 #[test]
 fn test_divu_boundary_values() {
     let test_cases: [(u32, u16, u16, u16); 4] = [
-        (100, 10, 10, 0),       // q=10, r=0
-        (101, 10, 10, 1),       // q=10, r=1
+        (100, 10, 10, 0), // q=10, r=0
+        (101, 10, 10, 1), // q=10, r=1
         (0x10000, 0x100, 0x100, 0),
         (7, 3, 2, 1),
     ];
-    
+
     for (dividend, divisor, q, r) in test_cases {
         let (mut cpu, mut memory) = create_test_cpu();
         memory.write_word(0x100, 0x80C1); // DIVU D1, D0
@@ -522,8 +527,16 @@ fn test_divu_boundary_values() {
         cpu.step_instruction(&mut memory);
         let result_q = cpu.d[0] & 0xFFFF;
         let result_r = (cpu.d[0] >> 16) & 0xFFFF;
-        assert_eq!(result_q as u16, q, "DIVU {} / {} quotient", dividend, divisor);
-        assert_eq!(result_r as u16, r, "DIVU {} / {} remainder", dividend, divisor);
+        assert_eq!(
+            result_q as u16, q,
+            "DIVU {} / {} quotient",
+            dividend, divisor
+        );
+        assert_eq!(
+            result_r as u16, r,
+            "DIVU {} / {} remainder",
+            dividend, divisor
+        );
     }
 }
 
@@ -538,17 +551,17 @@ proptest! {
         cpu1.d[1] = b;
         cpu1.step_instruction(&mut memory1);
         let result1 = cpu1.d[0] & 0xFFFF;
-        
+
         let (mut cpu2, mut memory2) = create_test_cpu();
         memory2.write_word(0x100, 0xD041);
         cpu2.d[0] = b;
         cpu2.d[1] = a;
         cpu2.step_instruction(&mut memory2);
         let result2 = cpu2.d[0] & 0xFFFF;
-        
+
         prop_assert_eq!(result1, result2);
     }
-    
+
     #[test]
     fn prop_sub_zero_identity(a in 0u32..0xFFFFFFFF) {
         let (mut cpu, mut memory) = create_test_cpu();
@@ -558,7 +571,7 @@ proptest! {
         cpu.step_instruction(&mut memory);
         prop_assert_eq!(cpu.d[0], a);
     }
-    
+
     #[test]
     fn prop_and_idempotent(a in 0u32..0xFFFFFFFF) {
         let (mut cpu, mut memory) = create_test_cpu();
@@ -568,7 +581,7 @@ proptest! {
         cpu.step_instruction(&mut memory);
         prop_assert_eq!(cpu.d[0], a);
     }
-    
+
     #[test]
     fn prop_or_idempotent(a in 0u32..0xFFFFFFFF) {
         let (mut cpu, mut memory) = create_test_cpu();
@@ -578,7 +591,7 @@ proptest! {
         cpu.step_instruction(&mut memory);
         prop_assert_eq!(cpu.d[0], a);
     }
-    
+
     #[test]
     fn prop_eor_self_zero(a in 0u32..0xFFFFFFFF) {
         let (mut cpu, mut memory) = create_test_cpu();
@@ -588,7 +601,7 @@ proptest! {
         cpu.step_instruction(&mut memory);
         prop_assert_eq!(cpu.d[1], 0);
     }
-    
+
     #[test]
     fn prop_not_involution(a in 0u32..0xFFFFFFFF) {
         let (mut cpu, mut memory) = create_test_cpu();
@@ -599,7 +612,7 @@ proptest! {
         cpu.step_instruction(&mut memory);
         prop_assert_eq!(cpu.d[0], a);
     }
-    
+
     #[test]
     fn prop_neg_neg_identity(a in 0u32..0xFFFFFFFF) {
         let (mut cpu, mut memory) = create_test_cpu();
@@ -610,7 +623,7 @@ proptest! {
         cpu.step_instruction(&mut memory);
         prop_assert_eq!(cpu.d[0], a);
     }
-    
+
     #[test]
     fn prop_swap_swap_identity(a in 0u32..0xFFFFFFFF) {
         let (mut cpu, mut memory) = create_test_cpu();
@@ -621,7 +634,7 @@ proptest! {
         cpu.step_instruction(&mut memory);
         prop_assert_eq!(cpu.d[0], a);
     }
-    
+
     #[test]
     fn prop_ext_word_sign(a in 0u8..=255u8) {
         let (mut cpu, mut memory) = create_test_cpu();
@@ -631,7 +644,7 @@ proptest! {
         let expected = (a as i8 as i16 as u16) as u32;
         prop_assert_eq!(cpu.d[0] & 0xFFFF, expected);
     }
-    
+
     #[test]
     fn prop_clr_always_zero(a in 0u32..0xFFFFFFFF) {
         let (mut cpu, mut memory) = create_test_cpu();
@@ -655,7 +668,7 @@ fn test_tst_all_sizes() {
     cpu.step_instruction(&mut memory);
     assert!(cpu.get_flag(flags::NEGATIVE));
     assert!(!cpu.get_flag(flags::ZERO));
-    
+
     // TST.W
     let (mut cpu, mut memory) = create_test_cpu();
     memory.write_word(0x100, 0x4A40);
@@ -663,7 +676,7 @@ fn test_tst_all_sizes() {
     cpu.step_instruction(&mut memory);
     assert!(!cpu.get_flag(flags::NEGATIVE));
     assert!(cpu.get_flag(flags::ZERO));
-    
+
     // TST.L
     let (mut cpu, mut memory) = create_test_cpu();
     memory.write_word(0x100, 0x4A80);
@@ -682,7 +695,7 @@ fn test_cmp_all_conditions() {
     cpu.d[1] = 0x12345678;
     cpu.step_instruction(&mut memory);
     assert!(cpu.get_flag(flags::ZERO));
-    
+
     // Greater
     let (mut cpu, mut memory) = create_test_cpu();
     memory.write_word(0x100, 0xB081);
@@ -691,7 +704,7 @@ fn test_cmp_all_conditions() {
     cpu.step_instruction(&mut memory);
     assert!(!cpu.get_flag(flags::ZERO));
     assert!(!cpu.get_flag(flags::CARRY));
-    
+
     // Less
     let (mut cpu, mut memory) = create_test_cpu();
     memory.write_word(0x100, 0xB081);
@@ -710,7 +723,7 @@ fn test_ext_all_sizes() {
     cpu.d[0] = 0x80;
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.d[0] & 0xFFFF, 0xFF80);
-    
+
     // EXT.L D0 (word to long)
     let (mut cpu, mut memory) = create_test_cpu();
     memory.write_word(0x100, 0x48C0);
@@ -729,8 +742,8 @@ fn test_exg_all_modes() {
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.d[0], 0x55555555);
     assert_eq!(cpu.d[1], 0xAAAAAAAA);
-    
-    // EXG Ax, Ay  
+
+    // EXG Ax, Ay
     let (mut cpu, mut memory) = create_test_cpu();
     memory.write_word(0x100, 0xC149); // EXG A0, A1
     cpu.a[0] = 0x11111111;
@@ -747,24 +760,24 @@ fn test_dbcc_loop() {
     memory.write_word(0x100, 0x51C8); // DBRA D0
     memory.write_word(0x102, 0xFFFE); // -2 displacement
     cpu.d[0] = 3;
-    
+
     cpu.step_instruction(&mut memory); // D0 = 2
     assert_eq!(cpu.d[0], 2);
     assert_eq!(cpu.pc, 0x100);
-    
+
     cpu.step_instruction(&mut memory); // D0 = 1
     assert_eq!(cpu.d[0], 1);
     assert_eq!(cpu.pc, 0x100);
-    
+
     cpu.step_instruction(&mut memory); // D0 = 0
     assert_eq!(cpu.d[0], 0);
     assert_eq!(cpu.pc, 0x100);
-    
+
     // Loop exit: Condition matches (False, so no). Dn == -1?
     // D0 decrements to -1.
     // Loop terminates. PC increments by 2 (to 0x104).
     cpu.step_instruction(&mut memory); // D0 = -1 (0xFFFF)
-    // d[0] high word is 0, so result is 0x0000FFFF
-    assert_eq!(cpu.d[0], 0x0000FFFF); 
+                                       // d[0] high word is 0, so result is 0x0000FFFF
+    assert_eq!(cpu.d[0], 0x0000FFFF);
     assert_eq!(cpu.pc, 0x104);
 }

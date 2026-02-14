@@ -1,19 +1,21 @@
 //! Expanded property-based tests for Z80 CPU - Massive test coverage
 
-use proptest::prelude::*;
-use super::*;
 use super::test_utils::TestIo;
+use super::*;
 use crate::memory::Memory;
+use proptest::prelude::*;
 
 fn z80_prog(program: &[u8]) -> Z80 {
     let mut m = Memory::new(0x10000);
-    for (i, &b) in program.iter().enumerate() { m.data[i] = b; }
+    for (i, &b) in program.iter().enumerate() {
+        m.data[i] = b;
+    }
     Z80::new(Box::new(m), Box::new(TestIo::default()))
 }
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(256))]
-    
+
     // ============ Register pair roundtrips ============
     #[test] fn prop_af(v in 0u16..=0xFFFF) { let mut c = z80_prog(&[]); c.set_af(v); prop_assert_eq!(c.af(), v); }
     #[test] fn prop_bc(v in 0u16..=0xFFFF) { let mut c = z80_prog(&[]); c.set_bc(v); prop_assert_eq!(c.bc(), v); }

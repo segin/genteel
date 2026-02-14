@@ -7,9 +7,13 @@ use super::*;
 use crate::memory::Memory;
 
 // fast rng
-struct XorShift64 { state: u64 }
+struct XorShift64 {
+    state: u64,
+}
 impl XorShift64 {
-    fn new(seed: u64) -> Self { Self { state: seed } }
+    fn new(seed: u64) -> Self {
+        Self { state: seed }
+    }
     fn next(&mut self) -> u64 {
         let mut x = self.state;
         x ^= x << 13;
@@ -18,13 +22,20 @@ impl XorShift64 {
         self.state = x;
         x
     }
-    fn next_u8(&mut self) -> u8 { (self.next() >> 32) as u8 }
-    fn next_u16(&mut self) -> u16 { (self.next() >> 48) as u16 }
+    fn next_u8(&mut self) -> u8 {
+        (self.next() >> 32) as u8
+    }
+    fn next_u16(&mut self) -> u16 {
+        (self.next() >> 48) as u16
+    }
 }
 
 fn z80_setup() -> Z80 {
     let m = Memory::new(0x10000);
-    Z80::new(Box::new(m), Box::new(crate::z80::test_utils::TestIo::default()))
+    Z80::new(
+        Box::new(m),
+        Box::new(crate::z80::test_utils::TestIo::default()),
+    )
 }
 
 // ============ Reference Models ============
@@ -39,16 +50,32 @@ fn ref_add(val1: u8, val2: u8) -> (u8, u8) {
     let v_calc = ((val1 ^ !val2) & (val1 ^ res) & 0x80) != 0;
     let n = false;
     let c = (val1 as u16 + val2 as u16) > 0xFF;
-    
+
     let mut f = 0u8;
-    if s { f |= flags::SIGN; }
-    if z { f |= flags::ZERO; }
-    if y { f |= flags::Y_FLAG; }
-    if h { f |= flags::HALF_CARRY; }
-    if x { f |= flags::X_FLAG; }
-    if v_calc { f |= flags::PARITY; }
-    if n { f |= flags::ADD_SUB; }
-    if c { f |= flags::CARRY; }
+    if s {
+        f |= flags::SIGN;
+    }
+    if z {
+        f |= flags::ZERO;
+    }
+    if y {
+        f |= flags::Y_FLAG;
+    }
+    if h {
+        f |= flags::HALF_CARRY;
+    }
+    if x {
+        f |= flags::X_FLAG;
+    }
+    if v_calc {
+        f |= flags::PARITY;
+    }
+    if n {
+        f |= flags::ADD_SUB;
+    }
+    if c {
+        f |= flags::CARRY;
+    }
     (res, f)
 }
 
@@ -65,14 +92,30 @@ fn ref_adc(val1: u8, val2: u8, carry_in: bool) -> (u8, u8) {
     let n = false;
     let c = res_wide > 0xFF;
     let mut f = 0u8;
-    if s { f |= flags::SIGN; }
-    if z { f |= flags::ZERO; }
-    if y { f |= flags::Y_FLAG; }
-    if h { f |= flags::HALF_CARRY; }
-    if x { f |= flags::X_FLAG; }
-    if v_calc { f |= flags::PARITY; }
-    if n { f |= flags::ADD_SUB; }
-    if c { f |= flags::CARRY; }
+    if s {
+        f |= flags::SIGN;
+    }
+    if z {
+        f |= flags::ZERO;
+    }
+    if y {
+        f |= flags::Y_FLAG;
+    }
+    if h {
+        f |= flags::HALF_CARRY;
+    }
+    if x {
+        f |= flags::X_FLAG;
+    }
+    if v_calc {
+        f |= flags::PARITY;
+    }
+    if n {
+        f |= flags::ADD_SUB;
+    }
+    if c {
+        f |= flags::CARRY;
+    }
     (res, f)
 }
 
@@ -87,14 +130,30 @@ fn ref_sub(val1: u8, val2: u8) -> (u8, u8) {
     let n = true;
     let c = val2 > val1;
     let mut f = 0u8;
-    if s { f |= flags::SIGN; }
-    if z { f |= flags::ZERO; }
-    if y { f |= flags::Y_FLAG; }
-    if h { f |= flags::HALF_CARRY; }
-    if x { f |= flags::X_FLAG; }
-    if v_calc { f |= flags::PARITY; }
-    if n { f |= flags::ADD_SUB; }
-    if c { f |= flags::CARRY; }
+    if s {
+        f |= flags::SIGN;
+    }
+    if z {
+        f |= flags::ZERO;
+    }
+    if y {
+        f |= flags::Y_FLAG;
+    }
+    if h {
+        f |= flags::HALF_CARRY;
+    }
+    if x {
+        f |= flags::X_FLAG;
+    }
+    if v_calc {
+        f |= flags::PARITY;
+    }
+    if n {
+        f |= flags::ADD_SUB;
+    }
+    if c {
+        f |= flags::CARRY;
+    }
     (res, f)
 }
 
@@ -112,14 +171,30 @@ fn ref_sbc(val1: u8, val2: u8, carry_in: bool) -> (u8, u8) {
     let n = true;
     let c = res_wide < 0;
     let mut f = 0u8;
-    if s { f |= flags::SIGN; }
-    if z { f |= flags::ZERO; }
-    if y { f |= flags::Y_FLAG; }
-    if h { f |= flags::HALF_CARRY; }
-    if x { f |= flags::X_FLAG; }
-    if v_calc { f |= flags::PARITY; }
-    if n { f |= flags::ADD_SUB; }
-    if c { f |= flags::CARRY; }
+    if s {
+        f |= flags::SIGN;
+    }
+    if z {
+        f |= flags::ZERO;
+    }
+    if y {
+        f |= flags::Y_FLAG;
+    }
+    if h {
+        f |= flags::HALF_CARRY;
+    }
+    if x {
+        f |= flags::X_FLAG;
+    }
+    if v_calc {
+        f |= flags::PARITY;
+    }
+    if n {
+        f |= flags::ADD_SUB;
+    }
+    if c {
+        f |= flags::CARRY;
+    }
     (res, f)
 }
 
@@ -138,14 +213,30 @@ fn ref_logic(op: u8, val1: u8, val2: u8) -> (u8, u8) {
     let n = false;
     let c = false;
     let mut f = 0u8;
-    if s { f |= flags::SIGN; }
-    if z { f |= flags::ZERO; }
-    if y { f |= flags::Y_FLAG; }
-    if h { f |= flags::HALF_CARRY; }
-    if x { f |= flags::X_FLAG; }
-    if pv { f |= flags::PARITY; }
-    if n { f |= flags::ADD_SUB; }
-    if c { f |= flags::CARRY; }
+    if s {
+        f |= flags::SIGN;
+    }
+    if z {
+        f |= flags::ZERO;
+    }
+    if y {
+        f |= flags::Y_FLAG;
+    }
+    if h {
+        f |= flags::HALF_CARRY;
+    }
+    if x {
+        f |= flags::X_FLAG;
+    }
+    if pv {
+        f |= flags::PARITY;
+    }
+    if n {
+        f |= flags::ADD_SUB;
+    }
+    if c {
+        f |= flags::CARRY;
+    }
     (res, f)
 }
 
@@ -160,14 +251,30 @@ fn ref_inc(val: u8, flags_in: u8) -> (u8, u8) {
     let n = false;
     let c = (flags_in & flags::CARRY) != 0;
     let mut f = 0u8;
-    if s { f |= flags::SIGN; }
-    if z { f |= flags::ZERO; }
-    if y { f |= flags::Y_FLAG; }
-    if h { f |= flags::HALF_CARRY; }
-    if x { f |= flags::X_FLAG; }
-    if pv { f |= flags::PARITY; }
-    if n { f |= flags::ADD_SUB; }
-    if c { f |= flags::CARRY; }
+    if s {
+        f |= flags::SIGN;
+    }
+    if z {
+        f |= flags::ZERO;
+    }
+    if y {
+        f |= flags::Y_FLAG;
+    }
+    if h {
+        f |= flags::HALF_CARRY;
+    }
+    if x {
+        f |= flags::X_FLAG;
+    }
+    if pv {
+        f |= flags::PARITY;
+    }
+    if n {
+        f |= flags::ADD_SUB;
+    }
+    if c {
+        f |= flags::CARRY;
+    }
     (result, f)
 }
 
@@ -182,14 +289,30 @@ fn ref_dec(val: u8, flags_in: u8) -> (u8, u8) {
     let n = true;
     let c = (flags_in & flags::CARRY) != 0;
     let mut f = 0u8;
-    if s { f |= flags::SIGN; }
-    if z { f |= flags::ZERO; }
-    if y { f |= flags::Y_FLAG; }
-    if h { f |= flags::HALF_CARRY; }
-    if x { f |= flags::X_FLAG; }
-    if pv { f |= flags::PARITY; }
-    if n { f |= flags::ADD_SUB; }
-    if c { f |= flags::CARRY; }
+    if s {
+        f |= flags::SIGN;
+    }
+    if z {
+        f |= flags::ZERO;
+    }
+    if y {
+        f |= flags::Y_FLAG;
+    }
+    if h {
+        f |= flags::HALF_CARRY;
+    }
+    if x {
+        f |= flags::X_FLAG;
+    }
+    if pv {
+        f |= flags::PARITY;
+    }
+    if n {
+        f |= flags::ADD_SUB;
+    }
+    if c {
+        f |= flags::CARRY;
+    }
     (result, f)
 }
 
@@ -201,11 +324,21 @@ fn ref_add16(val1: u16, val2: u16, flags_in: u8) -> (u16, u8) {
     let x = (res & 0x0800) != 0;
     let y = (res & 0x2000) != 0;
     let mut f = flags_in & (flags::SIGN | flags::ZERO | flags::PARITY);
-    if c { f |= flags::CARRY; }
-    if h { f |= flags::HALF_CARRY; }
-    if n { f |= flags::ADD_SUB; }
-    if x { f |= flags::X_FLAG; }
-    if y { f |= flags::Y_FLAG; }
+    if c {
+        f |= flags::CARRY;
+    }
+    if h {
+        f |= flags::HALF_CARRY;
+    }
+    if n {
+        f |= flags::ADD_SUB;
+    }
+    if x {
+        f |= flags::X_FLAG;
+    }
+    if y {
+        f |= flags::Y_FLAG;
+    }
     (res, f)
 }
 
@@ -222,14 +355,30 @@ fn ref_adc16(val1: u16, val2: u16, flags_in: u8) -> (u16, u8) {
     let n = false;
     let c = res_wide > 0xFFFF;
     let mut f = 0u8;
-    if s { f |= flags::SIGN; }
-    if z { f |= flags::ZERO; }
-    if y { f |= flags::Y_FLAG; }
-    if h { f |= flags::HALF_CARRY; }
-    if x { f |= flags::X_FLAG; }
-    if v_calc { f |= flags::PARITY; }
-    if n { f |= flags::ADD_SUB; }
-    if c { f |= flags::CARRY; }
+    if s {
+        f |= flags::SIGN;
+    }
+    if z {
+        f |= flags::ZERO;
+    }
+    if y {
+        f |= flags::Y_FLAG;
+    }
+    if h {
+        f |= flags::HALF_CARRY;
+    }
+    if x {
+        f |= flags::X_FLAG;
+    }
+    if v_calc {
+        f |= flags::PARITY;
+    }
+    if n {
+        f |= flags::ADD_SUB;
+    }
+    if c {
+        f |= flags::CARRY;
+    }
     (res, f)
 }
 
@@ -247,45 +396,68 @@ fn ref_sbc16(val1: u16, val2: u16, flags_in: u8) -> (u16, u8) {
     let n = true;
     let c = res_wide < 0;
     let mut f = 0u8;
-    if s { f |= flags::SIGN; }
-    if z { f |= flags::ZERO; }
-    if y { f |= flags::Y_FLAG; }
-    if h { f |= flags::HALF_CARRY; }
-    if x { f |= flags::X_FLAG; }
-    if v_calc { f |= flags::PARITY; }
-    if n { f |= flags::ADD_SUB; }
-    if c { f |= flags::CARRY; }
+    if s {
+        f |= flags::SIGN;
+    }
+    if z {
+        f |= flags::ZERO;
+    }
+    if y {
+        f |= flags::Y_FLAG;
+    }
+    if h {
+        f |= flags::HALF_CARRY;
+    }
+    if x {
+        f |= flags::X_FLAG;
+    }
+    if v_calc {
+        f |= flags::PARITY;
+    }
+    if n {
+        f |= flags::ADD_SUB;
+    }
+    if c {
+        f |= flags::CARRY;
+    }
     (res, f)
 }
 
 fn ref_shift(op_type: u8, val: u8, flags_in: u8) -> (u8, u8) {
     let old_c = (flags_in & flags::CARRY) != 0;
     let (res, new_c) = match op_type {
-        0 => { // RLC
+        0 => {
+            // RLC
             let c = (val & 0x80) != 0;
             ((val << 1) | (if c { 1 } else { 0 }), c)
         }
-        1 => { // RRC
+        1 => {
+            // RRC
             let c = (val & 0x01) != 0;
             ((val >> 1) | (if c { 0x80 } else { 0 }), c)
         }
-        2 => { // RL
+        2 => {
+            // RL
             let c = (val & 0x80) != 0;
             ((val << 1) | (if old_c { 1 } else { 0 }), c)
         }
-        3 => { // RR
+        3 => {
+            // RR
             let c = (val & 0x01) != 0;
             ((val >> 1) | (if old_c { 0x80 } else { 0 }), c)
         }
-        4 => { // SLA
+        4 => {
+            // SLA
             let c = (val & 0x80) != 0;
             (val << 1, c)
         }
-        5 => { // SRA
+        5 => {
+            // SRA
             let c = (val & 0x01) != 0;
             ((val as i8 >> 1) as u8, c)
         }
-        7 => { // SRL
+        7 => {
+            // SRL
             let c = (val & 0x01) != 0;
             (val >> 1, c)
         }
@@ -299,16 +471,32 @@ fn ref_shift(op_type: u8, val: u8, flags_in: u8) -> (u8, u8) {
     let pv = res.count_ones() % 2 == 0; // Parity
     let h = false;
     let n = false;
-    
+
     let mut f = 0u8;
-    if s { f |= flags::SIGN; }
-    if z { f |= flags::ZERO; }
-    if y { f |= flags::Y_FLAG; }
-    if h { f |= flags::HALF_CARRY; }
-    if x { f |= flags::X_FLAG; }
-    if pv { f |= flags::PARITY; }
-    if n { f |= flags::ADD_SUB; }
-    if new_c { f |= flags::CARRY; }
+    if s {
+        f |= flags::SIGN;
+    }
+    if z {
+        f |= flags::ZERO;
+    }
+    if y {
+        f |= flags::Y_FLAG;
+    }
+    if h {
+        f |= flags::HALF_CARRY;
+    }
+    if x {
+        f |= flags::X_FLAG;
+    }
+    if pv {
+        f |= flags::PARITY;
+    }
+    if n {
+        f |= flags::ADD_SUB;
+    }
+    if new_c {
+        f |= flags::CARRY;
+    }
     (res, f)
 }
 
@@ -316,12 +504,18 @@ fn ref_bit(bit: u8, val: u8, flags_in: u8) -> u8 {
     let zero = (val & (1 << bit)) == 0;
     let x = (val & 0x08) != 0;
     let y = (val & 0x20) != 0;
-    
+
     let mut f = flags_in & (flags::SIGN | flags::PARITY | flags::CARRY); // Preserve S, P/V, C
-    if zero { f |= flags::ZERO; }
+    if zero {
+        f |= flags::ZERO;
+    }
     f |= flags::HALF_CARRY;
-    if x { f |= flags::X_FLAG; }
-    if y { f |= flags::Y_FLAG; }
+    if x {
+        f |= flags::X_FLAG;
+    }
+    if y {
+        f |= flags::Y_FLAG;
+    }
     f
 }
 
@@ -331,51 +525,63 @@ fn ref_bit(bit: u8, val: u8, flags_in: u8) -> u8 {
 fn exhaustive_8bit_arithmetic() {
     let mut rng = XorShift64::new(0x1234567890ABCDEF);
     let mut cpu = z80_setup();
-    
+
     // ADD A, r
     for i in 0..10000 {
         let a = rng.next_u8();
         let b = rng.next_u8();
-        cpu.a = a; cpu.b = b; cpu.f = rng.next_u8();
-        cpu.memory.write_byte(0 as u32, 0x80); cpu.pc = 0;
+        cpu.a = a;
+        cpu.b = b;
+        cpu.f = rng.next_u8();
+        cpu.memory.write_byte(0 as u32, 0x80);
+        cpu.pc = 0;
         cpu.step();
         let (exp_res, exp_f) = ref_add(a, b);
         assert_eq!(cpu.a, exp_res, "ADD Res iter {}", i);
         assert_eq!(cpu.f, exp_f, "ADD Flags iter {}", i);
     }
-    
+
     // ADC
     for i in 0..10000 {
         let a = rng.next_u8();
         let b = rng.next_u8();
         let f_init = rng.next_u8();
-        cpu.a = a; cpu.b = b; cpu.f = f_init;
-        cpu.memory.write_byte(0 as u32, 0x88); cpu.pc = 0;
+        cpu.a = a;
+        cpu.b = b;
+        cpu.f = f_init;
+        cpu.memory.write_byte(0 as u32, 0x88);
+        cpu.pc = 0;
         cpu.step();
         let (exp_res, exp_f) = ref_adc(a, b, (f_init & flags::CARRY) != 0);
         assert_eq!(cpu.a, exp_res);
         assert_eq!(cpu.f, exp_f, "ADC Flags iter {}", i);
     }
-    
+
     // SUB
     for i in 0..10000 {
         let a = rng.next_u8();
         let b = rng.next_u8();
-        cpu.a = a; cpu.b = b; cpu.f = rng.next_u8();
-        cpu.memory.write_byte(0 as u32, 0x90); cpu.pc = 0;
+        cpu.a = a;
+        cpu.b = b;
+        cpu.f = rng.next_u8();
+        cpu.memory.write_byte(0 as u32, 0x90);
+        cpu.pc = 0;
         cpu.step();
         let (exp_res, exp_f) = ref_sub(a, b);
         assert_eq!(cpu.a, exp_res);
         assert_eq!(cpu.f, exp_f, "SUB Flags iter {}", i);
     }
-    
+
     // SBC
     for i in 0..10000 {
         let a = rng.next_u8();
         let b = rng.next_u8();
         let f_init = rng.next_u8();
-        cpu.a = a; cpu.b = b; cpu.f = f_init;
-        cpu.memory.write_byte(0 as u32, 0x98); cpu.pc = 0;
+        cpu.a = a;
+        cpu.b = b;
+        cpu.f = f_init;
+        cpu.memory.write_byte(0 as u32, 0x98);
+        cpu.pc = 0;
         cpu.step();
         let (exp_res, exp_f) = ref_sbc(a, b, (f_init & flags::CARRY) != 0);
         assert_eq!(cpu.a, exp_res);
@@ -391,8 +597,11 @@ fn exhaustive_logic() {
     for i in 0..10000 {
         let a = rng.next_u8();
         let b = rng.next_u8();
-        cpu.a = a; cpu.b = b; cpu.f = rng.next_u8();
-        cpu.memory.write_byte(0 as u32, 0xA0); cpu.pc = 0;
+        cpu.a = a;
+        cpu.b = b;
+        cpu.f = rng.next_u8();
+        cpu.memory.write_byte(0 as u32, 0xA0);
+        cpu.pc = 0;
         cpu.step();
         let (exp_res, exp_f) = ref_logic(0, a, b);
         assert_eq!(cpu.a, exp_res);
@@ -402,8 +611,11 @@ fn exhaustive_logic() {
     for i in 0..10000 {
         let a = rng.next_u8();
         let b = rng.next_u8();
-        cpu.a = a; cpu.b = b; cpu.f = rng.next_u8();
-        cpu.memory.write_byte(0 as u32, 0xA8); cpu.pc = 0;
+        cpu.a = a;
+        cpu.b = b;
+        cpu.f = rng.next_u8();
+        cpu.memory.write_byte(0 as u32, 0xA8);
+        cpu.pc = 0;
         cpu.step();
         let (exp_res, exp_f) = ref_logic(1, a, b);
         assert_eq!(cpu.a, exp_res);
@@ -413,8 +625,11 @@ fn exhaustive_logic() {
     for i in 0..10000 {
         let a = rng.next_u8();
         let b = rng.next_u8();
-        cpu.a = a; cpu.b = b; cpu.f = rng.next_u8();
-        cpu.memory.write_byte(0 as u32, 0xB0); cpu.pc = 0;
+        cpu.a = a;
+        cpu.b = b;
+        cpu.f = rng.next_u8();
+        cpu.memory.write_byte(0 as u32, 0xB0);
+        cpu.pc = 0;
         cpu.step();
         let (exp_res, exp_f) = ref_logic(2, a, b);
         assert_eq!(cpu.a, exp_res);
@@ -430,8 +645,10 @@ fn exhaustive_inc_dec() {
     for i in 0..10000 {
         let b = rng.next_u8();
         let f_init = rng.next_u8();
-        cpu.b = b; cpu.f = f_init;
-        cpu.memory.write_byte(0 as u32, 0x04); cpu.pc = 0;
+        cpu.b = b;
+        cpu.f = f_init;
+        cpu.memory.write_byte(0 as u32, 0x04);
+        cpu.pc = 0;
         cpu.step();
         let (exp_res, exp_f) = ref_inc(b, f_init);
         assert_eq!(cpu.b, exp_res);
@@ -441,8 +658,10 @@ fn exhaustive_inc_dec() {
     for i in 0..10000 {
         let b = rng.next_u8();
         let f_init = rng.next_u8();
-        cpu.b = b; cpu.f = f_init;
-        cpu.memory.write_byte(0 as u32, 0x05); cpu.pc = 0;
+        cpu.b = b;
+        cpu.f = f_init;
+        cpu.memory.write_byte(0 as u32, 0x05);
+        cpu.pc = 0;
         cpu.step();
         let (exp_res, exp_f) = ref_dec(b, f_init);
         assert_eq!(cpu.b, exp_res);
@@ -459,8 +678,11 @@ fn exhaustive_16bit_arithmetic() {
         let hl = rng.next_u16();
         let bc = rng.next_u16();
         let f_init = rng.next_u8();
-        cpu.set_hl(hl); cpu.set_bc(bc); cpu.f = f_init;
-        cpu.memory.write_byte(0 as u32, 0x09); cpu.pc = 0;
+        cpu.set_hl(hl);
+        cpu.set_bc(bc);
+        cpu.f = f_init;
+        cpu.memory.write_byte(0 as u32, 0x09);
+        cpu.pc = 0;
         cpu.step();
         let (exp_res, exp_f) = ref_add16(hl, bc, f_init);
         assert_eq!(cpu.hl(), exp_res);
@@ -471,8 +693,12 @@ fn exhaustive_16bit_arithmetic() {
         let hl = rng.next_u16();
         let bc = rng.next_u16();
         let f_init = rng.next_u8();
-        cpu.set_hl(hl); cpu.set_bc(bc); cpu.f = f_init;
-        cpu.memory.write_byte(0 as u32, 0xED); cpu.memory.write_byte(1 as u32, 0x4A); cpu.pc = 0;
+        cpu.set_hl(hl);
+        cpu.set_bc(bc);
+        cpu.f = f_init;
+        cpu.memory.write_byte(0 as u32, 0xED);
+        cpu.memory.write_byte(1 as u32, 0x4A);
+        cpu.pc = 0;
         cpu.step();
         let (exp_res, exp_f) = ref_adc16(hl, bc, f_init);
         assert_eq!(cpu.hl(), exp_res);
@@ -483,8 +709,12 @@ fn exhaustive_16bit_arithmetic() {
         let hl = rng.next_u16();
         let bc = rng.next_u16();
         let f_init = rng.next_u8();
-        cpu.set_hl(hl); cpu.set_bc(bc); cpu.f = f_init;
-        cpu.memory.write_byte(0 as u32, 0xED); cpu.memory.write_byte(1 as u32, 0x42); cpu.pc = 0;
+        cpu.set_hl(hl);
+        cpu.set_bc(bc);
+        cpu.f = f_init;
+        cpu.memory.write_byte(0 as u32, 0xED);
+        cpu.memory.write_byte(1 as u32, 0x42);
+        cpu.pc = 0;
         cpu.step();
         let (exp_res, exp_f) = ref_sbc16(hl, bc, f_init);
         assert_eq!(cpu.hl(), exp_res);
@@ -503,8 +733,11 @@ fn exhaustive_shifts() {
         for i in 0..10000 {
             let val = rng.next_u8();
             let f_init = rng.next_u8();
-            cpu.b = val; cpu.f = f_init;
-            cpu.memory.write_byte(0 as u32, 0xCB); cpu.memory.write_byte(1 as u32, opcode_byte); cpu.pc = 0;
+            cpu.b = val;
+            cpu.f = f_init;
+            cpu.memory.write_byte(0 as u32, 0xCB);
+            cpu.memory.write_byte(1 as u32, opcode_byte);
+            cpu.pc = 0;
             cpu.step();
             let (exp_res, exp_f) = ref_shift(t, val, f_init);
             assert_eq!(cpu.b, exp_res, "{} Res iter {}", type_names[idx], i);
@@ -524,8 +757,14 @@ fn exhaustive_bit_register() {
             for i in 0..2000 {
                 let val = rng.next_u8();
                 match r {
-                    0 => cpu.b = val, 1 => cpu.c = val, 2 => cpu.d = val, 3 => cpu.e = val,
-                    4 => cpu.h = val, 5 => cpu.l = val, 7 => cpu.a = val, _ => {}
+                    0 => cpu.b = val,
+                    1 => cpu.c = val,
+                    2 => cpu.d = val,
+                    3 => cpu.e = val,
+                    4 => cpu.h = val,
+                    5 => cpu.l = val,
+                    7 => cpu.a = val,
+                    _ => {}
                 }
                 let f_init = rng.next_u8();
                 cpu.f = f_init;
@@ -535,7 +774,11 @@ fn exhaustive_bit_register() {
                 cpu.pc = 0;
                 cpu.step();
                 let exp_f = ref_bit(b, val, f_init);
-                assert_eq!(cpu.f, exp_f, "BIT {}, {} Flags iter {}", b, reg_names[r_idx], i);
+                assert_eq!(
+                    cpu.f, exp_f,
+                    "BIT {}, {} Flags iter {}",
+                    b, reg_names[r_idx], i
+                );
             }
         }
     }

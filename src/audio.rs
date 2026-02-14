@@ -3,9 +3,9 @@
 //! Provides cross-platform audio output using cpal.
 //! Uses a ring buffer to transfer samples from emulation thread to audio callback.
 
-use std::sync::{Arc, Mutex};
 #[cfg(feature = "gui")]
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use std::sync::{Arc, Mutex};
 
 /// Sample rate for audio output
 pub const SAMPLE_RATE: u32 = 44100;
@@ -110,7 +110,8 @@ impl AudioOutput {
     pub fn new(buffer: SharedAudioBuffer) -> Result<Self, String> {
         let host = cpal::default_host();
 
-        let device = host.default_output_device()
+        let device = host
+            .default_output_device()
             .ok_or("No audio output device found")?;
 
         let config = cpal::StreamConfig {
@@ -121,21 +122,23 @@ impl AudioOutput {
 
         let buffer_clone = buffer.clone();
 
-        let stream = device.build_output_stream(
-            &config,
-            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                if let Ok(mut buf) = buffer_clone.lock() {
-                    buf.pop_f32(data);
-                } else {
-                    // Lock failed, output silence
-                    for sample in data.iter_mut() {
-                        *sample = 0.0;
+        let stream = device
+            .build_output_stream(
+                &config,
+                move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                    if let Ok(mut buf) = buffer_clone.lock() {
+                        buf.pop_f32(data);
+                    } else {
+                        // Lock failed, output silence
+                        for sample in data.iter_mut() {
+                            *sample = 0.0;
+                        }
                     }
-                }
-            },
-            |err| eprintln!("Audio stream error: {}", err),
-            None,
-        ).map_err(|e| e.to_string())?;
+                },
+                |err| eprintln!("Audio stream error: {}", err),
+                None,
+            )
+            .map_err(|e| e.to_string())?;
 
         stream.play().map_err(|e| e.to_string())?;
 

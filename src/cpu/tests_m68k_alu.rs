@@ -20,7 +20,10 @@ fn create_cpu() -> (Cpu, Memory) {
 
 fn write_op(memory: &mut Memory, opcodes: &[u16]) {
     let mut addr = 0x1000u32;
-    for &op in opcodes { memory.write_word(addr, op); addr += 2; }
+    for &op in opcodes {
+        memory.write_word(addr, op);
+        addr += 2;
+    }
 }
 
 // ============================================================================
@@ -31,7 +34,8 @@ fn write_op(memory: &mut Memory, opcodes: &[u16]) {
 fn test_add_b_d0_d1() {
     let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0xD200]); // ADD.B D0, D1
-    cpu.d[0] = 0x55; cpu.d[1] = 0x33;
+    cpu.d[0] = 0x55;
+    cpu.d[1] = 0x33;
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.d[1] & 0xFF, 0x88);
 }
@@ -40,7 +44,8 @@ fn test_add_b_d0_d1() {
 fn test_add_w_d0_d1() {
     let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0xD240]); // ADD.W D0, D1
-    cpu.d[0] = 0x1234; cpu.d[1] = 0x4321;
+    cpu.d[0] = 0x1234;
+    cpu.d[1] = 0x4321;
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.d[1] & 0xFFFF, 0x5555);
 }
@@ -49,7 +54,8 @@ fn test_add_w_d0_d1() {
 fn test_add_l_d0_d1() {
     let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0xD280]); // ADD.L D0, D1
-    cpu.d[0] = 0x12345678; cpu.d[1] = 0x11111111;
+    cpu.d[0] = 0x12345678;
+    cpu.d[1] = 0x11111111;
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.d[1], 0x23456789);
 }
@@ -58,7 +64,8 @@ fn test_add_l_d0_d1() {
 fn test_add_carry_byte() {
     let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0xD200]); // ADD.B D0, D1
-    cpu.d[0] = 0xFF; cpu.d[1] = 0x01;
+    cpu.d[0] = 0xFF;
+    cpu.d[1] = 0x01;
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.d[1] & 0xFF, 0x00);
     assert!(cpu.get_flag(flags::CARRY));
@@ -70,7 +77,8 @@ fn test_add_carry_byte() {
 fn test_add_overflow_byte() {
     let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0xD200]); // ADD.B D0, D1
-    cpu.d[0] = 0x7F; cpu.d[1] = 0x01; // 127 + 1 = overflow
+    cpu.d[0] = 0x7F;
+    cpu.d[1] = 0x01; // 127 + 1 = overflow
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.d[1] & 0xFF, 0x80);
     assert!(cpu.get_flag(flags::OVERFLOW));
@@ -81,7 +89,8 @@ fn test_add_overflow_byte() {
 fn test_add_negative_byte() {
     let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0xD200]); // ADD.B D0, D1
-    cpu.d[0] = 0x80; cpu.d[1] = 0x00;
+    cpu.d[0] = 0x80;
+    cpu.d[1] = 0x00;
     cpu.step_instruction(&mut memory);
     assert!(cpu.get_flag(flags::NEGATIVE));
 }
@@ -90,7 +99,8 @@ fn test_add_negative_byte() {
 fn test_add_zero_byte() {
     let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0xD200]); // ADD.B D0, D1
-    cpu.d[0] = 0x00; cpu.d[1] = 0x00;
+    cpu.d[0] = 0x00;
+    cpu.d[1] = 0x00;
     cpu.step_instruction(&mut memory);
     assert!(cpu.get_flag(flags::ZERO));
     assert!(!cpu.get_flag(flags::NEGATIVE));
@@ -161,7 +171,8 @@ fn test_addq_to_address_reg() {
 fn test_adda_w() {
     let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0xD0C0]); // ADDA.W D0, A0
-    cpu.d[0] = 0x1000; cpu.a[0] = 0x2000;
+    cpu.d[0] = 0x1000;
+    cpu.a[0] = 0x2000;
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.a[0], 0x3000);
 }
@@ -170,7 +181,8 @@ fn test_adda_w() {
 fn test_adda_l() {
     let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0xD1C0]); // ADDA.L D0, A0
-    cpu.d[0] = 0x12345678; cpu.a[0] = 0x11111111;
+    cpu.d[0] = 0x12345678;
+    cpu.a[0] = 0x11111111;
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.a[0], 0x23456789);
 }
@@ -193,7 +205,8 @@ fn test_adda_sign_extend() {
 fn test_addx_register() {
     let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0xD101]); // ADDX.B D1, D0
-    cpu.d[0] = 0x10; cpu.d[1] = 0x20;
+    cpu.d[0] = 0x10;
+    cpu.d[1] = 0x20;
     cpu.set_flag(flags::EXTEND, true);
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.d[0] & 0xFF, 0x31); // 0x10 + 0x20 + 1
@@ -203,7 +216,8 @@ fn test_addx_register() {
 fn test_addx_carry_propagation() {
     let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0xD101]); // ADDX.B D1, D0
-    cpu.d[0] = 0xFF; cpu.d[1] = 0x00;
+    cpu.d[0] = 0xFF;
+    cpu.d[1] = 0x00;
     cpu.set_flag(flags::EXTEND, true);
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.d[0] & 0xFF, 0x00);
@@ -219,7 +233,8 @@ fn test_addx_carry_propagation() {
 fn test_sub_b_d0_d1() {
     let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0x9200]); // SUB.B D0, D1
-    cpu.d[0] = 0x10; cpu.d[1] = 0x55;
+    cpu.d[0] = 0x10;
+    cpu.d[1] = 0x55;
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.d[1] & 0xFF, 0x45);
 }
@@ -228,7 +243,8 @@ fn test_sub_b_d0_d1() {
 fn test_sub_borrow_byte() {
     let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0x9200]); // SUB.B D0, D1
-    cpu.d[0] = 0x01; cpu.d[1] = 0x00;
+    cpu.d[0] = 0x01;
+    cpu.d[1] = 0x00;
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.d[1] & 0xFF, 0xFF);
     assert!(cpu.get_flag(flags::CARRY));
@@ -240,14 +256,15 @@ fn test_sub_borrow_byte() {
 fn test_sub_overflow() {
     let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0x9200]); // SUB.B D0, D1
-    cpu.d[0] = 0x01; cpu.d[1] = 0x80; // -128 - 1 = overflow
+    cpu.d[0] = 0x01;
+    cpu.d[1] = 0x80; // -128 - 1 = overflow
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.d[1] & 0xFF, 0x7F);
     assert!(cpu.get_flag(flags::OVERFLOW));
 }
 
 // ============================================================================
-// SUBI Tests  
+// SUBI Tests
 // ============================================================================
 
 #[test]
@@ -293,7 +310,8 @@ fn test_subq_1_to_8() {
 fn test_subx_register() {
     let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0x9101]); // SUBX.B D1, D0
-    cpu.d[0] = 0x30; cpu.d[1] = 0x10;
+    cpu.d[0] = 0x30;
+    cpu.d[1] = 0x10;
     cpu.set_flag(flags::EXTEND, true);
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.d[0] & 0xFF, 0x1F); // 0x30 - 0x10 - 1
@@ -356,7 +374,8 @@ fn test_negx_with_extend() {
 fn test_cmp_equal() {
     let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0xB200]); // CMP.B D0, D1
-    cpu.d[0] = 0x42; cpu.d[1] = 0x42;
+    cpu.d[0] = 0x42;
+    cpu.d[1] = 0x42;
     cpu.step_instruction(&mut memory);
     assert!(cpu.get_flag(flags::ZERO));
     assert!(!cpu.get_flag(flags::NEGATIVE));
@@ -367,7 +386,8 @@ fn test_cmp_equal() {
 fn test_cmp_greater() {
     let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0xB200]); // CMP.B D0, D1
-    cpu.d[0] = 0x10; cpu.d[1] = 0x42;
+    cpu.d[0] = 0x10;
+    cpu.d[1] = 0x42;
     cpu.step_instruction(&mut memory);
     assert!(!cpu.get_flag(flags::ZERO));
     assert!(!cpu.get_flag(flags::NEGATIVE)); // 0x42 - 0x10 = positive
@@ -377,7 +397,8 @@ fn test_cmp_greater() {
 fn test_cmp_less() {
     let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0xB200]); // CMP.B D0, D1
-    cpu.d[0] = 0x50; cpu.d[1] = 0x10;
+    cpu.d[0] = 0x50;
+    cpu.d[1] = 0x10;
     cpu.step_instruction(&mut memory);
     assert!(cpu.get_flag(flags::CARRY)); // Borrow occurred
     assert!(cpu.get_flag(flags::NEGATIVE));
@@ -409,15 +430,15 @@ fn test_cmpi_w() {
 // CMPM Tests
 // ============================================================================
 
-
 #[test]
 
 fn test_cmpm_b() {
     let (mut cpu, mut memory) = create_cpu();
     // CMPM.B (A1)+, (A0)+
     // Opcode: 1011 (B) 000 (Rx=A0) 1 00 (size) 001 (mode) 001 (Ry=A1) -> 0xB109
-    write_op(&mut memory, &[0xB109]); 
-    cpu.a[0] = 0x2000; cpu.a[1] = 0x3000;
+    write_op(&mut memory, &[0xB109]);
+    cpu.a[0] = 0x2000;
+    cpu.a[1] = 0x3000;
     memory.write_byte(0x2000, 0x42);
     memory.write_byte(0x3000, 0x42);
     cpu.step_instruction(&mut memory);
@@ -425,7 +446,6 @@ fn test_cmpm_b() {
     assert_eq!(cpu.a[0], 0x2001);
     assert_eq!(cpu.a[1], 0x3001);
 }
-
 
 // ============================================================================
 // AND Tests
@@ -435,7 +455,8 @@ fn test_cmpm_b() {
 fn test_and_b() {
     let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0xC200]); // AND.B D0, D1
-    cpu.d[0] = 0xF0; cpu.d[1] = 0x0F;
+    cpu.d[0] = 0xF0;
+    cpu.d[1] = 0x0F;
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.d[1] & 0xFF, 0x00);
     assert!(cpu.get_flag(flags::ZERO));
@@ -445,7 +466,8 @@ fn test_and_b() {
 fn test_and_l() {
     let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0xC280]); // AND.L D0, D1
-    cpu.d[0] = 0xFF00FF00; cpu.d[1] = 0xFFFFFFFF;
+    cpu.d[0] = 0xFF00FF00;
+    cpu.d[1] = 0xFFFFFFFF;
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.d[1], 0xFF00FF00);
 }
@@ -471,7 +493,8 @@ fn test_andi_b() {
 fn test_or_b() {
     let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0x8200]); // OR.B D0, D1
-    cpu.d[0] = 0xF0; cpu.d[1] = 0x0F;
+    cpu.d[0] = 0xF0;
+    cpu.d[1] = 0x0F;
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.d[1] & 0xFF, 0xFF);
 }
@@ -480,7 +503,8 @@ fn test_or_b() {
 fn test_or_l() {
     let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0x8280]); // OR.L D0, D1
-    cpu.d[0] = 0xFF00FF00; cpu.d[1] = 0x00FF00FF;
+    cpu.d[0] = 0xFF00FF00;
+    cpu.d[1] = 0x00FF00FF;
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.d[1], 0xFFFFFFFF);
 }
@@ -506,7 +530,8 @@ fn test_ori_b() {
 fn test_eor_b() {
     let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0xB300]); // EOR.B D1, D0
-    cpu.d[0] = 0xFF; cpu.d[1] = 0xFF;
+    cpu.d[0] = 0xFF;
+    cpu.d[1] = 0xFF;
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.d[0] & 0xFF, 0x00);
     assert!(cpu.get_flag(flags::ZERO));
@@ -516,7 +541,8 @@ fn test_eor_b() {
 fn test_eor_l() {
     let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0xB380]); // EOR.L D1, D0
-    cpu.d[0] = 0xAAAAAAAA; cpu.d[1] = 0x55555555;
+    cpu.d[0] = 0xAAAAAAAA;
+    cpu.d[1] = 0x55555555;
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.d[0], 0xFFFFFFFF);
 }
@@ -564,7 +590,8 @@ fn test_not_l() {
 fn test_mulu_basic() {
     let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0xC0C1]); // MULU.W D1, D0
-    cpu.d[0] = 100; cpu.d[1] = 200;
+    cpu.d[0] = 100;
+    cpu.d[1] = 200;
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.d[0], 20000);
 }
@@ -573,7 +600,8 @@ fn test_mulu_basic() {
 fn test_mulu_max() {
     let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0xC0C1]); // MULU.W D1, D0
-    cpu.d[0] = 0xFFFF; cpu.d[1] = 0xFFFF;
+    cpu.d[0] = 0xFFFF;
+    cpu.d[1] = 0xFFFF;
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.d[0], 0xFFFE0001);
 }
@@ -582,7 +610,8 @@ fn test_mulu_max() {
 fn test_muls_pos_pos() {
     let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0xC1C1]); // MULS.W D1, D0
-    cpu.d[0] = 100; cpu.d[1] = 200;
+    cpu.d[0] = 100;
+    cpu.d[1] = 200;
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.d[0], 20000);
 }
@@ -615,7 +644,8 @@ fn test_muls_neg_neg() {
 fn test_divu_basic() {
     let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0x80C1]); // DIVU.W D1, D0
-    cpu.d[0] = 20000; cpu.d[1] = 100;
+    cpu.d[0] = 20000;
+    cpu.d[1] = 100;
     cpu.step_instruction(&mut memory);
     let quotient = cpu.d[0] & 0xFFFF;
     let remainder = (cpu.d[0] >> 16) & 0xFFFF;
@@ -627,7 +657,8 @@ fn test_divu_basic() {
 fn test_divu_remainder() {
     let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0x80C1]); // DIVU.W D1, D0
-    cpu.d[0] = 12345; cpu.d[1] = 100;
+    cpu.d[0] = 12345;
+    cpu.d[1] = 100;
     cpu.step_instruction(&mut memory);
     let quotient = cpu.d[0] & 0xFFFF;
     let remainder = (cpu.d[0] >> 16) & 0xFFFF;
@@ -650,7 +681,8 @@ fn test_divs_neg_pos() {
 fn test_divu_by_zero() {
     let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0x80C1]); // DIVU.W D1, D0
-    cpu.d[0] = 100; cpu.d[1] = 0;
+    cpu.d[0] = 100;
+    cpu.d[1] = 0;
     // Set up divide by zero vector
     memory.write_long(0x14, 0x2000);
     cpu.step_instruction(&mut memory);
