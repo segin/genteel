@@ -788,4 +788,38 @@ mod tests {
         assert!(!bus.z80_reset);
         assert_eq!(bus.z80_bank_bit, 0); // Should stay 0 until next write
     }
+
+    #[test]
+    fn test_work_ram_wrapping_word() {
+        let mut bus = Bus::new();
+        // Load a ROM with some data at 0x000000
+        let rom_data = vec![0xDD, 0xEE];
+        bus.load_rom(&rom_data);
+
+        // Work RAM is 64KB (0x10000 bytes) mirrored from 0xE00000 to 0xFFFFFF.
+        // It uses a single 64KB buffer.
+
+        // 1. Write known values to start and end of the RAM buffer.
+        // RAM Start (offset 0x0000)
+        bus.write_byte(0xE00000, 0xBB);
+        // RAM End (offset 0xFFFF)
+        bus.write_byte(0xE0FFFF, 0xAA);
+
+        // Verify writes
+        assert_eq!(bus.read_byte(0xE00000), 0xBB);
+        assert_eq!(bus.read_byte(0xE0FFFF), 0xAA);
+
+        // Case 1: Wrapping within the 64KB mirror
+        // Reading a word at offset 0xFFFF (e.g. 0xE0FFFF).
+        // High byte comes from offset 0xFFFF -> 0xAA.
+        // Low byte comes from offset 0x0000 (0xE0FFFF + 1 = 0xE10000 which mirrors to 0x0000) -> 0xBB.
+        let val = bus.read_word(0xE0FFFF);
+        assert_eq!(val, 0xAABB, "Failed to wrap within 64KB mirror");
+
+        // Case 2: Wrapping at the end of memory map (0xFFFFFF)
+        // High byte comes from 0xFFFFFF (RAM offset 0xFFFF) -> 0xAA.
+        // Low byte comes from 0x1000000 -> 0x000000 (ROM offset 0x0000) -> 0xDD.
+        let val_end = bus.read_word(0xFFFFFF);
+        assert_eq!(val_end, 0xAADD, "Failed to wrap at end of memory map");
+    }
 }
