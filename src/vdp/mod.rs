@@ -739,9 +739,14 @@ impl Vdp {
         let tile_v_offset = fetch_py / 8;
         let pixel_v = fetch_py % 8;
 
-        for px in 0..sprite_h_px {
-            let screen_x = attr.h_pos.wrapping_add(px);
-            if screen_x >= screen_width {
+        for px in (0..sprite_h_px).step_by(2) {
+            let screen_x_1 = attr.h_pos.wrapping_add(px);
+            let screen_x_2 = attr.h_pos.wrapping_add(px + 1);
+
+            let visible_1 = screen_x_1 < screen_width;
+            let visible_2 = screen_x_2 < screen_width;
+
+            if !visible_1 && !visible_2 {
                 continue;
             }
 
@@ -757,20 +762,39 @@ impl Vdp {
             let tile_idx = attr.base_tile + (tile_h_offset * attr.v_size as u16) + tile_v_offset;
 
             let pattern_addr = (tile_idx * 32) + (pixel_v * 4) + (pixel_h / 2);
+
             if pattern_addr as usize + 4 > 0x10000 {
                 continue;
             }
 
             let byte = self.vram[pattern_addr as usize];
-            let color_idx = if pixel_h % 2 == 0 {
-                byte >> 4
-            } else {
-                byte & 0x0F
-            };
 
-            if color_idx != 0 {
-                let color = self.get_cram_color(attr.palette, color_idx);
-                self.framebuffer[line_offset + screen_x as usize] = color;
+            // Draw Pixel 1
+            if visible_1 {
+                let color_idx = if pixel_h % 2 == 0 {
+                    byte >> 4
+                } else {
+                    byte & 0x0F
+                };
+
+                if color_idx != 0 {
+                    let color = self.get_cram_color(attr.palette, color_idx);
+                    self.framebuffer[line_offset + screen_x_1 as usize] = color;
+                }
+            }
+
+            // Draw Pixel 2
+            if visible_2 {
+                let color_idx = if pixel_h % 2 == 0 {
+                    byte & 0x0F
+                } else {
+                    byte >> 4
+                };
+
+                if color_idx != 0 {
+                    let color = self.get_cram_color(attr.palette, color_idx);
+                    self.framebuffer[line_offset + screen_x_2 as usize] = color;
+                }
             }
         }
     }

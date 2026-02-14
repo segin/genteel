@@ -130,3 +130,93 @@ fn test_render_plane_scroll() {
     // Pixel 8 should be Empty (0) because Tile 2 is empty.
     assert_eq!(vdp.framebuffer[8], 0x0000);
 }
+
+#[test]
+fn test_render_sprite_basic() {
+    let mut vdp = Vdp::new();
+    vdp.set_region(false);
+    vdp.registers[1] = 0x40; // Display
+    vdp.registers[5] = 0x68; // SAT at 0xD000
+
+    // Setup Sprite 0 at 0xD000
+    // y=128+10, size=1x1 (0), link=0, attr=0 (pal 0), x=128+10
+    let sat_base = 0xD000;
+    vdp.vram[sat_base] = 0x00; vdp.vram[sat_base+1] = 128+10;
+    vdp.vram[sat_base+2] = 0x00; // 1x1 tile
+    vdp.vram[sat_base+3] = 0x00; // link 0
+    vdp.vram[sat_base+4] = 0x00; vdp.vram[sat_base+5] = 0x00; // attr: tile 0
+    vdp.vram[sat_base+6] = 0x00; vdp.vram[sat_base+7] = 128+10;
+
+    // Tile 0 Pattern:
+    // Row 0: 0x12, 0x34, 0x56, 0x78 (Pixels: 1,2, 3,4, 5,6, 7,8)
+    // We render line 10. Sprite y=10. So line 10 is row 0 of sprite.
+    vdp.vram[0] = 0x12;
+    vdp.vram[1] = 0x34;
+    vdp.vram[2] = 0x56;
+    vdp.vram[3] = 0x78;
+
+    // Pal 0 Colors
+    vdp.cram_cache[1] = 0x0001;
+    vdp.cram_cache[2] = 0x0002;
+    vdp.cram_cache[3] = 0x0003;
+    vdp.cram_cache[4] = 0x0004;
+
+    vdp.render_line(10);
+
+    // Sprite is at x=10.
+    // Pixels 0-7 of sprite should be at screen x=10-17.
+    // Line offset for line 10 is 3200.
+    let offset = 3200;
+    // Pixel 0: Val 1 -> Color 1
+    assert_eq!(vdp.framebuffer[offset + 10], 0x0001, "Pixel 0 mismatch");
+    // Pixel 1: Val 2 -> Color 2
+    assert_eq!(vdp.framebuffer[offset + 11], 0x0002, "Pixel 1 mismatch");
+    // Pixel 2: Val 3
+    assert_eq!(vdp.framebuffer[offset + 12], 0x0003, "Pixel 2 mismatch");
+    // Pixel 7: Val 8 (from 0x78 -> 8) -> Color 0 (Transparent)
+    assert_eq!(vdp.framebuffer[offset + 17], 0x0000, "Pixel 7 mismatch");
+}
+
+#[test]
+fn test_render_sprite_hflip() {
+    let mut vdp = Vdp::new();
+    vdp.set_region(false);
+    vdp.registers[1] = 0x40; // Display
+    vdp.registers[5] = 0x68; // SAT at 0xD000
+
+    // Setup Sprite 0 at 0xD000
+    // H-Flip enabled (Bit 11 of attr word) -> Byte 4 bit 3?
+    // Attr word is bytes 4,5.
+    // Bit 11 is 0x0800. So byte 4 |= 0x08.
+    let sat_base = 0xD000;
+    vdp.vram[sat_base] = 0x00; vdp.vram[sat_base+1] = 128+10;
+    vdp.vram[sat_base+2] = 0x00; // 1x1
+    vdp.vram[sat_base+3] = 0x00;
+    vdp.vram[sat_base+4] = 0x08; vdp.vram[sat_base+5] = 0x00; // H-Flip
+    vdp.vram[sat_base+6] = 0x00; vdp.vram[sat_base+7] = 128+10;
+
+    // Tile 0 Pattern: 0x12, 0x34...
+    // Pixels: 1,2, 3,4...
+    vdp.vram[0] = 0x12;
+    vdp.vram[1] = 0x34;
+
+    vdp.cram_cache[1] = 0x0001;
+    vdp.cram_cache[2] = 0x0002;
+    vdp.cram_cache[3] = 0x0003;
+    vdp.cram_cache[4] = 0x0004;
+
+    vdp.render_line(10);
+    let offset = 3200;
+
+    // H-Flip:
+    // Original: 1,2, 3,4, 5,6, 7,8
+    // Flipped:  8,7, 6,5, 4,3, 2,1
+
+    // Pixel 0 (screen 10): Should be 8 (Color 0/Transparent)
+    assert_eq!(vdp.framebuffer[offset + 10], 0x0000, "Flip Pixel 0 mismatch");
+
+    // Pixel 6 (screen 16): Should be 2 -> Color 2
+    assert_eq!(vdp.framebuffer[offset + 16], 0x0002, "Flip Pixel 6 mismatch");
+    // Pixel 7 (screen 17): Should be 1 -> Color 1
+    assert_eq!(vdp.framebuffer[offset + 17], 0x0001, "Flip Pixel 7 mismatch");
+}
