@@ -871,7 +871,16 @@ mod tests {
 
     #[test]
     fn test_oversized_packet_prevention() {
+<<<<<<< HEAD
+        let mut server = GdbServer::new(0).expect("Failed to create GDB server");
+        let port = server
+            .listener
+            .local_addr()
+            .expect("Failed to get local addr")
+            .port();
+=======
         let mut server = GdbServer::new(0, None).expect("Failed to create GDB server");
+>>>>>>> origin/main
 
         // Connect via loopback
         let mut client_stream =
@@ -904,6 +913,8 @@ mod tests {
             !server.is_connected(),
             "Server should have disconnected the client after oversized packet"
         );
+<<<<<<< HEAD
+=======
     }
 
     #[test]
@@ -935,5 +946,6 @@ mod tests {
 
         // Now commands work
         assert_eq!(server.process_command("g", &mut regs, &mut mem).len(), (8 + 8 + 1 + 1) * 8);
+>>>>>>> origin/main
     }
 }
