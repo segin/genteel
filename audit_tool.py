@@ -186,8 +186,8 @@ def scan_text_patterns():
             with open(f, 'r', encoding='utf-8', errors='ignore') as fp:
                 for i, line_content in enumerate(fp):
                     # Secrets
-                    for name, pattern in secret_patterns.items():
-                        if pattern.search(line_content):
+                    for name, compiled_pattern in secret_patterns.items():
+                        if compiled_pattern.search(line_content):
                             add_finding(
                                 title=f"Potential Secret: {name}",
                                 severity="Critical",
