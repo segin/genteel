@@ -960,8 +960,6 @@ mod tests {
 
         // Check if 0xA01FFD is 0x80
         // We use read_byte on bus.
-        // If hack is present, this passes trivially.
-        // If hack is removed, this passes ONLY if Z80 ran correctly (PC=0 at start).
         let val = emulator.bus.borrow_mut().read_byte(0xA01FFD);
         assert_eq!(val, 0x80, "Z80 should have written 0x80 to 0xA01FFD");
     }
