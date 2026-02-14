@@ -61,16 +61,19 @@ fn regression_ld_hl_h() {
 // Bug: PUSH/POP AF not preserving all flag bits
 #[test]
 fn regression_push_pop_af_all_bits() {
-    let mut c = z80(&[0xF5, 0xF1]); // PUSH AF; POP AF
-    c.sp = 0x8000;
-    c.a = 0xFF;
-    c.f = 0xFF; // All flag bits set
-    c.step(); // PUSH
-    c.a = 0x00;
-    c.f = 0x00;
-    c.step(); // POP
-    assert_eq!(c.a, 0xFF);
-    assert_eq!(c.f, 0xFF);
+    let patterns = [0xFF, 0x00, 0x55, 0xAA];
+    for &val in &patterns {
+        let mut c = z80(&[0xF5, 0xF1]); // PUSH AF; POP AF
+        c.sp = 0x8000;
+        c.a = val;
+        c.f = val;
+        c.step(); // PUSH
+        c.a = !val; // Corrupt registers to ensure reload works
+        c.f = !val;
+        c.step(); // POP
+        assert_eq!(c.a, val, "Failed to preserve A for pattern 0x{:02X}", val);
+        assert_eq!(c.f, val, "Failed to preserve F for pattern 0x{:02X}", val);
+    }
 }
 
 // Bug: EX (SP), HL not swapping correctly
