@@ -83,6 +83,49 @@ const CTRL_CODE_LOW_SHIFT: u16 = 14;
 const CTRL_CODE_HIGH_SHIFT: u16 = 2;
 const CTRL_ADDR_HI_SHIFT: u16 = 14;
 
+// VDP Registers
+const REG_MODE1: usize = 0;
+const REG_MODE2: usize = 1;
+const REG_PLANE_A: usize = 2;
+// const REG_WINDOW: usize = 3;
+const REG_PLANE_B: usize = 4;
+const REG_SPRITE_TABLE: usize = 5;
+// const REG_SPRITE_PATTERN: usize = 6;
+const REG_BG_COLOR: usize = 7;
+// const REG_H_INT: usize = 10;
+// const REG_MODE3: usize = 11;
+const REG_MODE4: usize = 12;
+const REG_HSCROLL: usize = 13;
+const REG_AUTO_INC: usize = 15;
+const REG_PLANE_SIZE: usize = 16;
+// const REG_WINDOW_H: usize = 17;
+// const REG_WINDOW_V: usize = 18;
+const REG_DMA_LEN_LO: usize = 19;
+const REG_DMA_LEN_HI: usize = 20;
+const REG_DMA_SRC_LO: usize = 21;
+const REG_DMA_SRC_MID: usize = 22;
+const REG_DMA_SRC_HI: usize = 23;
+
+// Register Flags
+const MODE1_HINT_ENABLE: u8 = 0x10;
+
+const MODE2_V30_MODE: u8 = 0x08;
+const MODE2_DMA_ENABLE: u8 = 0x10;
+const MODE2_VINT_ENABLE: u8 = 0x20;
+const MODE2_DISPLAY_ENABLE: u8 = 0x40;
+
+const MODE4_H40_MODE: u8 = 0x81; // H40 mode check mask
+
+// DMA Modes (Reg 23)
+const DMA_MODE_MASK: u8 = 0xC0;
+const DMA_MODE_FILL: u8 = 0x80;
+const DMA_MODE_COPY: u8 = 0xC0;
+const DMA_TYPE_BIT: u8 = 0x80; // 0=Transfer, 1=Fill/Copy
+
+// Status Register Flags
+const STATUS_VBLANK: u16 = 0x0008;
+const STATUS_VINT_PENDING: u16 = 0x0080;
+
 const REG_WRITE_TAG: u16 = 0x8000; // Value indicating register write
 const REG_WRITE_MASK: u16 = 0xC000; // Mask to check register write tag
 const REG_IDX_MASK: u16 = 0x1F; // Register index mask (5 bits)
@@ -176,7 +219,7 @@ impl Vdp {
         self.control_pending = false;
 
         // Optimized VRAM write for standard increment
-        if (self.control_code & 0x0F) == 1 && self.auto_increment() == 2 {
+        if (self.control_code & 0x0F) == VRAM_WRITE && self.auto_increment() == 2 {
             let mut addr = self.control_address as usize;
             for chunk in data.chunks_exact(2) {
                 if addr < 0x10000 {
@@ -228,7 +271,9 @@ impl Vdp {
 
         // DMA Fill (Mode 2) check
         // Enabled (Reg 1 bit 4) AND Mode 2 (Reg 23 bits 7,6 = 1,0)
-        if (self.registers[1] & 0x10) != 0 && (self.registers[23] & 0xC0) == 0x80 {
+        if (self.registers[REG_MODE2] & MODE2_DMA_ENABLE) != 0
+            && (self.registers[REG_DMA_SRC_HI] & DMA_MODE_MASK) == DMA_MODE_FILL
+        {
             let length = self.dma_length();
             let mut addr = self.control_address;
             let inc = self.auto_increment() as u16;
@@ -382,19 +427,19 @@ impl Vdp {
 
     // Helper methods
     fn auto_increment(&self) -> u8 {
-        self.registers[15]
+        self.registers[REG_AUTO_INC]
     }
 
     pub fn mode1(&self) -> u8 {
-        self.registers[0]
+        self.registers[REG_MODE1]
     }
 
     pub fn mode2(&self) -> u8 {
-        self.registers[1]
+        self.registers[REG_MODE2]
     }
 
     pub fn h40_mode(&self) -> bool {
-        (self.registers[12] & 0x81) == 0x81
+        (self.registers[REG_MODE4] & MODE4_H40_MODE) == MODE4_H40_MODE
     }
 
     pub fn screen_width(&self) -> u16 {
@@ -414,38 +459,38 @@ impl Vdp {
     }
 
     pub fn v30_mode(&self) -> bool {
-        (self.registers[1] & 0x08) != 0
+        (self.registers[REG_MODE2] & MODE2_V30_MODE) != 0
     }
 
     pub fn display_enabled(&self) -> bool {
-        (self.registers[1] & 0x40) != 0
+        (self.registers[REG_MODE2] & MODE2_DISPLAY_ENABLE) != 0
     }
 
     pub fn dma_enabled(&self) -> bool {
-        (self.registers[1] & 0x10) != 0
+        (self.registers[REG_MODE2] & MODE2_DMA_ENABLE) != 0
     }
 
     pub fn dma_mode(&self) -> u8 {
         // Bit 4 of Reg 23 determines mode (0=memory, 1=vram fill/copy)
         // Bit 5 is unused? Actually bit 6 and 7 of reg 23 are type.
         // Simplified: Reg 23
-        self.registers[23]
+        self.registers[REG_DMA_SRC_HI]
     }
 
     pub fn dma_source(&self) -> u32 {
-        ((self.registers[23] as u32) << 17)
-            | ((self.registers[22] as u32) << 9)
-            | ((self.registers[21] as u32) << 1)
+        ((self.registers[REG_DMA_SRC_HI] as u32) << 17)
+            | ((self.registers[REG_DMA_SRC_MID] as u32) << 9)
+            | ((self.registers[REG_DMA_SRC_LO] as u32) << 1)
     }
 
     pub fn dma_length(&self) -> u32 {
-        ((self.registers[20] as u32) << 8) | (self.registers[19] as u32)
+        ((self.registers[REG_DMA_LEN_HI] as u32) << 8) | (self.registers[REG_DMA_LEN_LO] as u32)
     }
 
     pub fn dma_source_transfer(&self) -> u32 {
-        ((self.registers[23] as u32 & 0x3F) << 17)
-            | ((self.registers[22] as u32) << 9)
-            | ((self.registers[21] as u32) << 1)
+        ((self.registers[REG_DMA_SRC_HI] as u32 & 0x3F) << 17)
+            | ((self.registers[REG_DMA_SRC_MID] as u32) << 9)
+            | ((self.registers[REG_DMA_SRC_LO] as u32) << 1)
     }
 
     /// Check if DMA mode is 0 or 1 (68k Transfer)
@@ -456,7 +501,7 @@ impl Vdp {
         // Bit 7: Type (0=transfer, 1=fill/copy)
         // Bit 6: Type (0=fill, 1=copy) - only if Bit 7 is 1
         // So for transfer, Bit 7 must be 0.
-        (self.registers[23] & 0x80) == 0
+        (self.registers[REG_DMA_SRC_HI] & DMA_TYPE_BIT) == 0
     }
 
     pub fn execute_dma(&mut self) -> u32 {
@@ -464,10 +509,10 @@ impl Vdp {
         // If length is 0, it is treated as 0x10000 (64KB)
         let len = if length == 0 { 0x10000 } else { length };
 
-        let mode = self.registers[23] & 0xC0;
+        let mode = self.registers[REG_DMA_SRC_HI] & DMA_MODE_MASK;
 
         match mode {
-            0x80 => {
+            DMA_MODE_FILL => {
                 // VRAM Fill (Mode 2)
                 // This is also handled in write_data, but provided here for completeness
                 // if triggered via control port (non-standard but possible).
@@ -482,7 +527,7 @@ impl Vdp {
                 }
                 self.control_address = addr;
             }
-            0xC0 => {
+            DMA_MODE_COPY => {
                 // VRAM Copy (Mode 3)
                 let mut source = (self.dma_source() & 0xFFFF) as u16;
                 let mut dest = self.control_address;
@@ -505,28 +550,28 @@ impl Vdp {
 
     pub fn sprite_table_address(&self) -> u16 {
         let mask = 0xFE00; // simplified
-        ((self.registers[5] as u16) << 9) & mask
+        ((self.registers[REG_SPRITE_TABLE] as u16) << 9) & mask
     }
 
     pub fn plane_a_address(&self) -> usize {
-        ((self.registers[2] as usize) & 0x38) << 10
+        ((self.registers[REG_PLANE_A] as usize) & 0x38) << 10
     }
 
     pub fn plane_b_address(&self) -> usize {
-        ((self.registers[4] as usize) & 0x07) << 13
+        ((self.registers[REG_PLANE_B] as usize) & 0x07) << 13
     }
 
     pub fn hscroll_address(&self) -> usize {
-        ((self.registers[13] as usize) & 0x3F) << 10
+        ((self.registers[REG_HSCROLL] as usize) & 0x3F) << 10
     }
 
     pub fn plane_size(&self) -> (usize, usize) {
-        let w = match self.registers[16] & 0x03 {
+        let w = match self.registers[REG_PLANE_SIZE] & 0x03 {
             0 => 32,
             1 => 64,
             _ => 128, // 2 and 3 are invalid but behave like 64 or 128
         };
-        let h = match (self.registers[16] >> 4) & 0x03 {
+        let h = match (self.registers[REG_PLANE_SIZE] >> 4) & 0x03 {
             0 => 32,
             1 => 64,
             _ => 128,
@@ -535,7 +580,7 @@ impl Vdp {
     }
 
     fn bg_color(&self) -> (u8, u8) {
-        let bg_idx = self.registers[7];
+        let bg_idx = self.registers[REG_BG_COLOR];
         let pal = (bg_idx >> 4) & 0x03;
         let color = bg_idx & 0x0F;
         (pal, color)
@@ -557,28 +602,28 @@ impl Vdp {
 
     /// Check if VBlank interrupt is pending
     pub fn vblank_pending(&self) -> bool {
-        (self.status & 0x0008) != 0 && (self.registers[1] & 0x20) != 0
+        (self.status & STATUS_VBLANK) != 0 && (self.registers[REG_MODE2] & MODE2_VINT_ENABLE) != 0
     }
 
     /// Set VBlank status
     pub fn set_vblank(&mut self, active: bool) {
         if active {
-            self.status |= 0x0008; // VBlank flag
-            self.status |= 0x0080; // VInterrupt pending
+            self.status |= STATUS_VBLANK; // VBlank flag
+            self.status |= STATUS_VINT_PENDING; // VInterrupt pending
         } else {
-            self.status &= !0x0008;
-            self.status &= !0x0080;
+            self.status &= !STATUS_VBLANK;
+            self.status &= !STATUS_VINT_PENDING;
         }
     }
 
     pub fn trigger_vint(&mut self) {
-        self.status |= 0x0080;
+        self.status |= STATUS_VINT_PENDING;
     }
 
     /// Check if HBlank interrupt is pending
     pub fn hblank_pending(&self) -> bool {
         // Simplified
-        (self.registers[0] & 0x10) != 0
+        (self.registers[REG_MODE1] & MODE1_HINT_ENABLE) != 0
     }
 
     /// Update V30 rolling offset for NTSC mode
