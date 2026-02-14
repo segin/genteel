@@ -346,23 +346,24 @@ impl GdbServer {
     }
 
     fn read_registers(&self, registers: &GdbRegisters) -> String {
+        use std::fmt::Write;
         let mut result = String::new();
 
         // D0-D7
         for &d in &registers.d {
-            result.push_str(&format!("{:08x}", d));
+            write!(result, "{:08x}", d).unwrap();
         }
 
         // A0-A7
         for &a in &registers.a {
-            result.push_str(&format!("{:08x}", a));
+            write!(result, "{:08x}", a).unwrap();
         }
 
         // SR
-        result.push_str(&format!("{:08x}", registers.sr as u32));
+        write!(result, "{:08x}", registers.sr as u32).unwrap();
 
         // PC
-        result.push_str(&format!("{:08x}", registers.pc));
+        write!(result, "{:08x}", registers.pc).unwrap();
 
         result
     }
@@ -445,6 +446,7 @@ impl GdbServer {
     }
 
     fn read_memory(&self, cmd: &str, memory: &mut dyn GdbMemory) -> String {
+        use std::fmt::Write;
         let parts: Vec<&str> = cmd.split(',').collect();
         if parts.len() != 2 {
             return "E01".to_string();
@@ -463,7 +465,7 @@ impl GdbServer {
         let mut result = String::new();
         for i in 0..len {
             let byte = memory.read_byte(addr.wrapping_add(i as u32));
-            result.push_str(&format!("{:02x}", byte));
+            write!(result, "{:02x}", byte).unwrap();
         }
 
         result
