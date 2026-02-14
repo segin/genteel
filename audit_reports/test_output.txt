@@ -1,7 +1,7 @@
 
-   Compiling wgpu-hal v0.17.2
    Compiling alsa-sys v0.3.1
    Compiling calloop-wayland-source v0.2.0
+   Compiling crc32fast v1.5.0
    Compiling wayland-protocols-wlr v0.2.0
 error: failed to run custom build command for `alsa-sys v0.3.1`
 
@@ -32,7 +32,7 @@ Caused by:
 
   --- stderr
 
-  thread 'main' (10446) panicked at /home/jules/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/alsa-sys-0.3.1/build.rs:13:18:
+  thread 'main' (8374) panicked at /home/jules/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/alsa-sys-0.3.1/build.rs:13:18:
 
   pkg-config exited with status code 1
   > PKG_CONFIG_ALLOW_SYSTEM_LIBS=1 PKG_CONFIG_ALLOW_SYSTEM_CFLAGS=1 pkg-config --libs --cflags alsa

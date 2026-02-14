@@ -77,7 +77,7 @@ def get_tracked_files():
                 files.append(os.path.join(root, f))
 
     # Filter out audit_reports from files if git ls-files included them (unlikely if not committed yet, but possible)
-    files = [f for f in files if not f.startswith("audit_reports/")]
+    files = [f for f in files if not f.startswith("audit_reports/") and "/target/" not in f and not f.startswith("target/")]
 
     TRACKED_FILES = files
     return files
