@@ -10,6 +10,9 @@ use std::collections::HashSet;
 /// Default GDB server port
 pub const DEFAULT_PORT: u16 = 1234;
 
+/// Maximum GDB packet size to prevent unbounded memory consumption
+pub const MAX_PACKET_SIZE: usize = 4096;
+
 /// GDB stop reasons
 #[derive(Debug, Clone, Copy)]
 pub enum StopReason {
@@ -150,6 +153,11 @@ impl GdbServer {
                 Ok(1) => {
                     if buf[0] == b'#' {
                         break;
+                    }
+                    if data.len() >= MAX_PACKET_SIZE {
+                        eprintln!("⚠️  SECURITY ALERT: GDB packet exceeded maximum size of {}. Disconnecting.", MAX_PACKET_SIZE);
+                        self.client = None;
+                        return None;
                     }
                     data.push(buf[0] as char);
                 }
@@ -486,7 +494,7 @@ impl GdbServer {
     fn handle_query(&mut self, cmd: &str) -> String {
         if cmd.starts_with("qSupported") {
             // Report supported features
-            "PacketSize=4096;swbreak+;QStartNoAckMode+".to_string()
+            format!("PacketSize={};swbreak+;QStartNoAckMode+", MAX_PACKET_SIZE)
         } else if cmd == "qC" {
             // Current thread
             "QC1".to_string()
@@ -742,5 +750,34 @@ mod tests {
         assert_eq!(server.process_command("H", &mut regs, &mut mem), "OK");
         assert_eq!(server.process_command("D", &mut regs, &mut mem), "OK");
         assert_eq!(server.process_command("k", &mut regs, &mut mem), "");
+    }
+
+    #[test]
+    fn test_oversized_packet_prevention() {
+        let mut server = GdbServer::new(0).expect("Failed to create GDB server");
+        let port = server.listener.local_addr().expect("Failed to get local addr").port();
+
+        // Connect via loopback
+        let mut client_stream = TcpStream::connect(format!("127.0.0.1:{}", port)).expect("Failed to connect");
+        assert!(server.accept(), "Server should accept connection");
+
+        // Send a very large packet without '#'
+        // Use a size significantly larger than our planned 4096 limit
+        let large_size = 10000;
+        let mut large_packet = String::with_capacity(large_size + 1);
+        large_packet.push('$');
+        for _ in 0..large_size {
+            large_packet.push('A');
+        }
+
+        client_stream.write_all(large_packet.as_bytes()).expect("Failed to write to server");
+        client_stream.flush().expect("Failed to flush");
+
+        // Try to receive the packet.
+        // Currently, it might return None because of WouldBlock, but 'data' will have grown.
+        // After the fix, it should return None AND close the connection.
+        let result = server.receive_packet();
+        assert!(result.is_none(), "Should not return a valid packet for oversized input");
+        assert!(!server.is_connected(), "Server should have disconnected the client after oversized packet");
     }
 }
