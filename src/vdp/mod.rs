@@ -29,6 +29,41 @@ struct SpriteAttributes {
     base_tile: u16,
 }
 
+struct SpriteIterator<'a> {
+    vdp: &'a Vdp,
+    next_idx: u8,
+    count: usize,
+    max_sprites: usize,
+    sat_base: usize,
+}
+
+impl<'a> Iterator for SpriteIterator<'a> {
+    type Item = SpriteAttributes;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.count >= self.max_sprites {
+            return None;
+        }
+
+        // Check SAT boundary
+        if self.sat_base + (self.next_idx as usize * 8) + 8 > 0x10000 {
+            return None;
+        }
+
+        let attr = self.vdp.fetch_sprite_attributes(self.sat_base, self.next_idx);
+
+        self.count += 1;
+        let link = attr.link;
+        self.next_idx = link;
+
+        if link == 0 {
+            self.count = self.max_sprites; // Stop after this one
+        }
+
+        Some(attr)
+    }
+}
+
 /// Video Display Processor (VDP)
 #[derive(Debug)]
 pub struct Vdp {
@@ -511,6 +546,19 @@ impl Vdp {
         self.render_sprites(fetch_line, draw_line, true);
     }
 
+    fn sprite_iter(&self) -> SpriteIterator<'_> {
+        let sat_base = self.sprite_table_address() as usize;
+        let max_sprites = if self.h40_mode() { 80 } else { 64 };
+
+        SpriteIterator {
+            vdp: self,
+            next_idx: 0,
+            count: 0,
+            max_sprites,
+            sat_base,
+        }
+    }
+
     fn fetch_sprite_attributes(&self, sat_base: usize, index: u8) -> SpriteAttributes {
         let addr = sat_base + (index as usize * 8);
 
@@ -604,24 +652,12 @@ impl Vdp {
     }
 
     fn render_sprites(&mut self, fetch_line: u16, draw_line: u16, priority_filter: bool) {
-        let sat_base = self.sprite_table_address() as usize;
-        let mut sprite_idx = 0;
-        let mut sprite_count = 0;
-        let max_sprites = if self.h40_mode() { 80 } else { 64 };
-
         let screen_width = self.screen_width();
         let line_offset = (draw_line as usize) * 320;
 
-        // SAT structure is 8 bytes per sprite
-        // We follow the 'link' pointer starting from sprite 0
-        loop {
-            // Check SAT boundary
-            if sat_base + (sprite_idx as usize * 8) + 8 > 0x10000 {
-                break;
-            }
+        let sprites: Vec<_> = self.sprite_iter().collect();
 
-            let attr = self.fetch_sprite_attributes(sat_base, sprite_idx as u8);
-
+        for attr in sprites {
             // Check if sprite is visible on this line
             let sprite_v_px = (attr.v_size as u16) * 8;
             if attr.priority == priority_filter
@@ -629,12 +665,6 @@ impl Vdp {
                 && fetch_line < attr.v_pos + sprite_v_px
             {
                 self.render_sprite_scanline(fetch_line, &attr, line_offset, screen_width);
-            }
-
-            sprite_count += 1;
-            sprite_idx = attr.link;
-            if sprite_idx == 0 || sprite_count >= max_sprites {
-                break;
             }
         }
     }
