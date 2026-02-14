@@ -450,6 +450,12 @@ impl Bus {
         }
 
         if !self.vdp.is_dma_transfer() {
+            // If it's VRAM Fill (Mode 2), do not execute immediately.
+            // Wait for data write to trigger it.
+            if (self.vdp.registers[23] & 0xC0) == 0x80 {
+                return;
+            }
+
             self.vdp.execute_dma();
             self.vdp.dma_pending = false;
             return;
