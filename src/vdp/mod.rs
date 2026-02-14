@@ -719,7 +719,6 @@ impl Vdp {
         line_offset: usize,
         screen_width: u16,
     ) {
-        let sprite_h_px = (attr.h_size as u16) * 8;
         let sprite_v_px = (attr.v_size as u16) * 8;
 
         let py = line - attr.v_pos;
@@ -732,61 +731,58 @@ impl Vdp {
         let tile_v_offset = fetch_py / 8;
         let pixel_v = fetch_py % 8;
 
-        for px in (0..sprite_h_px).step_by(2) {
-            let screen_x_1 = attr.h_pos.wrapping_add(px);
-            let screen_x_2 = attr.h_pos.wrapping_add(px + 1);
-
-            let visible_1 = screen_x_1 < screen_width;
-            let visible_2 = screen_x_2 < screen_width;
-
-            if !visible_1 && !visible_2 {
-                continue;
-            }
-
-            let fetch_px = if attr.h_flip {
-                (sprite_h_px - 1) - px
+        // Iterate by tiles instead of pixels for efficiency
+        for t_h in 0..attr.h_size {
+            let tile_h_offset = t_h as u16;
+            let fetch_tile_h_offset = if attr.h_flip {
+                (attr.h_size as u16 - 1) - tile_h_offset
             } else {
-                px
+                tile_h_offset
             };
-            let tile_h_offset = fetch_px / 8;
-            let pixel_h = fetch_px % 8;
 
             // In a multi-tile sprite, tiles are arranged vertically first
-            let tile_idx = attr.base_tile + (tile_h_offset * attr.v_size as u16) + tile_v_offset;
+            let tile_idx = attr
+                .base_tile
+                .wrapping_add(fetch_tile_h_offset * attr.v_size as u16)
+                .wrapping_add(tile_v_offset);
 
-            let pattern_addr = (tile_idx * 32) + (pixel_v * 4) + (pixel_h / 2);
+            // Calculate pattern address for the row (pixel_v is 0..7)
+            // Each tile is 32 bytes (4 bytes per row)
+            let row_addr = (tile_idx as usize * 32) + (pixel_v as usize * 4);
 
-            if pattern_addr as usize + 4 > 0x10000 {
+            // Check if row is within VRAM bounds
+            if row_addr + 4 > 0x10000 {
                 continue;
             }
 
-            let byte = self.vram[pattern_addr as usize];
+            // Prefetch the 4 bytes (8 pixels) for this row
+            // We use wrapping arithmetic for safety although checks above should prevent OOB
+            let p0 = self.vram[row_addr];
+            let p1 = self.vram[(row_addr + 1) & 0xFFFF];
+            let p2 = self.vram[(row_addr + 2) & 0xFFFF];
+            let p3 = self.vram[(row_addr + 3) & 0xFFFF];
+            let patterns = [p0, p1, p2, p3];
 
-            // Draw Pixel 1
-            if visible_1 {
-                let color_idx = if pixel_h % 2 == 0 {
-                    byte >> 4
-                } else {
-                    byte & 0x0F
-                };
+            let base_screen_x = attr.h_pos.wrapping_add(tile_h_offset * 8);
 
-                if color_idx != 0 {
-                    let color = self.get_cram_color(attr.palette, color_idx);
-                    self.framebuffer[line_offset + screen_x_1 as usize] = color;
+            for i in 0..8 {
+                let screen_x = base_screen_x.wrapping_add(i);
+                if screen_x >= screen_width {
+                    continue;
                 }
-            }
 
-            // Draw Pixel 2
-            if visible_2 {
-                let color_idx = if pixel_h % 2 == 0 {
-                    byte & 0x0F
-                } else {
+                let eff_col = if attr.h_flip { 7 - i } else { i };
+
+                let byte = patterns[(eff_col as usize) / 2];
+                let color_idx = if eff_col % 2 == 0 {
                     byte >> 4
+                } else {
+                    byte & 0x0F
                 };
 
                 if color_idx != 0 {
                     let color = self.get_cram_color(attr.palette, color_idx);
-                    self.framebuffer[line_offset + screen_x_2 as usize] = color;
+                    self.framebuffer[line_offset + screen_x as usize] = color;
                 }
             }
         }
@@ -924,7 +920,7 @@ impl Vdp {
                 let h_flip = (entry & 0x0800) != 0;
                 let tile_index = entry & 0x07FF;
 
-                let patterns = self.fetch_tile_pattern(tile_index, pixel_v, v_flip);
+                let patterns = self.fetch_tile_pattern(tile_index, pixel_v as u16, v_flip);
 
                 self.draw_tile_segment(
                     patterns,
@@ -958,7 +954,7 @@ impl Vdp {
             let h_flip = (entry & 0x0800) != 0;
             let tile_index = entry & 0x07FF;
 
-            let patterns = self.fetch_tile_pattern(tile_index, pixel_v, v_flip);
+            let patterns = self.fetch_tile_pattern(tile_index, pixel_v as u16, v_flip);
             let p0 = patterns[0];
             let p1 = patterns[1];
             let p2 = patterns[2];
@@ -1033,7 +1029,7 @@ impl Vdp {
                 let h_flip = (entry & 0x0800) != 0;
                 let tile_index = entry & 0x07FF;
 
-                let patterns = self.fetch_tile_pattern(tile_index, pixel_v, v_flip);
+                let patterns = self.fetch_tile_pattern(tile_index, pixel_v as u16, v_flip);
 
                 self.draw_tile_segment(
                     patterns,
