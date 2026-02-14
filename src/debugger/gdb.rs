@@ -6,9 +6,17 @@
 use std::collections::HashSet;
 use std::io::{BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
+use rand::Rng;
 
 /// Default GDB server port
 pub const DEFAULT_PORT: u16 = 1234;
+
+fn generate_token() -> String {
+    let mut rng = rand::rng();
+    let val1: u64 = rng.random();
+    let val2: u64 = rng.random();
+    format!("{:016x}{:016x}", val1, val2)
+}
 
 /// Maximum GDB packet size to prevent unbounded memory consumption
 pub const MAX_PACKET_SIZE: usize = 4096;
@@ -62,13 +70,29 @@ impl GdbServer {
         let listener = TcpListener::bind(format!("127.0.0.1:{}", port))?;
         listener.set_nonblocking(true)?;
 
-        if password.is_some() {
-            eprintln!("🔒 GDB Server listening on 127.0.0.1:{}. Protected with password.", port);
+        let (password_str, is_generated) = if let Some(pwd) = password {
+            if pwd.is_empty() {
+                (generate_token(), true)
+            } else {
+                (pwd, false)
+            }
         } else {
-            eprintln!("⚠️  SECURITY WARNING: GDB Server listening on 127.0.0.1:{}. This port is accessible to all local users. Only use this on a trusted single-user machine.", port);
-        }
+            (generate_token(), true)
+        };
 
-        let authenticated = password.is_none();
+        eprintln!(
+            "🔒 GDB Server listening on 127.0.0.1:{}. Protected with password.",
+            port
+        );
+
+        if is_generated {
+            eprintln!("   Authentication required. No password provided.");
+            eprintln!("   Generated temporary password: {}", password_str);
+            eprintln!(
+                "   To authenticate, run in GDB: monitor auth {}",
+                password_str
+            );
+        }
 
         Ok(Self {
             listener,
@@ -76,8 +100,8 @@ impl GdbServer {
             breakpoints: HashSet::new(),
             stop_reason: StopReason::Halted,
             no_ack_mode: false,
-            password,
-            authenticated,
+            password: Some(password_str),
+            authenticated: false,
         })
     }
 
@@ -930,5 +954,30 @@ mod tests {
 
         // Now commands work
         assert_eq!(server.process_command("g", &mut regs, &mut mem).len(), (8 + 8 + 1 + 1) * 8);
+    }
+
+    #[test]
+    fn test_authentication_default_secure() {
+        // Create server with NO password (None)
+        // This should trigger auto-generation and enforce authentication
+        let mut server = GdbServer::new(0, None).expect("Failed to create GDB server");
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+
+        // 1. Verify we are NOT authenticated by default
+        // Try to read registers (should be denied)
+        assert_eq!(
+            server.process_command("g", &mut regs, &mut mem),
+            "E01",
+            "Should be denied access by default when no password provided"
+        );
+
+        // 2. Verify that incorrect password fails
+        // "auth wrong" -> 617574682077726f6e67
+        assert_eq!(
+            server.process_command("qRcmd,617574682077726f6e67", &mut regs, &mut mem),
+            "E01",
+            "Should fail auth with wrong password"
+        );
     }
 }
