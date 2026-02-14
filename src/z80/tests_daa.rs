@@ -1,12 +1,13 @@
+#![allow(unused_imports)]
 //! Z80 DAA (Decimal Adjust Accumulator) Tests
 //!
 //! DAA is one of the most complex Z80 instructions to implement correctly.
 //! It adjusts A to valid BCD after ADD or SUB operations.
 
-use super::*;
+use super::*; use crate::memory::{MemoryInterface, IoInterface};
 use crate::memory::Memory;
 
-fn z80(program: &[u8]) -> Z80 {
+fn z80(program: &[u8]) -> Z80<Box<crate::memory::Memory>, Box<crate::z80::test_utils::TestIo>> {
     let mut m = Memory::new(0x10000);
     for (i, &b) in program.iter().enumerate() {
         m.data[i] = b;

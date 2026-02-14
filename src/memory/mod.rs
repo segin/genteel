@@ -5,6 +5,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 pub mod bus;
+pub mod tests_performance;
 pub mod z80_bus;
 use bus::Bus;
 pub use z80_bus::Z80Bus;
@@ -66,8 +67,40 @@ impl MemoryInterface for Box<dyn MemoryInterface> {
     }
 }
 
+// Blanket impl for Box<T> where T: MemoryInterface
+impl<T: MemoryInterface> MemoryInterface for Box<T> {
+    fn read_byte(&mut self, address: u32) -> u8 {
+        (**self).read_byte(address)
+    }
+    fn write_byte(&mut self, address: u32, value: u8) {
+        (**self).write_byte(address, value);
+    }
+    fn read_word(&mut self, address: u32) -> u16 {
+        (**self).read_word(address)
+    }
+    fn write_word(&mut self, address: u32, value: u16) {
+        (**self).write_word(address, value);
+    }
+    fn read_long(&mut self, address: u32) -> u32 {
+        (**self).read_long(address)
+    }
+    fn write_long(&mut self, address: u32, value: u32) {
+        (**self).write_long(address, value);
+    }
+}
+
 // Blanket impl for Box<dyn IoInterface>
 impl IoInterface for Box<dyn IoInterface> {
+    fn read_port(&mut self, port: u16) -> u8 {
+        (**self).read_port(port)
+    }
+    fn write_port(&mut self, port: u16, value: u8) {
+        (**self).write_port(port, value);
+    }
+}
+
+// Blanket impl for Box<T> where T: IoInterface
+impl<T: IoInterface> IoInterface for Box<T> {
     fn read_port(&mut self, port: u16) -> u8 {
         (**self).read_port(port)
     }
@@ -166,12 +199,13 @@ impl MemoryInterface for Memory {
 impl Memory {
     #[cfg(test)]
     pub fn hex_dump(&self, start: u32, end: u32) -> String {
+        use std::fmt::Write;
         let mut output = String::new();
         for i in (start..=end).step_by(16) {
-            output.push_str(&format!("{:08x}: ", i));
+            write!(output, "{:08x}: ", i).unwrap();
             for j in 0..16 {
                 if (i + j) <= end {
-                    output.push_str(&format!("{:02X} ", self.data[(i + j) as usize]));
+                    write!(output, "{:02X} ", self.data[(i + j) as usize]).unwrap();
                 } else {
                     output.push_str("   ");
                 }
