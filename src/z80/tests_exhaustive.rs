@@ -1,9 +1,10 @@
+#![allow(unused_imports)]
 //! Exhaustive Z80 ALU Verification
 //!
 //! "Golden Reference" model for Z80 ALU.
 //! Verifies standard and undocumented flags (X/Y).
 
-use super::*;
+use super::*; use crate::memory::{MemoryInterface, IoInterface};
 use crate::memory::Memory;
 
 // fast rng
@@ -30,7 +31,7 @@ impl XorShift64 {
     }
 }
 
-fn z80_setup() -> Z80 {
+fn z80_setup() -> Z80<Box<crate::memory::Memory>, Box<crate::z80::test_utils::TestIo>> {
     let m = Memory::new(0x10000);
     Z80::new(
         Box::new(m),
