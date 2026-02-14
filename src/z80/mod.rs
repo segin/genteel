@@ -638,7 +638,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 self.memptr = addr;
                 let handler = self.read_word(addr);
                 self.pc = handler;
-                19
+                8
             }
             _ => 0,
         }
@@ -1887,6 +1887,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
             }
 
             // LD r, (IX/IY+d) and LD (IX/IY+d), r
+            // LD r, (IX/IY+d) and LD (IX/IY+d), r
             0x46 | 0x4E | 0x56 | 0x5E | 0x66 | 0x6E | 0x7E => {
                 let d = self.fetch_byte() as i8;
                 let idx = self.get_index_val(is_ix);
@@ -1897,7 +1898,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 self.set_reg(r, val);
                 19
             }
-            0x70..=0x77 => {
+            0x70..=0x75 | 0x77 => {
                 let d = self.fetch_byte() as i8;
                 let idx = self.get_index_val(is_ix);
                 let addr = (idx as i16 + d as i16) as u16;
@@ -1907,11 +1908,16 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 self.write_byte(addr, val);
                 19
             }
+            0x76 => {
+                self.halted = true;
+                8
+            }
 
             // Generic Undocumented (using index halves)
             0x40..=0x7F => {
                 if opcode == 0x76 {
-                    return 4;
+                    self.halted = true;
+                    return 8;
                 }
                 let r_src = opcode & 0x07;
                 let r_dest = (opcode >> 3) & 0x07;
