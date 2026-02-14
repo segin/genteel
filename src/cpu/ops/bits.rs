@@ -204,8 +204,11 @@ pub fn exec_shift<M: MemoryInterface>(
     let (dst_ea, cycles) = calculate_ea(dst, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     let val = read_ea(dst_ea, size, &cpu.d, &cpu.a, memory);
 
-    let mask = size.mask();
-    let sign_bit = size.sign_bit();
+    let (mask, sign_bit) = match size {
+        Size::Byte => (0xFFu32, 0x80u32),
+        Size::Word => (0xFFFF, 0x8000),
+        Size::Long => (0xFFFFFFFF, 0x80000000),
+    };
 
     let val = val & mask;
     let mut result = val;
@@ -262,8 +265,11 @@ pub fn exec_rotate<M: MemoryInterface>(
     let (dst_ea, cycles) = calculate_ea(dst, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     let val = read_ea(dst_ea, size, &cpu.d, &cpu.a, memory);
 
-    let mask = size.mask();
-    let bits = size.bits();
+    let (mask, bits) = match size {
+        Size::Byte => (0xFFu32, 8u32),
+        Size::Word => (0xFFFF, 16),
+        Size::Long => (0xFFFFFFFF, 32),
+    };
 
     let val = val & mask;
     let effective_count = count_val % bits;
@@ -317,8 +323,11 @@ pub fn exec_roxl<M: MemoryInterface>(
     let (dst_ea, cycles) = calculate_ea(dst, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     let val = cpu.cpu_read_ea(dst_ea, size, memory);
 
-    let mask = size.mask();
-    let msb = size.sign_bit();
+    let (mask, msb) = match size {
+        Size::Byte => (0xFFu32, 0x80u32),
+        Size::Word => (0xFFFF, 0x8000),
+        Size::Long => (0xFFFFFFFF, 0x80000000),
+    };
 
     let mut res = val & mask;
     let mut x = cpu.get_flag(flags::EXTEND);
@@ -359,8 +368,11 @@ pub fn exec_roxr<M: MemoryInterface>(
     let (dst_ea, cycles) = calculate_ea(dst, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     let val = cpu.cpu_read_ea(dst_ea, size, memory);
 
-    let mask = size.mask();
-    let msb = size.sign_bit();
+    let (mask, msb) = match size {
+        Size::Byte => (0xFFu32, 0x80u32),
+        Size::Word => (0xFFFF, 0x8000),
+        Size::Long => (0xFFFFFFFF, 0x80000000),
+    };
 
     let mut res = val & mask;
     let mut x = cpu.get_flag(flags::EXTEND);
@@ -387,55 +399,50 @@ pub fn exec_roxr<M: MemoryInterface>(
 }
 
 enum BitOp {
-    Btst,
-    Bset,
-    Bclr,
-    Bchg,
+    Test,
+    Set,
+    Clear,
+    Change,
 }
 
 fn exec_bit_instruction<M: MemoryInterface>(
     cpu: &mut Cpu,
-    op: BitOp,
     bit: BitSource,
     dst: AddressingMode,
     memory: &mut M,
+    op: BitOp,
 ) -> u32 {
     let bit_num = cpu.fetch_bit_num(bit, memory);
     let is_memory = !matches!(dst, AddressingMode::DataRegister(_));
     let size = if is_memory { Size::Byte } else { Size::Long };
 
-    let mut cycles = match op {
-        BitOp::Btst => 4u32,
-        _ => 8u32,
-    };
-
+    let mut cycles = if matches!(op, BitOp::Test) { 4u32 } else { 8u32 };
     let (dst_ea, dst_cycles) = calculate_ea(dst, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     cycles += dst_cycles;
 
     let val = cpu.cpu_read_ea(dst_ea, size, memory);
-
     let bit_idx = cpu.resolve_bit_index(bit_num, is_memory);
     let bit_val = (val >> bit_idx) & 1;
 
     cpu.set_flag(flags::ZERO, bit_val == 0);
 
     match op {
-        BitOp::Btst => {
+        BitOp::Test => {
             if is_memory {
                 cycles += 4;
             } else {
                 cycles += 6;
             }
         }
-        BitOp::Bset => {
+        BitOp::Set => {
             let new_val = val | (1 << bit_idx);
             cpu.cpu_write_ea(dst_ea, size, new_val, memory);
         }
-        BitOp::Bclr => {
+        BitOp::Clear => {
             let new_val = val & !(1 << bit_idx);
             cpu.cpu_write_ea(dst_ea, size, new_val, memory);
         }
-        BitOp::Bchg => {
+        BitOp::Change => {
             let new_val = val ^ (1 << bit_idx);
             cpu.cpu_write_ea(dst_ea, size, new_val, memory);
         }
@@ -450,7 +457,7 @@ pub fn exec_btst<M: MemoryInterface>(
     dst: AddressingMode,
     memory: &mut M,
 ) -> u32 {
-    exec_bit_instruction(cpu, BitOp::Btst, bit, dst, memory)
+    exec_bit_instruction(cpu, bit, dst, memory, BitOp::Test)
 }
 
 pub fn exec_bset<M: MemoryInterface>(
@@ -459,7 +466,7 @@ pub fn exec_bset<M: MemoryInterface>(
     dst: AddressingMode,
     memory: &mut M,
 ) -> u32 {
-    exec_bit_instruction(cpu, BitOp::Bset, bit, dst, memory)
+    exec_bit_instruction(cpu, bit, dst, memory, BitOp::Set)
 }
 
 pub fn exec_bclr<M: MemoryInterface>(
@@ -468,7 +475,7 @@ pub fn exec_bclr<M: MemoryInterface>(
     dst: AddressingMode,
     memory: &mut M,
 ) -> u32 {
-    exec_bit_instruction(cpu, BitOp::Bclr, bit, dst, memory)
+    exec_bit_instruction(cpu, bit, dst, memory, BitOp::Clear)
 }
 
 pub fn exec_bchg<M: MemoryInterface>(
@@ -477,7 +484,7 @@ pub fn exec_bchg<M: MemoryInterface>(
     dst: AddressingMode,
     memory: &mut M,
 ) -> u32 {
-    exec_bit_instruction(cpu, BitOp::Bchg, bit, dst, memory)
+    exec_bit_instruction(cpu, bit, dst, memory, BitOp::Change)
 }
 
 pub fn exec_tas<M: MemoryInterface>(cpu: &mut Cpu, dst: AddressingMode, memory: &mut M) -> u32 {
