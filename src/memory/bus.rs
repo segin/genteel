@@ -279,15 +279,15 @@ impl Bus {
         }
 
         // VDP Data Port (Word access)
-        if addr >= 0xC00000 && addr <= 0xC00003 {
+        if (0xC00000..=0xC00003).contains(&addr) {
             return self.vdp.read_data();
         }
         // VDP Control Port / Status
-        if addr >= 0xC00004 && addr <= 0xC00007 {
+        if (0xC00004..=0xC00007).contains(&addr) {
             return self.vdp.read_status();
         }
         // VDP H/V Counter
-        if addr >= 0xC00008 && addr <= 0xC0000F {
+        if (0xC00008..=0xC0000F).contains(&addr) {
             return self.vdp.read_hv_counter();
         }
 
@@ -317,12 +317,12 @@ impl Bus {
         let addr = address & 0xFFFFFF;
 
         // VDP Data Port
-        if addr >= 0xC00000 && addr <= 0xC00003 {
+        if (0xC00000..=0xC00003).contains(&addr) {
             self.vdp.write_data(value);
             return;
         }
         // VDP Control Port
-        if addr >= 0xC00004 && addr <= 0xC00007 {
+        if (0xC00004..=0xC00007).contains(&addr) {
             self.vdp.write_control(value);
             if self.vdp.dma_pending {
                 self.run_dma();
@@ -398,6 +398,40 @@ impl Bus {
     }
     // === DMA ===
 
+    /// Get a direct slice of memory for DMA transfer if possible.
+    /// Returns None if the range crosses memory boundaries or is not contiguous.
+    pub fn get_dma_slice(&self, source: u32, length_words: u32) -> Option<&[u8]> {
+        let len = (length_words as usize) * 2;
+        if len == 0 {
+            return Some(&[]);
+        }
+
+        let start_addr = source & 0xFFFFFF;
+        let end_addr_exclusive = (start_addr as usize) + len;
+
+        // ROM: 0x000000 - 0x3FFFFF
+        if start_addr <= 0x3FFFFF {
+            // Check if end is also within loaded ROM
+            if end_addr_exclusive <= self.rom.len() {
+                return Some(&self.rom[(start_addr as usize)..end_addr_exclusive]);
+            }
+            // If ROM is smaller than 4MB, access beyond rom.len() returns 0xFF.
+            // We can't return a slice for that, so fallback to read_word.
+            return None;
+        }
+
+        // Work RAM: 0xE00000 - 0xFFFFFF (Mirrored)
+        if start_addr >= 0xE00000 {
+            let ram_start = (start_addr & 0xFFFF) as usize;
+            // RAM is 64KB (0x10000)
+            if ram_start + len <= 0x10000 {
+                return Some(&self.work_ram[ram_start..(ram_start + len)]);
+            }
+        }
+
+        None
+    }
+
     fn run_dma(&mut self) {
         if !self.vdp.dma_pending {
             return;
@@ -422,6 +456,33 @@ impl Bus {
         }
 
         // Transfer
+
+        // Optimization: Bulk transfer for contiguous ROM/RAM
+        let len_bytes = (length as usize) * 2;
+        let start_addr = source & 0xFFFFFF;
+
+        // Check ROM
+        if start_addr <= 0x3FFFFF {
+            let end_addr = (start_addr as usize) + len_bytes;
+            if end_addr <= self.rom.len() {
+                self.vdp
+                    .write_data_bulk(&self.rom[(start_addr as usize)..end_addr]);
+                self.vdp.dma_pending = false;
+                return;
+            }
+        }
+        // Check RAM (0xE00000-0xFFFFFF)
+        else if start_addr >= 0xE00000 {
+            let ram_start = (start_addr & 0xFFFF) as usize;
+            if ram_start + len_bytes <= 0x10000 {
+                self.vdp
+                    .write_data_bulk(&self.work_ram[ram_start..(ram_start + len_bytes)]);
+                self.vdp.dma_pending = false;
+                return;
+            }
+        }
+
+        // Fallback: Word-by-word transfer
         for _ in 0..length {
             let word = self.read_word(source);
             self.vdp.write_data(word);
@@ -635,5 +696,63 @@ mod tests {
         // 4. Assert VRAM content
         assert_eq!(bus.vdp.vram[0], 0x12);
         assert_eq!(bus.vdp.vram[1], 0x34);
+    }
+
+    #[test]
+    fn test_z80_bank_register_logic() {
+        let mut bus = Bus::new();
+
+        // Initial state
+        assert_eq!(bus.z80_bank_addr, 0);
+        assert_eq!(bus.z80_bank_bit, 0);
+
+        // We want to write a pattern.
+        // The bank address is constructed from 9 bits.
+        // bit 0 -> addr bit 15
+        // bit 1 -> addr bit 16
+        // ...
+        // bit 8 -> addr bit 23
+
+        // Let's write the pattern: 1, 0, 1, 1, 0, 0, 1, 1, 1
+        // Indices:                 0  1  2  3  4  5  6  7  8
+        // Addr Bits:              15 16 17 18 19 20 21 22 23
+        // Values:              0x8000, 0, 0x20000, 0x40000, 0, 0, 0x200000, 0x400000, 0x800000
+
+        // Sum = 0x8000 + 0x20000 + 0x40000 + 0x200000 + 0x400000 + 0x800000
+        //     = 32768 + 131072 + 262144 + 2097152 + 4194304 + 8388608
+        //     = 15106048 (0xE68000)
+
+        let bits = [1, 0, 1, 1, 0, 0, 1, 1, 1];
+
+        for (i, &bit) in bits.iter().enumerate() {
+            // Write to 0xA06000 (Z80 Bank Register)
+            // Use different addresses in the range to verify mirroring
+            bus.write_byte(0xA06000 + (i as u32 % 0x100), bit);
+
+            assert_eq!(bus.z80_bank_bit, ((i + 1) % 9) as u8);
+        }
+
+        assert_eq!(bus.z80_bank_addr, 0xE68000);
+
+        // Verify wrap-around behavior (next write should affect bit 15 again)
+        // Write 0 to bit 15 (was 1)
+        bus.write_byte(0xA06000, 0);
+        // Expected: 0xE68000 & !(1<<15) = 0xE68000 - 0x8000 = 0xE60000
+        assert_eq!(bus.z80_bank_addr, 0xE60000);
+        assert_eq!(bus.z80_bank_bit, 1);
+
+        // Verify Reset clears bank bit index
+        // Assert current state
+        assert_eq!(bus.z80_bank_bit, 1);
+
+        // Reset Z80 (write 0 to 0xA11200)
+        bus.write_byte(0xA11200, 0x00);
+        assert!(bus.z80_reset);
+        assert_eq!(bus.z80_bank_bit, 0);
+
+        // Unreset (write 1)
+        bus.write_byte(0xA11200, 0x01);
+        assert!(!bus.z80_reset);
+        assert_eq!(bus.z80_bank_bit, 0); // Should stay 0 until next write
     }
 }

@@ -400,4 +400,117 @@ mod tests {
         assert_eq!(manager.frame(), 0);
         assert!(!manager.is_complete());
     }
+
+    #[test]
+    fn test_input_manager_completion_edge_cases() {
+        let mut manager = InputManager::new();
+
+        // Edge Case 1: Empty script (default InputScript, max_frame = 0)
+        let script = InputScript::new();
+        manager.set_script(script);
+        assert!(!manager.is_complete(), "Empty script frame 0 should not be complete");
+        manager.advance_frame();
+        assert!(manager.is_complete(), "Empty script frame 1 should be complete");
+
+        // Edge Case 2: Single frame script at 0
+        let script = InputScript::parse("0,........,........").unwrap();
+        manager.set_script(script);
+        assert!(!manager.is_complete());
+        manager.advance_frame();
+        assert!(manager.is_complete());
+
+        // Edge Case 3: Script with gaps
+        let script = InputScript::parse("0,........,........\n10,........,........").unwrap();
+        assert_eq!(script.max_frame, 10);
+        manager.set_script(script);
+
+        // Fast forward to frame 10
+        for _ in 0..10 {
+            assert!(!manager.is_complete());
+            manager.advance_frame();
+        }
+        assert_eq!(manager.frame(), 10);
+        assert!(!manager.is_complete()); // At max_frame
+
+        manager.advance_frame();
+        assert_eq!(manager.frame(), 11);
+        assert!(manager.is_complete()); // After max_frame
+
+        // Edge Case 4: Unordered frames
+        let script = InputScript::parse("10,........,........\n5,........,........").unwrap();
+        manager.set_script(script);
+        // Correctly calculates max frame despite order
+        assert_eq!(manager.script.as_ref().unwrap().max_frame, 10);
+
+        // At frame 0
+        assert!(!manager.is_complete());
+    }
+
+    #[test]
+    fn test_input_manager_reset() {
+        let mut manager = InputManager::new();
+
+        // 1. Test manual state reset
+        manager.current_frame = 100;
+        manager.last_input.p1.a = true;
+        manager.last_input.p2.start = true;
+
+        assert_eq!(manager.frame(), 100);
+        assert!(manager.last_input.p1.a);
+
+        manager.reset();
+
+        assert_eq!(manager.frame(), 0);
+        assert!(!manager.last_input.p1.a);
+        assert!(!manager.last_input.p2.start);
+
+        // 2. Test script-based state reset
+        // Frame 0: default
+        // Frame 1: A pressed
+        let script = InputScript::parse("0,........,........\n1,....A...,........").unwrap();
+        manager.set_script(script);
+
+        // Advance to frame 1
+        manager.advance_frame(); // Frame 0 processed
+        let input = manager.advance_frame(); // Frame 1 processed
+
+        assert_eq!(manager.frame(), 2);
+        assert!(input.p1.a);
+        assert!(manager.last_input.p1.a);
+
+        // Reset
+        manager.reset();
+
+        assert_eq!(manager.frame(), 0);
+        // Verify last_input is reset to default (no A pressed)
+        assert!(!manager.last_input.p1.a);
+
+        // Advance frame 0 again
+        let input0 = manager.advance_frame();
+        assert!(!input0.p1.a);
+    }
+
+    #[test]
+    fn test_load_nonexistent_file() {
+        let result = InputScript::load("non_existent_file.txt");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("Failed to read input script"));
+    }
+
+    #[test]
+    fn test_parse_missing_fields() {
+        let content = "0";
+        let result = InputScript::parse(content);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Line 1: expected at least 2 fields");
+    }
+
+    #[test]
+    fn test_parse_invalid_frame_number() {
+        let content = "invalid,........";
+        let result = InputScript::parse(content);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Line 1: invalid frame number");
+    }
 }
