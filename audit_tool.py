@@ -92,7 +92,7 @@ def enumerate_files():
 
         try:
             with open(f, 'r', encoding='utf-8', errors='ignore') as fp:
-                lines = len(fp.readlines())
+                lines = sum(1 for _ in fp)
                 loc_by_lang[lang] = loc_by_lang.get(lang, 0) + lines
         except:
             pass
@@ -177,43 +177,41 @@ def scan_text_patterns():
 
         try:
             with open(f, 'r', encoding='utf-8', errors='ignore') as fp:
-                lines = fp.readlines()
+                for i, line_content in enumerate(fp):
+                    # Secrets
+                    for name, pattern in secret_patterns.items():
+                        if re.search(pattern, line_content):
+                            add_finding(
+                                title=f"Potential Secret: {name}",
+                                severity="Critical",
+                                description=f"Found pattern matching {name}",
+                                filepath=f,
+                                line=i+1,
+                                remediation="Rotate secret and remove from history."
+                            )
+                            metrics["secrets_found"] += 1
 
-            for i, line_content in enumerate(lines):
-                # Secrets
-                for name, pattern in secret_patterns.items():
-                    if re.search(pattern, line_content):
+                    # Unsafe
+                    if re.search(unsafe_pattern, line_content):
                         add_finding(
-                            title=f"Potential Secret: {name}",
-                            severity="Critical",
-                            description=f"Found pattern matching {name}",
+                            title="Unsafe Rust Code",
+                            severity="Medium",
+                            description="Usage of `unsafe` block detected. Verify memory safety manually.",
                             filepath=f,
                             line=i+1,
-                            remediation="Rotate secret and remove from history."
+                            remediation="Audit unsafe block for soundness."
                         )
-                        metrics["secrets_found"] += 1
 
-                # Unsafe
-                if re.search(unsafe_pattern, line_content):
-                    add_finding(
-                        title="Unsafe Rust Code",
-                        severity="Medium",
-                        description="Usage of `unsafe` block detected. Verify memory safety manually.",
-                        filepath=f,
-                        line=i+1,
-                        remediation="Audit unsafe block for soundness."
-                    )
-
-                # TODOs
-                if re.search(todo_pattern, line_content):
-                    add_finding(
-                        title="Technical Debt (TODO/FIXME)",
-                        severity="Info",
-                        description=line_content.strip(),
-                        filepath=f,
-                        line=i+1,
-                        remediation="Address the comment."
-                    )
+                    # TODOs
+                    if re.search(todo_pattern, line_content):
+                        add_finding(
+                            title="Technical Debt (TODO/FIXME)",
+                            severity="Info",
+                            description=line_content.strip(),
+                            filepath=f,
+                            line=i+1,
+                            remediation="Address the comment."
+                        )
 
         except Exception as e:
             pass

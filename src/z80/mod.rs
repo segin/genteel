@@ -191,10 +191,12 @@ impl Z80 {
     }
 
     fn set_sz_flags(&mut self, value: u8) {
-        self.set_flag(flags::ZERO, value == 0);
-        self.set_flag(flags::SIGN, (value & 0x80) != 0);
-        self.set_flag(flags::X_FLAG, (value & 0x08) != 0);
-        self.set_flag(flags::Y_FLAG, (value & 0x20) != 0);
+        let mut new_f = self.f & !(flags::SIGN | flags::ZERO | flags::Y_FLAG | flags::X_FLAG);
+        new_f |= value & (flags::SIGN | flags::Y_FLAG | flags::X_FLAG);
+        if value == 0 {
+            new_f |= flags::ZERO;
+        }
+        self.f = new_f;
     }
 
     fn set_parity_flag(&mut self, value: u8) {

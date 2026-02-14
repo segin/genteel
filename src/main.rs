@@ -54,19 +54,10 @@ impl Emulator {
         drop(bus_ref);
 
         // Z80 uses Z80Bus which routes to sound chips and banked 68k memory
+        // It also handles Z80 I/O (which is unconnected on Genesis)
         let z80_bus = Z80Bus::new(SharedBus::new(bus.clone()));
 
-        // Temporary null I/O implementation for Z80 ports
-        #[derive(Debug)]
-        struct NullIo;
-        impl crate::memory::IoInterface for NullIo {
-            fn read_port(&mut self, _port: u16) -> u8 {
-                0xFF
-            }
-            fn write_port(&mut self, _port: u16, _value: u8) {}
-        }
-
-        let z80 = Z80::new(Box::new(z80_bus), Box::new(NullIo));
+        let z80 = Z80::new(Box::new(z80_bus.clone()), Box::new(z80_bus));
 
         let mut emulator = Self {
             cpu,
