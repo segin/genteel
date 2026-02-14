@@ -117,7 +117,11 @@ impl Bus {
             // Z80 Address Space: 0xA00000-0xA0FFFF
             0xA00000..=0xA01FFF => {
                 // Z80 RAM (8KB)
-                self.z80_ram[(addr & 0x1FFF) as usize]
+                if self.z80_bus_request {
+                    self.z80_ram[(addr & 0x1FFF) as usize]
+                } else {
+                    0xFF
+                }
             }
             // YM2612 from 68k: 0xA04000-0xA04003
             0xA04000..=0xA04003 => self.apu.fm.read((addr & 3) as u8),
@@ -188,7 +192,9 @@ impl Bus {
 
             // Z80 RAM
             0xA00000..=0xA01FFF => {
-                self.z80_ram[(addr & 0x1FFF) as usize] = value;
+                if self.z80_bus_request {
+                    self.z80_ram[(addr & 0x1FFF) as usize] = value;
+                }
             }
 
             // YM2612 FM Chip: 0xA04000-0xA04003
@@ -603,6 +609,9 @@ mod tests {
     #[test]
     fn test_z80_ram() {
         let mut bus = Bus::new();
+
+        // Request Z80 bus
+        bus.z80_bus_request = true;
 
         bus.write_byte(0xA00000, 0x55);
         assert_eq!(bus.read_byte(0xA00000), 0x55);
