@@ -166,9 +166,9 @@ impl Ym2612 {
 
     /// Write to Data Port 0 (Part I)
     pub fn write_data0(&mut self, val: u8) {
-        // Set busy flag duration (32 internal YM2612 cycles * 6 * 7 = 1344 Master Cycles)
-        // This corresponds to ~192 M68k cycles
-        self.busy_cycles = 1344;
+        // Set busy flag duration (32 internal YM2612 cycles * 7 = 224 Master Cycles)
+        // This corresponds to 32 M68k cycles.
+        self.busy_cycles = 224;
 
         if self.addr0 == 0x27 {
             let old_val = self.registers[0][0x27];
@@ -212,7 +212,7 @@ impl Ym2612 {
 
     /// Write to Data Port 1 (Part II)
     pub fn write_data1(&mut self, val: u8) {
-        self.busy_cycles = 1344;
+        self.busy_cycles = 224;
         self.registers[1][self.addr1 as usize] = val;
     }
 
@@ -462,14 +462,13 @@ mod tests {
         // Should be busy immediately
         assert_eq!(ym.read_status() & 0x80, 0x80);
 
-        // Step for 191 68k cycles (191 * 7 = 1337 < 1344)
-        ym.step(191);
-        assert_eq!(ym.read_status() & 0x80, 0x80, "Should still be busy");
+        // Step for 31 68k cycles (31 * 7 = 217 Master Cycles)
+        ym.step(31);
+        assert_eq!(ym.read_status() & 0x80, 0x80, "Should still be busy at 31 cycles");
 
-        // Step 1 more cycle (total 192 * 7 = 1344)
+        // Step 1 more cycle (total 32 * 7 = 224)
         ym.step(1);
-        // Depending on implementation, if exactly 0 remains, busy clears.
-        // busy_cycles -= 7 -> 0. Condition > 0 becomes false next check.
-        assert_eq!(ym.read_status() & 0x80, 0, "Should be free now");
+        // busy_cycles -= 7 -> 0.
+        assert_eq!(ym.read_status() & 0x80, 0, "Should be free after 32 cycles");
     }
 }
