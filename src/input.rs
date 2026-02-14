@@ -44,25 +44,38 @@ impl InputScript {
 
     /// Load a script from a file
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, String> {
-        use std::io::Read;
-        const MAX_SCRIPT_SIZE: u64 = 50 * 1024 * 1024; // 50 MB
-
-        let file =
+        let mut file =
             fs::File::open(path).map_err(|e| format!("Failed to open input script: {}", e))?;
         let metadata = file
             .metadata()
             .map_err(|e| format!("Failed to get script metadata: {}", e))?;
 
-        if metadata.len() > MAX_SCRIPT_SIZE {
+        let content = Self::read_script_with_limit(&mut file, metadata.len())?;
+        Self::parse(&content)
+    }
+
+    fn read_script_with_limit<R: std::io::Read>(
+        reader: &mut R,
+        size: u64,
+    ) -> Result<String, String> {
+        use std::io::Read;
+        const MAX_SCRIPT_SIZE: u64 = 64 * 1024 * 1024; // 64 MB
+
+        if size > MAX_SCRIPT_SIZE {
             return Err(format!(
                 "Input script too large ({} bytes, max {} bytes)",
-                metadata.len(),
+                size,
                 MAX_SCRIPT_SIZE
             ));
         }
 
-        let mut content = String::with_capacity(metadata.len() as usize);
-        file.take(MAX_SCRIPT_SIZE + 1)
+        if size > usize::MAX as u64 {
+            return Err("Input script size too large for memory address space".to_string());
+        }
+
+        let mut content = String::with_capacity(size as usize);
+        reader
+            .take(MAX_SCRIPT_SIZE + 1)
             .read_to_string(&mut content)
             .map_err(|e| format!("Failed to read input script: {}", e))?;
 
@@ -73,7 +86,7 @@ impl InputScript {
             ));
         }
 
-        Self::parse(&content)
+        Ok(content)
     }
 
     /// Parse a script from a string
@@ -596,6 +609,43 @@ mod tests {
             let expected_random = random_frame > max_frame;
             prop_assert_eq!(manager.is_complete(), expected_random,
                 "Failed random check: max_frame={}, current_frame={}", max_frame, random_frame);
+        }
+    }
+}
+
+#[cfg(test)]
+mod additional_tests {
+    use super::*;
+
+    #[test]
+    fn test_large_script_rejection() {
+        let path = "large_script_reject.txt";
+        // Create 65MB dummy file
+        let size = 65 * 1024 * 1024;
+        let f = std::fs::File::create(path).unwrap();
+        f.set_len(size as u64).unwrap();
+
+        let result = InputScript::load(path);
+        let _ = std::fs::remove_file(path);
+
+        assert!(result.is_err(), "Should reject large script (>64MB)");
+        let err = result.unwrap_err();
+        assert!(err.contains("Input script too large") || err.contains("exceeds maximum size"), "Error was: {}", err);
+    }
+
+    #[test]
+    fn test_acceptable_script_size() {
+        let path = "large_script_accept.txt";
+        // Create 60MB dummy file
+        let size = 60 * 1024 * 1024;
+        let f = std::fs::File::create(path).unwrap();
+        f.set_len(size as u64).unwrap();
+
+        let result = InputScript::load(path);
+        let _ = std::fs::remove_file(path);
+
+        if let Err(e) = &result {
+             assert!(!e.contains("too large") && !e.contains("exceeds maximum size"), "Should not reject 60MB script: {}", e);
         }
     }
 }
