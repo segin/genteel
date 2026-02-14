@@ -10,7 +10,10 @@ F-008,Unsafe Rust Code,Medium,fuzz/target/debug/deps/liblibfuzzer_sys-691fbdf079
 F-009,Unsafe Rust Code,Medium,fuzz/target/debug/deps/liblibfuzzer_sys-691fbdf079f0efb7.rmeta,95,Open
 F-010,Unsafe Rust Code,Medium,fuzz/target/debug/deps/libsyn-f935f9f7c4762fcb.rlib,8107,Open
 F-011,Unsafe Rust Code,Medium,fuzz/target/debug/deps/libsyn-f935f9f7c4762fcb.rmeta,8087,Open
-F-012,Technical Debt (TODO/FIXME),Info,src/apu/ym2612.rs,72,Open
-F-013,Unsafe Rust Code,Medium,src/main.rs,228,Open
-F-014,Unsafe Rust Code,Medium,src/main.rs,240,Open
-F-015,Test Failure,High,,,Open
+F-012,Unsafe Rust Code,Medium,src/memory/bus.rs,268,Open
+F-013,Unsafe Rust Code,Medium,src/memory/bus.rs,269,Open
+F-014,Unsafe Rust Code,Medium,src/memory/bus.rs,356,Open
+F-015,Unsafe Rust Code,Medium,src/memory/bus.rs,357,Open
+F-016,Unsafe Rust Code,Medium,src/memory/bus.rs,358,Open
+F-017,Unsafe Rust Code,Medium,src/memory/bus.rs,359,Open
+F-018,Test Failure,High,,,Open

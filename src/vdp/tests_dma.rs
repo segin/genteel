@@ -48,49 +48,39 @@ fn test_dma_fill_vram() {
     vdp.write_control(0x8F01);
 
     // 5. Setup DMA Fill destination (VRAM 0x0000)
-    // Command: VRAM Write (0x1) + DMA (0x20) = 0x21.
+    // Command: VRAM Write (0x1).
     // Addr 0x0000.
     // Word 1: 0x4000.
-    // Word 2: Need bit 7 set for DMA flag (0x0080).
-    // (0x0080 >> 2) & 0x3C = 0x20.
+    // Word 2: DMA bit (CD5) is NOT set for Fill. (0x0000).
 
     vdp.write_control(0x4000);
-    vdp.write_control(0x0080); // DMA bit set
+    vdp.write_control(0x0000);
 
     // Check if dma_pending is set
-    // In `write_control`: "if self.dma_enabled() && (self.control_code & 0x20) != 0 { ... self.dma_pending = true; }"
-    assert!(vdp.dma_pending, "DMA pending should be true after command");
+    // It should NOT be set because CD5 is 0
+    assert!(!vdp.dma_pending, "DMA pending should be false for Fill setup");
 
     // 6. Write Fill Data (e.g. 0xAA)
-    // Writing to data port triggers the fill in hardware, but here we just prepare data.
-    // Also, this write modifies VRAM at 0x0000 and increments address to 0x0001.
+    // Writing to data port triggers the fill in hardware.
+    // This replaces the normal write.
+    // It fills `dma_length` bytes starting at `control_address` (0x0000).
     vdp.write_data(0xAA00);
 
-    assert!(vdp.dma_pending, "DMA pending should persist after data write");
+    assert!(!vdp.dma_pending, "DMA pending should be false after data write");
 
-    // 7. Execute DMA
-    let cycles = vdp.execute_dma();
+    // 7. Verify VRAM
+    // Length is 0x10 (16 bytes).
+    // Writes 16 bytes: indices 0x0000 to 0x000F.
+    // 0x0000..0x000F is 0xAA.
+    // 0x0010 is 0x00.
 
-    // assert!(!vdp.dma_pending, "DMA pending should be false after execution");
-    // Current implementation does NOT clear dma_pending
-    assert!(vdp.dma_pending, "DMA pending currently persists after execution");
-    assert_eq!(cycles, 0x10, "Should return length as cycles/bytes transferred");
-
-    // Verify VRAM
-    // Current implementation writes alternating bytes based on address parity
-    // 0x0000: 0xAA (initial write)
-    // 0x0001: 0x00 (odd)
-    // 0x0002: 0xAA (even)
-    // ...
-    assert_eq!(vdp.vram[0], 0xAA);
-    for i in 1..=0x10 {
-        let expected = if i % 2 == 0 { 0xAA } else { 0x00 };
-        assert_eq!(vdp.vram[i], expected, "Mismatch at index 0x{:04X}", i);
+    for i in 0..0x10 {
+        assert_eq!(vdp.vram[i], 0xAA, "Mismatch at index 0x{:04X}", i);
     }
+    assert_eq!(vdp.vram[0x10], 0x00, "Should stop at 0x10");
 }
 
 #[test]
-#[ignore] // VRAM Copy not implemented yet
 fn test_dma_copy_vram() {
     let mut vdp = Vdp::new();
 

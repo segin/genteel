@@ -16,6 +16,14 @@
 use crate::debugger::Debuggable;
 use serde_json::{json, Value};
 
+// VDP Control Codes (bits 0-3)
+const VRAM_READ: u8 = 0x00;
+const VRAM_WRITE: u8 = 0x01;
+const CRAM_WRITE: u8 = 0x03;
+const VSRAM_READ: u8 = 0x04;
+const VSRAM_WRITE: u8 = 0x05;
+const CRAM_READ: u8 = 0x08;
+
 struct SpriteAttributes {
     v_pos: u16,
     h_pos: u16,
@@ -27,6 +35,41 @@ struct SpriteAttributes {
     v_flip: bool,
     h_flip: bool,
     base_tile: u16,
+}
+
+struct SpriteIterator<'a> {
+    vdp: &'a Vdp,
+    next_idx: u8,
+    count: usize,
+    max_sprites: usize,
+    sat_base: usize,
+}
+
+impl<'a> Iterator for SpriteIterator<'a> {
+    type Item = SpriteAttributes;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.count >= self.max_sprites {
+            return None;
+        }
+
+        // Check SAT boundary
+        if self.sat_base + (self.next_idx as usize * 8) + 8 > 0x10000 {
+            return None;
+        }
+
+        let attr = self.vdp.fetch_sprite_attributes(self.sat_base, self.next_idx);
+
+        self.count += 1;
+        let link = attr.link;
+        self.next_idx = link;
+
+        if link == 0 {
+            self.count = self.max_sprites; // Stop after this one
+        }
+
+        Some(attr)
+    }
 }
 
 // Control Port Constants
@@ -95,6 +138,12 @@ pub struct Vdp {
     pub framebuffer: Vec<u16>,
 }
 
+impl Default for Vdp {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Vdp {
     pub fn new() -> Self {
         Vdp {
@@ -123,18 +172,83 @@ impl Vdp {
         self.is_pal = is_pal;
     }
 
+    pub fn write_data_bulk(&mut self, data: &[u8]) {
+        self.control_pending = false;
+
+        // Optimized VRAM write for standard increment
+        if (self.control_code & 0x0F) == 1 && self.auto_increment() == 2 {
+            let mut addr = self.control_address as usize;
+            for chunk in data.chunks_exact(2) {
+                if addr < 0x10000 {
+                    // Big-endian source: chunk[0] is high byte, chunk[1] is low byte.
+                    // VRAM is byte array.
+                    // write_data logic:
+                    // self.vram[addr] = (value >> 8) as u8;
+                    // self.vram[addr ^ 1] = (value & 0xFF) as u8;
+
+                    // So:
+                    // self.vram[addr] = chunk[0];
+                    // self.vram[addr ^ 1] = chunk[1];
+
+                    // If addr is even: vram[addr] = chunk[0], vram[addr+1] = chunk[1].
+                    // If addr is odd: vram[addr] = chunk[0], vram[addr-1] = chunk[1].
+
+                    // Since inc=2, addr parity is preserved.
+                    if (addr & 1) == 0 {
+                        self.vram[addr] = chunk[0];
+                        self.vram[addr + 1] = chunk[1];
+                    } else {
+                        self.vram[addr] = chunk[0];
+                        self.vram[addr - 1] = chunk[1];
+                    }
+                }
+                addr = (addr + 2) & 0xFFFF;
+            }
+            self.control_address = addr as u16;
+
+            // Update last_data_write
+            if data.len() >= 2 {
+                let last_idx = data.len() - 2;
+                self.last_data_write =
+                    ((data[last_idx] as u16) << 8) | (data[last_idx + 1] as u16);
+            }
+            return;
+        }
+
+        // Fallback
+        for chunk in data.chunks_exact(2) {
+            let val = ((chunk[0] as u16) << 8) | (chunk[1] as u16);
+            self.write_data(val);
+        }
+    }
+
     pub fn write_data(&mut self, value: u16) {
         self.control_pending = false;
         self.last_data_write = value;
 
-        // DMA fill check (if configured)
-        if (self.registers[1] & 0x10) != 0 && (self.registers[23] & 0x80) != 0 {
-            // DMA fill implementation would go here
-            // For now, just handle normal write
+        // DMA Fill (Mode 2) check
+        // Enabled (Reg 1 bit 4) AND Mode 2 (Reg 23 bits 7,6 = 1,0)
+        if (self.registers[1] & 0x10) != 0 && (self.registers[23] & 0xC0) == 0x80 {
+            let length = self.dma_length();
+            let mut addr = self.control_address;
+            let inc = self.auto_increment() as u16;
+            let fill_byte = (value >> 8) as u8;
+
+            // DMA Fill writes bytes. Length register specifies number of bytes.
+            // If length is 0, it is treated as 0x10000 (64KB).
+            let len = if length == 0 { 0x10000 } else { length };
+
+            for _ in 0..len {
+                // VRAM is byte-addressable in this emulator
+                self.vram[addr as usize] = fill_byte;
+                addr = addr.wrapping_add(inc);
+            }
+            self.control_address = addr;
+            return;
         }
 
         match self.control_code & 0x0F {
-            1 => {
+            VRAM_WRITE => {
                 // Write VRAM
                 let addr = self.control_address as usize;
                 if addr < 0x10000 {
@@ -143,11 +257,11 @@ impl Vdp {
                     self.vram[addr ^ 1] = (value & 0xFF) as u8;
                 }
             }
-            3 => {
+            CRAM_WRITE => {
                 // Write CRAM
                 let mut val = value;
                 if (self.control_address & 0x01) != 0 {
-                    val = (val >> 8) | (val << 8);
+                    val = val.rotate_left(8);
                 }
                 let addr = (self.control_address & 0x7E) as usize;
                 // Pack 9-bit color to RGB565
@@ -158,12 +272,12 @@ impl Vdp {
                 let r5 = (r << 1) | (r >> 3);
                 let g6 = (g << 2) | (g >> 2);
                 let b5 = (b << 1) | (b >> 3);
-                self.cram_cache[addr >> 1] = ((r5 as u16) << 11) | ((g6 as u16) << 5) | (b5 as u16);
+                self.cram_cache[addr >> 1] = (r5 << 11) | (g6 << 5) | b5;
 
                 self.cram[addr] = (val & 0xFF) as u8;
                 self.cram[addr + 1] = (val >> 8) as u8;
             }
-            5 => {
+            VSRAM_WRITE => {
                 // Write VSRAM
                 let addr = (self.control_address & 0x7F) as usize;
                 if addr < 80 {
@@ -182,7 +296,7 @@ impl Vdp {
     pub fn read_data(&mut self) -> u16 {
         self.control_pending = false;
         match self.control_code & 0x0F {
-            0 => {
+            VRAM_READ => {
                 // Read VRAM
                 let addr = self.control_address as usize;
                 let val = if addr < 0x10000 {
@@ -195,12 +309,12 @@ impl Vdp {
                     .wrapping_add(self.auto_increment() as u16);
                 val
             }
-            8 => {
+            CRAM_READ => {
                 // Read CRAM
                 let addr = (self.control_address & 0x7F) as usize;
                 ((self.cram[addr + 1] as u16) << 8) | (self.cram[addr] as u16)
             }
-            4 => {
+            VSRAM_READ => {
                 // Read VSRAM
                 let addr = (self.control_address & 0x7F) as usize;
                 if addr < 80 {
@@ -244,6 +358,26 @@ impl Vdp {
 
     pub fn read_status(&self) -> u16 {
         self.status
+    }
+
+    /// Reset VDP state
+    pub fn reset(&mut self) {
+        *self = Self::new();
+    }
+
+    #[cfg(test)]
+    pub fn get_control_code(&self) -> u8 {
+        self.control_code
+    }
+
+    #[cfg(test)]
+    pub fn get_control_address(&self) -> u16 {
+        self.control_address
+    }
+
+    #[cfg(test)]
+    pub fn get_cram_color_pub(&self, palette: u8, color: u8) -> u16 {
+        self.get_cram_color(palette, color)
     }
 
     // Helper methods
@@ -326,41 +460,51 @@ impl Vdp {
     }
 
     pub fn execute_dma(&mut self) -> u32 {
-        // Simple VRAM fill implementation for now
         let length = self.dma_length();
+        // If length is 0, it is treated as 0x10000 (64KB)
+        let len = if length == 0 { 0x10000 } else { length };
+
         let mode = self.registers[23] & 0xC0;
 
-        if mode == 0x80 {
-            // VRAM Fill
-            let data = self.last_data_write;
-            // Byte write to VRAM
-            let mut addr = self.control_address;
-            let inc = self.auto_increment() as u16;
+        match mode {
+            0x80 => {
+                // VRAM Fill (Mode 2)
+                // This is also handled in write_data, but provided here for completeness
+                // if triggered via control port (non-standard but possible).
+                let data = self.last_data_write;
+                let mut addr = self.control_address;
+                let inc = self.auto_increment() as u16;
+                let fill_byte = (data >> 8) as u8;
 
-            for _ in 0..length {
-                if (addr as usize) < 0x10000 {
-                    // VRAM fill writes the lower byte of data to the VRAM address
-                    // If address is even, it writes high byte of word?
-                    // VRAM is bytes.
-                    // Actually VRAM fill repeats the data to the VRAM port.
-                    // For now, simple implementation
-                    let val = if (addr & 1) == 0 {
-                        (data >> 8) as u8
-                    } else {
-                        (data & 0xFF) as u8
-                    };
-                    self.vram[addr as usize] = val;
+                for _ in 0..len {
+                    self.vram[addr as usize] = fill_byte;
+                    addr = addr.wrapping_add(inc);
                 }
-                addr = addr.wrapping_add(inc);
+                self.control_address = addr;
             }
-            self.control_address = addr;
+            0xC0 => {
+                // VRAM Copy (Mode 3)
+                let mut source = (self.dma_source() & 0xFFFF) as u16;
+                let mut dest = self.control_address;
+                let inc = self.auto_increment() as u16;
+
+                for _ in 0..len {
+                    let val = self.vram[source as usize];
+                    self.vram[dest as usize] = val;
+                    source = source.wrapping_add(1);
+                    dest = dest.wrapping_add(inc);
+                }
+                self.control_address = dest;
+            }
+            _ => {}
         }
 
-        length // Return cycles used (placeholder)
+        self.dma_pending = false;
+        len
     }
 
     pub fn sprite_table_address(&self) -> u16 {
-        let mask = if self.h40_mode() { 0xFE00 } else { 0xFE00 }; // simplified
+        let mask = 0xFE00; // simplified
         ((self.registers[5] as u16) << 9) & mask
     }
 
@@ -506,9 +650,7 @@ impl Vdp {
         let bg_color = self.get_cram_color(pal_line, color_idx);
 
         // Fill with background color
-        for x in 0..width as usize {
-            self.framebuffer[line_offset + x] = bg_color;
-        }
+        self.framebuffer[line_offset..line_offset + width as usize].fill(bg_color);
 
         if !self.display_enabled() {
             return;
@@ -526,6 +668,19 @@ impl Vdp {
         self.render_plane(true, fetch_line, draw_line, true); // Plane A high
                                                               // Sprites high priority
         self.render_sprites(fetch_line, draw_line, true);
+    }
+
+    fn sprite_iter(&self) -> SpriteIterator<'_> {
+        let sat_base = self.sprite_table_address() as usize;
+        let max_sprites = if self.h40_mode() { 80 } else { 64 };
+
+        SpriteIterator {
+            vdp: self,
+            next_idx: 0,
+            count: 0,
+            max_sprites,
+            sat_base,
+        }
     }
 
     fn fetch_sprite_attributes(&self, sat_base: usize, index: u8) -> SpriteAttributes {
@@ -621,24 +776,12 @@ impl Vdp {
     }
 
     fn render_sprites(&mut self, fetch_line: u16, draw_line: u16, priority_filter: bool) {
-        let sat_base = self.sprite_table_address() as usize;
-        let mut sprite_idx = 0;
-        let mut sprite_count = 0;
-        let max_sprites = if self.h40_mode() { 80 } else { 64 };
-
         let screen_width = self.screen_width();
         let line_offset = (draw_line as usize) * 320;
 
-        // SAT structure is 8 bytes per sprite
-        // We follow the 'link' pointer starting from sprite 0
-        loop {
-            // Check SAT boundary
-            if sat_base + (sprite_idx as usize * 8) + 8 > 0x10000 {
-                break;
-            }
+        let sprites: Vec<_> = self.sprite_iter().collect();
 
-            let attr = self.fetch_sprite_attributes(sat_base, sprite_idx as u8);
-
+        for attr in sprites {
             // Check if sprite is visible on this line
             let sprite_v_px = (attr.v_size as u16) * 8;
             if attr.priority == priority_filter
@@ -646,12 +789,6 @@ impl Vdp {
                 && fetch_line < attr.v_pos + sprite_v_px
             {
                 self.render_sprite_scanline(fetch_line, &attr, line_offset, screen_width);
-            }
-
-            sprite_count += 1;
-            sprite_idx = attr.link;
-            if sprite_idx == 0 || sprite_count >= max_sprites {
-                break;
             }
         }
     }
@@ -678,8 +815,8 @@ impl Vdp {
         // Get horizontal scroll (per-screen for now)
         let hs_base = self.hscroll_address();
         let hs_addr = if is_plane_a { hs_base } else { hs_base + 2 };
-        let hi = self.vram[hs_addr as usize];
-        let lo = self.vram[hs_addr as usize + 1];
+        let hi = self.vram[hs_addr];
+        let lo = self.vram[hs_addr + 1];
         let h_scroll = (((hi as u16) << 8) | (lo as u16)) & 0x03FF;
         let scrolled_v = fetch_line.wrapping_add(v_scroll);
         let tile_v = (scrolled_v as usize / 8) % plane_h;
@@ -688,19 +825,26 @@ impl Vdp {
         let screen_width = self.screen_width();
         let line_offset = (draw_line as usize) * 320;
 
-        for screen_x in 0..screen_width {
-            let scrolled_h = (screen_x as u16).wrapping_sub(h_scroll);
-            let tile_h = (scrolled_h as usize / 8) % plane_w;
+        let mut screen_x: u16 = 0;
+        let mut scrolled_h = (0u16).wrapping_sub(h_scroll);
+
+        while screen_x < screen_width {
             let pixel_h = scrolled_h % 8;
+            let pixels_left_in_tile = 8 - pixel_h;
+            let pixels_to_process = std::cmp::min(pixels_left_in_tile, screen_width - screen_x);
+
+            let tile_h = (scrolled_h as usize / 8) % plane_w;
 
             // Fetch nametable entry (2 bytes)
             let nt_entry_addr = name_table_base + (tile_v * plane_w + tile_h) * 2;
-            let hi = self.vram[nt_entry_addr as usize];
-            let lo = self.vram[nt_entry_addr as usize + 1];
+            let hi = self.vram[nt_entry_addr & 0xFFFF];
+            let lo = self.vram[(nt_entry_addr + 1) & 0xFFFF];
             let entry = ((hi as u16) << 8) | (lo as u16);
 
             let priority = (entry & 0x8000) != 0;
             if priority != priority_filter {
+                screen_x += pixels_to_process;
+                scrolled_h = scrolled_h.wrapping_add(pixels_to_process);
                 continue;
             }
 
@@ -710,28 +854,38 @@ impl Vdp {
             let tile_index = entry & 0x07FF;
 
             let row = if v_flip { 7 - pixel_v } else { pixel_v };
-            let pattern_addr =
-                (tile_index as usize * 32) + (row as usize * 4) + (pixel_h as usize / 2);
+            let row_addr = (tile_index as usize * 32) + (row as usize * 4);
 
-            let byte = self.vram[pattern_addr % 0x10000];
-            let col = if h_flip {
-                if pixel_h % 2 == 0 {
-                    byte & 0x0F
-                } else {
-                    byte >> 4
-                }
-            } else {
-                if pixel_h % 2 == 0 {
-                    byte >> 4
-                } else {
-                    byte & 0x0F
-                }
-            };
+            // Prefetch the 4 bytes of pattern data for this row
+            let p0 = self.vram[row_addr & 0xFFFF];
+            let p1 = self.vram[(row_addr + 1) & 0xFFFF];
+            let p2 = self.vram[(row_addr + 2) & 0xFFFF];
+            let p3 = self.vram[(row_addr + 3) & 0xFFFF];
+            let patterns = [p0, p1, p2, p3];
 
-            if col != 0 {
-                let color = self.get_cram_color(palette, col);
-                self.framebuffer[line_offset + screen_x as usize] = color;
+            for i in 0..pixels_to_process {
+                let current_pixel_h = pixel_h + i;
+                let eff_col = if h_flip {
+                    7 - current_pixel_h
+                } else {
+                    current_pixel_h
+                };
+
+                let byte = patterns[(eff_col as usize) / 2];
+
+                let col = if eff_col % 2 == 0 {
+                    byte >> 4
+                } else {
+                    byte & 0x0F
+                };
+
+                if col != 0 {
+                    let color = self.get_cram_color(palette, col);
+                    self.framebuffer[line_offset + (screen_x + i) as usize] = color;
+                }
             }
+            screen_x += pixels_to_process;
+            scrolled_h = scrolled_h.wrapping_add(pixels_to_process);
         }
     }
 }
@@ -743,6 +897,7 @@ impl Debuggable for Vdp {
             "h_counter": self.h_counter,
             "v_counter": self.v_counter,
             "dma_pending": self.dma_pending,
+            "registers": self.registers,
             "control": {
                 "pending": self.control_pending,
                 "code": self.control_code,
@@ -751,16 +906,97 @@ impl Debuggable for Vdp {
         })
     }
 
-    fn write_state(&mut self, _state: &Value) {
-        // Not implemented
+    fn write_state(&mut self, state: &Value) {
+        if let Some(status) = state["status"].as_u64() {
+            self.status = status as u16;
+        }
+        if let Some(h_counter) = state["h_counter"].as_u64() {
+            self.h_counter = h_counter as u16;
+        }
+        if let Some(v_counter) = state["v_counter"].as_u64() {
+            self.v_counter = v_counter as u16;
+        }
+        if let Some(dma_pending) = state["dma_pending"].as_bool() {
+            self.dma_pending = dma_pending;
+        }
+
+        if let Some(registers) = state["registers"].as_array() {
+            for (i, val) in registers.iter().enumerate() {
+                if i < 24 {
+                    if let Some(v) = val.as_u64() {
+                        self.registers[i] = v as u8;
+                    }
+                }
+            }
+        }
+
+        let control = &state["control"];
+        if let Some(pending) = control["pending"].as_bool() {
+            self.control_pending = pending;
+        }
+        if let Some(code) = control["code"].as_u64() {
+            self.control_code = code as u8;
+        }
+        if let Some(address) = control["address"].as_u64() {
+            self.control_address = address as u16;
+        }
     }
 }
 
 #[cfg(test)]
-mod test_command;
-#[cfg(test)]
-mod tests_control;
+mod tests_render;
+
 #[cfg(test)]
 mod tests_dma;
+
+#[cfg(test)]
+mod test_command;
+
+#[cfg(test)]
+mod tests_control;
+
 #[cfg(test)]
 mod tests_properties;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_vdp_debuggable() {
+        let mut vdp = Vdp::new();
+        let state = json!({
+            "status": 0x1234,
+            "h_counter": 0x56,
+            "v_counter": 0x78,
+            "dma_pending": true,
+            "registers": [
+                1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24
+            ],
+            "control": {
+                "pending": true,
+                "code": 0x0F,
+                "address": 0x3FFF
+            }
+        });
+
+        vdp.write_state(&state);
+
+        assert_eq!(vdp.status, 0x1234);
+        assert_eq!(vdp.h_counter, 0x56);
+        assert_eq!(vdp.v_counter, 0x78);
+        assert_eq!(vdp.dma_pending, true);
+        assert_eq!(vdp.registers[0], 1);
+        assert_eq!(vdp.registers[23], 24);
+        assert_eq!(vdp.control_pending, true);
+        assert_eq!(vdp.control_code, 0x0F);
+        assert_eq!(vdp.control_address, 0x3FFF);
+
+        // Verify read_state mirrors the written state
+        let new_state = vdp.read_state();
+        assert_eq!(new_state["status"], 0x1234);
+        assert_eq!(new_state["registers"][23], 24);
+        assert_eq!(new_state["control"]["address"], 0x3FFF);
+    }
+}
