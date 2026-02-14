@@ -828,12 +828,14 @@ impl Vdp {
         let mut screen_x: u16 = 0;
         let mut scrolled_h = (0u16).wrapping_sub(h_scroll);
 
+        // Pre-calculate tile_h and pixel_h to avoid division/modulo in loop
+        let plane_w_mask = plane_w - 1;
+        let mut tile_h = (scrolled_h as usize / 8) & plane_w_mask;
+        let mut pixel_h = scrolled_h % 8;
+
         while screen_x < screen_width {
-            let pixel_h = scrolled_h % 8;
             let pixels_left_in_tile = 8 - pixel_h;
             let pixels_to_process = std::cmp::min(pixels_left_in_tile, screen_width - screen_x);
-
-            let tile_h = (scrolled_h as usize / 8) % plane_w;
 
             // Fetch nametable entry (2 bytes)
             let nt_entry_addr = name_table_base + (tile_v * plane_w + tile_h) * 2;
@@ -845,6 +847,10 @@ impl Vdp {
             if priority != priority_filter {
                 screen_x += pixels_to_process;
                 scrolled_h = scrolled_h.wrapping_add(pixels_to_process);
+
+                // Advance to next tile
+                tile_h = (tile_h + 1) & plane_w_mask;
+                pixel_h = 0;
                 continue;
             }
 
@@ -886,6 +892,10 @@ impl Vdp {
             }
             screen_x += pixels_to_process;
             scrolled_h = scrolled_h.wrapping_add(pixels_to_process);
+
+            // Advance to next tile
+            tile_h = (tile_h + 1) & plane_w_mask;
+            pixel_h = 0;
         }
     }
 }
