@@ -948,6 +948,13 @@ mod tests {
                 .write_byte(0xA00000 + i as u32, *byte);
         }
 
+        // Verify Z80 RAM at target address is 0 before execution
+        assert_eq!(
+            emulator.bus.borrow_mut().read_byte(0xA01FFD),
+            0x00,
+            "Z80 RAM should be 0 before run"
+        );
+
         // 4. Release Bus (Write 0 to 0xA11100)
         emulator.bus.borrow_mut().write_word(0xA11100, 0x0000);
 
