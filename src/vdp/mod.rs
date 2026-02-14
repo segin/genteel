@@ -751,6 +751,7 @@ impl Debuggable for Vdp {
             "h_counter": self.h_counter,
             "v_counter": self.v_counter,
             "dma_pending": self.dma_pending,
+            "registers": self.registers,
             "control": {
                 "pending": self.control_pending,
                 "code": self.control_code,
@@ -759,8 +760,83 @@ impl Debuggable for Vdp {
         })
     }
 
-    fn write_state(&mut self, _state: &Value) {
-        // Not implemented
+    fn write_state(&mut self, state: &Value) {
+        if let Some(status) = state["status"].as_u64() {
+            self.status = status as u16;
+        }
+        if let Some(h_counter) = state["h_counter"].as_u64() {
+            self.h_counter = h_counter as u16;
+        }
+        if let Some(v_counter) = state["v_counter"].as_u64() {
+            self.v_counter = v_counter as u16;
+        }
+        if let Some(dma_pending) = state["dma_pending"].as_bool() {
+            self.dma_pending = dma_pending;
+        }
+
+        if let Some(registers) = state["registers"].as_array() {
+            for (i, val) in registers.iter().enumerate() {
+                if i < 24 {
+                    if let Some(v) = val.as_u64() {
+                        self.registers[i] = v as u8;
+                    }
+                }
+            }
+        }
+
+        let control = &state["control"];
+        if let Some(pending) = control["pending"].as_bool() {
+            self.control_pending = pending;
+        }
+        if let Some(code) = control["code"].as_u64() {
+            self.control_code = code as u8;
+        }
+        if let Some(address) = control["address"].as_u64() {
+            self.control_address = address as u16;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_vdp_debuggable() {
+        let mut vdp = Vdp::new();
+        let state = json!({
+            "status": 0x1234,
+            "h_counter": 0x56,
+            "v_counter": 0x78,
+            "dma_pending": true,
+            "registers": [
+                1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24
+            ],
+            "control": {
+                "pending": true,
+                "code": 0x0F,
+                "address": 0x3FFF
+            }
+        });
+
+        vdp.write_state(&state);
+
+        assert_eq!(vdp.status, 0x1234);
+        assert_eq!(vdp.h_counter, 0x56);
+        assert_eq!(vdp.v_counter, 0x78);
+        assert_eq!(vdp.dma_pending, true);
+        assert_eq!(vdp.registers[0], 1);
+        assert_eq!(vdp.registers[23], 24);
+        assert_eq!(vdp.control_pending, true);
+        assert_eq!(vdp.control_code, 0x0F);
+        assert_eq!(vdp.control_address, 0x3FFF);
+
+        // Verify read_state mirrors the written state
+        let new_state = vdp.read_state();
+        assert_eq!(new_state["status"], 0x1234);
+        assert_eq!(new_state["registers"][23], 24);
+        assert_eq!(new_state["control"]["address"], 0x3FFF);
     }
 }
 
