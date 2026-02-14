@@ -21,7 +21,7 @@ fn test_vram_write_command_sequence() {
 
     assert!(vdp.control_pending);
     // Code should have lower 2 bits set to 01
-    assert_eq!(vdp.control_code & 0x03, 0x01);
+    assert_eq!(vdp.control_code & 0x03, super::VRAM_WRITE);
 
     // Step 2: Write second word 0x0000
     vdp.write_control(0x0000);
@@ -30,7 +30,7 @@ fn test_vram_write_command_sequence() {
     // Address should be 0x0000
     assert_eq!(vdp.control_address, 0x0000);
     // Code should be 0x01 (VRAM Write)
-    assert_eq!(vdp.control_code, 0x01);
+    assert_eq!(vdp.control_code, super::VRAM_WRITE);
 }
 
 #[test]
@@ -42,14 +42,14 @@ fn test_cram_write_command_sequence() {
     vdp.write_control(0xC000);
 
     assert!(vdp.control_pending);
-    assert_eq!(vdp.control_code & 0x03, 0x03); // CD1-0 = 11
+    assert_eq!(vdp.control_code & 0x03, super::CRAM_WRITE); // CD1-0 = 11
 
     // Second word: 0x0000
     vdp.write_control(0x0000);
 
     assert!(!vdp.control_pending);
     assert_eq!(vdp.control_address, 0x0000);
-    assert_eq!(vdp.control_code, 0x03);
+    assert_eq!(vdp.control_code, super::CRAM_WRITE);
 }
 
 #[test]
@@ -69,7 +69,7 @@ fn test_vsram_write_command_sequence() {
     vdp.write_control(0x4000);
     vdp.write_control(0x0010); // VSRAM Write
 
-    assert_eq!(vdp.control_code, 0x05);
+    assert_eq!(vdp.control_code, super::VSRAM_WRITE);
 }
 
 #[test]

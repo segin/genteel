@@ -1,12 +1,13 @@
+#![allow(unused_imports)]
 //! Z80 DD CB / FD CB (Indexed Bit Operations) Tests
 //!
 //! Tests for indexed bit operations at (IX+d) and (IY+d).
 //! Includes undocumented behavior where result is also stored to a register.
 
-use super::*;
+use super::*; use crate::memory::{MemoryInterface, IoInterface};
 use crate::memory::Memory;
 
-fn z80(program: &[u8]) -> Z80 {
+fn z80(program: &[u8]) -> Z80<Box<crate::memory::Memory>, Box<crate::z80::test_utils::TestIo>> {
     let mut m = Memory::new(0x10000);
     for (i, &b) in program.iter().enumerate() {
         m.data[i] = b;
