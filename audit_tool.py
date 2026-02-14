@@ -31,6 +31,8 @@ metrics = {
     "test_results": "Not Run"
 }
 
+TRACKED_FILES = None
+
 def run_command(command, cwd=None, capture_output=True):
     try:
         result = subprocess.run(
@@ -56,8 +58,11 @@ def add_finding(title, severity, description, filepath=None, line=None, remediat
     }
     findings.append(finding)
 
-def enumerate_files():
-    print("[*] Enumerating files...")
+def get_tracked_files():
+    global TRACKED_FILES
+    if TRACKED_FILES is not None:
+        return TRACKED_FILES
+
     files = []
     # Use git ls-files to get tracked files
     out, err, _ = run_command(["git", "ls-files"])
@@ -73,6 +78,13 @@ def enumerate_files():
 
     # Filter out audit_reports from files if git ls-files included them (unlikely if not committed yet, but possible)
     files = [f for f in files if not f.startswith("audit_reports/")]
+
+    TRACKED_FILES = files
+    return files
+
+def enumerate_files():
+    print("[*] Enumerating files...")
+    files = get_tracked_files()
 
     metrics["file_count"] = len(files)
 
@@ -137,10 +149,7 @@ def run_sast_clippy():
 def run_sast_cppcheck():
     print("[*] Running Cppcheck...")
     # specific for vdp_io.cpp or all cpp files
-    # Re-list files
-    out, _, _ = run_command(["git", "ls-files"])
-    files = out.splitlines() if out else []
-    files = [f for f in files if not f.startswith("audit_reports/")]
+    files = get_tracked_files()
     cpp_files = [f for f in files if f.endswith(".cpp") or f.endswith(".c")]
 
     for f in cpp_files:
@@ -158,9 +167,7 @@ def run_sast_cppcheck():
 
 def scan_text_patterns():
     print("[*] Scanning for secrets and unsafe patterns...")
-    out, _, _ = run_command(["git", "ls-files"])
-    files = out.splitlines() if out else []
-    files = [f for f in files if not f.startswith("audit_reports/")]
+    files = get_tracked_files()
 
     secret_patterns = {
         "AWS Key": r"AKIA[0-9A-Z]{16}",
