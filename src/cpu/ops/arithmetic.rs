@@ -134,20 +134,20 @@ pub fn exec_addx<M: MemoryInterface>(
     memory_mode: bool,
     memory: &mut M,
 ) -> u32 {
-    let mut cycles = match size {
-        Size::Byte | Size::Word => 4,
-        Size::Long => 8,
-    };
-
     let (src_val, dst_val, dst_addr) =
         fetch_predec_or_reg_operands(cpu, src_reg, dst_reg, size, memory_mode, memory);
 
-    if dst_addr.is_some() {
-        cycles = match size {
+    let cycles = if dst_addr.is_some() {
+        match size {
             Size::Byte | Size::Word => 18,
             Size::Long => 30,
-        };
-    }
+        }
+    } else {
+        match size {
+            Size::Byte | Size::Word => 4,
+            Size::Long => 8,
+        }
+    };
 
     if cpu.pending_exception {
         return cycles;
@@ -304,20 +304,20 @@ pub fn exec_subx<M: MemoryInterface>(
     memory_mode: bool,
     memory: &mut M,
 ) -> u32 {
-    let mut cycles = match size {
-        Size::Byte | Size::Word => 4,
-        Size::Long => 8,
-    };
-
     let (src_val, dst_val, dst_addr) =
         fetch_predec_or_reg_operands(cpu, src_reg, dst_reg, size, memory_mode, memory);
 
-    if dst_addr.is_some() {
-        cycles = match size {
+    let cycles = if dst_addr.is_some() {
+        match size {
             Size::Byte | Size::Word => 18,
             Size::Long => 30,
-        };
-    }
+        }
+    } else {
+        match size {
+            Size::Byte | Size::Word => 4,
+            Size::Long => 8,
+        }
+    };
 
     if cpu.pending_exception {
         return cycles;
@@ -428,13 +428,8 @@ pub fn exec_cmpm<M: MemoryInterface>(
     dst_reg: u8,
     memory: &mut M,
 ) -> u32 {
-    let src_addr = cpu.a[src_reg as usize];
-    let src_val = cpu.cpu_read_memory(src_addr, size, memory);
-    cpu.a[src_reg as usize] = src_addr.wrapping_add(size.bytes());
-
-    let dst_addr = cpu.a[dst_reg as usize];
-    let dst_val = cpu.cpu_read_memory(dst_addr, size, memory);
-    cpu.a[dst_reg as usize] = dst_addr.wrapping_add(size.bytes());
+    let src_val = fetch_postinc_operand(cpu, src_reg, size, memory);
+    let dst_val = fetch_postinc_operand(cpu, dst_reg, size, memory);
 
     let (result, carry, overflow) = cpu.sub_with_flags(dst_val, src_val, size);
 
@@ -785,4 +780,16 @@ fn fetch_predec_or_reg_operands<M: MemoryInterface>(
             None,
         )
     }
+}
+
+fn fetch_postinc_operand<M: MemoryInterface>(
+    cpu: &mut Cpu,
+    reg: u8,
+    size: Size,
+    memory: &mut M,
+) -> u32 {
+    let addr = cpu.a[reg as usize];
+    let val = cpu.cpu_read_memory(addr, size, memory);
+    cpu.a[reg as usize] = addr.wrapping_add(size.bytes());
+    val
 }
