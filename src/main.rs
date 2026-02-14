@@ -93,7 +93,9 @@ impl Emulator {
             // Extract ROM from zip file
             Self::load_rom_from_zip(path)?
         } else {
-            std::fs::read(path)?
+            let mut file = std::fs::File::open(path)?;
+            let size = file.metadata()?.len();
+            Self::read_rom_with_limit(&mut file, size)?
         };
 
         let mut bus = self.bus.borrow_mut();
@@ -417,7 +419,10 @@ impl Emulator {
 
         println!("Waiting for GDB connection on port {}...", port);
         if let Some(pwd) = password {
-            println!("🔒 Password protected. After connecting, run: monitor auth {}", pwd);
+            println!(
+                "🔒 Password protected. After connecting, run: monitor auth {}",
+                pwd
+            );
         }
         println!(
             "Connect with: m68k-elf-gdb -ex \"target remote :{}\" <elf_file>",
@@ -698,7 +703,6 @@ impl Emulator {
             })
             .map_err(|e| e.to_string())
     }
-
 }
 
 fn print_usage() {
@@ -1054,5 +1058,21 @@ mod tests {
         emulator.step_frame();
         emulator.step_frame();
         assert_eq!(emulator.internal_frame_count, 2);
+    }
+
+    #[test]
+    fn test_raw_file_limit_enforcement() {
+        let path = "test_large.bin";
+        // Create 33MB file
+        let data = vec![0u8; 33 * 1024 * 1024];
+        std::fs::write(path, &data).unwrap();
+
+        let mut emulator = Emulator::new();
+        let result = emulator.load_rom(path);
+
+        // Cleanup
+        let _ = std::fs::remove_file(path);
+
+        assert!(result.is_err(), "Should reject large ROM file (>32MB)");
     }
 }
