@@ -400,4 +400,49 @@ mod tests {
         assert_eq!(manager.frame(), 0);
         assert!(!manager.is_complete());
     }
+
+    #[test]
+    fn test_input_manager_completion_edge_cases() {
+        let mut manager = InputManager::new();
+
+        // Edge Case 1: Empty script (default InputScript, max_frame = 0)
+        let script = InputScript::new();
+        manager.set_script(script);
+        assert!(!manager.is_complete(), "Empty script frame 0 should not be complete");
+        manager.advance_frame();
+        assert!(manager.is_complete(), "Empty script frame 1 should be complete");
+
+        // Edge Case 2: Single frame script at 0
+        let script = InputScript::parse("0,........,........").unwrap();
+        manager.set_script(script);
+        assert!(!manager.is_complete());
+        manager.advance_frame();
+        assert!(manager.is_complete());
+
+        // Edge Case 3: Script with gaps
+        let script = InputScript::parse("0,........,........\n10,........,........").unwrap();
+        assert_eq!(script.max_frame, 10);
+        manager.set_script(script);
+
+        // Fast forward to frame 10
+        for _ in 0..10 {
+            assert!(!manager.is_complete());
+            manager.advance_frame();
+        }
+        assert_eq!(manager.frame(), 10);
+        assert!(!manager.is_complete()); // At max_frame
+
+        manager.advance_frame();
+        assert_eq!(manager.frame(), 11);
+        assert!(manager.is_complete()); // After max_frame
+
+        // Edge Case 4: Unordered frames
+        let script = InputScript::parse("10,........,........\n5,........,........").unwrap();
+        manager.set_script(script);
+        // Correctly calculates max frame despite order
+        assert_eq!(manager.script.as_ref().unwrap().max_frame, 10);
+
+        // At frame 0
+        assert!(!manager.is_complete());
+    }
 }
