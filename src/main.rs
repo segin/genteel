@@ -771,7 +771,7 @@ fn main() {
         return;
     }
 
-    let mut rom_path = config.rom_path;
+    let rom_path = config.rom_path;
     let script_path = config.script_path;
     let headless_frames = config.headless_frames;
     let gdb_port = config.gdb_port;
