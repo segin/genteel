@@ -459,6 +459,15 @@ mod tests {
     }
 
     #[test]
+    fn test_controller_invalid_port() {
+        let mut io = Io::new();
+        // Port 0 is invalid
+        assert!(io.controller(0).is_none());
+        // Port 3 is invalid
+        assert!(io.controller(3).is_none());
+    }
+
+    #[test]
     fn test_6button_cycles() {
         let mut port = ControllerPort::new(ControllerType::SixButton);
 
