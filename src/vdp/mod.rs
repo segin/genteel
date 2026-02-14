@@ -671,33 +671,48 @@ impl Vdp {
         let screen_width = self.screen_width();
         let line_offset = (draw_line as usize) * 320;
 
+        let mut prev_tile_h = usize::MAX;
+        let mut current_priority = false;
+        let mut current_palette = 0;
+        let mut current_h_flip = false;
+        let mut current_row_data = [0u8; 4];
+
         for screen_x in 0..screen_width {
             let scrolled_h = (screen_x as u16).wrapping_sub(h_scroll);
             let tile_h = (scrolled_h as usize / 8) % plane_w;
             let pixel_h = scrolled_h % 8;
 
-            // Fetch nametable entry (2 bytes)
-            let nt_entry_addr = name_table_base + (tile_v * plane_w + tile_h) * 2;
-            let hi = self.vram[nt_entry_addr as usize];
-            let lo = self.vram[nt_entry_addr as usize + 1];
-            let entry = ((hi as u16) << 8) | (lo as u16);
+            if tile_h != prev_tile_h {
+                // Fetch nametable entry (2 bytes)
+                let nt_entry_addr = name_table_base + (tile_v * plane_w + tile_h) * 2;
+                let hi = self.vram[nt_entry_addr as usize];
+                let lo = self.vram[nt_entry_addr as usize + 1];
+                let entry = ((hi as u16) << 8) | (lo as u16);
 
-            let priority = (entry & 0x8000) != 0;
-            if priority != priority_filter {
+                current_priority = (entry & 0x8000) != 0;
+                current_palette = ((entry >> 13) & 0x03) as u8;
+                let v_flip = (entry & 0x1000) != 0;
+                current_h_flip = (entry & 0x0800) != 0;
+                let tile_index = entry & 0x07FF;
+
+                // Fetch 4 bytes of row data
+                let row = if v_flip { 7 - pixel_v } else { pixel_v };
+                let pattern_base = (tile_index as usize * 32) + (row as usize * 4);
+
+                // Read 4 bytes safely (wrapping)
+                for i in 0..4 {
+                    current_row_data[i] = self.vram[(pattern_base + i) % 0x10000];
+                }
+
+                prev_tile_h = tile_h;
+            }
+
+            if current_priority != priority_filter {
                 continue;
             }
 
-            let palette = ((entry >> 13) & 0x03) as u8;
-            let v_flip = (entry & 0x1000) != 0;
-            let h_flip = (entry & 0x0800) != 0;
-            let tile_index = entry & 0x07FF;
-
-            let row = if v_flip { 7 - pixel_v } else { pixel_v };
-            let pattern_addr =
-                (tile_index as usize * 32) + (row as usize * 4) + (pixel_h as usize / 2);
-
-            let byte = self.vram[pattern_addr % 0x10000];
-            let col = if h_flip {
+            let byte = current_row_data[(pixel_h as usize) / 2];
+            let col = if current_h_flip {
                 if pixel_h % 2 == 0 {
                     byte & 0x0F
                 } else {
@@ -712,7 +727,7 @@ impl Vdp {
             };
 
             if col != 0 {
-                let color = self.get_cram_color(palette, col);
+                let color = self.get_cram_color(current_palette, col);
                 self.framebuffer[line_offset + screen_x as usize] = color;
             }
         }
@@ -738,3 +753,5 @@ impl Debuggable for Vdp {
         // Not implemented
     }
 }
+
+#[cfg(test)] mod tests_render;
