@@ -44,8 +44,35 @@ impl InputScript {
 
     /// Load a script from a file
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, String> {
-        let content =
-            fs::read_to_string(path).map_err(|e| format!("Failed to read input script: {}", e))?;
+        use std::io::Read;
+        const MAX_SCRIPT_SIZE: u64 = 50 * 1024 * 1024; // 50 MB
+
+        let file =
+            fs::File::open(path).map_err(|e| format!("Failed to open input script: {}", e))?;
+        let metadata = file
+            .metadata()
+            .map_err(|e| format!("Failed to get script metadata: {}", e))?;
+
+        if metadata.len() > MAX_SCRIPT_SIZE {
+            return Err(format!(
+                "Input script too large ({} bytes, max {} bytes)",
+                metadata.len(),
+                MAX_SCRIPT_SIZE
+            ));
+        }
+
+        let mut content = String::with_capacity(metadata.len() as usize);
+        file.take(MAX_SCRIPT_SIZE + 1)
+            .read_to_string(&mut content)
+            .map_err(|e| format!("Failed to read input script: {}", e))?;
+
+        if content.len() as u64 > MAX_SCRIPT_SIZE {
+            return Err(format!(
+                "Input script exceeds maximum size of {} bytes",
+                MAX_SCRIPT_SIZE
+            ));
+        }
+
         Self::parse(&content)
     }
 
