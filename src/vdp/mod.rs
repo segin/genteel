@@ -37,40 +37,6 @@ struct SpriteAttributes {
     base_tile: u16,
 }
 
-struct SpriteIterator<'a> {
-    vdp: &'a Vdp,
-    next_idx: u8,
-    count: usize,
-    max_sprites: usize,
-    sat_base: usize,
-}
-
-impl<'a> Iterator for SpriteIterator<'a> {
-    type Item = SpriteAttributes;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.count >= self.max_sprites {
-            return None;
-        }
-
-        // Check SAT boundary
-        if self.sat_base + (self.next_idx as usize * 8) + 8 > 0x10000 {
-            return None;
-        }
-
-        let attr = self.vdp.fetch_sprite_attributes(self.sat_base, self.next_idx);
-
-        self.count += 1;
-        let link = attr.link;
-        self.next_idx = link;
-
-        if link == 0 {
-            self.count = self.max_sprites; // Stop after this one
-        }
-
-        Some(attr)
-    }
-}
 
 // Control Port Constants
 const CTRL_CODE_LOW_MASK: u8 = 0x03; // CD1-CD0
@@ -670,19 +636,6 @@ impl Vdp {
         self.render_sprites(fetch_line, draw_line, true);
     }
 
-    fn sprite_iter(&self) -> SpriteIterator<'_> {
-        let sat_base = self.sprite_table_address() as usize;
-        let max_sprites = if self.h40_mode() { 80 } else { 64 };
-
-        SpriteIterator {
-            vdp: self,
-            next_idx: 0,
-            count: 0,
-            max_sprites,
-            sat_base,
-        }
-    }
-
     fn fetch_sprite_attributes(&self, sat_base: usize, index: u8) -> SpriteAttributes {
         let addr = sat_base + (index as usize * 8);
 
@@ -779,9 +732,19 @@ impl Vdp {
         let screen_width = self.screen_width();
         let line_offset = (draw_line as usize) * 320;
 
-        let sprites: Vec<_> = self.sprite_iter().collect();
+        let sat_base = self.sprite_table_address() as usize;
+        let max_sprites = if self.h40_mode() { 80 } else { 64 };
+        let mut next_idx = 0;
+        let mut count = 0;
 
-        for attr in sprites {
+        while count < max_sprites {
+            // Check SAT boundary
+            if sat_base + (next_idx as usize * 8) + 8 > 0x10000 {
+                break;
+            }
+
+            let attr = self.fetch_sprite_attributes(sat_base, next_idx);
+
             // Check if sprite is visible on this line
             let sprite_v_px = (attr.v_size as u16) * 8;
             if attr.priority == priority_filter
@@ -789,6 +752,13 @@ impl Vdp {
                 && fetch_line < attr.v_pos + sprite_v_px
             {
                 self.render_sprite_scanline(fetch_line, &attr, line_offset, screen_width);
+            }
+
+            count += 1;
+            next_idx = attr.link;
+
+            if next_idx == 0 {
+                break;
             }
         }
     }
