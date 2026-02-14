@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 //! Z80 Torture Tests - Gap Coverage
 //!
 //! Tests for 20 specific edge cases identified in the code audit.
@@ -5,10 +6,10 @@
 
 #![cfg(test)]
 
-use crate::memory::Memory;
+use crate::memory::{Memory, MemoryInterface, IoInterface};
 use crate::z80::{flags, Z80};
 
-fn create_z80(program: &[u8]) -> Z80 {
+fn create_z80(program: &[u8]) -> Z80<Box<crate::memory::Memory>, Box<crate::z80::test_utils::TestIo>> {
     let mut m = Memory::new(0x10000);
     for (i, &b) in program.iter().enumerate() {
         m.data[i] = b;

@@ -32,7 +32,7 @@ use z80::Z80;
 
 pub struct Emulator {
     pub cpu: Cpu,
-    pub z80: Z80,
+    pub z80: Z80<Z80Bus, Z80Bus>,
     pub apu: Apu,
     pub bus: Rc<RefCell<Bus>>,
     pub input: InputManager,
@@ -57,7 +57,7 @@ impl Emulator {
         // It also handles Z80 I/O (which is unconnected on Genesis)
         let z80_bus = Z80Bus::new(SharedBus::new(bus.clone()));
 
-        let z80 = Z80::new(Box::new(z80_bus.clone()), Box::new(z80_bus));
+        let z80 = Z80::new(z80_bus.clone(), z80_bus);
 
         let mut emulator = Self {
             cpu,
