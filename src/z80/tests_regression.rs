@@ -111,18 +111,55 @@ fn regression_dec_overflow() {
 fn regression_scf_clears_h() {
     let mut c = z80(&[0x37]); // SCF
     c.set_flag(flags::HALF_CARRY, true);
+    c.set_flag(flags::ADD_SUB, true);
+    c.set_flag(flags::SIGN, true);
+    c.set_flag(flags::ZERO, true);
+    c.set_flag(flags::PARITY, true);
     c.step();
     assert!(!c.get_flag(flags::HALF_CARRY));
+    assert!(!c.get_flag(flags::ADD_SUB));
+    assert!(c.get_flag(flags::CARRY));
+    assert!(c.get_flag(flags::SIGN));
+    assert!(c.get_flag(flags::ZERO));
+    assert!(c.get_flag(flags::PARITY));
 }
 
 #[test]
 fn regression_ccf_copies_c_to_h() {
     let mut c = z80(&[0x3F]); // CCF
+
+    // Case 1: C=1 -> H=1, C=0
     c.set_flag(flags::CARRY, true);
     c.set_flag(flags::HALF_CARRY, false);
+    c.set_flag(flags::ADD_SUB, true);
+    c.set_flag(flags::SIGN, true);
+    c.set_flag(flags::ZERO, true);
+    c.set_flag(flags::PARITY, true);
     c.step();
-    assert!(!c.get_flag(flags::CARRY));
+    assert!(!c.get_flag(flags::CARRY)); // Inverted C
     assert!(c.get_flag(flags::HALF_CARRY)); // Previous C copied to H
+    assert!(!c.get_flag(flags::ADD_SUB)); // N cleared
+    assert!(c.get_flag(flags::SIGN)); // Preserved
+    assert!(c.get_flag(flags::ZERO)); // Preserved
+    assert!(c.get_flag(flags::PARITY)); // Preserved
+
+    // Reset PC for next step
+    c.pc = 0;
+
+    // Case 2: C=0 -> H=0, C=1
+    c.set_flag(flags::CARRY, false);
+    c.set_flag(flags::HALF_CARRY, true);
+    c.set_flag(flags::ADD_SUB, true);
+    c.set_flag(flags::SIGN, true);
+    c.set_flag(flags::ZERO, true);
+    c.set_flag(flags::PARITY, true);
+    c.step();
+    assert!(c.get_flag(flags::CARRY)); // Inverted C
+    assert!(!c.get_flag(flags::HALF_CARRY)); // Previous C copied to H
+    assert!(!c.get_flag(flags::ADD_SUB)); // N cleared
+    assert!(c.get_flag(flags::SIGN)); // Preserved
+    assert!(c.get_flag(flags::ZERO)); // Preserved
+    assert!(c.get_flag(flags::PARITY)); // Preserved
 }
 
 // Bug: NEG with A=0x80 causes overflow
