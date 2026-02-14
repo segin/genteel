@@ -465,6 +465,7 @@ impl Emulator {
         Ok(())
     }
 
+    #[cfg(feature = "gui")]
     fn print_debug_info(&self, frame_count: u64) {
         let mut bus = self.bus.borrow_mut();
         let disp_en = bus.vdp.display_enabled();
@@ -509,6 +510,7 @@ impl Emulator {
         }
     }
 
+    #[cfg(feature = "gui")]
     fn render_frame(&self, pixels: &mut pixels::Pixels) -> Result<(), String> {
         let frame = pixels.frame_mut();
         let bus = self.bus.borrow();
@@ -518,6 +520,7 @@ impl Emulator {
         pixels.render().map_err(|e| e.to_string())
     }
 
+    #[cfg(feature = "gui")]
     fn process_audio(&mut self, audio_buffer: &audio::SharedAudioBuffer) {
         if let Ok(mut buf) = audio_buffer.lock() {
             buf.push(&self.audio_buffer);
@@ -526,6 +529,7 @@ impl Emulator {
     }
 
     /// Run with winit window (interactive play mode)
+    #[cfg(feature = "gui")]
     pub fn run_with_frontend(mut self) -> Result<(), String> {
         use pixels::{Pixels, SurfaceTexture};
         use winit::event::{ElementState, Event, KeyEvent, WindowEvent};
@@ -848,15 +852,33 @@ mod tests {
 
         std::fs::write(path, &zip_data).unwrap();
 
-        // Attempt to load - should fail after fix
+        // Attempt to load
         let result = Emulator::load_rom_from_zip(path);
 
         // Cleanup
         let _ = std::fs::remove_file(path);
 
-        // Before fix: This assertion will fail (because result.is_ok() is likely true)
-        // After fix: This assertion will pass
+        // Verify rejection
         assert!(result.is_err(), "Should reject large ROM file (>32MB)");
+    }
+
+    #[test]
+    fn test_zip_bomb_mismatch() {
+        // Create 33MB of dummy data (simulating decompressed stream)
+        let size = 33 * 1024 * 1024;
+        let data = vec![0u8; size];
+        let mut reader = std::io::Cursor::new(data);
+
+        // Report size as small (e.g., 1KB), simulating a zip bomb header lie
+        let reported_size = 1024;
+
+        // This should fail because it reads > 32MB despite reported size
+        let result = Emulator::read_rom_with_limit(&mut reader, reported_size);
+
+        assert!(
+            result.is_err(),
+            "Should reject read size exceeding limit even if reported size is small"
+        );
     }
 
     #[test]
