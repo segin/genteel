@@ -1,12 +1,11 @@
+#![allow(unused_imports)]
 //! Exhaustive Z80 ALU Verification
 //!
 //! "Golden Reference" model for Z80 ALU.
 //! Verifies standard and undocumented flags (X/Y).
 
-#![allow(unused_variables, unused_mut)]
-use super::*;
-use crate::memory::MemoryInterface;
-use crate::z80::test_utils::TestContext;
+use super::*; use crate::memory::{MemoryInterface, IoInterface};
+use crate::memory::Memory;
 
 // fast rng
 struct XorShift64 {
@@ -32,8 +31,12 @@ impl XorShift64 {
     }
 }
 
-fn z80_setup() -> (Z80, TestContext) {
-    (Z80::new(), TestContext::new(&[]))
+fn z80_setup() -> Z80<Box<crate::memory::Memory>, Box<crate::z80::test_utils::TestIo>> {
+    let m = Memory::new(0x10000);
+    Z80::new(
+        Box::new(m),
+        Box::new(crate::z80::test_utils::TestIo::default()),
+    )
 }
 
 // ============ Reference Models ============
@@ -522,7 +525,7 @@ fn ref_bit(bit: u8, val: u8, flags_in: u8) -> u8 {
 #[test]
 fn exhaustive_8bit_arithmetic() {
     let mut rng = XorShift64::new(0x1234567890ABCDEF);
-    let (mut cpu, mut context) = z80_setup();
+    let mut cpu = z80_setup();
 
     // ADD A, r
     for i in 0..10000 {
@@ -531,9 +534,9 @@ fn exhaustive_8bit_arithmetic() {
         cpu.a = a;
         cpu.b = b;
         cpu.f = rng.next_u8();
-        context.write_byte(0 as u32, 0x80);
+        cpu.memory.write_byte(0 as u32, 0x80);
         cpu.pc = 0;
-        cpu.step(&mut context);
+        cpu.step();
         let (exp_res, exp_f) = ref_add(a, b);
         assert_eq!(cpu.a, exp_res, "ADD Res iter {}", i);
         assert_eq!(cpu.f, exp_f, "ADD Flags iter {}", i);
@@ -547,9 +550,9 @@ fn exhaustive_8bit_arithmetic() {
         cpu.a = a;
         cpu.b = b;
         cpu.f = f_init;
-        context.write_byte(0 as u32, 0x88);
+        cpu.memory.write_byte(0 as u32, 0x88);
         cpu.pc = 0;
-        cpu.step(&mut context);
+        cpu.step();
         let (exp_res, exp_f) = ref_adc(a, b, (f_init & flags::CARRY) != 0);
         assert_eq!(cpu.a, exp_res);
         assert_eq!(cpu.f, exp_f, "ADC Flags iter {}", i);
@@ -562,9 +565,9 @@ fn exhaustive_8bit_arithmetic() {
         cpu.a = a;
         cpu.b = b;
         cpu.f = rng.next_u8();
-        context.write_byte(0 as u32, 0x90);
+        cpu.memory.write_byte(0 as u32, 0x90);
         cpu.pc = 0;
-        cpu.step(&mut context);
+        cpu.step();
         let (exp_res, exp_f) = ref_sub(a, b);
         assert_eq!(cpu.a, exp_res);
         assert_eq!(cpu.f, exp_f, "SUB Flags iter {}", i);
@@ -578,9 +581,9 @@ fn exhaustive_8bit_arithmetic() {
         cpu.a = a;
         cpu.b = b;
         cpu.f = f_init;
-        context.write_byte(0 as u32, 0x98);
+        cpu.memory.write_byte(0 as u32, 0x98);
         cpu.pc = 0;
-        cpu.step(&mut context);
+        cpu.step();
         let (exp_res, exp_f) = ref_sbc(a, b, (f_init & flags::CARRY) != 0);
         assert_eq!(cpu.a, exp_res);
         assert_eq!(cpu.f, exp_f, "SBC Flags iter {}", i);
@@ -590,7 +593,7 @@ fn exhaustive_8bit_arithmetic() {
 #[test]
 fn exhaustive_logic() {
     let mut rng = XorShift64::new(0x9876543210FEDCBA);
-    let (mut cpu, mut context) = z80_setup();
+    let mut cpu = z80_setup();
     // AND
     for i in 0..10000 {
         let a = rng.next_u8();
@@ -598,9 +601,9 @@ fn exhaustive_logic() {
         cpu.a = a;
         cpu.b = b;
         cpu.f = rng.next_u8();
-        context.write_byte(0 as u32, 0xA0);
+        cpu.memory.write_byte(0 as u32, 0xA0);
         cpu.pc = 0;
-        cpu.step(&mut context);
+        cpu.step();
         let (exp_res, exp_f) = ref_logic(0, a, b);
         assert_eq!(cpu.a, exp_res);
         assert_eq!(cpu.f, exp_f, "AND flags iter {}", i);
@@ -612,9 +615,9 @@ fn exhaustive_logic() {
         cpu.a = a;
         cpu.b = b;
         cpu.f = rng.next_u8();
-        context.write_byte(0 as u32, 0xA8);
+        cpu.memory.write_byte(0 as u32, 0xA8);
         cpu.pc = 0;
-        cpu.step(&mut context);
+        cpu.step();
         let (exp_res, exp_f) = ref_logic(1, a, b);
         assert_eq!(cpu.a, exp_res);
         assert_eq!(cpu.f, exp_f, "XOR flags iter {}", i);
@@ -626,9 +629,9 @@ fn exhaustive_logic() {
         cpu.a = a;
         cpu.b = b;
         cpu.f = rng.next_u8();
-        context.write_byte(0 as u32, 0xB0);
+        cpu.memory.write_byte(0 as u32, 0xB0);
         cpu.pc = 0;
-        cpu.step(&mut context);
+        cpu.step();
         let (exp_res, exp_f) = ref_logic(2, a, b);
         assert_eq!(cpu.a, exp_res);
         assert_eq!(cpu.f, exp_f, "OR flags iter {}", i);
@@ -638,16 +641,16 @@ fn exhaustive_logic() {
 #[test]
 fn exhaustive_inc_dec() {
     let mut rng = XorShift64::new(0xABCDEF1234567890);
-    let (mut cpu, mut context) = z80_setup();
+    let mut cpu = z80_setup();
     // INC B
     for i in 0..10000 {
         let b = rng.next_u8();
         let f_init = rng.next_u8();
         cpu.b = b;
         cpu.f = f_init;
-        context.write_byte(0 as u32, 0x04);
+        cpu.memory.write_byte(0 as u32, 0x04);
         cpu.pc = 0;
-        cpu.step(&mut context);
+        cpu.step();
         let (exp_res, exp_f) = ref_inc(b, f_init);
         assert_eq!(cpu.b, exp_res);
         assert_eq!(cpu.f, exp_f, "INC flags iter {}", i);
@@ -658,9 +661,9 @@ fn exhaustive_inc_dec() {
         let f_init = rng.next_u8();
         cpu.b = b;
         cpu.f = f_init;
-        context.write_byte(0 as u32, 0x05);
+        cpu.memory.write_byte(0 as u32, 0x05);
         cpu.pc = 0;
-        cpu.step(&mut context);
+        cpu.step();
         let (exp_res, exp_f) = ref_dec(b, f_init);
         assert_eq!(cpu.b, exp_res);
         assert_eq!(cpu.f, exp_f, "DEC flags iter {}", i);
@@ -670,7 +673,7 @@ fn exhaustive_inc_dec() {
 #[test]
 fn exhaustive_16bit_arithmetic() {
     let mut rng = XorShift64::new(0xDEADBEEFCAFEBABE);
-    let (mut cpu, mut context) = z80_setup();
+    let mut cpu = z80_setup();
     // ADD HL, BC
     for i in 0..10000 {
         let hl = rng.next_u16();
@@ -679,9 +682,9 @@ fn exhaustive_16bit_arithmetic() {
         cpu.set_hl(hl);
         cpu.set_bc(bc);
         cpu.f = f_init;
-        context.write_byte(0 as u32, 0x09);
+        cpu.memory.write_byte(0 as u32, 0x09);
         cpu.pc = 0;
-        cpu.step(&mut context);
+        cpu.step();
         let (exp_res, exp_f) = ref_add16(hl, bc, f_init);
         assert_eq!(cpu.hl(), exp_res);
         assert_eq!(cpu.f, exp_f, "ADD HL flags iter {}", i);
@@ -694,10 +697,10 @@ fn exhaustive_16bit_arithmetic() {
         cpu.set_hl(hl);
         cpu.set_bc(bc);
         cpu.f = f_init;
-        context.write_byte(0 as u32, 0xED);
-        context.write_byte(1 as u32, 0x4A);
+        cpu.memory.write_byte(0 as u32, 0xED);
+        cpu.memory.write_byte(1 as u32, 0x4A);
         cpu.pc = 0;
-        cpu.step(&mut context);
+        cpu.step();
         let (exp_res, exp_f) = ref_adc16(hl, bc, f_init);
         assert_eq!(cpu.hl(), exp_res);
         assert_eq!(cpu.f, exp_f, "ADC HL flags iter {}", i);
@@ -710,10 +713,10 @@ fn exhaustive_16bit_arithmetic() {
         cpu.set_hl(hl);
         cpu.set_bc(bc);
         cpu.f = f_init;
-        context.write_byte(0 as u32, 0xED);
-        context.write_byte(1 as u32, 0x42);
+        cpu.memory.write_byte(0 as u32, 0xED);
+        cpu.memory.write_byte(1 as u32, 0x42);
         cpu.pc = 0;
-        cpu.step(&mut context);
+        cpu.step();
         let (exp_res, exp_f) = ref_sbc16(hl, bc, f_init);
         assert_eq!(cpu.hl(), exp_res);
         assert_eq!(cpu.f, exp_f, "SBC HL flags iter {}", i);
@@ -723,7 +726,7 @@ fn exhaustive_16bit_arithmetic() {
 #[test]
 fn exhaustive_shifts() {
     let mut rng = XorShift64::new(0x1122334455667788);
-    let (mut cpu, mut context) = z80_setup();
+    let mut cpu = z80_setup();
     let types = [0, 1, 2, 3, 4, 5, 7];
     let type_names = ["RLC", "RRC", "RL", "RR", "SLA", "SRA", "SRL"];
     for (idx, &t) in types.iter().enumerate() {
@@ -733,10 +736,10 @@ fn exhaustive_shifts() {
             let f_init = rng.next_u8();
             cpu.b = val;
             cpu.f = f_init;
-            context.write_byte(0 as u32, 0xCB);
-            context.write_byte(1 as u32, opcode_byte);
+            cpu.memory.write_byte(0 as u32, 0xCB);
+            cpu.memory.write_byte(1 as u32, opcode_byte);
             cpu.pc = 0;
-            cpu.step(&mut context);
+            cpu.step();
             let (exp_res, exp_f) = ref_shift(t, val, f_init);
             assert_eq!(cpu.b, exp_res, "{} Res iter {}", type_names[idx], i);
             assert_eq!(cpu.f, exp_f, "{} Flags iter {}", type_names[idx], i);
@@ -747,7 +750,7 @@ fn exhaustive_shifts() {
 #[test]
 fn exhaustive_bit_register() {
     let mut rng = XorShift64::new(0x9988776655443322);
-    let (mut cpu, mut context) = z80_setup();
+    let mut cpu = z80_setup();
     let registers = [0, 1, 2, 3, 4, 5, 7];
     let reg_names = ["B", "C", "D", "E", "H", "L", "A"];
     for (r_idx, &r) in registers.iter().enumerate() {
@@ -767,10 +770,10 @@ fn exhaustive_bit_register() {
                 let f_init = rng.next_u8();
                 cpu.f = f_init;
                 let opcode = 0x40 | (b << 3) | r;
-                context.write_byte(0 as u32, 0xCB);
-                context.write_byte(1 as u32, opcode);
+                cpu.memory.write_byte(0 as u32, 0xCB);
+                cpu.memory.write_byte(1 as u32, opcode);
                 cpu.pc = 0;
-                cpu.step(&mut context);
+                cpu.step();
                 let exp_f = ref_bit(b, val, f_init);
                 assert_eq!(
                     cpu.f, exp_f,
