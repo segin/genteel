@@ -267,4 +267,152 @@ mod tests {
         assert!(psg.noise.white_noise);
         assert_eq!(psg.noise.shift_rate, 3);
     }
+
+    #[test]
+    fn test_psg_tone_step() {
+        let mut psg = Psg::new();
+
+        // Setup Tone 0: Frequency = 2 (write 2), Volume = 0
+        // Write: 1000 0010 (82) -> Channel 0, Freq, Data 2
+        psg.write(0x82);
+        // Write: 1001 0000 (90) -> Channel 0, Vol, Data 0
+        psg.write(0x90);
+
+        assert_eq!(psg.tones[0].frequency, 2);
+        assert_eq!(psg.tones[0].volume, 0);
+
+        // Initial state: counter = 0, output = false (default)
+        // Step 1: counter is 0, so it resets to frequency (2) and toggles output (true)
+        let sample = psg.step();
+        assert_eq!(psg.tones[0].counter, 2);
+        assert!(psg.tones[0].output);
+        assert_eq!(sample, VOLUME_TABLE[0]); // Max volume
+
+        // Step 2: counter = 2 -> 1
+        let sample = psg.step();
+        assert_eq!(psg.tones[0].counter, 1);
+        assert!(psg.tones[0].output); // Still high
+        assert_eq!(sample, VOLUME_TABLE[0]);
+
+        // Step 3: counter = 1 -> 0
+        let sample = psg.step();
+        assert_eq!(psg.tones[0].counter, 0);
+        assert!(psg.tones[0].output); // Still high
+        assert_eq!(sample, VOLUME_TABLE[0]);
+
+        // Step 4: counter = 0 -> resets to 2, toggles output (false)
+        let sample = psg.step();
+        assert_eq!(psg.tones[0].counter, 2);
+        assert!(!psg.tones[0].output);
+        assert_eq!(sample, 0); // Output low -> 0 contribution
+
+        // Step 5: counter = 2 -> 1
+        let sample = psg.step();
+        assert_eq!(psg.tones[0].counter, 1);
+        assert!(!psg.tones[0].output);
+        assert_eq!(sample, 0);
+
+        // Step 6: counter = 1 -> 0
+        let sample = psg.step();
+        assert_eq!(psg.tones[0].counter, 0);
+        assert!(!psg.tones[0].output);
+        assert_eq!(sample, 0);
+
+        // Step 7: counter = 0 -> resets to 2, toggles output (true)
+        let sample = psg.step();
+        assert_eq!(psg.tones[0].counter, 2);
+        assert!(psg.tones[0].output);
+        assert_eq!(sample, VOLUME_TABLE[0]);
+    }
+
+    #[test]
+    fn test_psg_volume_mixing() {
+        let mut psg = Psg::new();
+
+        // Channel 0: Freq 1, Vol 0 (Max)
+        psg.write(0x81);
+        psg.write(0x90);
+
+        // Channel 1: Freq 1, Vol 4
+        psg.write(0xA1); // Channel 1 (10), Freq (0), Data 1 -> 1010 0001
+        psg.write(0xB4); // Channel 1 (10), Vol (1), Data 4 -> 1011 0100
+
+        // Step 1: Both toggle to High
+        let sample = psg.step();
+        let expected = (VOLUME_TABLE[0] as i32 + VOLUME_TABLE[4] as i32) as i16;
+        assert_eq!(sample, expected);
+    }
+
+    #[test]
+    fn test_psg_noise_generation() {
+        let mut psg = Psg::new();
+
+        // Setup Noise: White Noise, Rate 0 (N/512 -> 0x10 = 16)
+        // 1110 0100 (E4) -> Ch 3, Type 0, Data 4 (White=1, Rate=00)
+        psg.write(0xE4);
+
+        // Set Volume to Max (0)
+        // 1111 0000 (F0)
+        psg.write(0xF0);
+
+        assert!(psg.noise.white_noise);
+        assert_eq!(psg.noise.shift_rate, 0);
+
+        // Initial LFSR is 0x8000. Bit 0 is 0.
+        // Step 1: counter = 0 -> reset to 16. Shift LFSR.
+        // Feedback (White): (bit0 ^ bit3).
+        // LFSR 0x8000: bit0=0, bit3=0. Feedback=0.
+        // New LFSR = (0x8000 >> 1) | (0 << 14) = 0x4000.
+        // Output: bit0 of new LFSR?
+        // Code checks `if (self.noise.lfsr & 1) != 0`.
+        // 0x4000 & 1 = 0. Output 0.
+
+        let sample = psg.step();
+        assert_eq!(psg.noise.counter, 16);
+        assert_eq!(psg.noise.lfsr, 0x4000);
+        assert_eq!(sample, 0);
+
+        // We need to step enough times to get a 1 in bit 0.
+        // Run until we see output.
+        let mut seen_noise = false;
+        // 16 cycles per shift * 16 shifts = 256 steps roughly.
+        for _ in 0..1000 {
+            if psg.step() > 0 {
+                seen_noise = true;
+                break;
+            }
+        }
+        assert!(seen_noise, "Noise channel should eventually produce output");
+    }
+
+    #[test]
+    fn test_psg_edge_cases() {
+        let mut psg = Psg::new();
+
+        // 1. Volume 15 (Silence)
+        psg.write(0x81); // Tone 0 Freq 1
+        psg.write(0x9F); // Tone 0 Vol 15
+
+        let sample = psg.step();
+        assert_eq!(sample, 0);
+
+        // 2. Frequency 0 (should be treated as 0 or handled gracefully)
+        // Code: `if tone.frequency > 0`. So if 0, it doesn't count down.
+        let mut psg = Psg::new();
+        psg.write(0x80); // Tone 0 Freq 0 (1000 0000)
+        psg.write(0x90); // Tone 0 Vol 0
+
+        // Manually set freq to 0 just to be sure (write might limit it?)
+        // Write low: 0x80 -> freq = ... | 0.
+        // Write high: default 0.
+        assert_eq!(psg.tones[0].frequency, 0);
+
+        let sample = psg.step();
+        // Counter should not change (starts at 0)
+        assert_eq!(psg.tones[0].counter, 0);
+        // Output shouldn't toggle (starts false)
+        assert!(!psg.tones[0].output);
+        // Result 0
+        assert_eq!(sample, 0);
+    }
 }
