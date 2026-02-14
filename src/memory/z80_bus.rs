@@ -7,7 +7,7 @@
 //! - 7F11h: SN76489 PSG
 //! - 8000h-FFFFh: Banked 68k Memory (32KB window)
 
-use super::{MemoryInterface, SharedBus, IoInterface};
+use super::{IoInterface, MemoryInterface, SharedBus};
 
 /// Z80 Bus adapter that routes memory accesses to Genesis components
 #[derive(Debug, Clone)]
