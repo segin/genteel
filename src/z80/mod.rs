@@ -1157,135 +1157,124 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
 
     // ========== CB Prefix (Bit operations) ==========
 
+    fn cb_rotate_shift(&mut self, val: u8, y: u8) -> u8 {
+        let result = match y {
+            0 => {
+                // RLC
+                let carry = (val & 0x80) != 0;
+                self.set_flag(flags::CARRY, carry);
+                (val << 1) | if carry { 1 } else { 0 }
+            }
+            1 => {
+                // RRC
+                let carry = (val & 0x01) != 0;
+                self.set_flag(flags::CARRY, carry);
+                (val >> 1) | if carry { 0x80 } else { 0 }
+            }
+            2 => {
+                // RL
+                let old_carry = self.get_flag(flags::CARRY);
+                let carry = (val & 0x80) != 0;
+                self.set_flag(flags::CARRY, carry);
+                (val << 1) | if old_carry { 1 } else { 0 }
+            }
+            3 => {
+                // RR
+                let old_carry = self.get_flag(flags::CARRY);
+                let carry = (val & 0x01) != 0;
+                self.set_flag(flags::CARRY, carry);
+                (val >> 1) | if old_carry { 0x80 } else { 0 }
+            }
+            4 => {
+                // SLA
+                let carry = (val & 0x80) != 0;
+                self.set_flag(flags::CARRY, carry);
+                val << 1
+            }
+            5 => {
+                // SRA
+                let carry = (val & 0x01) != 0;
+                self.set_flag(flags::CARRY, carry);
+                (val >> 1) | (val & 0x80)
+            }
+            6 => {
+                // SLL (undocumented)
+                let carry = (val & 0x80) != 0;
+                self.set_flag(flags::CARRY, carry);
+                (val << 1) | 1
+            }
+            7 => {
+                // SRL
+                let carry = (val & 0x01) != 0;
+                self.set_flag(flags::CARRY, carry);
+                val >> 1
+            }
+            _ => val,
+        };
+        self.set_flag(flags::HALF_CARRY, false);
+        self.set_flag(flags::ADD_SUB, false);
+        self.set_sz_flags(result);
+        self.set_parity_flag(result);
+        result
+    }
+
+    fn cb_bit(&mut self, val: u8, bit: u8) {
+        let b = (val >> bit) & 1;
+        self.set_flag(flags::ZERO, b == 0);
+        self.set_flag(flags::HALF_CARRY, true);
+        self.set_flag(flags::ADD_SUB, false);
+    }
+
+    fn cb_res(&mut self, val: u8, bit: u8) -> u8 {
+        val & !(1 << bit)
+    }
+
+    fn cb_set(&mut self, val: u8, bit: u8) -> u8 {
+        val | (1 << bit)
+    }
+
     fn execute_cb_prefix(&mut self) -> u8 {
         let opcode = self.fetch_byte();
         let x = (opcode >> 6) & 0x03;
         let y = (opcode >> 3) & 0x07;
         let z = opcode & 0x07;
 
+        let val = self.get_reg(z);
+
         match x {
             0 => {
                 // Rotate/shift
-                let val = self.get_reg(z);
-                let result = match y {
-                    0 => {
-                        // RLC
-                        let carry = (val & 0x80) != 0;
-                        let r = (val << 1) | if carry { 1 } else { 0 };
-                        self.set_flag(flags::CARRY, carry);
-                        r
-                    }
-                    1 => {
-                        // RRC
-                        let carry = (val & 0x01) != 0;
-                        let r = (val >> 1) | if carry { 0x80 } else { 0 };
-                        self.set_flag(flags::CARRY, carry);
-                        r
-                    }
-                    2 => {
-                        // RL
-                        let old_carry = self.get_flag(flags::CARRY);
-                        let carry = (val & 0x80) != 0;
-                        let r = (val << 1) | if old_carry { 1 } else { 0 };
-                        self.set_flag(flags::CARRY, carry);
-                        r
-                    }
-                    3 => {
-                        // RR
-                        let old_carry = self.get_flag(flags::CARRY);
-                        let carry = (val & 0x01) != 0;
-                        let r = (val >> 1) | if old_carry { 0x80 } else { 0 };
-                        self.set_flag(flags::CARRY, carry);
-                        r
-                    }
-                    4 => {
-                        // SLA
-                        let carry = (val & 0x80) != 0;
-                        let r = val << 1;
-                        self.set_flag(flags::CARRY, carry);
-                        r
-                    }
-                    5 => {
-                        // SRA
-                        let carry = (val & 0x01) != 0;
-                        let r = (val >> 1) | (val & 0x80);
-                        self.set_flag(flags::CARRY, carry);
-                        r
-                    }
-                    6 => {
-                        // SLL (undocumented)
-                        let carry = (val & 0x80) != 0;
-                        let r = (val << 1) | 1;
-                        self.set_flag(flags::CARRY, carry);
-                        r
-                    }
-                    7 => {
-                        // SRL
-                        let carry = (val & 0x01) != 0;
-                        let r = val >> 1;
-                        self.set_flag(flags::CARRY, carry);
-                        r
-                    }
-                    _ => val,
-                };
-                self.set_flag(flags::HALF_CARRY, false);
-                self.set_flag(flags::ADD_SUB, false);
-                self.set_sz_flags(result);
-                self.set_parity_flag(result);
+                let result = self.cb_rotate_shift(val, y);
                 self.set_reg(z, result);
-                if z == 6 {
-                    15
-                } else {
-                    8
-                }
+                if z == 6 { 15 } else { 8 }
             }
             1 => {
                 // BIT y, r
-                let val = self.get_reg(z);
-                let bit = (val >> y) & 1;
-                self.set_flag(flags::ZERO, bit == 0);
-                self.set_flag(flags::HALF_CARRY, true);
-                self.set_flag(flags::ADD_SUB, false);
+                self.cb_bit(val, y);
 
                 if z != 6 {
                     self.set_flag(flags::X_FLAG, (val & 0x08) != 0);
                     self.set_flag(flags::Y_FLAG, (val & 0x20) != 0);
                 } else {
                     // For (HL), X/Y come from MEMPTR (WZ) high byte.
-                    // Since we don't fully track MEMPTR yet, we use memptr if available, or just leave as is/0?
-                    // Let's use memptr >> 8 for structural correctness.
                     let h_memptr = (self.memptr >> 8) as u8;
                     self.set_flag(flags::X_FLAG, (h_memptr & 0x08) != 0);
                     self.set_flag(flags::Y_FLAG, (h_memptr & 0x20) != 0);
                 }
 
-                if z == 6 {
-                    12
-                } else {
-                    8
-                }
+                if z == 6 { 12 } else { 8 }
             }
             2 => {
                 // RES y, r
-                let val = self.get_reg(z);
-                let result = val & !(1 << y);
+                let result = self.cb_res(val, y);
                 self.set_reg(z, result);
-                if z == 6 {
-                    15
-                } else {
-                    8
-                }
+                if z == 6 { 15 } else { 8 }
             }
             3 => {
                 // SET y, r
-                let val = self.get_reg(z);
-                let result = val | (1 << y);
+                let result = self.cb_set(val, y);
                 self.set_reg(z, result);
-                if z == 6 {
-                    15
-                } else {
-                    8
-                }
+                if z == 6 { 15 } else { 8 }
             }
             _ => 8,
         }
@@ -1703,6 +1692,27 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
     }
 
+    fn calc_index_addr(&mut self, offset: i8, is_ix: bool) -> u16 {
+        let idx = self.get_index_val(is_ix);
+        let addr = (idx as i16 + offset as i16) as u16;
+        self.memptr = addr;
+        addr
+    }
+
+    fn execute_index_alu(&mut self, op_index: u8, val: u8) {
+        match op_index {
+            0 => self.add_a(val, false),
+            1 => self.add_a(val, true),
+            2 => self.sub_a(val, false, true),
+            3 => self.sub_a(val, true, true),
+            4 => self.and_a(val),
+            5 => self.xor_a(val),
+            6 => self.or_a(val),
+            7 => self.sub_a(val, false, false),
+            _ => {}
+        }
+    }
+
     fn execute_index_prefix(&mut self, is_ix: bool) -> u8 {
         let opcode = self.fetch_byte();
 
@@ -1785,9 +1795,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
             }
             0x34 => {
                 let d = self.fetch_byte() as i8;
-                let idx = self.get_index_val(is_ix);
-                let addr = (idx as i16 + d as i16) as u16;
-                self.memptr = addr;
+                let addr = self.calc_index_addr(d, is_ix);
                 let val = self.read_byte(addr);
                 let result = self.inc(val);
                 self.write_byte(addr, result);
@@ -1795,9 +1803,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
             }
             0x35 => {
                 let d = self.fetch_byte() as i8;
-                let idx = self.get_index_val(is_ix);
-                let addr = (idx as i16 + d as i16) as u16;
-                self.memptr = addr;
+                let addr = self.calc_index_addr(d, is_ix);
                 let val = self.read_byte(addr);
                 let result = self.dec(val);
                 self.write_byte(addr, result);
@@ -1806,9 +1812,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
             0x36 => {
                 let d = self.fetch_byte() as i8;
                 let n = self.fetch_byte();
-                let idx = self.get_index_val(is_ix);
-                let addr = (idx as i16 + d as i16) as u16;
-                self.memptr = addr;
+                let addr = self.calc_index_addr(d, is_ix);
                 self.write_byte(addr, n);
                 19
             }
@@ -1818,76 +1822,11 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
             }
 
             // Specific ALU ops
-            0x86 => {
+            0x86 | 0x8E | 0x96 | 0x9E | 0xA6 | 0xAE | 0xB6 | 0xBE => {
                 let d = self.fetch_byte() as i8;
-                let idx = self.get_index_val(is_ix);
-                let addr = (idx as i16 + d as i16) as u16;
-                self.memptr = addr;
+                let addr = self.calc_index_addr(d, is_ix);
                 let val = self.read_byte(addr);
-                self.add_a(val, false);
-                19
-            }
-            0x8E => {
-                let d = self.fetch_byte() as i8;
-                let idx = self.get_index_val(is_ix);
-                let addr = (idx as i16 + d as i16) as u16;
-                self.memptr = addr;
-                let val = self.read_byte(addr);
-                self.add_a(val, true);
-                19
-            }
-            0x96 => {
-                let d = self.fetch_byte() as i8;
-                let idx = self.get_index_val(is_ix);
-                let addr = (idx as i16 + d as i16) as u16;
-                self.memptr = addr;
-                let val = self.read_byte(addr);
-                self.sub_a(val, false, true);
-                19
-            }
-            0x9E => {
-                let d = self.fetch_byte() as i8;
-                let idx = self.get_index_val(is_ix);
-                let addr = (idx as i16 + d as i16) as u16;
-                self.memptr = addr;
-                let val = self.read_byte(addr);
-                self.sub_a(val, true, true);
-                19
-            }
-            0xA6 => {
-                let d = self.fetch_byte() as i8;
-                let idx = self.get_index_val(is_ix);
-                let addr = (idx as i16 + d as i16) as u16;
-                self.memptr = addr;
-                let val = self.read_byte(addr);
-                self.and_a(val);
-                19
-            }
-            0xAE => {
-                let d = self.fetch_byte() as i8;
-                let idx = self.get_index_val(is_ix);
-                let addr = (idx as i16 + d as i16) as u16;
-                self.memptr = addr;
-                let val = self.read_byte(addr);
-                self.xor_a(val);
-                19
-            }
-            0xB6 => {
-                let d = self.fetch_byte() as i8;
-                let idx = self.get_index_val(is_ix);
-                let addr = (idx as i16 + d as i16) as u16;
-                self.memptr = addr;
-                let val = self.read_byte(addr);
-                self.or_a(val);
-                19
-            }
-            0xBE => {
-                let d = self.fetch_byte() as i8;
-                let idx = self.get_index_val(is_ix);
-                let addr = (idx as i16 + d as i16) as u16;
-                self.memptr = addr;
-                let val = self.read_byte(addr);
-                self.sub_a(val, false, false);
+                self.execute_index_alu((opcode >> 3) & 0x07, val);
                 19
             }
 
@@ -1895,9 +1834,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
             // LD r, (IX/IY+d) and LD (IX/IY+d), r
             0x46 | 0x4E | 0x56 | 0x5E | 0x66 | 0x6E | 0x7E => {
                 let d = self.fetch_byte() as i8;
-                let idx = self.get_index_val(is_ix);
-                let addr = (idx as i16 + d as i16) as u16;
-                self.memptr = addr;
+                let addr = self.calc_index_addr(d, is_ix);
                 let val = self.read_byte(addr);
                 let r = (opcode >> 3) & 0x07;
                 self.set_reg(r, val);
@@ -1905,9 +1842,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
             }
             0x70..=0x75 | 0x77 => {
                 let d = self.fetch_byte() as i8;
-                let idx = self.get_index_val(is_ix);
-                let addr = (idx as i16 + d as i16) as u16;
-                self.memptr = addr;
+                let addr = self.calc_index_addr(d, is_ix);
                 let r = opcode & 0x07;
                 let val = self.get_reg(r);
                 self.write_byte(addr, val);
@@ -1932,36 +1867,9 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
             }
 
             // Generic Undocumented ALU
-            0x80..=0x87 => {
-                self.add_a(self.get_index_byte(opcode & 0x07, is_ix), false);
-                8
-            }
-            0x88..=0x8F => {
-                self.add_a(self.get_index_byte(opcode & 0x07, is_ix), true);
-                8
-            }
-            0x90..=0x97 => {
-                self.sub_a(self.get_index_byte(opcode & 0x07, is_ix), false, true);
-                8
-            }
-            0x98..=0x9F => {
-                self.sub_a(self.get_index_byte(opcode & 0x07, is_ix), true, true);
-                8
-            }
-            0xA0..=0xA7 => {
-                self.and_a(self.get_index_byte(opcode & 0x07, is_ix));
-                8
-            }
-            0xA8..=0xAF => {
-                self.xor_a(self.get_index_byte(opcode & 0x07, is_ix));
-                8
-            }
-            0xB0..=0xB7 => {
-                self.or_a(self.get_index_byte(opcode & 0x07, is_ix));
-                8
-            }
-            0xB8..=0xBF => {
-                self.sub_a(self.get_index_byte(opcode & 0x07, is_ix), false, false);
+            0x80..=0xBF => {
+                let val = self.get_index_byte(opcode & 0x07, is_ix);
+                self.execute_index_alu((opcode >> 3) & 0x07, val);
                 8
             }
 
@@ -1993,8 +1901,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
             0xCB => {
                 let d = self.fetch_byte() as i8;
                 let opcode = self.fetch_byte();
-                let idx = self.get_index_val(is_ix);
-                let addr = (idx as i16 + d as i16) as u16;
+                let addr = self.calc_index_addr(d, is_ix);
                 self.execute_indexed_cb(opcode, addr)
             }
             _ => 8, // Treat as NOP
@@ -2022,55 +1929,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         match x {
             0 => {
                 // Rotate/shift
-                let result = match y {
-                    0 => {
-                        let c = (val & 0x80) != 0;
-                        self.set_flag(flags::CARRY, c);
-                        (val << 1) | if c { 1 } else { 0 }
-                    }
-                    1 => {
-                        let c = (val & 0x01) != 0;
-                        self.set_flag(flags::CARRY, c);
-                        (val >> 1) | if c { 0x80 } else { 0 }
-                    }
-                    2 => {
-                        let oc = self.get_flag(flags::CARRY);
-                        let c = (val & 0x80) != 0;
-                        self.set_flag(flags::CARRY, c);
-                        (val << 1) | if oc { 1 } else { 0 }
-                    }
-                    3 => {
-                        let oc = self.get_flag(flags::CARRY);
-                        let c = (val & 0x01) != 0;
-                        self.set_flag(flags::CARRY, c);
-                        (val >> 1) | if oc { 0x80 } else { 0 }
-                    }
-                    4 => {
-                        let c = (val & 0x80) != 0;
-                        self.set_flag(flags::CARRY, c);
-                        val << 1
-                    }
-                    5 => {
-                        let c = (val & 0x01) != 0;
-                        self.set_flag(flags::CARRY, c);
-                        (val >> 1) | (val & 0x80)
-                    }
-                    6 => {
-                        let c = (val & 0x80) != 0;
-                        self.set_flag(flags::CARRY, c);
-                        (val << 1) | 1
-                    }
-                    7 => {
-                        let c = (val & 0x01) != 0;
-                        self.set_flag(flags::CARRY, c);
-                        val >> 1
-                    }
-                    _ => val,
-                };
-                self.set_flag(flags::HALF_CARRY, false);
-                self.set_flag(flags::ADD_SUB, false);
-                self.set_sz_flags(result);
-                self.set_parity_flag(result);
+                let result = self.cb_rotate_shift(val, y);
                 self.write_byte(addr, result);
                 if z != 6 {
                     self.set_reg(z, result);
@@ -2079,10 +1938,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
             }
             1 => {
                 // BIT y, (IX/IY+d)
-                let bit = (val >> y) & 1;
-                self.set_flag(flags::ZERO, bit == 0);
-                self.set_flag(flags::HALF_CARRY, true);
-                self.set_flag(flags::ADD_SUB, false);
+                self.cb_bit(val, y);
 
                 // X/Y from High Byte of EA
                 let h_ea = (addr >> 8) as u8;
@@ -2092,7 +1948,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
             }
             2 => {
                 // RES y, (IX/IY+d)
-                let result = val & !(1 << y);
+                let result = self.cb_res(val, y);
                 self.write_byte(addr, result);
                 if z != 6 {
                     self.set_reg(z, result);
@@ -2101,7 +1957,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
             }
             3 => {
                 // SET y, (IX/IY+d)
-                let result = val | (1 << y);
+                let result = self.cb_set(val, y);
                 self.write_byte(addr, result);
                 if z != 6 {
                     self.set_reg(z, result);
