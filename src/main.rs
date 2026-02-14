@@ -417,7 +417,10 @@ impl Emulator {
 
         println!("Waiting for GDB connection on port {}...", port);
         if let Some(pwd) = password {
-            println!("🔒 Password protected. After connecting, run: monitor auth {}", pwd);
+            println!(
+                "🔒 Password protected. After connecting, run: monitor auth {}",
+                pwd
+            );
         }
         println!(
             "Connect with: m68k-elf-gdb -ex \"target remote :{}\" <elf_file>",
@@ -698,7 +701,6 @@ impl Emulator {
             })
             .map_err(|e| e.to_string())
     }
-
 }
 
 fn print_usage() {

@@ -58,7 +58,10 @@ fn test_dma_fill_vram() {
 
     // Check if dma_pending is set
     // It should NOT be set because CD5 is 0
-    assert!(!vdp.dma_pending, "DMA pending should be false for Fill setup");
+    assert!(
+        !vdp.dma_pending,
+        "DMA pending should be false for Fill setup"
+    );
 
     // 6. Write Fill Data (e.g. 0xAA)
     // Writing to data port triggers the fill in hardware.
@@ -66,7 +69,10 @@ fn test_dma_fill_vram() {
     // It fills `dma_length` bytes starting at `control_address` (0x0000).
     vdp.write_data(0xAA00);
 
-    assert!(!vdp.dma_pending, "DMA pending should be false after data write");
+    assert!(
+        !vdp.dma_pending,
+        "DMA pending should be false after data write"
+    );
 
     // 7. Verify VRAM
     // Length is 0x10 (16 bytes).

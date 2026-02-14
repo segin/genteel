@@ -99,7 +99,7 @@ fn test_render_plane_scroll() {
     vdp.set_region(false);
     vdp.registers[1] = 0x40; // Display
     vdp.registers[2] = 0x30; // Plane A 0xC000
-    // HScroll Table Base 0x0000 (Reg 13 = 0x00)
+                             // HScroll Table Base 0x0000 (Reg 13 = 0x00)
     vdp.registers[13] = 0x00;
 
     vdp.cram_cache[1] = 0xF800; // Red
@@ -118,8 +118,10 @@ fn test_render_plane_scroll() {
     // Nametable at 0xC000.
     // Tile 0 (Empty) at 0xC000.
     // Tile 1 (Red) at 0xC002.
-    vdp.vram[0xC000] = 0x00; vdp.vram[0xC001] = 0x00;
-    vdp.vram[0xC002] = 0x00; vdp.vram[0xC003] = 0x01;
+    vdp.vram[0xC000] = 0x00;
+    vdp.vram[0xC001] = 0x00;
+    vdp.vram[0xC002] = 0x00;
+    vdp.vram[0xC003] = 0x01;
 
     vdp.render_line(0);
 
