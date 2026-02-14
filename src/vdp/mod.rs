@@ -229,21 +229,8 @@ impl Vdp {
         // DMA Fill (Mode 2) check
         // Enabled (Reg 1 bit 4) AND Mode 2 (Reg 23 bits 7,6 = 1,0)
         if (self.registers[1] & 0x10) != 0 && (self.registers[23] & 0xC0) == 0x80 {
-            let length = self.dma_length();
-            let mut addr = self.control_address;
-            let inc = self.auto_increment() as u16;
-            let fill_byte = (value >> 8) as u8;
-
-            // DMA Fill writes bytes. Length register specifies number of bytes.
-            // If length is 0, it is treated as 0x10000 (64KB).
-            let len = if length == 0 { 0x10000 } else { length };
-
-            for _ in 0..len {
-                // VRAM is byte-addressable in this emulator
-                self.vram[addr as usize] = fill_byte;
-                addr = addr.wrapping_add(inc);
-            }
-            self.control_address = addr;
+            self.dma_pending = true;
+            self.execute_dma();
             return;
         }
 
@@ -469,8 +456,6 @@ impl Vdp {
         match mode {
             0x80 => {
                 // VRAM Fill (Mode 2)
-                // This is also handled in write_data, but provided here for completeness
-                // if triggered via control port (non-standard but possible).
                 let data = self.last_data_write;
                 let mut addr = self.control_address;
                 let inc = self.auto_increment() as u16;
@@ -481,6 +466,10 @@ impl Vdp {
                     addr = addr.wrapping_add(inc);
                 }
                 self.control_address = addr;
+
+                // Clear DMA length registers
+                self.registers[19] = 0;
+                self.registers[20] = 0;
             }
             0xC0 => {
                 // VRAM Copy (Mode 3)
@@ -495,6 +484,10 @@ impl Vdp {
                     dest = dest.wrapping_add(inc);
                 }
                 self.control_address = dest;
+
+                // Clear DMA length registers
+                self.registers[19] = 0;
+                self.registers[20] = 0;
             }
             _ => {}
         }
