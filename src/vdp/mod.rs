@@ -227,10 +227,10 @@ impl Vdp {
         self.last_data_write = value;
 
         // DMA Fill (Mode 2) check
-        // Enabled (Reg 1 bit 4) AND Mode 2 (Reg 23 bits 7,6 = 1,0)
-        if (self.registers[1] & 0x10) != 0 && (self.registers[23] & 0xC0) == 0x80 {
-            self.dma_pending = true;
+        // Enabled (Reg 1 bit 4) AND Mode 2 (Reg 23 bits 7,6 = 1,0) AND DMA Pending (CD5=1)
+        if (self.registers[1] & 0x10) != 0 && (self.registers[23] & 0xC0) == 0x80 && self.dma_pending {
             self.execute_dma();
+            self.dma_pending = false;
             return;
         }
 
@@ -449,7 +449,7 @@ impl Vdp {
     pub fn execute_dma(&mut self) -> u32 {
         let length = self.dma_length();
         // If length is 0, it is treated as 0x10000 (64KB)
-        let len = if length == 0 { 0x10000 } else { length };
+        let len = if length == 0 { 0x10000 } else { length as usize };
 
         let mode = self.registers[23] & 0xC0;
 
@@ -493,7 +493,7 @@ impl Vdp {
         }
 
         self.dma_pending = false;
-        len
+        len as u32
     }
 
     pub fn sprite_table_address(&self) -> u16 {
@@ -905,40 +905,146 @@ impl Vdp {
         let mut screen_x: u16 = 0;
         let mut scrolled_h = (0u16).wrapping_sub(h_scroll);
 
-        while screen_x < screen_width {
-            let pixel_h = scrolled_h % 8;
+        // Pre-calculate constants
+        let row_base = name_table_base + (tile_v * plane_w) * 2;
+        let plane_w_mask = plane_w - 1;
+
+        // Prologue: Handle unaligned start
+        let pixel_h = scrolled_h % 8;
+        if pixel_h != 0 {
             let pixels_left_in_tile = 8 - pixel_h;
             let pixels_to_process = std::cmp::min(pixels_left_in_tile, screen_width - screen_x);
 
-            let tile_h = (scrolled_h as usize / 8) % plane_w;
+            let tile_h = (scrolled_h as usize >> 3) & plane_w_mask;
+            let entry = self.fetch_nametable_entry(name_table_base, tile_v, tile_h, plane_w);
 
+            let priority = (entry & 0x8000) != 0;
+            if priority == priority_filter {
+                let palette = ((entry >> 13) & 0x03) as u8;
+                let v_flip = (entry & 0x1000) != 0;
+                let h_flip = (entry & 0x0800) != 0;
+                let tile_index = entry & 0x07FF;
+
+                let patterns = self.fetch_tile_pattern(tile_index, pixel_v, v_flip);
+
+                self.draw_tile_segment(
+                    patterns,
+                    palette,
+                    h_flip,
+                    pixel_h,
+                    pixels_to_process,
+                    line_offset + screen_x as usize,
+                );
+            }
+            screen_x += pixels_to_process;
+            scrolled_h = scrolled_h.wrapping_add(pixels_to_process);
+        }
+
+        // Main Loop: Process full 8-pixel tiles
+        while screen_x + 8 <= screen_width {
+            let tile_h = (scrolled_h as usize >> 3) & plane_w_mask;
             let entry = self.fetch_nametable_entry(name_table_base, tile_v, tile_h, plane_w);
 
             let priority = (entry & 0x8000) != 0;
             if priority != priority_filter {
-                screen_x += pixels_to_process;
-                scrolled_h = scrolled_h.wrapping_add(pixels_to_process);
+                screen_x += 8;
+                scrolled_h = scrolled_h.wrapping_add(8);
                 continue;
             }
 
             let palette = ((entry >> 13) & 0x03) as u8;
+            let palette_base = (palette as usize) * 16;
+
             let v_flip = (entry & 0x1000) != 0;
             let h_flip = (entry & 0x0800) != 0;
             let tile_index = entry & 0x07FF;
 
             let patterns = self.fetch_tile_pattern(tile_index, pixel_v, v_flip);
+            let p0 = patterns[0];
+            let p1 = patterns[1];
+            let p2 = patterns[2];
+            let p3 = patterns[3];
 
-            self.draw_tile_segment(
-                patterns,
-                palette,
-                h_flip,
-                pixel_h,
-                pixels_to_process,
-                line_offset + screen_x as usize,
-            );
+            let dest_idx = line_offset + (screen_x as usize);
 
-            screen_x += pixels_to_process;
-            scrolled_h = scrolled_h.wrapping_add(pixels_to_process);
+            if h_flip {
+                let mut col = p3 & 0x0F;
+                if col != 0 { self.framebuffer[dest_idx] = self.cram_cache[palette_base + col as usize]; }
+
+                col = p3 >> 4;
+                if col != 0 { self.framebuffer[dest_idx + 1] = self.cram_cache[palette_base + col as usize]; }
+
+                col = p2 & 0x0F;
+                if col != 0 { self.framebuffer[dest_idx + 2] = self.cram_cache[palette_base + col as usize]; }
+
+                col = p2 >> 4;
+                if col != 0 { self.framebuffer[dest_idx + 3] = self.cram_cache[palette_base + col as usize]; }
+
+                col = p1 & 0x0F;
+                if col != 0 { self.framebuffer[dest_idx + 4] = self.cram_cache[palette_base + col as usize]; }
+
+                col = p1 >> 4;
+                if col != 0 { self.framebuffer[dest_idx + 5] = self.cram_cache[palette_base + col as usize]; }
+
+                col = p0 & 0x0F;
+                if col != 0 { self.framebuffer[dest_idx + 6] = self.cram_cache[palette_base + col as usize]; }
+
+                col = p0 >> 4;
+                if col != 0 { self.framebuffer[dest_idx + 7] = self.cram_cache[palette_base + col as usize]; }
+            } else {
+                let mut col = p0 >> 4;
+                if col != 0 { self.framebuffer[dest_idx] = self.cram_cache[palette_base + col as usize]; }
+
+                col = p0 & 0x0F;
+                if col != 0 { self.framebuffer[dest_idx + 1] = self.cram_cache[palette_base + col as usize]; }
+
+                col = p1 >> 4;
+                if col != 0 { self.framebuffer[dest_idx + 2] = self.cram_cache[palette_base + col as usize]; }
+
+                col = p1 & 0x0F;
+                if col != 0 { self.framebuffer[dest_idx + 3] = self.cram_cache[palette_base + col as usize]; }
+
+                col = p2 >> 4;
+                if col != 0 { self.framebuffer[dest_idx + 4] = self.cram_cache[palette_base + col as usize]; }
+
+                col = p2 & 0x0F;
+                if col != 0 { self.framebuffer[dest_idx + 5] = self.cram_cache[palette_base + col as usize]; }
+
+                col = p3 >> 4;
+                if col != 0 { self.framebuffer[dest_idx + 6] = self.cram_cache[palette_base + col as usize]; }
+
+                col = p3 & 0x0F;
+                if col != 0 { self.framebuffer[dest_idx + 7] = self.cram_cache[palette_base + col as usize]; }
+            }
+
+            screen_x += 8;
+            scrolled_h = scrolled_h.wrapping_add(8);
+        }
+
+        // Epilogue: Handle remaining pixels
+        if screen_x < screen_width {
+            let count = screen_width - screen_x;
+            let tile_h = (scrolled_h as usize >> 3) & plane_w_mask;
+            let entry = self.fetch_nametable_entry(name_table_base, tile_v, tile_h, plane_w);
+
+            let priority = (entry & 0x8000) != 0;
+            if priority == priority_filter {
+                let palette = ((entry >> 13) & 0x03) as u8;
+                let v_flip = (entry & 0x1000) != 0;
+                let h_flip = (entry & 0x0800) != 0;
+                let tile_index = entry & 0x07FF;
+
+                let patterns = self.fetch_tile_pattern(tile_index, pixel_v, v_flip);
+
+                self.draw_tile_segment(
+                    patterns,
+                    palette,
+                    h_flip,
+                    0,
+                    count,
+                    line_offset + screen_x as usize,
+                );
+            }
         }
     }
 }
