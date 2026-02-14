@@ -200,7 +200,7 @@ impl Memory {
     #[cfg(test)]
     pub fn hex_dump(&self, start: u32, end: u32) -> String {
         use std::fmt::Write;
-        let mut output = String::new();
+        let mut output = String::with_capacity((((end - start) as usize / 16) + 1) * 80);
         for i in (start..=end).step_by(16) {
             write!(output, "{:08x}: ", i).unwrap();
             for j in 0..16 {

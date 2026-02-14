@@ -346,23 +346,24 @@ impl GdbServer {
     }
 
     fn read_registers(&self, registers: &GdbRegisters) -> String {
-        let mut result = String::new();
+        use std::fmt::Write;
+        let mut result = String::with_capacity(18 * 8);
 
         // D0-D7
         for &d in &registers.d {
-            result.push_str(&format!("{:08x}", d));
+            write!(result, "{:08x}", d).unwrap();
         }
 
         // A0-A7
         for &a in &registers.a {
-            result.push_str(&format!("{:08x}", a));
+            write!(result, "{:08x}", a).unwrap();
         }
 
         // SR
-        result.push_str(&format!("{:08x}", registers.sr as u32));
+        write!(result, "{:08x}", registers.sr as u32).unwrap();
 
         // PC
-        result.push_str(&format!("{:08x}", registers.pc));
+        write!(result, "{:08x}", registers.pc).unwrap();
 
         result
     }
@@ -460,10 +461,11 @@ impl GdbServer {
             Err(_) => return "E01".to_string(),
         };
 
-        let mut result = String::new();
+        use std::fmt::Write;
+        let mut result = String::with_capacity(len * 2);
         for i in 0..len {
             let byte = memory.read_byte(addr.wrapping_add(i as u32));
-            result.push_str(&format!("{:02x}", byte));
+            write!(result, "{:02x}", byte).unwrap();
         }
 
         result
