@@ -1,11 +1,12 @@
+#![allow(unused_imports)]
 //! Expanded property-based tests for Z80 CPU - Massive test coverage
 
 use super::test_utils::TestIo;
-use super::*;
+use super::*; use crate::memory::{MemoryInterface, IoInterface};
 use crate::memory::Memory;
 use proptest::prelude::*;
 
-fn z80_prog(program: &[u8]) -> Z80 {
+fn z80_prog(program: &[u8]) -> Z80<Box<crate::memory::Memory>, Box<crate::z80::test_utils::TestIo>> {
     let mut m = Memory::new(0x10000);
     for (i, &b) in program.iter().enumerate() {
         m.data[i] = b;
