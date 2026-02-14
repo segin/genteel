@@ -400,4 +400,32 @@ mod tests {
         assert_eq!(manager.frame(), 0);
         assert!(!manager.is_complete());
     }
+
+    #[test]
+    fn test_input_manager_reset() {
+        let mut manager = InputManager::new();
+        // Frame 0: default
+        // Frame 1: A pressed
+        let script = InputScript::parse("0,........,........\n1,....A...,........").unwrap();
+        manager.set_script(script);
+
+        // Advance to frame 1
+        manager.advance_frame(); // Frame 0 processed
+        let input = manager.advance_frame(); // Frame 1 processed
+
+        assert_eq!(manager.frame(), 2);
+        assert!(input.p1.a);
+        assert!(manager.last_input.p1.a);
+
+        // Reset
+        manager.reset();
+
+        assert_eq!(manager.frame(), 0);
+        // Verify last_input is reset to default (no A pressed)
+        assert!(!manager.last_input.p1.a);
+
+        // Advance frame 0 again
+        let input0 = manager.advance_frame();
+        assert!(!input0.p1.a);
+    }
 }
