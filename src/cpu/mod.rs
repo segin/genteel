@@ -571,7 +571,6 @@ impl Cpu {
 
     pub(crate) fn add_with_flags(&self, a: u32, b: u32, size: Size) -> (u32, bool, bool) {
         let mask = size.mask();
-        let sign_bit = size.sign_bit();
 
         let a = a & mask;
         let b = b & mask;
@@ -579,17 +578,13 @@ impl Cpu {
         let result_masked = result & mask;
 
         let carry = result > mask;
-        let a_sign = (a & sign_bit) != 0;
-        let b_sign = (b & sign_bit) != 0;
-        let r_sign = (result_masked & sign_bit) != 0;
-        let overflow = (a_sign == b_sign) && (a_sign != r_sign);
+        let overflow = calc_add_overflow(size, a, b, result_masked);
 
         (result_masked, carry, overflow)
     }
 
     pub(crate) fn sub_with_flags(&self, a: u32, b: u32, size: Size) -> (u32, bool, bool) {
         let mask = size.mask();
-        let sign_bit = size.sign_bit();
 
         let a = a & mask;
         let b = b & mask;
@@ -597,10 +592,7 @@ impl Cpu {
         let result_masked = result & mask;
 
         let borrow = b > a;
-        let a_sign = (a & sign_bit) != 0;
-        let b_sign = (b & sign_bit) != 0;
-        let r_sign = (result_masked & sign_bit) != 0;
-        let overflow = (a_sign != b_sign) && (a_sign != r_sign);
+        let overflow = calc_sub_overflow(size, a, b, result_masked);
 
         (result_masked, borrow, overflow)
     }
@@ -613,7 +605,6 @@ impl Cpu {
         size: Size,
     ) -> (u32, bool, bool) {
         let mask = size.mask();
-        let sign_bit = size.sign_bit();
 
         let a = src & mask;
         let b = dst & mask;
@@ -626,10 +617,7 @@ impl Cpu {
             res > mask
         };
 
-        let a_sign = (a & sign_bit) != 0;
-        let b_sign = (b & sign_bit) != 0;
-        let r_sign = (res_masked & sign_bit) != 0;
-        let overflow = (a_sign == b_sign) && (a_sign != r_sign);
+        let overflow = calc_add_overflow(size, a, b, res_masked);
 
         (res_masked, carry, overflow)
     }
@@ -642,7 +630,6 @@ impl Cpu {
         size: Size,
     ) -> (u32, bool, bool) {
         let mask = size.mask();
-        let sign_bit = size.sign_bit();
 
         let a = dst & mask;
         let b = src & mask;
@@ -655,10 +642,7 @@ impl Cpu {
             a < (b + x)
         };
 
-        let a_sign = (a & sign_bit) != 0;
-        let b_sign = (b & sign_bit) != 0;
-        let r_sign = (res_masked & sign_bit) != 0;
-        let overflow = (a_sign != b_sign) && (a_sign != r_sign);
+        let overflow = calc_sub_overflow(size, a, b, res_masked);
 
         (res_masked, borrow, overflow)
     }
@@ -921,6 +905,21 @@ impl Cpu {
 
         self.sr = new_sr;
     }
+}
+
+// Helper functions for flag calculation
+fn calc_add_overflow(size: Size, a: u32, b: u32, result: u32) -> bool {
+    let a_sign = size.is_negative(a);
+    let b_sign = size.is_negative(b);
+    let r_sign = size.is_negative(result);
+    (a_sign == b_sign) && (a_sign != r_sign)
+}
+
+fn calc_sub_overflow(size: Size, a: u32, b: u32, result: u32) -> bool {
+    let a_sign = size.is_negative(a);
+    let b_sign = size.is_negative(b);
+    let r_sign = size.is_negative(result);
+    (a_sign != b_sign) && (a_sign != r_sign)
 }
 
 #[cfg(test)]
