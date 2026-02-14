@@ -739,12 +739,7 @@ impl Vdp {
         let tile_v_offset = fetch_py / 8;
         let pixel_v = fetch_py % 8;
 
-        for px in 0..sprite_h_px {
-            let screen_x = attr.h_pos.wrapping_add(px);
-            if screen_x >= screen_width {
-                continue;
-            }
-
+        for px in (0..sprite_h_px).step_by(2) {
             let fetch_px = if attr.h_flip {
                 (sprite_h_px - 1) - px
             } else {
@@ -762,15 +757,29 @@ impl Vdp {
             }
 
             let byte = self.vram[pattern_addr as usize];
-            let color_idx = if pixel_h % 2 == 0 {
-                byte >> 4
+
+            let (c1, c2) = if attr.h_flip {
+                (byte & 0x0F, byte >> 4)
             } else {
-                byte & 0x0F
+                (byte >> 4, byte & 0x0F)
             };
 
-            if color_idx != 0 {
-                let color = self.get_cram_color(attr.palette, color_idx);
-                self.framebuffer[line_offset + screen_x as usize] = color;
+            // Pixel 1
+            let screen_x_1 = attr.h_pos.wrapping_add(px);
+            if screen_x_1 < screen_width {
+                if c1 != 0 {
+                    let color = self.get_cram_color(attr.palette, c1);
+                    self.framebuffer[line_offset + screen_x_1 as usize] = color;
+                }
+            }
+
+            // Pixel 2
+            let screen_x_2 = attr.h_pos.wrapping_add(px + 1);
+            if screen_x_2 < screen_width {
+                if c2 != 0 {
+                    let color = self.get_cram_color(attr.palette, c2);
+                    self.framebuffer[line_offset + screen_x_2 as usize] = color;
+                }
             }
         }
     }

@@ -130,3 +130,120 @@ fn test_render_plane_scroll() {
     // Pixel 8 should be Empty (0) because Tile 2 is empty.
     assert_eq!(vdp.framebuffer[8], 0x0000);
 }
+
+#[test]
+fn test_sprite_rendering_correctness() {
+    let mut vdp = Vdp::new();
+    vdp.set_region(false); // NTSC
+    vdp.registers[1] = 0x40; // Display Enable
+    vdp.registers[5] = 0x78; // Sprite Table at 0xF000 (0x78 << 9 = 0xF000)
+
+    // Palette 1 (Sprites use palette 1, 2, 3 usually, or maybe 0-3 depending on attr)
+    // Attr palette 0 maps to CRAM 16-31.
+    vdp.cram_cache[17] = 0xF800; // Red (Palette 1, Color 1)
+    vdp.cram_cache[18] = 0x07E0; // Green (Palette 1, Color 2)
+
+    // Sprite 0: at 100, 100. Size 1x1. Palette 1.
+    // SAT at 0xF000.
+    // Index 0:
+    // +0: VPos = 100 + 128 = 228 (0x00E4)
+    // +2: Size = 00 (1x1)
+    // +3: Link = 0 (End)
+    // +4: Attr = Palette 1 (bit 13,14 = 01 -> 0x2000) | Priority 0 | Flip 0 | Tile 0
+    // +6: HPos = 100 + 128 = 228 (0x00E4)
+
+    let sat_addr = 0xF000;
+    vdp.vram[sat_addr] = 0x00; vdp.vram[sat_addr+1] = 0xE4;
+    vdp.vram[sat_addr+2] = 0x00;
+    vdp.vram[sat_addr+3] = 0x00;
+    vdp.vram[sat_addr+4] = 0x20; vdp.vram[sat_addr+5] = 0x00;
+    vdp.vram[sat_addr+6] = 0x00; vdp.vram[sat_addr+7] = 0xE4;
+
+    // Tile 0 Pattern:
+    // We want to test pixel 0 and 1 sharing a byte.
+    // Byte 0: 0x12 (Pixel 0=1, Pixel 1=2)
+    // Pixel 0 (color 1) -> Red.
+    // Pixel 1 (color 2) -> Green.
+    vdp.vram[0] = 0x12; // Row 0, Pixels 0,1
+
+    // Sprite 1: H-Flip. at 120, 100. Size 1x1. Palette 1.
+    // Link from Sprite 0 to Sprite 1.
+    vdp.vram[sat_addr+3] = 1;
+
+    // Index 1 (addr + 8):
+    // +0: VPos = 100 + 128 = 228 (0x00E4)
+    // +2: Size = 00 (1x1)
+    // +3: Link = 0 (End)
+    // +4: Attr = Palette 1 | H-Flip (0x800) -> 0x2800 | Tile 1
+    // +6: HPos = 120 + 128 = 248 (0x00F8)
+
+    let sat_addr_1 = sat_addr + 8;
+    vdp.vram[sat_addr_1] = 0x00; vdp.vram[sat_addr_1+1] = 0xE4;
+    vdp.vram[sat_addr_1+2] = 0x00;
+    vdp.vram[sat_addr_1+3] = 0x00;
+    vdp.vram[sat_addr_1+4] = 0x28; vdp.vram[sat_addr_1+5] = 0x01; // Tile 1
+    vdp.vram[sat_addr_1+6] = 0x00; vdp.vram[sat_addr_1+7] = 0xF8;
+
+    // Tile 1 Pattern (flipped).
+    // Original pixels: 0, 1, 2, 3...
+    // Flipped pixels: 7, 6, 5, 4... 1, 0
+    // Byte 0 contains pixel 0 and 1.
+    // If flipped, Pixel 0 corresponds to original Pixel 7. Pixel 1 -> Pixel 6.
+    // We want to test that packed pixels are correctly flipped.
+
+    // Let's set byte 3 (pixels 6, 7) to 0x21.
+    // Pixel 6 = 2 (Green), Pixel 7 = 1 (Red).
+    // On screen (flipped):
+    // x=0 (original 7) -> Red (1)
+    // x=1 (original 6) -> Green (2)
+
+    vdp.vram[32 + 3] = 0x21;
+
+    vdp.render_line(100);
+
+    // Check pixels for Sprite 0
+    // x=100 -> Pixel 0 -> Color 1 (Red)
+    // x=101 -> Pixel 1 -> Color 2 (Green)
+    assert_eq!(vdp.framebuffer[100 * 320 + 100], 0xF800, "Sprite 0 Pixel 0 incorrect");
+    assert_eq!(vdp.framebuffer[100 * 320 + 101], 0x07E0, "Sprite 0 Pixel 1 incorrect");
+
+    // Check pixels for Sprite 1 (Flipped)
+    // x=120 (Pixel 0 of sprite, corresponds to Pixel 7 of tile) -> Red (1)
+    // x=121 (Pixel 1 of sprite, corresponds to Pixel 6 of tile) -> Green (2)
+    assert_eq!(vdp.framebuffer[100 * 320 + 120], 0xF800, "Sprite 1 Pixel 0 incorrect");
+    assert_eq!(vdp.framebuffer[100 * 320 + 121], 0x07E0, "Sprite 1 Pixel 1 incorrect");
+}
+
+#[test]
+fn test_sprite_rendering_perf() {
+    let mut vdp = Vdp::new();
+    vdp.set_region(false);
+    vdp.registers[1] = 0x40; // Display Enable
+    vdp.registers[5] = 0x78; // Sprite Table at 0xF000
+
+    let sat_addr = 0xF000;
+
+    // Create 20 sprites on line 100
+    for i in 0..20 {
+        let addr = sat_addr + (i * 8);
+        vdp.vram[addr] = 0x00; vdp.vram[addr+1] = 0xE4; // VPos 100
+        vdp.vram[addr+2] = 0x0F; // Size 4x4 tiles (max size) -> 32x32 pixels
+        vdp.vram[addr+3] = (i + 1) as u8; // Link to next
+        vdp.vram[addr+4] = 0x00; vdp.vram[addr+5] = 0x00; // Tile 0, Pal 0
+        vdp.vram[addr+6] = 0x00; vdp.vram[addr+7] = 0x80; // HPos 0
+    }
+    // Fix last link
+    vdp.vram[sat_addr + (19 * 8) + 3] = 0;
+
+    // Fill Tile 0 with pattern
+    for i in 0..32 {
+        vdp.vram[i] = 0x11;
+    }
+
+    let start = std::time::Instant::now();
+    for _ in 0..10000 {
+        vdp.render_line(100);
+    }
+    let duration = start.elapsed();
+    println!("Sprite Render Perf: {:?}", duration);
+}
