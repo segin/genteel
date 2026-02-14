@@ -87,7 +87,10 @@ impl Emulator {
             // Extract ROM from zip file
             Self::load_rom_from_zip(path)?
         } else {
-            std::fs::read(path)?
+            let file = std::fs::File::open(path)?;
+            let size = file.metadata()?.len();
+            let mut reader = std::io::BufReader::new(file);
+            Self::read_rom_with_limit(&mut reader, size)?
         };
 
         let mut bus = self.bus.borrow_mut();
@@ -856,6 +859,41 @@ mod tests {
 
         // Before fix: This assertion will fail (because result.is_ok() is likely true)
         // After fix: This assertion will pass
+        assert!(result.is_err(), "Should reject large ROM file (>32MB)");
+    }
+
+    #[test]
+    fn test_read_rom_with_limit_toctou() {
+        // Simulate a file that claims to be small but is actually huge
+        let claimed_size = 100;
+        let actual_size = 33 * 1024 * 1024; // 33MB
+        // Using a repeatable iterator to avoid allocating 33MB
+        // However, Cursor needs a slice.
+        // We can just allocate 33MB. It's fine for a test.
+        let data = vec![0u8; actual_size];
+        let mut reader = std::io::Cursor::new(&data);
+
+        // This should fail because read_rom_with_limit reads up to MAX_ROM_SIZE + 1
+        // and checks the final length.
+        let result = Emulator::read_rom_with_limit(&mut reader, claimed_size);
+
+        assert!(result.is_err(), "Should detect that actual content exceeds limit even if metadata says otherwise");
+    }
+
+    #[test]
+    fn test_large_file_prevention() {
+        let path = "test_large_rom.bin";
+        // Create a 33MB file
+        // We use a file > 32MB to trigger the limit
+        let data = vec![0u8; 33 * 1024 * 1024];
+        std::fs::write(path, &data).unwrap();
+
+        let mut emulator = Emulator::new();
+        let result = emulator.load_rom(path);
+
+        // Cleanup
+        let _ = std::fs::remove_file(path);
+
         assert!(result.is_err(), "Should reject large ROM file (>32MB)");
     }
 
