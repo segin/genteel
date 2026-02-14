@@ -1457,4 +1457,42 @@ mod tests {
         assert_eq!(memory.read_byte(0x2004), 0x56);
         assert_eq!(memory.read_byte(0x2006), 0x78);
     }
+
+    #[test]
+    fn benchmark_interrupt_handler() {
+        // This test benchmarks the interrupt handling code path to ensure it is efficient.
+        // It specifically targets potential regressions where debug prints might be left in the interrupt handler.
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        // Setup vector for Level 6 (Vector 30 = 24+6)
+        // Address = 30 * 4 = 120 (0x78)
+        memory.write_long(0x78, 0x1000); // Handler address
+
+        // Enable interrupts (Supervisor mode, mask 0)
+        cpu.sr = 0x2000;
+
+        let start = std::time::Instant::now();
+        let iterations = 100_000;
+
+        for _ in 0..iterations {
+            cpu.request_interrupt(6);
+            let cycles = cpu.check_interrupts(&mut memory);
+
+            // check_interrupts should return cycles > 0 if interrupt taken
+            assert!(cycles > 0);
+
+            // Interrupt handling sets mask to level 6. Reset it to 0 so next interrupt can be taken.
+            // Also it pushes PC/SR. We reset SP to avoid memory overflow.
+            cpu.a[7] = 0x1000;
+
+            // Reset SR to enable interrupts again
+            cpu.sr = 0x2000;
+        }
+
+        let duration = start.elapsed();
+        println!("Benchmark interrupt handler: {:?} for {} iterations", duration, iterations);
+
+        // Assert that it takes less than 500ms
+        assert!(duration.as_millis() < 500, "Interrupt handler too slow! Duration: {:?}", duration);
+    }
 }
