@@ -688,3 +688,44 @@ fn test_divu_by_zero() {
     cpu.step_instruction(&mut memory);
     // Should trap
 }
+
+#[test]
+fn test_addx_memory() {
+    let (mut cpu, mut memory) = create_cpu();
+    // ADDX.B -(A1), -(A0)
+    // Opcode: 1101 (ADDX prefix) 000 (Rx=A0) 1 00 (Size=B) 001 (Mode=Memory) 001 (Ry=A1) -> 0xD109
+    write_op(&mut memory, &[0xD109]);
+    cpu.a[0] = 0x2000;
+    cpu.a[1] = 0x3000;
+    memory.write_byte(0x1FFF, 0x10);
+    memory.write_byte(0x2FFF, 0x20);
+    cpu.set_flag(flags::EXTEND, true);
+
+    cpu.step_instruction(&mut memory);
+
+    // Result should be written to 0x1FFF (pre-decremented A0)
+    // 0x10 + 0x20 + 1 = 0x31
+    assert_eq!(memory.read_byte(0x1FFF), 0x31);
+    assert_eq!(cpu.a[0], 0x1FFF);
+    assert_eq!(cpu.a[1], 0x2FFF);
+}
+
+#[test]
+fn test_subx_memory() {
+    let (mut cpu, mut memory) = create_cpu();
+    // SUBX.B -(A1), -(A0)
+    // Opcode: 1001 (SUBX prefix) 000 (Rx=A0) 1 00 (Size=B) 001 (Mode=Memory) 001 (Ry=A1) -> 0x9109
+    write_op(&mut memory, &[0x9109]);
+    cpu.a[0] = 0x2000;
+    cpu.a[1] = 0x3000;
+    memory.write_byte(0x1FFF, 0x30); // Dest
+    memory.write_byte(0x2FFF, 0x10); // Src
+    cpu.set_flag(flags::EXTEND, true);
+
+    cpu.step_instruction(&mut memory);
+
+    // Result: 0x30 - 0x10 - 1 = 0x1F
+    assert_eq!(memory.read_byte(0x1FFF), 0x1F);
+    assert_eq!(cpu.a[0], 0x1FFF);
+    assert_eq!(cpu.a[1], 0x2FFF);
+}
