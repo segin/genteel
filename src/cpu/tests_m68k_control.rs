@@ -444,3 +444,47 @@ fn test_tst_l() {
     cpu.step_instruction(&mut memory);
     assert!(cpu.get_flag(flags::NEGATIVE));
 }
+
+// ============================================================================
+// STOP Tests
+// ============================================================================
+
+#[test]
+fn test_stop_privilege_violation() {
+    let (mut cpu, mut memory) = create_cpu();
+
+    // STOP #$2000 opcode: 0x4E72, immediate: 0x2000
+    write_op(&mut memory, &[0x4E72, 0x2000]);
+
+    // Setup Stacks
+    cpu.ssp = 0x8000; // Valid Supervisor Stack
+    cpu.usp = 0xA000; // Valid User Stack
+
+    // Set User Mode
+    cpu.sr &= !flags::SUPERVISOR;
+    cpu.a[7] = cpu.usp; // Active stack is now USP
+
+    // Set Vector 8 (Privilege Violation)
+    memory.write_long(32, 0x4000); // 8 * 4 = 32
+
+    cpu.step_instruction(&mut memory);
+
+    assert_eq!(cpu.pc, 0x4000);
+    // Exception should set supervisor bit
+    assert!(cpu.sr & flags::SUPERVISOR != 0);
+    // Should NOT be halted
+    assert!(!cpu.halted);
+}
+
+#[test]
+fn test_stop_supervisor_behavior() {
+    let (mut cpu, mut memory) = create_cpu();
+
+    // STOP #$2200 opcode: 0x4E72, immediate: 0x2200 (Supervisor + Interrupt mask 2)
+    write_op(&mut memory, &[0x4E72, 0x2200]);
+
+    cpu.step_instruction(&mut memory);
+
+    assert_eq!(cpu.sr, 0x2200);
+    assert!(cpu.halted);
+}
