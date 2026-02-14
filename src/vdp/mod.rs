@@ -320,23 +320,14 @@ impl Vdp {
             let mut addr = self.control_address;
             let inc = self.auto_increment() as u16;
 
+            // VRAM fill uses the high byte of the data port for the fill value
+            let val = (data >> 8) as u8;
             for _ in 0..length {
-                if (addr as usize) < 0x10000 {
-                    // VRAM fill writes the lower byte of data to the VRAM address
-                    // If address is even, it writes high byte of word?
-                    // VRAM is bytes.
-                    // Actually VRAM fill repeats the data to the VRAM port.
-                    // For now, simple implementation
-                    let val = if (addr & 1) == 0 {
-                        (data >> 8) as u8
-                    } else {
-                        (data & 0xFF) as u8
-                    };
-                    self.vram[addr as usize] = val;
-                }
+                self.vram[addr as usize] = val;
                 addr = addr.wrapping_add(inc);
             }
             self.control_address = addr;
+            self.dma_pending = false;
         }
 
         length // Return cycles used (placeholder)
@@ -738,3 +729,8 @@ impl Debuggable for Vdp {
         // Not implemented
     }
 }
+
+#[cfg(test)]
+mod tests_dma;
+#[cfg(test)]
+mod bench_dma;
