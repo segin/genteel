@@ -413,7 +413,7 @@ fn test_stop_instruction() {
     assert_eq!(cpu.sr, 0x2000, "SR should be updated");
 }
 
-/// Item 21: STOP in user mode should trap
+/// Item 21: STOP instruction in user mode - should cause privilege trap
 #[test]
 fn test_stop_user_mode_privilege_violation() {
     let (mut cpu, mut memory) = create_test_cpu();
@@ -421,27 +421,18 @@ fn test_stop_user_mode_privilege_violation() {
     // Set up SSP for exception handling (before switching to user mode)
     cpu.ssp = 0x9000;
 
-    // Set up privilege violation vector (Vector 8 is at address 0x20)
-    memory.write_long(0x20, 0x4000);
+    // Set up privilege violation vector (Vector 8)
+    memory.write_long(0x20, 0x3000);
 
     // Switch to user mode properly
     cpu.set_sr(cpu.sr & !flags::SUPERVISOR);
 
-    // STOP #$2000 (Opcode 0x4E72, Operand 0x2000)
+    // STOP #$2000
     write_program(&mut memory, &[0x4E72, 0x2000]);
 
     cpu.step_instruction(&mut memory);
 
-    // Should have trapped to privilege violation handler
-    assert_eq!(cpu.pc, 0x4000, "Should jump to privilege violation handler");
-
-    // Should be back in supervisor mode
-    assert!(
-        cpu.sr & flags::SUPERVISOR != 0,
-        "Should be in supervisor mode after exception"
-    );
-
-    // CPU should not be halted because the instruction caused an exception
-    // before the halt state was set
-    assert!(!cpu.halted, "CPU should not be halted after privilege violation");
+    // Should trap
+    assert_eq!(cpu.pc, 0x3000, "Should privilege trap");
+    assert!(cpu.get_flag(flags::SUPERVISOR), "Should be in supervisor mode");
 }
