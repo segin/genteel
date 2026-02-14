@@ -521,4 +521,12 @@ mod tests {
         // Expected: 0x70 | 0x01 = 0x71.
         assert_eq!(port.read_data(), 0x71, "Pulse 5 Fall (Extra Buttons)");
     }
+
+    #[test]
+    fn test_io_controller_invalid_port() {
+        let mut io = Io::new();
+        assert!(io.controller(0).is_none());
+        assert!(io.controller(3).is_none());
+        assert!(io.controller(99).is_none());
+    }
 }

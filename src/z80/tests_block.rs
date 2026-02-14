@@ -1,10 +1,11 @@
+#![allow(unused_imports)]
 //! Z80 Block Operation Tests
 //!
 //! Exhaustive property-based tests for block transfer and search operations.
 //! Includes massive randomization of state to cover edge cases, overlaps, and wrapping.
 
 use super::*;
-use crate::memory::Memory;
+use crate::memory::{Memory, MemoryInterface, IoInterface};
 
 // Simple deterministic RNG to avoid dependencies
 struct Rng {
@@ -29,7 +30,7 @@ impl Rng {
     }
 }
 
-fn z80(program: &[u8]) -> Z80 {
+fn z80(program: &[u8]) -> Z80<Box<crate::memory::Memory>, Box<crate::z80::test_utils::TestIo>> {
     let mut m = Memory::new(0x10000);
     for (i, &b) in program.iter().enumerate() {
         m.data[i] = b;
@@ -41,7 +42,7 @@ fn z80(program: &[u8]) -> Z80 {
 }
 
 /// Snapshot memory contents into a Vec for reference comparison
-fn snapshot_memory(z80: &mut Z80) -> Vec<u8> {
+fn snapshot_memory<M: MemoryInterface, I: crate::memory::IoInterface>(z80: &mut Z80<M, I>) -> Vec<u8> {
     let mut snapshot = Vec::with_capacity(0x10000);
     for addr in 0..0x10000u32 {
         snapshot.push(z80.memory.read_byte(addr));

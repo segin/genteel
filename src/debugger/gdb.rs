@@ -872,10 +872,10 @@ mod tests {
     #[test]
     fn test_oversized_packet_prevention() {
         let mut server = GdbServer::new(0, None).expect("Failed to create GDB server");
-        let port = server.listener.local_addr().expect("Failed to get local addr").port();
 
         // Connect via loopback
-        let mut client_stream = TcpStream::connect(format!("127.0.0.1:{}", port)).expect("Failed to connect");
+        let mut client_stream =
+            TcpStream::connect(format!("127.0.0.1:{}", port)).expect("Failed to connect");
         assert!(server.accept(), "Server should accept connection");
 
         // Send a very large packet without '#'
@@ -887,15 +887,23 @@ mod tests {
             large_packet.push('A');
         }
 
-        client_stream.write_all(large_packet.as_bytes()).expect("Failed to write to server");
+        client_stream
+            .write_all(large_packet.as_bytes())
+            .expect("Failed to write to server");
         client_stream.flush().expect("Failed to flush");
 
         // Try to receive the packet.
         // Currently, it might return None because of WouldBlock, but 'data' will have grown.
         // After the fix, it should return None AND close the connection.
         let result = server.receive_packet();
-        assert!(result.is_none(), "Should not return a valid packet for oversized input");
-        assert!(!server.is_connected(), "Server should have disconnected the client after oversized packet");
+        assert!(
+            result.is_none(),
+            "Should not return a valid packet for oversized input"
+        );
+        assert!(
+            !server.is_connected(),
+            "Server should have disconnected the client after oversized packet"
+        );
     }
 
     #[test]
