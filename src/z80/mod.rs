@@ -692,234 +692,256 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
 
     fn execute_x0(&mut self, _opcode: u8, y: u8, z: u8, p: u8, q: u8) -> u8 {
         match z {
-            0 => match y {
-                0 => 4, // NOP
-                1 => {
-                    // EX AF, AF'
-                    std::mem::swap(&mut self.a, &mut self.a_prime);
-                    std::mem::swap(&mut self.f, &mut self.f_prime);
-                    4
+            0 => self.execute_x0_z0(y),
+            1 => self.execute_x0_z1(p, q),
+            2 => self.execute_x0_z2(p, q),
+            3 => self.execute_x0_z3(p, q),
+            4 => self.execute_x0_z4(y),
+            5 => self.execute_x0_z5(y),
+            6 => self.execute_x0_z6(y),
+            7 => self.execute_x0_z7(y),
+            _ => 4,
+        }
+    }
+
+    fn execute_x0_z0(&mut self, y: u8) -> u8 {
+        match y {
+            0 => 4, // NOP
+            1 => {
+                // EX AF, AF'
+                std::mem::swap(&mut self.a, &mut self.a_prime);
+                std::mem::swap(&mut self.f, &mut self.f_prime);
+                4
+            }
+            2 => {
+                // DJNZ d
+                let d = self.fetch_byte() as i8;
+                self.b = self.b.wrapping_sub(1);
+                if self.b != 0 {
+                    self.pc = (self.pc as i16 + d as i16) as u16;
+                    13
+                } else {
+                    8
                 }
-                2 => {
-                    // DJNZ d
-                    let d = self.fetch_byte() as i8;
-                    self.b = self.b.wrapping_sub(1);
-                    if self.b != 0 {
-                        self.pc = (self.pc as i16 + d as i16) as u16;
-                        13
-                    } else {
-                        8
-                    }
-                }
-                3 => {
-                    // JR d
-                    let d = self.fetch_byte() as i8;
+            }
+            3 => {
+                // JR d
+                let d = self.fetch_byte() as i8;
+                self.pc = (self.pc as i16 + d as i16) as u16;
+                12
+            }
+            4..=7 => {
+                // JR cc, d
+                let d = self.fetch_byte() as i8;
+                if self.check_condition(y - 4) {
                     self.pc = (self.pc as i16 + d as i16) as u16;
                     12
-                }
-                4..=7 => {
-                    // JR cc, d
-                    let d = self.fetch_byte() as i8;
-                    if self.check_condition(y - 4) {
-                        self.pc = (self.pc as i16 + d as i16) as u16;
-                        12
-                    } else {
-                        7
-                    }
-                }
-                _ => 4,
-            },
-            1 => {
-                if q == 0 {
-                    // LD rp, nn
-                    let nn = self.fetch_word();
-                    self.set_rp(p, nn);
-                    10
                 } else {
-                    // ADD HL, rp
-                    let rp = self.get_rp(p);
-                    self.add_hl(rp);
-                    11
+                    7
                 }
             }
-            2 => match (p, q) {
-                (0, 0) => {
-                    // LD (BC), A
-                    let addr = self.bc();
-                    self.write_byte(addr, self.a);
-                    7
-                }
-                (0, 1) => {
-                    // LD A, (BC)
-                    let addr = self.bc();
-                    self.a = self.read_byte(addr);
-                    7
-                }
-                (1, 0) => {
-                    // LD (DE), A
-                    let addr = self.de();
-                    self.write_byte(addr, self.a);
-                    7
-                }
-                (1, 1) => {
-                    // LD A, (DE)
-                    let addr = self.de();
-                    self.a = self.read_byte(addr);
-                    7
-                }
-                (2, 0) => {
-                    // LD (nn), HL
-                    let addr = self.fetch_word();
-                    self.write_word(addr, self.hl());
-                    self.memptr = addr.wrapping_add(1);
-                    16
-                }
-                (2, 1) => {
-                    // LD HL, (nn)
-                    let addr = self.fetch_word();
-                    let val = self.read_word(addr);
-                    self.set_hl(val);
-                    self.memptr = addr.wrapping_add(1);
-                    16
-                }
-                (3, 0) => {
-                    // LD (nn), A
-                    let addr = self.fetch_word();
-                    self.write_byte(addr, self.a);
-                    self.memptr = (self.a as u16) << 8 | addr.wrapping_add(1) & 0xFF;
-                    13
-                }
-                (3, 1) => {
-                    // LD A, (nn)
-                    let addr = self.fetch_word();
-                    self.a = self.read_byte(addr);
-                    self.memptr = addr.wrapping_add(1);
-                    13
-                }
-                _ => 4,
-            },
+            _ => 4,
+        }
+    }
+
+    fn execute_x0_z1(&mut self, p: u8, q: u8) -> u8 {
+        if q == 0 {
+            // LD rp, nn
+            let nn = self.fetch_word();
+            self.set_rp(p, nn);
+            10
+        } else {
+            // ADD HL, rp
+            let rp = self.get_rp(p);
+            self.add_hl(rp);
+            11
+        }
+    }
+
+    fn execute_x0_z2(&mut self, p: u8, q: u8) -> u8 {
+        match (p, q) {
+            (0, 0) => {
+                // LD (BC), A
+                let addr = self.bc();
+                self.write_byte(addr, self.a);
+                7
+            }
+            (0, 1) => {
+                // LD A, (BC)
+                let addr = self.bc();
+                self.a = self.read_byte(addr);
+                7
+            }
+            (1, 0) => {
+                // LD (DE), A
+                let addr = self.de();
+                self.write_byte(addr, self.a);
+                7
+            }
+            (1, 1) => {
+                // LD A, (DE)
+                let addr = self.de();
+                self.a = self.read_byte(addr);
+                7
+            }
+            (2, 0) => {
+                // LD (nn), HL
+                let addr = self.fetch_word();
+                self.write_word(addr, self.hl());
+                self.memptr = addr.wrapping_add(1);
+                16
+            }
+            (2, 1) => {
+                // LD HL, (nn)
+                let addr = self.fetch_word();
+                let val = self.read_word(addr);
+                self.set_hl(val);
+                self.memptr = addr.wrapping_add(1);
+                16
+            }
+            (3, 0) => {
+                // LD (nn), A
+                let addr = self.fetch_word();
+                self.write_byte(addr, self.a);
+                self.memptr = (self.a as u16) << 8 | addr.wrapping_add(1) & 0xFF;
+                13
+            }
+            (3, 1) => {
+                // LD A, (nn)
+                let addr = self.fetch_word();
+                self.a = self.read_byte(addr);
+                self.memptr = addr.wrapping_add(1);
+                13
+            }
+            _ => 4,
+        }
+    }
+
+    fn execute_x0_z3(&mut self, p: u8, q: u8) -> u8 {
+        // INC/DEC rp
+        let rp = self.get_rp(p);
+        if q == 0 {
+            self.set_rp(p, rp.wrapping_add(1));
+        } else {
+            self.set_rp(p, rp.wrapping_sub(1));
+        }
+        6
+    }
+
+    fn execute_x0_z4(&mut self, y: u8) -> u8 {
+        // INC r
+        let val = self.get_reg(y);
+        let result = self.inc(val);
+        self.set_reg(y, result);
+        if y == 6 {
+            11
+        } else {
+            4
+        }
+    }
+
+    fn execute_x0_z5(&mut self, y: u8) -> u8 {
+        // DEC r
+        let val = self.get_reg(y);
+        let result = self.dec(val);
+        self.set_reg(y, result);
+        if y == 6 {
+            11
+        } else {
+            4
+        }
+    }
+
+    fn execute_x0_z6(&mut self, y: u8) -> u8 {
+        // LD r, n
+        let n = self.fetch_byte();
+        self.set_reg(y, n);
+        if y == 6 {
+            10
+        } else {
+            7
+        }
+    }
+
+    fn execute_x0_z7(&mut self, y: u8) -> u8 {
+        match y {
+            0 => {
+                self.rlca();
+                4
+            }
+            1 => {
+                self.rrca();
+                4
+            }
+            2 => {
+                self.rla();
+                4
+            }
             3 => {
-                // INC/DEC rp
-                let rp = self.get_rp(p);
-                if q == 0 {
-                    self.set_rp(p, rp.wrapping_add(1));
-                } else {
-                    self.set_rp(p, rp.wrapping_sub(1));
-                }
-                6
+                self.rra();
+                4
             }
             4 => {
-                // INC r
-                let val = self.get_reg(y);
-                let result = self.inc(val);
-                self.set_reg(y, result);
-                if y == 6 {
-                    11
+                // DAA - Decimal Adjust Accumulator
+                // DAA adjusts A to valid BCD based on N, H, C flags
+                let mut correction: u8 = 0;
+                let mut carry = self.get_flag(flags::CARRY);
+
+                if self.get_flag(flags::ADD_SUB) {
+                    // After subtraction
+                    if self.get_flag(flags::HALF_CARRY) {
+                        correction |= 0x06;
+                    }
+                    if carry {
+                        correction |= 0x60;
+                    }
+                    self.a = self.a.wrapping_sub(correction);
                 } else {
-                    4
+                    // After addition
+                    if self.get_flag(flags::HALF_CARRY) || (self.a & 0x0F) > 9 {
+                        correction |= 0x06;
+                    }
+                    if carry || self.a > 0x99 {
+                        correction |= 0x60;
+                        carry = true;
+                    }
+                    self.a = self.a.wrapping_add(correction);
                 }
+
+                self.set_flag(flags::CARRY, carry);
+                self.set_flag(flags::HALF_CARRY, (correction & 0x06) != 0);
+                self.set_sz_flags(self.a);
+                self.set_parity_flag(self.a);
+                4
             }
             5 => {
-                // DEC r
-                let val = self.get_reg(y);
-                let result = self.dec(val);
-                self.set_reg(y, result);
-                if y == 6 {
-                    11
-                } else {
-                    4
-                }
+                // CPL
+                self.a = !self.a;
+                self.set_flag(flags::HALF_CARRY, true);
+                self.set_flag(flags::ADD_SUB, true);
+                self.set_flag(flags::X_FLAG, (self.a & 0x08) != 0);
+                self.set_flag(flags::Y_FLAG, (self.a & 0x20) != 0);
+                4
             }
             6 => {
-                // LD r, n
-                let n = self.fetch_byte();
-                self.set_reg(y, n);
-                if y == 6 {
-                    10
-                } else {
-                    7
-                }
+                // SCF
+                self.set_flag(flags::CARRY, true);
+                self.set_flag(flags::HALF_CARRY, false);
+                self.set_flag(flags::ADD_SUB, false);
+                self.set_flag(flags::X_FLAG, (self.a & 0x08) != 0);
+                self.set_flag(flags::Y_FLAG, (self.a & 0x20) != 0);
+                4
             }
-            7 => match y {
-                0 => {
-                    self.rlca();
-                    4
-                }
-                1 => {
-                    self.rrca();
-                    4
-                }
-                2 => {
-                    self.rla();
-                    4
-                }
-                3 => {
-                    self.rra();
-                    4
-                }
-                4 => {
-                    // DAA - Decimal Adjust Accumulator
-                    // DAA adjusts A to valid BCD based on N, H, C flags
-                    let mut correction: u8 = 0;
-                    let mut carry = self.get_flag(flags::CARRY);
-
-                    if self.get_flag(flags::ADD_SUB) {
-                        // After subtraction
-                        if self.get_flag(flags::HALF_CARRY) {
-                            correction |= 0x06;
-                        }
-                        if carry {
-                            correction |= 0x60;
-                        }
-                        self.a = self.a.wrapping_sub(correction);
-                    } else {
-                        // After addition
-                        if self.get_flag(flags::HALF_CARRY) || (self.a & 0x0F) > 9 {
-                            correction |= 0x06;
-                        }
-                        if carry || self.a > 0x99 {
-                            correction |= 0x60;
-                            carry = true;
-                        }
-                        self.a = self.a.wrapping_add(correction);
-                    }
-
-                    self.set_flag(flags::CARRY, carry);
-                    self.set_flag(flags::HALF_CARRY, (correction & 0x06) != 0);
-                    self.set_sz_flags(self.a);
-                    self.set_parity_flag(self.a);
-                    4
-                }
-                5 => {
-                    // CPL
-                    self.a = !self.a;
-                    self.set_flag(flags::HALF_CARRY, true);
-                    self.set_flag(flags::ADD_SUB, true);
-                    self.set_flag(flags::X_FLAG, (self.a & 0x08) != 0);
-                    self.set_flag(flags::Y_FLAG, (self.a & 0x20) != 0);
-                    4
-                }
-                6 => {
-                    // SCF
-                    self.set_flag(flags::CARRY, true);
-                    self.set_flag(flags::HALF_CARRY, false);
-                    self.set_flag(flags::ADD_SUB, false);
-                    self.set_flag(flags::X_FLAG, (self.a & 0x08) != 0);
-                    self.set_flag(flags::Y_FLAG, (self.a & 0x20) != 0);
-                    4
-                }
-                7 => {
-                    // CCF
-                    let c = self.get_flag(flags::CARRY);
-                    self.set_flag(flags::HALF_CARRY, c);
-                    self.set_flag(flags::CARRY, !c);
-                    self.set_flag(flags::ADD_SUB, false);
-                    self.set_flag(flags::X_FLAG, (self.a & 0x08) != 0);
-                    self.set_flag(flags::Y_FLAG, (self.a & 0x20) != 0);
-                    4
-                }
-                _ => 4,
-            },
+            7 => {
+                // CCF
+                let c = self.get_flag(flags::CARRY);
+                self.set_flag(flags::HALF_CARRY, c);
+                self.set_flag(flags::CARRY, !c);
+                self.set_flag(flags::ADD_SUB, false);
+                self.set_flag(flags::X_FLAG, (self.a & 0x08) != 0);
+                self.set_flag(flags::Y_FLAG, (self.a & 0x20) != 0);
+                4
+            }
             _ => 4,
         }
     }
