@@ -547,7 +547,7 @@ mod tests {
         let result = InputScript::load("non_existent_file.txt");
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.contains("Failed to read input script"));
+        assert!(err.contains("Failed to open input script"));
     }
 
     #[test]
