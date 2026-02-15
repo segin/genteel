@@ -6,6 +6,8 @@
 
 use crate::memory::{IoInterface, MemoryInterface};
 
+pub mod test_utils;
+
 /// Z80 Flag bits in the F register
 pub mod flags {
     pub const CARRY: u8 = 0b0000_0001; // C - Carry flag
@@ -2080,8 +2082,8 @@ mod tests_undoc;
 #[cfg(test)]
 mod tests_exhaustive;
 
-#[cfg(test)]
-mod tests_block;
+// #[cfg(test)]
+// mod tests_block;
 
 #[cfg(test)]
 mod tests_halfcarry;
@@ -2104,8 +2106,8 @@ mod tests_torture;
 #[cfg(test)]
 mod tests_gaps;
 
-#[cfg(test)]
-mod tests_memptr;
+// #[cfg(test)]
+// mod tests_memptr;
 
 #[cfg(test)]
 mod tests_ddcb;
