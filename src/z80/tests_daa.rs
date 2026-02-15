@@ -4,8 +4,9 @@
 //! DAA is one of the most complex Z80 instructions to implement correctly.
 //! It adjusts A to valid BCD after ADD or SUB operations.
 
-use super::*; use crate::memory::{MemoryInterface, IoInterface};
+use super::*;
 use crate::memory::Memory;
+use crate::memory::{IoInterface, MemoryInterface};
 
 fn z80(program: &[u8]) -> Z80<Box<crate::memory::Memory>, Box<crate::z80::test_utils::TestIo>> {
     let mut m = Memory::new(0x10000);

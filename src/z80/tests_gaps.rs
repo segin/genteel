@@ -6,10 +6,12 @@
 
 #![cfg(test)]
 
-use crate::memory::{Memory, MemoryInterface, IoInterface};
+use crate::memory::{IoInterface, Memory, MemoryInterface};
 use crate::z80::{flags, Z80};
 
-fn create_z80(program: &[u8]) -> Z80<Box<crate::memory::Memory>, Box<crate::z80::test_utils::TestIo>> {
+fn create_z80(
+    program: &[u8],
+) -> Z80<Box<crate::memory::Memory>, Box<crate::z80::test_utils::TestIo>> {
     let mut m = Memory::new(0x10000);
     for (i, &b) in program.iter().enumerate() {
         m.data[i] = b;
