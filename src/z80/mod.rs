@@ -1743,9 +1743,10 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
     }
 
-    fn calc_index_addr(&mut self, offset: i8, is_ix: bool) -> u16 {
+    fn calc_index_addr(&mut self, is_ix: bool) -> u16 {
+        let d = self.fetch_byte() as i8;
         let idx = self.get_index_val(is_ix);
-        let addr = (idx as i16 + offset as i16) as u16;
+        let addr = (idx as i16 + d as i16) as u16;
         self.memptr = addr;
         addr
     }
@@ -1845,25 +1846,22 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 11
             }
             0x34 => {
-                let d = self.fetch_byte() as i8;
-                let addr = self.calc_index_addr(d, is_ix);
+                let addr = self.calc_index_addr(is_ix);
                 let val = self.read_byte(addr);
                 let result = self.inc(val);
                 self.write_byte(addr, result);
                 23
             }
             0x35 => {
-                let d = self.fetch_byte() as i8;
-                let addr = self.calc_index_addr(d, is_ix);
+                let addr = self.calc_index_addr(is_ix);
                 let val = self.read_byte(addr);
                 let result = self.dec(val);
                 self.write_byte(addr, result);
                 23
             }
             0x36 => {
-                let d = self.fetch_byte() as i8;
+                let addr = self.calc_index_addr(is_ix);
                 let n = self.fetch_byte();
-                let addr = self.calc_index_addr(d, is_ix);
                 self.write_byte(addr, n);
                 19
             }
@@ -1874,8 +1872,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
 
             // Specific ALU ops
             0x86 | 0x8E | 0x96 | 0x9E | 0xA6 | 0xAE | 0xB6 | 0xBE => {
-                let d = self.fetch_byte() as i8;
-                let addr = self.calc_index_addr(d, is_ix);
+                let addr = self.calc_index_addr(is_ix);
                 let val = self.read_byte(addr);
                 self.execute_index_alu((opcode >> 3) & 0x07, val);
                 19
@@ -1884,16 +1881,14 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
             // LD r, (IX/IY+d) and LD (IX/IY+d), r
             // LD r, (IX/IY+d) and LD (IX/IY+d), r
             0x46 | 0x4E | 0x56 | 0x5E | 0x66 | 0x6E | 0x7E => {
-                let d = self.fetch_byte() as i8;
-                let addr = self.calc_index_addr(d, is_ix);
+                let addr = self.calc_index_addr(is_ix);
                 let val = self.read_byte(addr);
                 let r = (opcode >> 3) & 0x07;
                 self.set_reg(r, val);
                 19
             }
             0x70..=0x75 | 0x77 => {
-                let d = self.fetch_byte() as i8;
-                let addr = self.calc_index_addr(d, is_ix);
+                let addr = self.calc_index_addr(is_ix);
                 let r = opcode & 0x07;
                 let val = self.get_reg(r);
                 self.write_byte(addr, val);
@@ -1950,9 +1945,8 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 10
             }
             0xCB => {
-                let d = self.fetch_byte() as i8;
+                let addr = self.calc_index_addr(is_ix);
                 let opcode = self.fetch_byte();
-                let addr = self.calc_index_addr(d, is_ix);
                 self.execute_indexed_cb(opcode, addr)
             }
             _ => 8, // Treat as NOP
