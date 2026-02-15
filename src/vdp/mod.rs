@@ -24,6 +24,7 @@ const VSRAM_READ: u8 = 0x04;
 const VSRAM_WRITE: u8 = 0x05;
 const CRAM_READ: u8 = 0x08;
 
+#[derive(Debug, Clone, Copy, Default)]
 struct SpriteAttributes {
     v_pos: u16,
     h_pos: u16,
@@ -491,11 +492,6 @@ impl Vdp {
         (self.registers[REG_DMA_SRC_HI] & DMA_MODE_MASK) == DMA_MODE_FILL
     }
 
-    pub fn is_dma_fill(&self) -> bool {
-        // Bit 7=1, Bit 6=0
-        (self.registers[23] & 0xC0) == 0x80
-    }
-
     pub fn execute_dma(&mut self) -> u32 {
         let length = self.dma_length();
         // If length is 0, it is treated as 0x10000 (64KB)
@@ -842,9 +838,20 @@ impl Vdp {
         let screen_width = self.screen_width();
         let line_offset = (draw_line as usize) * 320;
 
-        let sprites: Vec<_> = self.sprite_iter().collect();
+        // Collect sprites into a stack-allocated array instead of a Vec to avoid allocation
+        let mut sprites = [SpriteAttributes::default(); 80]; // Max sprites in H40 mode is 80
+        let mut count = 0;
 
-        for attr in sprites {
+        for attr in self.sprite_iter() {
+            if count >= 80 {
+                break;
+            }
+            sprites[count] = attr;
+            count += 1;
+        }
+
+        for i in 0..count {
+            let attr = sprites[i];
             // Check if sprite is visible on this line
             let sprite_v_px = (attr.v_size as u16) * 8;
             if attr.priority == priority_filter
@@ -1209,3 +1216,6 @@ mod tests {
 
 #[cfg(test)]
 mod tests_security;
+
+#[cfg(test)]
+mod bench_render;
