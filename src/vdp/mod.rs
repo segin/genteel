@@ -395,7 +395,8 @@ impl Vdp {
         }
     }
 
-    pub fn read_status(&self) -> u16 {
+    pub fn read_status(&mut self) -> u16 {
+        self.control_pending = false;
         self.status
     }
 
