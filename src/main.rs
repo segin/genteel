@@ -477,7 +477,10 @@ impl Emulator {
 
         println!("Waiting for GDB connection on port {}...", port);
         if let Some(pwd) = password {
-            println!("🔒 Password protected. After connecting, run: monitor auth {}", pwd);
+            println!(
+                "🔒 Password protected. After connecting, run: monitor auth {}",
+                pwd
+            );
         }
         println!(
             "Connect with: m68k-elf-gdb -ex \"target remote :{}\" <elf_file>",
@@ -758,7 +761,6 @@ impl Emulator {
             })
             .map_err(|e| e.to_string())
     }
-
 }
 
 fn print_usage() {
@@ -1119,20 +1121,20 @@ mod tests {
     }
 }
 
-    #[test]
-    fn test_large_raw_rom_prevention() {
-        let path = "large_rom.bin";
-        // Create 33MB of dummy data
-        let size = 33 * 1024 * 1024;
-        let data = vec![0u8; size];
-        std::fs::write(path, &data).unwrap();
+#[test]
+fn test_large_raw_rom_prevention() {
+    let path = "large_rom.bin";
+    // Create 33MB of dummy data
+    let size = 33 * 1024 * 1024;
+    let data = vec![0u8; size];
+    std::fs::write(path, &data).unwrap();
 
-        let mut emulator = Emulator::new();
-        let result = emulator.load_rom(path);
+    let mut emulator = Emulator::new();
+    let result = emulator.load_rom(path);
 
-        // Cleanup
-        let _ = std::fs::remove_file(path);
+    // Cleanup
+    let _ = std::fs::remove_file(path);
 
-        // Verify rejection
-        assert!(result.is_err(), "Should reject large ROM file (>32MB)");
-    }
+    // Verify rejection
+    assert!(result.is_err(), "Should reject large ROM file (>32MB)");
+}

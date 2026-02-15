@@ -791,5 +791,4 @@ mod tests {
         // Read word at 0xFFFFFF.
         assert_eq!(bus.read_word(0xFFFFFF), 0xBBEE);
     }
-
 }

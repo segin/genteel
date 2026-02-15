@@ -3,8 +3,9 @@
 //!
 //! Known edge cases and common emulator bugs.
 
-use super::*; use crate::memory::{MemoryInterface, IoInterface};
+use super::*;
 use crate::memory::Memory;
+use crate::memory::{IoInterface, MemoryInterface};
 
 fn z80(program: &[u8]) -> Z80<Box<crate::memory::Memory>, Box<crate::z80::test_utils::TestIo>> {
     let mut m = Memory::new(0x10000);
@@ -434,7 +435,6 @@ fn regression_srl_parity() {
     assert!(c.get_flag(flags::ZERO));
     assert!(c.get_flag(flags::PARITY));
 }
-
 
 // Bug: SBC HL, BC with no carry shouldn't borrow
 #[test]

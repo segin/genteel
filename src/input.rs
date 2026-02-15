@@ -263,6 +263,7 @@ impl InputManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[allow(unused_imports)]
     use proptest::prelude::*;
 
     #[test]
@@ -441,9 +442,15 @@ mod tests {
         // Edge Case 1: Empty script (default InputScript, max_frame = 0)
         let script = InputScript::new();
         manager.set_script(script);
-        assert!(!manager.is_complete(), "Empty script frame 0 should not be complete");
+        assert!(
+            !manager.is_complete(),
+            "Empty script frame 0 should not be complete"
+        );
         manager.advance_frame();
-        assert!(manager.is_complete(), "Empty script frame 1 should be complete");
+        assert!(
+            manager.is_complete(),
+            "Empty script frame 1 should be complete"
+        );
 
         // Edge Case 2: Single frame script at 0
         let script = InputScript::parse("0,........,........").unwrap();

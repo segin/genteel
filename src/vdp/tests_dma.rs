@@ -66,7 +66,10 @@ fn test_dma_fill_vram() {
     // It fills `dma_length` bytes starting at `control_address` (0x0000).
     vdp.write_data(0xAA00);
 
-    assert!(!vdp.dma_pending, "DMA pending should be false after data write");
+    assert!(
+        !vdp.dma_pending,
+        "DMA pending should be false after data write"
+    );
 
     // 7. Verify VRAM
     // Length is 0x10 (16 bytes).
@@ -166,7 +169,7 @@ fn test_dma_fill_via_execute() {
     // First, set the value to be filled.
     // We disable DMA briefly to write to data port without triggering fill immediately.
     vdp.write_control(0x8104); // Disable DMA
-    vdp.write_data(0xBB00);    // last_data_write = 0xBB00
+    vdp.write_data(0xBB00); // last_data_write = 0xBB00
     vdp.write_control(0x8114); // Re-enable DMA
 
     // Now send destination command with DMA bit set (CD5=1).
@@ -186,6 +189,11 @@ fn test_dma_fill_via_execute() {
 
     // 7. Verify VRAM at 0x0100
     for i in 0..0x10 {
-        assert_eq!(vdp.vram[0x0100 + i], 0xBB, "Mismatch at index 0x{:04X}", 0x0100 + i);
+        assert_eq!(
+            vdp.vram[0x0100 + i],
+            0xBB,
+            "Mismatch at index 0x{:04X}",
+            0x0100 + i
+        );
     }
 }

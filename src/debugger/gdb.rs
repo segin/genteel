@@ -3,8 +3,8 @@
 //! Implements a GDB stub for debugging M68k code running in the emulator.
 //! Connect with: `m68k-elf-gdb -ex "target remote :1234"`
 
-use std::collections::HashSet;
 use std::collections::hash_map::RandomState;
+use std::collections::HashSet;
 use std::hash::{BuildHasher, Hasher};
 use std::io::{BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -941,21 +941,32 @@ mod tests {
         assert_eq!(server.process_command("m100,4", &mut regs, &mut mem), "E01");
 
         // Allowed commands work
-        assert!(server.process_command("qSupported", &mut regs, &mut mem).contains("PacketSize"));
+        assert!(server
+            .process_command("qSupported", &mut regs, &mut mem)
+            .contains("PacketSize"));
         assert_eq!(server.process_command("?", &mut regs, &mut mem), "S05");
 
         // Authenticate failure
         // "auth wrong" in hex: 617574682077726f6e67
-        assert_eq!(server.process_command("qRcmd,617574682077726f6e67", &mut regs, &mut mem), "E01");
+        assert_eq!(
+            server.process_command("qRcmd,617574682077726f6e67", &mut regs, &mut mem),
+            "E01"
+        );
         assert!(!server.authenticated);
 
         // Authenticate success
         // "auth secret" in hex: 6175746820736563726574
-        assert_eq!(server.process_command("qRcmd,6175746820736563726574", &mut regs, &mut mem), "OK");
+        assert_eq!(
+            server.process_command("qRcmd,6175746820736563726574", &mut regs, &mut mem),
+            "OK"
+        );
         assert!(server.authenticated);
 
         // Now commands work
-        assert_eq!(server.process_command("g", &mut regs, &mut mem).len(), (8 + 8 + 1 + 1) * 8);
+        assert_eq!(
+            server.process_command("g", &mut regs, &mut mem).len(),
+            (8 + 8 + 1 + 1) * 8
+        );
     }
 
     #[test]
@@ -973,7 +984,9 @@ mod tests {
         assert_eq!(server.process_command("m100,4", &mut regs, &mut mem), "E01");
 
         // Allowed commands work
-        assert!(server.process_command("qSupported", &mut regs, &mut mem).contains("PacketSize"));
+        assert!(server
+            .process_command("qSupported", &mut regs, &mut mem)
+            .contains("PacketSize"));
         assert_eq!(server.process_command("?", &mut regs, &mut mem), "S05");
     }
 }

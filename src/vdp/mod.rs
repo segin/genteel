@@ -58,7 +58,9 @@ impl<'a> Iterator for SpriteIterator<'a> {
             return None;
         }
 
-        let attr = self.vdp.fetch_sprite_attributes(self.sat_base, self.next_idx);
+        let attr = self
+            .vdp
+            .fetch_sprite_attributes(self.sat_base, self.next_idx);
 
         self.count += 1;
         let link = attr.link;
@@ -247,8 +249,7 @@ impl Vdp {
             // Update last_data_write
             if data.len() >= 2 {
                 let last_idx = data.len() - 2;
-                self.last_data_write =
-                    ((data[last_idx] as u16) << 8) | (data[last_idx + 1] as u16);
+                self.last_data_write = ((data[last_idx] as u16) << 8) | (data[last_idx + 1] as u16);
             }
             return;
         }
@@ -266,9 +267,9 @@ impl Vdp {
 
         // DMA Fill (Mode 2) check
         // Enabled (Reg 1 bit 4) AND Mode 2 (Reg 23 bits 7,6 = 1,0) AND DMA Pending (CD5=1)
-        if (self.registers[REG_MODE2] & MODE2_DMA_ENABLE) != 0 
-            && self.is_dma_fill() 
-            && self.dma_pending 
+        if (self.registers[REG_MODE2] & MODE2_DMA_ENABLE) != 0
+            && self.is_dma_fill()
+            && self.dma_pending
         {
             self.execute_dma();
             self.dma_pending = false;
@@ -378,7 +379,8 @@ impl Vdp {
             }
         } else {
             // First word of command
-            self.control_code = ((value >> CTRL_CODE_LOW_SHIFT) & (CTRL_CODE_LOW_MASK as u16)) as u8;
+            self.control_code =
+                ((value >> CTRL_CODE_LOW_SHIFT) & (CTRL_CODE_LOW_MASK as u16)) as u8;
             self.control_address = value & CTRL_ADDR_LO_MASK;
             self.control_pending = true;
         }
@@ -491,15 +493,14 @@ impl Vdp {
         (self.registers[REG_DMA_SRC_HI] & DMA_MODE_MASK) == DMA_MODE_FILL
     }
 
-    pub fn is_dma_fill(&self) -> bool {
-        // Bit 7=1, Bit 6=0
-        (self.registers[23] & 0xC0) == 0x80
-    }
-
     pub fn execute_dma(&mut self) -> u32 {
         let length = self.dma_length();
         // If length is 0, it is treated as 0x10000 (64KB)
-        let len = if length == 0 { 0x10000 } else { length as usize };
+        let len = if length == 0 {
+            0x10000
+        } else {
+            length as usize
+        };
 
         let mode = self.registers[REG_DMA_SRC_HI] & DMA_MODE_MASK;
 
@@ -1015,52 +1016,84 @@ impl Vdp {
 
             if h_flip {
                 let mut col = p3 & 0x0F;
-                if col != 0 { self.framebuffer[dest_idx] = self.cram_cache[palette_base + col as usize]; }
+                if col != 0 {
+                    self.framebuffer[dest_idx] = self.cram_cache[palette_base + col as usize];
+                }
 
                 col = p3 >> 4;
-                if col != 0 { self.framebuffer[dest_idx + 1] = self.cram_cache[palette_base + col as usize]; }
+                if col != 0 {
+                    self.framebuffer[dest_idx + 1] = self.cram_cache[palette_base + col as usize];
+                }
 
                 col = p2 & 0x0F;
-                if col != 0 { self.framebuffer[dest_idx + 2] = self.cram_cache[palette_base + col as usize]; }
+                if col != 0 {
+                    self.framebuffer[dest_idx + 2] = self.cram_cache[palette_base + col as usize];
+                }
 
                 col = p2 >> 4;
-                if col != 0 { self.framebuffer[dest_idx + 3] = self.cram_cache[palette_base + col as usize]; }
+                if col != 0 {
+                    self.framebuffer[dest_idx + 3] = self.cram_cache[palette_base + col as usize];
+                }
 
                 col = p1 & 0x0F;
-                if col != 0 { self.framebuffer[dest_idx + 4] = self.cram_cache[palette_base + col as usize]; }
+                if col != 0 {
+                    self.framebuffer[dest_idx + 4] = self.cram_cache[palette_base + col as usize];
+                }
 
                 col = p1 >> 4;
-                if col != 0 { self.framebuffer[dest_idx + 5] = self.cram_cache[palette_base + col as usize]; }
+                if col != 0 {
+                    self.framebuffer[dest_idx + 5] = self.cram_cache[palette_base + col as usize];
+                }
 
                 col = p0 & 0x0F;
-                if col != 0 { self.framebuffer[dest_idx + 6] = self.cram_cache[palette_base + col as usize]; }
+                if col != 0 {
+                    self.framebuffer[dest_idx + 6] = self.cram_cache[palette_base + col as usize];
+                }
 
                 col = p0 >> 4;
-                if col != 0 { self.framebuffer[dest_idx + 7] = self.cram_cache[palette_base + col as usize]; }
+                if col != 0 {
+                    self.framebuffer[dest_idx + 7] = self.cram_cache[palette_base + col as usize];
+                }
             } else {
                 let mut col = p0 >> 4;
-                if col != 0 { self.framebuffer[dest_idx] = self.cram_cache[palette_base + col as usize]; }
+                if col != 0 {
+                    self.framebuffer[dest_idx] = self.cram_cache[palette_base + col as usize];
+                }
 
                 col = p0 & 0x0F;
-                if col != 0 { self.framebuffer[dest_idx + 1] = self.cram_cache[palette_base + col as usize]; }
+                if col != 0 {
+                    self.framebuffer[dest_idx + 1] = self.cram_cache[palette_base + col as usize];
+                }
 
                 col = p1 >> 4;
-                if col != 0 { self.framebuffer[dest_idx + 2] = self.cram_cache[palette_base + col as usize]; }
+                if col != 0 {
+                    self.framebuffer[dest_idx + 2] = self.cram_cache[palette_base + col as usize];
+                }
 
                 col = p1 & 0x0F;
-                if col != 0 { self.framebuffer[dest_idx + 3] = self.cram_cache[palette_base + col as usize]; }
+                if col != 0 {
+                    self.framebuffer[dest_idx + 3] = self.cram_cache[palette_base + col as usize];
+                }
 
                 col = p2 >> 4;
-                if col != 0 { self.framebuffer[dest_idx + 4] = self.cram_cache[palette_base + col as usize]; }
+                if col != 0 {
+                    self.framebuffer[dest_idx + 4] = self.cram_cache[palette_base + col as usize];
+                }
 
                 col = p2 & 0x0F;
-                if col != 0 { self.framebuffer[dest_idx + 5] = self.cram_cache[palette_base + col as usize]; }
+                if col != 0 {
+                    self.framebuffer[dest_idx + 5] = self.cram_cache[palette_base + col as usize];
+                }
 
                 col = p3 >> 4;
-                if col != 0 { self.framebuffer[dest_idx + 6] = self.cram_cache[palette_base + col as usize]; }
+                if col != 0 {
+                    self.framebuffer[dest_idx + 6] = self.cram_cache[palette_base + col as usize];
+                }
 
                 col = p3 & 0x0F;
-                if col != 0 { self.framebuffer[dest_idx + 7] = self.cram_cache[palette_base + col as usize]; }
+                if col != 0 {
+                    self.framebuffer[dest_idx + 7] = self.cram_cache[palette_base + col as usize];
+                }
             }
 
             screen_x += 8;
@@ -1093,7 +1126,6 @@ impl Vdp {
             }
         }
     }
-
 }
 
 impl Debuggable for Vdp {

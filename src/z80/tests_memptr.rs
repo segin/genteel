@@ -1,7 +1,7 @@
 use super::*;
 use crate::memory::{Memory, MemoryInterface};
 
-fn create_z80(program: &[u8]) -> Z80 {
+fn create_z80(program: &[u8]) -> Z80<Box<Memory>, Box<crate::z80::test_utils::TestIo>> {
     let mut memory = Memory::new(0x10000);
     for (i, &byte) in program.iter().enumerate() {
         memory.write_byte(i as u32, byte);
@@ -21,8 +21,8 @@ fn test_memptr_ld_a_bc() {
 
     let program = [
         0x01, 0x00, 0x28, // LD BC, 0x2800
-        0x0A,             // LD A, (BC)
-        0xCB, 0x46        // BIT 0, (HL)
+        0x0A, // LD A, (BC)
+        0xCB, 0x46, // BIT 0, (HL)
     ];
     let mut z80 = create_z80(&program);
 
@@ -41,8 +41,16 @@ fn test_memptr_ld_a_bc() {
     z80.step();
 
     // Verify X/Y flags
-    assert_eq!(z80.get_flag(flags::X_FLAG), true, "X Flag (bit 3) should be set from MEMPTR high byte (0x28)");
-    assert_eq!(z80.get_flag(flags::Y_FLAG), true, "Y Flag (bit 5) should be set from MEMPTR high byte (0x28)");
+    assert_eq!(
+        z80.get_flag(flags::X_FLAG),
+        true,
+        "X Flag (bit 3) should be set from MEMPTR high byte (0x28)"
+    );
+    assert_eq!(
+        z80.get_flag(flags::Y_FLAG),
+        true,
+        "Y Flag (bit 5) should be set from MEMPTR high byte (0x28)"
+    );
 }
 
 #[test]
@@ -50,8 +58,8 @@ fn test_memptr_ld_a_de() {
     // Test case: LD DE, 0x2800; LD A, (DE); BIT 0, (HL)
     let program = [
         0x11, 0x00, 0x28, // LD DE, 0x2800
-        0x1A,             // LD A, (DE)
-        0xCB, 0x46        // BIT 0, (HL)
+        0x1A, // LD A, (DE)
+        0xCB, 0x46, // BIT 0, (HL)
     ];
     let mut z80 = create_z80(&program);
     z80.write_byte(0x2800, 0x55);
@@ -62,8 +70,16 @@ fn test_memptr_ld_a_de() {
     assert_eq!(z80.a, 0x55);
     z80.step(); // BIT 0, (HL)
 
-    assert_eq!(z80.get_flag(flags::X_FLAG), true, "X Flag should be set from MEMPTR high byte (0x28)");
-    assert_eq!(z80.get_flag(flags::Y_FLAG), true, "Y Flag should be set from MEMPTR high byte (0x28)");
+    assert_eq!(
+        z80.get_flag(flags::X_FLAG),
+        true,
+        "X Flag should be set from MEMPTR high byte (0x28)"
+    );
+    assert_eq!(
+        z80.get_flag(flags::Y_FLAG),
+        true,
+        "Y Flag should be set from MEMPTR high byte (0x28)"
+    );
 }
 
 #[test]
@@ -76,8 +92,8 @@ fn test_memptr_ex_sp_hl() {
     let program = [
         0x21, 0x34, 0x12, // LD HL, 0x1234
         0x31, 0x00, 0x20, // LD SP, 0x2000
-        0xE3,             // EX (SP), HL
-        0xCB, 0x46        // BIT 0, (HL)
+        0xE3, // EX (SP), HL
+        0xCB, 0x46, // BIT 0, (HL)
     ];
     let mut z80 = create_z80(&program);
     z80.write_word(0x2000, 0xABCD);
@@ -88,6 +104,14 @@ fn test_memptr_ex_sp_hl() {
     assert_eq!(z80.hl(), 0xABCD);
     z80.step(); // BIT 0, (HL)
 
-    assert_eq!(z80.get_flag(flags::X_FLAG), true, "X Flag should be set from MEMPTR high byte (0xAB)");
-    assert_eq!(z80.get_flag(flags::Y_FLAG), true, "Y Flag should be set from MEMPTR high byte (0xAB)");
+    assert_eq!(
+        z80.get_flag(flags::X_FLAG),
+        true,
+        "X Flag should be set from MEMPTR high byte (0xAB)"
+    );
+    assert_eq!(
+        z80.get_flag(flags::Y_FLAG),
+        true,
+        "Y Flag should be set from MEMPTR high byte (0xAB)"
+    );
 }

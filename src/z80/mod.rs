@@ -282,9 +282,15 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         self.a = result as u8;
 
         let mut f = 0;
-        if result > 0xFF { f |= flags::CARRY; }
-        if half_carry { f |= flags::HALF_CARRY; }
-        if overflow { f |= flags::PARITY; }
+        if result > 0xFF {
+            f |= flags::CARRY;
+        }
+        if half_carry {
+            f |= flags::HALF_CARRY;
+        }
+        if overflow {
+            f |= flags::PARITY;
+        }
         // ADD_SUB is false (0)
 
         // Inline set_sz_flags logic
@@ -313,9 +319,15 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
 
         let mut f = flags::ADD_SUB;
-        if result > 0xFF { f |= flags::CARRY; }
-        if half_carry { f |= flags::HALF_CARRY; }
-        if overflow { f |= flags::PARITY; }
+        if result > 0xFF {
+            f |= flags::CARRY;
+        }
+        if half_carry {
+            f |= flags::HALF_CARRY;
+        }
+        if overflow {
+            f |= flags::PARITY;
+        }
 
         let res_u8 = result as u8;
         f |= res_u8 & (flags::SIGN | flags::Y_FLAG | flags::X_FLAG);
@@ -389,8 +401,12 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         let result = value.wrapping_add(1);
 
         let mut f = self.f & flags::CARRY; // Preserve Carry
-        if (value & 0x0F) == 0x0F { f |= flags::HALF_CARRY; }
-        if value == 0x7F { f |= flags::PARITY; }
+        if (value & 0x0F) == 0x0F {
+            f |= flags::HALF_CARRY;
+        }
+        if value == 0x7F {
+            f |= flags::PARITY;
+        }
         // ADD_SUB is false (0)
 
         f |= result & (flags::SIGN | flags::Y_FLAG | flags::X_FLAG);
@@ -406,8 +422,12 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         let result = value.wrapping_sub(1);
 
         let mut f = (self.f & flags::CARRY) | flags::ADD_SUB; // Preserve Carry, set N
-        if (value & 0x0F) == 0x00 { f |= flags::HALF_CARRY; }
-        if value == 0x80 { f |= flags::PARITY; }
+        if (value & 0x0F) == 0x00 {
+            f |= flags::HALF_CARRY;
+        }
+        if value == 0x80 {
+            f |= flags::PARITY;
+        }
 
         f |= result & (flags::SIGN | flags::Y_FLAG | flags::X_FLAG);
         if result == 0 {
@@ -1297,7 +1317,11 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 // Rotate/shift
                 let result = self.cb_rotate_shift(val, y);
                 self.set_reg(z, result);
-                if z == 6 { 15 } else { 8 }
+                if z == 6 {
+                    15
+                } else {
+                    8
+                }
             }
             1 => {
                 // BIT y, r
@@ -1313,19 +1337,31 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                     self.set_flag(flags::Y_FLAG, (h_memptr & 0x20) != 0);
                 }
 
-                if z == 6 { 12 } else { 8 }
+                if z == 6 {
+                    12
+                } else {
+                    8
+                }
             }
             2 => {
                 // RES y, r
                 let result = self.cb_res(val, y);
                 self.set_reg(z, result);
-                if z == 6 { 15 } else { 8 }
+                if z == 6 {
+                    15
+                } else {
+                    8
+                }
             }
             3 => {
                 // SET y, r
                 let result = self.cb_set(val, y);
                 self.set_reg(z, result);
-                if z == 6 { 15 } else { 8 }
+                if z == 6 {
+                    15
+                } else {
+                    8
+                }
             }
             _ => 8,
         }
@@ -2036,23 +2072,73 @@ impl<M: MemoryInterface, I: IoInterface> Debuggable for Z80<M, I> {
     }
 
     fn write_state(&mut self, state: &Value) {
-        if let Some(a) = state["a"].as_u64() { self.a = a as u8; }
-        if let Some(f) = state["f"].as_u64() { self.f = f as u8; }
-        if let Some(b) = state["b"].as_u64() { self.b = b as u8; }
-        if let Some(c) = state["c"].as_u64() { self.c = c as u8; }
-        if let Some(d) = state["d"].as_u64() { self.d = d as u8; }
-        if let Some(e) = state["e"].as_u64() { self.e = e as u8; }
-        if let Some(h) = state["h"].as_u64() { self.h = h as u8; }
-        if let Some(l) = state["l"].as_u64() { self.l = l as u8; }
-        if let Some(ix) = state["ix"].as_u64() { self.ix = ix as u16; }
-        if let Some(iy) = state["iy"].as_u64() { self.iy = iy as u16; }
-        if let Some(sp) = state["sp"].as_u64() { self.sp = sp as u16; }
-        if let Some(pc) = state["pc"].as_u64() { self.pc = pc as u16; }
-        if let Some(iff1) = state["iff1"].as_bool() { self.iff1 = iff1; }
-        if let Some(iff2) = state["iff2"].as_bool() { self.iff2 = iff2; }
-        if let Some(im) = state["im"].as_u64() { self.im = im as u8; }
-        if let Some(halted) = state["halted"].as_bool() { self.halted = halted; }
-        if let Some(cycles) = state["cycles"].as_u64() { self.cycles = cycles; }
+        if let Some(a) = state["a"].as_u64() {
+            self.a = a as u8;
+        }
+        if let Some(f) = state["f"].as_u64() {
+            self.f = f as u8;
+        }
+        if let Some(b) = state["b"].as_u64() {
+            self.b = b as u8;
+        }
+        if let Some(c) = state["c"].as_u64() {
+            self.c = c as u8;
+        }
+        if let Some(d) = state["d"].as_u64() {
+            self.d = d as u8;
+        }
+        if let Some(e) = state["e"].as_u64() {
+            self.e = e as u8;
+        }
+        if let Some(h) = state["h"].as_u64() {
+            self.h = h as u8;
+        }
+        if let Some(l) = state["l"].as_u64() {
+            self.l = l as u8;
+        }
+        if let Some(ix) = state["ix"].as_u64() {
+            self.ix = ix as u16;
+        }
+        if let Some(iy) = state["iy"].as_u64() {
+            self.iy = iy as u16;
+        }
+        if let Some(sp) = state["sp"].as_u64() {
+            self.sp = sp as u16;
+        }
+        if let Some(pc) = state["pc"].as_u64() {
+            self.pc = pc as u16;
+        }
+        if let Some(iff1) = state["iff1"].as_bool() {
+            self.iff1 = iff1;
+        }
+        if let Some(iff2) = state["iff2"].as_bool() {
+            self.iff2 = iff2;
+        }
+        if let Some(im) = state["im"].as_u64() {
+            self.im = im as u8;
+        }
+        if let Some(halted) = state["halted"].as_bool() {
+            self.halted = halted;
+        }
+        if let Some(cycles) = state["cycles"].as_u64() {
+            self.cycles = cycles;
+        }
+    }
+}
+
+#[cfg(test)]
+pub mod test_utils {
+    use crate::memory::IoInterface;
+
+    #[derive(Debug, Default)]
+    pub struct TestIo;
+
+    impl IoInterface for TestIo {
+        fn read_port(&mut self, _port: u16) -> u8 {
+            0
+        }
+
+        fn write_port(&mut self, _port: u16, _value: u8) {}
     }
 }
 
