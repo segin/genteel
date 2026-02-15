@@ -205,7 +205,18 @@ impl Memory {
     #[cfg(test)]
     pub fn hex_dump(&self, start: u32, end: u32) -> String {
         use std::fmt::Write;
+<<<<<<< HEAD
+
+        // Pre-allocate capacity to avoid reallocations
+        // Each line is roughly 80 characters (10 addr + 48 hex + 1 space + 16 ascii + 1 newline)
+        let len = (end as u64).saturating_sub(start as u64).saturating_add(1);
+        let lines = (len + 15) / 16;
+        let capacity = (lines * 80) as usize;
+
+        let mut output = String::with_capacity(capacity);
+=======
         let mut output = String::with_capacity((((end - start) as usize / 16) + 1) * 80);
+>>>>>>> main
         for i in (start..=end).step_by(16) {
             write!(output, "{:08x}: ", i).unwrap();
             for j in 0..16 {
