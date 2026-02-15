@@ -6,6 +6,74 @@ use super::addressing::AddressingMode;
 use super::ops::{Instruction, ShiftCount};
 use super::Size;
 
+/// M68k Condition Codes
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Condition {
+    True,
+    False,
+    High,
+    LowOrSame,
+    CarryClear,
+    CarrySet,
+    NotEqual,
+    Equal,
+    OverflowClear,
+    OverflowSet,
+    Plus,
+    Minus,
+    GreaterThanOrEqual,
+    LessThan,
+    GreaterThan,
+    LessThanOrEqual,
+}
+
+impl Condition {
+    /// Decode 4-bit condition code from opcode
+    pub fn from_bits(bits: u8) -> Self {
+        match bits & 0x0F {
+            0b0000 => Condition::True,
+            0b0001 => Condition::False,
+            0b0010 => Condition::High,
+            0b0011 => Condition::LowOrSame,
+            0b0100 => Condition::CarryClear,
+            0b0101 => Condition::CarrySet,
+            0b0110 => Condition::NotEqual,
+            0b0111 => Condition::Equal,
+            0b1000 => Condition::OverflowClear,
+            0b1001 => Condition::OverflowSet,
+            0b1010 => Condition::Plus,
+            0b1011 => Condition::Minus,
+            0b1100 => Condition::GreaterThanOrEqual,
+            0b1101 => Condition::LessThan,
+            0b1110 => Condition::GreaterThan,
+            0b1111 => Condition::LessThanOrEqual,
+            _ => unreachable!(),
+        }
+    }
+
+    /// Returns the mnemonic for this condition
+    pub fn mnemonic(&self) -> &'static str {
+        match self {
+            Condition::True => "T",
+            Condition::False => "F",
+            Condition::High => "HI",
+            Condition::LowOrSame => "LS",
+            Condition::CarryClear => "CC", // or HS
+            Condition::CarrySet => "CS",   // or LO
+            Condition::NotEqual => "NE",
+            Condition::Equal => "EQ",
+            Condition::OverflowClear => "VC",
+            Condition::OverflowSet => "VS",
+            Condition::Plus => "PL",
+            Condition::Minus => "MI",
+            Condition::GreaterThanOrEqual => "GE",
+            Condition::LessThan => "LT",
+            Condition::GreaterThan => "GT",
+            Condition::LessThanOrEqual => "LE",
+        }
+    }
+}
+
 pub fn decode(opcode: u16) -> Instruction {
     match (opcode >> 12) & 0x0F {
         0x0 => decode_0(opcode),

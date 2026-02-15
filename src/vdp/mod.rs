@@ -58,7 +58,9 @@ impl<'a> Iterator for SpriteIterator<'a> {
             return None;
         }
 
-        let attr = self.vdp.fetch_sprite_attributes(self.sat_base, self.next_idx);
+        let attr = self
+            .vdp
+            .fetch_sprite_attributes(self.sat_base, self.next_idx);
 
         self.count += 1;
         let link = attr.link;
@@ -237,8 +239,7 @@ impl Vdp {
             // Update last_data_write
             if data.len() >= 2 {
                 let last_idx = data.len() - 2;
-                self.last_data_write =
-                    ((data[last_idx] as u16) << 8) | (data[last_idx + 1] as u16);
+                self.last_data_write = ((data[last_idx] as u16) << 8) | (data[last_idx + 1] as u16);
             }
             return;
         }
@@ -368,7 +369,8 @@ impl Vdp {
             }
         } else {
             // First word of command
-            self.control_code = ((value >> CTRL_CODE_LOW_SHIFT) & (CTRL_CODE_LOW_MASK as u16)) as u8;
+            self.control_code =
+                ((value >> CTRL_CODE_LOW_SHIFT) & (CTRL_CODE_LOW_MASK as u16)) as u8;
             self.control_address = value & CTRL_ADDR_LO_MASK;
             self.control_pending = true;
         }
@@ -918,6 +920,9 @@ impl Vdp {
         priority_filter: bool,
     ) {
         let (plane_w, plane_h) = self.plane_size();
+        let plane_w_mask = plane_w - 1;
+        let plane_h_mask = plane_h - 1;
+
         let name_table_base = if is_plane_a {
             self.plane_a_address()
         } else {
@@ -927,7 +932,11 @@ impl Vdp {
         let (v_scroll, h_scroll) = self.get_scroll_values(is_plane_a);
 
         let scrolled_v = fetch_line.wrapping_add(v_scroll);
+<<<<<<< HEAD
+        let tile_v = (scrolled_v as usize >> 3) & plane_h_mask;
+=======
         let tile_v = ((scrolled_v as usize) >> 3) & (plane_h - 1);
+>>>>>>> main
         let pixel_v = scrolled_v & 7;
 
         let screen_width = self.screen_width();
@@ -936,6 +945,14 @@ impl Vdp {
         let mut screen_x: u16 = 0;
         let mut scrolled_h = (0u16).wrapping_sub(h_scroll);
 
+<<<<<<< HEAD
+        while screen_x < screen_width {
+            let pixel_h = scrolled_h & 7;
+            let pixels_left_in_tile = 8 - pixel_h;
+            let pixels_to_process = std::cmp::min(pixels_left_in_tile, screen_width - screen_x);
+
+            let tile_h = (scrolled_h as usize >> 3) & plane_w_mask;
+=======
         let plane_mask = plane_w - 1;
 
         // Prologue: Align to 8-pixel boundary
@@ -943,6 +960,7 @@ impl Vdp {
         if pixel_h != 0 {
             let pixels_left = 8 - pixel_h;
             let count = std::cmp::min(pixels_left, screen_width - screen_x);
+>>>>>>> main
 
             let tile_h = ((scrolled_h as usize) >> 3) & plane_mask;
             let entry = self.fetch_nametable_entry(name_table_base, tile_v, tile_h, plane_w);
@@ -1219,6 +1237,8 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+mod bench_render;
 #[cfg(test)]
 mod tests_security;
 

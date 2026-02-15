@@ -78,19 +78,12 @@ impl GdbServer {
         let listener = TcpListener::bind(format!("127.0.0.1:{}", port))?;
         listener.set_nonblocking(true)?;
 
-<<<<<<< HEAD
-        if password.is_some() {
-=======
         let final_password = if let Some(pwd) = password {
->>>>>>> main
             eprintln!(
                 "🔒 GDB Server listening on 127.0.0.1:{}. Protected with password.",
                 port
             );
-<<<<<<< HEAD
-=======
             Some(pwd)
->>>>>>> main
         } else {
             let token = generate_token();
             eprintln!(
