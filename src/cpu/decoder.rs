@@ -622,7 +622,6 @@ pub enum BitSource {
     Register(u8), // Bit number in Dn
 }
 
-
 /// Decode a single M68k instruction from an opcode
 pub fn decode(opcode: u16) -> Instruction {
     let group = ((opcode >> 12) & 0x0F) as usize;
@@ -661,10 +660,16 @@ fn decode_line_f(opcode: u16) -> Instruction {
 }
 
 fn decode_group_0(opcode: u16) -> Instruction {
-    decode_movep(opcode)
-        .or_else(|| decode_bit_dynamic(opcode))
-        .or_else(|| decode_immediate_and_static_bit(opcode))
-        .unwrap_or(Instruction::Unimplemented { opcode })
+    if (opcode & 0x0100) != 0 {
+        decode_movep(opcode)
+            .or_else(|| decode_bit_dynamic(opcode))
+            .unwrap_or(Instruction::Unimplemented { opcode })
+    } else {
+        decode_static_bit(opcode)
+            .or_else(|| decode_ccr_sr_immediate(opcode))
+            .or_else(|| decode_immediate_alu(opcode))
+            .unwrap_or(Instruction::Unimplemented { opcode })
+    }
 }
 
 fn decode_movep(opcode: u16) -> Option<Instruction> {
@@ -714,68 +719,71 @@ fn decode_bit_dynamic(opcode: u16) -> Option<Instruction> {
     None
 }
 
-fn decode_immediate_and_static_bit(opcode: u16) -> Option<Instruction> {
-    // Check for immediate operations and Static Bit Ops
-    let bit8 = (opcode >> 8) & 0x01;
-    if bit8 == 0 {
-        let op = (opcode >> 9) & 0x07;
+fn decode_static_bit(opcode: u16) -> Option<Instruction> {
+    let op = (opcode >> 9) & 0x07;
+    // Static Bit Instructions (Op 4)
+    if op == 0b100 {
         let mode = ((opcode >> 3) & 0x07) as u8;
         let reg = (opcode & 0x07) as u8;
-
-        // Static Bit Instructions (Op 4)
-        if op == 0b100 {
-            if let Some(dst) = AddressingMode::from_mode_reg(mode, reg) {
-                let bit_op = (opcode >> 6) & 0x03;
-                let bit = BitSource::Immediate;
-                return Some(match bit_op {
-                    0b00 => Instruction::Btst { bit, dst },
-                    0b01 => Instruction::Bchg { bit, dst },
-                    0b10 => Instruction::Bclr { bit, dst },
-                    0b11 => Instruction::Bset { bit, dst },
-                    _ => unreachable!(),
-                });
-            }
-        }
-
-        // CCR/SR Immediate Operations - Special case when mode=7, reg=4 (immediate)
-        // 0000 000 0 00 111 100 = ORI to CCR (003C)
-        // 0000 000 0 01 111 100 = ORI to SR  (007C)
-        // 0000 001 0 00 111 100 = ANDI to CCR (023C)
-        // 0000 001 0 01 111 100 = ANDI to SR  (027C)
-        // 0000 101 0 00 111 100 = EORI to CCR (0A3C)
-        // 0000 101 0 01 111 100 = EORI to SR  (0A7C)
-        if mode == 7 && reg == 4 {
-            let size_bits = ((opcode >> 6) & 0x03) as u8;
-            return Some(match (op, size_bits) {
-                (0b000, 0b00) => Instruction::OriToCcr,
-                (0b000, 0b01) => Instruction::OriToSr,
-                (0b001, 0b00) => Instruction::AndiToCcr,
-                (0b001, 0b01) => Instruction::AndiToSr,
-                (0b101, 0b00) => Instruction::EoriToCcr,
-                (0b101, 0b01) => Instruction::EoriToSr,
-                _ => Instruction::Unimplemented { opcode },
+        if let Some(dst) = AddressingMode::from_mode_reg(mode, reg) {
+            let bit_op = (opcode >> 6) & 0x03;
+            let bit = BitSource::Immediate;
+            return Some(match bit_op {
+                0b00 => Instruction::Btst { bit, dst },
+                0b01 => Instruction::Bchg { bit, dst },
+                0b10 => Instruction::Bclr { bit, dst },
+                0b11 => Instruction::Bset { bit, dst },
+                _ => unreachable!(),
             });
-        }
-
-        // Immediate Instructions (ORI, ANDI, SUBI, ADDI, EORI, CMPI)
-        let size_bits = ((opcode >> 6) & 0x03) as u8;
-        if let Some(size) = Size::from_bits(size_bits) {
-            if let Some(dst) = AddressingMode::from_mode_reg(mode, reg) {
-                return Some(match op {
-                    0b000 => Instruction::OrI { size, dst },
-                    0b001 => Instruction::AndI { size, dst },
-                    0b010 => Instruction::SubI { size, dst },
-                    0b011 => Instruction::AddI { size, dst },
-                    0b100 => Instruction::Unimplemented { opcode }, // Handled above
-                    0b101 => Instruction::EorI { size, dst },
-                    0b110 => Instruction::CmpI { size, dst },
-                    _ => Instruction::Unimplemented { opcode },
-                });
-            }
         }
     }
     None
 }
+
+fn decode_ccr_sr_immediate(opcode: u16) -> Option<Instruction> {
+    let mode = ((opcode >> 3) & 0x07) as u8;
+    let reg = (opcode & 0x07) as u8;
+
+    // CCR/SR Immediate Operations - Special case when mode=7, reg=4 (immediate)
+    if mode == 7 && reg == 4 {
+        let op = (opcode >> 9) & 0x07;
+        let size_bits = ((opcode >> 6) & 0x03) as u8;
+        return Some(match (op, size_bits) {
+            (0b000, 0b00) => Instruction::OriToCcr,
+            (0b000, 0b01) => Instruction::OriToSr,
+            (0b001, 0b00) => Instruction::AndiToCcr,
+            (0b001, 0b01) => Instruction::AndiToSr,
+            (0b101, 0b00) => Instruction::EoriToCcr,
+            (0b101, 0b01) => Instruction::EoriToSr,
+            _ => Instruction::Unimplemented { opcode },
+        });
+    }
+    None
+}
+
+fn decode_immediate_alu(opcode: u16) -> Option<Instruction> {
+    // Immediate Instructions (ORI, ANDI, SUBI, ADDI, EORI, CMPI)
+    let size_bits = ((opcode >> 6) & 0x03) as u8;
+    if let Some(size) = Size::from_bits(size_bits) {
+        let op = (opcode >> 9) & 0x07;
+        let mode = ((opcode >> 3) & 0x07) as u8;
+        let reg = (opcode & 0x07) as u8;
+        if let Some(dst) = AddressingMode::from_mode_reg(mode, reg) {
+            return Some(match op {
+                0b000 => Instruction::OrI { size, dst },
+                0b001 => Instruction::AndI { size, dst },
+                0b010 => Instruction::SubI { size, dst },
+                0b011 => Instruction::AddI { size, dst },
+                // 0b100 is bit/CCR ops, handled elsewhere
+                0b101 => Instruction::EorI { size, dst },
+                0b110 => Instruction::CmpI { size, dst },
+                _ => return None,
+            });
+        }
+    }
+    None
+}
+
 fn decode_move_byte(opcode: u16) -> Instruction {
     decode_move(opcode, Size::Byte)
 }
@@ -1407,6 +1415,26 @@ fn decode_add(opcode: u16) -> Instruction {
     Instruction::Unimplemented { opcode }
 }
 
+fn make_shift_instruction(
+    op_type: u8,
+    direction: bool,
+    size: Size,
+    dst: AddressingMode,
+    count: ShiftCount,
+) -> Instruction {
+    match (op_type, direction) {
+        (0b00, false) => Instruction::Asr { size, dst, count },
+        (0b00, true) => Instruction::Asl { size, dst, count },
+        (0b01, false) => Instruction::Lsr { size, dst, count },
+        (0b01, true) => Instruction::Lsl { size, dst, count },
+        (0b10, false) => Instruction::Roxr { size, dst, count },
+        (0b10, true) => Instruction::Roxl { size, dst, count },
+        (0b11, false) => Instruction::Ror { size, dst, count },
+        (0b11, true) => Instruction::Rol { size, dst, count },
+        _ => unreachable!(), // op_type is 2 bits
+    }
+}
+
 fn decode_shifts(opcode: u16) -> Instruction {
     // ASL, ASR, LSL, LSR, ROL, ROR, ROXL, ROXR
 
@@ -1423,49 +1451,13 @@ fn decode_shifts(opcode: u16) -> Instruction {
         let ea_reg = (opcode & 0x07) as u8;
         if let Some(dst) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
             let count = ShiftCount::Immediate(1); // Memory shifts are always by 1
-            return match (op_type, direction) {
-                (0b00, false) => Instruction::Asr {
-                    size: Size::Word,
-                    dst,
-                    count,
-                },
-                (0b00, true) => Instruction::Asl {
-                    size: Size::Word,
-                    dst,
-                    count,
-                },
-                (0b01, false) => Instruction::Lsr {
-                    size: Size::Word,
-                    dst,
-                    count,
-                },
-                (0b01, true) => Instruction::Lsl {
-                    size: Size::Word,
-                    dst,
-                    count,
-                },
-                (0b10, false) => Instruction::Roxr {
-                    size: Size::Word,
-                    dst,
-                    count,
-                },
-                (0b10, true) => Instruction::Roxl {
-                    size: Size::Word,
-                    dst,
-                    count,
-                },
-                (0b11, false) => Instruction::Ror {
-                    size: Size::Word,
-                    dst,
-                    count,
-                },
-                (0b11, true) => Instruction::Rol {
-                    size: Size::Word,
-                    dst,
-                    count,
-                },
-                _ => Instruction::Unimplemented { opcode },
-            };
+            return make_shift_instruction(
+                op_type,
+                direction,
+                Size::Word,
+                dst,
+                count,
+            );
         }
     }
 
@@ -1479,17 +1471,7 @@ fn decode_shifts(opcode: u16) -> Instruction {
         };
         let dst = AddressingMode::DataRegister(reg);
 
-        return match (op_type, direction) {
-            (0b00, false) => Instruction::Asr { size, dst, count },
-            (0b00, true) => Instruction::Asl { size, dst, count },
-            (0b01, false) => Instruction::Lsr { size, dst, count },
-            (0b01, true) => Instruction::Lsl { size, dst, count },
-            (0b10, false) => Instruction::Roxr { size, dst, count },
-            (0b10, true) => Instruction::Roxl { size, dst, count },
-            (0b11, false) => Instruction::Ror { size, dst, count },
-            (0b11, true) => Instruction::Rol { size, dst, count },
-            _ => Instruction::Unimplemented { opcode },
-        };
+        return make_shift_instruction(op_type, direction, size, dst, count);
     }
 
     Instruction::Unimplemented { opcode }

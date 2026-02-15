@@ -1,5 +1,5 @@
-use genteel::memory::{IoInterface, MemoryInterface};
 use genteel::z80::Z80;
+use genteel::memory::{MemoryInterface, IoInterface};
 use std::time::Instant;
 
 #[derive(Debug)]
@@ -9,9 +9,7 @@ struct SimpleMemory {
 
 impl SimpleMemory {
     fn new(size: usize) -> Self {
-        Self {
-            data: vec![0; size],
-        }
+        Self { data: vec![0; size] }
     }
 }
 
@@ -36,15 +34,14 @@ impl MemoryInterface for SimpleMemory {
     fn read_long(&mut self, _address: u32) -> u32 {
         0
     }
-    fn write_long(&mut self, _address: u32, _value: u32) {}
+    fn write_long(&mut self, _address: u32, _value: u32) {
+    }
 }
 
 #[derive(Debug)]
 struct SimpleIo;
 impl IoInterface for SimpleIo {
-    fn read_port(&mut self, _port: u16) -> u8 {
-        0
-    }
+    fn read_port(&mut self, _port: u16) -> u8 { 0 }
     fn write_port(&mut self, _port: u16, _value: u8) {}
 }
 
@@ -60,25 +57,24 @@ fn main() {
     mem.write_byte(2, 0x00);
     mem.write_byte(3, 0x00);
 
-    // Optimized: Using concrete types
-    let mut z80 = Z80::new(mem, SimpleIo);
+    // Baseline: Using Box<dyn Trait> to force dynamic dispatch
+    let mem: Box<dyn MemoryInterface> = Box::new(mem);
+    let io: Box<dyn IoInterface> = Box::new(SimpleIo);
+
+    let mut z80 = Z80::new(mem, io);
     z80.a = 0xFF;
 
     // Warmup
     for _ in 0..1000 {
         z80.step();
-        if z80.pc == 4 {
-            z80.pc = 0;
-        }
+        if z80.pc == 4 { z80.pc = 0; }
     }
 
     let start = Instant::now();
     let iterations = 100_000_000;
     for _ in 0..iterations {
-        z80.step();
-        if z80.pc == 4 {
-            z80.pc = 0;
-        }
+         z80.step();
+         if z80.pc == 4 { z80.pc = 0; }
     }
     let duration = start.elapsed();
     println!("Time taken: {:?}", duration);
