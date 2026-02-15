@@ -117,7 +117,7 @@ impl Bus {
 
             // Z80 Address Space: 0xA00000-0xA0FFFF
             0xA00000..=0xA01FFF => {
-                // Z80 RAM (8KB)
+                // Z80 RAM (8KB) - Only accessible if Z80 bus is requested (Z80 stopped)
                 if self.z80_bus_request {
                     self.z80_ram[(addr & 0x1FFF) as usize]
                 } else {
@@ -193,6 +193,7 @@ impl Bus {
 
             // Z80 RAM
             0xA00000..=0xA01FFF => {
+                // Only accessible if Z80 bus is requested (Z80 stopped)
                 if self.z80_bus_request {
                     self.z80_ram[(addr & 0x1FFF) as usize] = value;
                 }
@@ -383,9 +384,9 @@ impl Bus {
             }
         }
 
-        let high = self.read_word(address) as u32;
-        let low = self.read_word(address.wrapping_add(2)) as u32;
-        (high << 16) | low
+        let high = self.read_word(address);
+        let low = self.read_word(address.wrapping_add(2));
+        byte_utils::join_u32_words(high, low)
     }
 
     /// Write a long word (32-bit, big-endian) to the memory map
@@ -405,8 +406,9 @@ impl Bus {
             }
         }
 
-        self.write_word(address, (value >> 16) as u16);
-        self.write_word(address.wrapping_add(2), value as u16);
+        let (high, low) = byte_utils::split_u32_to_words(value);
+        self.write_word(address, high);
+        self.write_word(address.wrapping_add(2), low);
     }
     // === DMA ===
 
@@ -450,6 +452,11 @@ impl Bus {
         }
 
         if !self.vdp.is_dma_transfer() {
+            if self.vdp.is_dma_fill() {
+                // VRAM Fill (Mode 2) waits for data port write.
+                // Do not execute yet, and keep dma_pending true.
+                return;
+            }
             self.vdp.execute_dma();
             self.vdp.dma_pending = false;
             return;
@@ -617,7 +624,7 @@ mod tests {
         let mut bus = Bus::new();
 
         // Request Z80 bus
-        bus.z80_bus_request = true;
+        bus.write_byte(0xA11100, 0x01);
 
         bus.write_byte(0xA00000, 0x55);
         assert_eq!(bus.read_byte(0xA00000), 0x55);
@@ -787,4 +794,68 @@ mod tests {
         assert_eq!(bus.read_word(0xFFFFFF), 0xBBEE);
     }
 
+    #[test]
+    fn test_z80_bank_register_logic() {
+        let mut bus = Bus::new();
+
+        // Initial state
+        assert_eq!(bus.z80_bank_addr, 0);
+        assert_eq!(bus.z80_bank_bit, 0);
+
+        let bits = [1, 0, 1, 1, 0, 0, 1, 1, 1];
+
+        for (i, &bit) in bits.iter().enumerate() {
+            // Write to 0xA06000 (Z80 Bank Register)
+            bus.write_byte(0xA06000 + (i as u32 % 0x100), bit);
+            assert_eq!(bus.z80_bank_bit, ((i + 1) % 9) as u8);
+        }
+
+        assert_eq!(bus.z80_bank_addr, 0xE68000);
+
+        // Verify wrap-around behavior
+        bus.write_byte(0xA06000, 0);
+        assert_eq!(bus.z80_bank_addr, 0xE60000);
+        assert_eq!(bus.z80_bank_bit, 1);
+
+        // Verify Reset clears bank bit index
+        bus.write_byte(0xA11200, 0x00);
+        assert!(bus.z80_reset);
+        assert_eq!(bus.z80_bank_bit, 0);
+    }
+
+    #[test]
+    fn test_work_ram_wrapping_word() {
+        let mut bus = Bus::new();
+
+        // 1. Load a dummy ROM to control what is at 0x000000
+        let rom_data = vec![0xCD];
+        bus.load_rom(&rom_data);
+
+        // 2. Setup initial RAM state
+        bus.work_ram[0xFFFF] = 0x12;
+        bus.work_ram[0x0000] = 0x34;
+
+        // 3. Test wrapping at 0xE0FFFF (end of first 64KB mirror)
+        // Should read 0xFFFF (0x12) and 0x0000 (0x34)
+        assert_eq!(bus.read_word(0xE0FFFF), 0x1234);
+
+        // 4. Test writing across boundary at 0xE0FFFF
+        bus.write_word(0xE0FFFF, 0x5678);
+        assert_eq!(bus.work_ram[0xFFFF], 0x56);
+        assert_eq!(bus.work_ram[0x0000], 0x78);
+
+        // 5. Test wrapping at 0xFFFFFF (end of RAM space)
+        // Should read 0xFFFF (0x56) and ROM[0] (0xCD)
+        // Set RAM[0xFFFF] to a distinct value
+        bus.work_ram[0xFFFF] = 0xAB;
+        // ROM[0] is 0xCD
+
+        assert_eq!(bus.read_word(0xFFFFFF), 0xABCD);
+
+        // 6. Test writing at 0xFFFFFF
+        // Should write high byte to RAM[0xFFFF], low byte to ROM[0] (ignored)
+        bus.write_word(0xFFFFFF, 0xAABB);
+        assert_eq!(bus.work_ram[0xFFFF], 0xAA);
+        assert_eq!(bus.rom[0], 0xCD); // ROM write ignored
+    }
 }

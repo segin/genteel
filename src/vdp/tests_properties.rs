@@ -20,7 +20,7 @@ proptest! {
         // Set CRAM color: ----BBB-GGG-RRR-
         let cram_value = ((b as u16) << 9) | ((g as u16) << 5) | ((r as u16) << 1);
         let addr = ((palette as usize) << 5) | ((color as usize) << 1);
-        
+
         // Use write_control/write_data to ensure cache is updated
         vdp.write_control(0xC000 | (addr as u16));
         vdp.write_control(0x0000);
