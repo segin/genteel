@@ -59,6 +59,7 @@ const DMA_TYPE_BIT: u8 = 0x80; // 0=Transfer, 1=Fill/Copy
 const STATUS_VBLANK: u16 = 0x0008;
 const STATUS_VINT_PENDING: u16 = 0x0080;
 
+#[derive(Clone, Copy, Debug)]
 struct SpriteAttributes {
     v_pos: u16,
     h_pos: u16,
@@ -171,6 +172,9 @@ pub struct Vdp {
 
     /// Framebuffer (320x240 RGB565)
     pub framebuffer: Vec<u16>,
+
+    /// Reused buffer for sprite rendering to avoid allocation
+    sprite_buffer: Vec<SpriteAttributes>,
 }
 
 impl Default for Vdp {
@@ -199,6 +203,7 @@ impl Vdp {
             v30_offset: 0,
             is_pal: false,
             framebuffer: vec![0; 320 * 240],
+            sprite_buffer: Vec::with_capacity(80),
         }
     }
 
@@ -772,18 +777,23 @@ impl Vdp {
         let screen_width = self.screen_width();
         let line_offset = (draw_line as usize) * 320;
 
-        let sprites: Vec<_> = self.sprite_iter().collect();
+        // reuse sprite_buffer to avoid allocation
+        let mut sprites = std::mem::take(&mut self.sprite_buffer);
+        sprites.clear();
+        sprites.extend(self.sprite_iter());
 
-        for attr in sprites {
+        for attr in &sprites {
             // Check if sprite is visible on this line
             let sprite_v_px = (attr.v_size as u16) * 8;
             if attr.priority == priority_filter
                 && fetch_line >= attr.v_pos
                 && fetch_line < attr.v_pos + sprite_v_px
             {
-                self.render_sprite_scanline(fetch_line, &attr, line_offset, screen_width);
+                self.render_sprite_scanline(fetch_line, attr, line_offset, screen_width);
             }
         }
+
+        self.sprite_buffer = sprites;
     }
 
     fn render_plane(
@@ -800,17 +810,11 @@ impl Vdp {
             self.plane_b_address()
         };
 
-        // Get vertical scroll
-        let vs_addr = if is_plane_a { 0 } else { 2 };
-        let v_scroll =
-            (((self.vsram[vs_addr] as u16) << 8) | (self.vsram[vs_addr + 1] as u16)) & 0x03FF;
+        let (v_scroll, h_scroll) = (
+            (((self.vsram[if is_plane_a { 0 } else { 2 }] as u16) << 8) | (self.vsram[if is_plane_a { 1 } else { 3 }] as u16)) & 0x03FF,
+            (((self.vram[self.hscroll_address() + if is_plane_a { 0 } else { 2 }] as u16) << 8) | (self.vram[self.hscroll_address() + if is_plane_a { 1 } else { 3 }] as u16)) & 0x03FF
+        );
 
-        // Get horizontal scroll (per-screen for now)
-        let hs_base = self.hscroll_address();
-        let hs_addr = if is_plane_a { hs_base } else { hs_base + 2 };
-        let hi = self.vram[hs_addr];
-        let lo = self.vram[hs_addr + 1];
-        let h_scroll = (((hi as u16) << 8) | (lo as u16)) & 0x03FF;
         let scrolled_v = fetch_line.wrapping_add(v_scroll);
         let tile_v = (scrolled_v as usize / 8) % plane_h;
         let pixel_v = scrolled_v % 8;
@@ -1221,7 +1225,7 @@ mod tests {
         // Verify internal state
         assert_eq!(vdp2.line_counter, 42);
         assert_eq!(vdp2.last_data_write, 0xCAFE);
-        assert_eq!(vdp2.v_counter, 0x78); // Should be 0x78 from state["v_counter"]
+        assert_eq!(vdp2.v_counter, 0x78);
         assert_eq!(vdp2.v30_offset, 123);
         assert_eq!(vdp2.is_pal, true);
 

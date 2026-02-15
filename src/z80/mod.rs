@@ -2080,6 +2080,10 @@ impl<M: MemoryInterface, I: IoInterface> Debuggable for Z80<M, I> {
     }
 }
 
+<<<<<<< HEAD
+// #[cfg(test)]
+mod tests;
+=======
 pub mod test_utils;
 
 #[cfg(test)]
@@ -2103,57 +2107,63 @@ pub mod test_utils;
 
 #[cfg(test)]
 mod tests;
+>>>>>>> main
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_alu;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_cb;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_control;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_load;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_regression;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_undoc;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_exhaustive;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_block;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_halfcarry;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_interrupt;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_reset;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_rrd_rld;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_timing;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_torture;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_gaps;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_memptr;
 
+<<<<<<< HEAD
+// #[cfg(test)]
+mod tests_ddcb;
+=======
 #[cfg(test)]
 mod tests_ddcb;
 
 #[cfg(test)]
 mod tests_ex_sp_hl_expanded;
+>>>>>>> main
