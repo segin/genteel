@@ -24,6 +24,7 @@ const VSRAM_READ: u8 = 0x04;
 const VSRAM_WRITE: u8 = 0x05;
 const CRAM_READ: u8 = 0x08;
 
+#[derive(Debug, Clone, Copy, Default)]
 struct SpriteAttributes {
     v_pos: u16,
     h_pos: u16,
@@ -699,18 +700,31 @@ impl Vdp {
             return;
         }
 
+        // Collect sprites once per scanline
+        let mut sprites = [SpriteAttributes::default(); 80];
+        let mut count = 0;
+        for attr in self.sprite_iter() {
+            sprites[count] = attr;
+            count += 1;
+            if count >= 80 {
+                break;
+            }
+        }
+        let active_sprites = &sprites[..count];
+
         // Plane rendering (Low priority)
         self.render_plane(false, fetch_line, draw_line, false); // Plane B low
         self.render_plane(true, fetch_line, draw_line, false); // Plane A low
 
         // Sprites low priority
-        self.render_sprites(fetch_line, draw_line, false);
+        self.render_sprites(fetch_line, draw_line, false, active_sprites);
 
         // Plane rendering (High priority)
         self.render_plane(false, fetch_line, draw_line, true); // Plane B high
         self.render_plane(true, fetch_line, draw_line, true); // Plane A high
-                                                              // Sprites high priority
-        self.render_sprites(fetch_line, draw_line, true);
+
+        // Sprites high priority
+        self.render_sprites(fetch_line, draw_line, true, active_sprites);
     }
 
     fn sprite_iter(&self) -> SpriteIterator<'_> {
@@ -838,11 +852,15 @@ impl Vdp {
         }
     }
 
-    fn render_sprites(&mut self, fetch_line: u16, draw_line: u16, priority_filter: bool) {
+    fn render_sprites(
+        &mut self,
+        fetch_line: u16,
+        draw_line: u16,
+        priority_filter: bool,
+        sprites: &[SpriteAttributes],
+    ) {
         let screen_width = self.screen_width();
         let line_offset = (draw_line as usize) * 320;
-
-        let sprites: Vec<_> = self.sprite_iter().collect();
 
         for attr in sprites {
             // Check if sprite is visible on this line
@@ -851,7 +869,7 @@ impl Vdp {
                 && fetch_line >= attr.v_pos
                 && fetch_line < attr.v_pos + sprite_v_px
             {
-                self.render_sprite_scanline(fetch_line, &attr, line_offset, screen_width);
+                self.render_sprite_scanline(fetch_line, attr, line_offset, screen_width);
             }
         }
     }
