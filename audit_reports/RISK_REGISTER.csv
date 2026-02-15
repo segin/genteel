@@ -1,9 +1,0 @@
-ID,Title,Severity,File,Line,Status
-F-001,Potential Secret: Private Key,Critical,audit_tool.py,174,Open
-F-002,Unsafe Rust Code,Medium,src/memory/bus.rs,275,Open
-F-003,Unsafe Rust Code,Medium,src/memory/bus.rs,276,Open
-F-004,Unsafe Rust Code,Medium,src/memory/bus.rs,365,Open
-F-005,Unsafe Rust Code,Medium,src/memory/bus.rs,366,Open
-F-006,Unsafe Rust Code,Medium,src/memory/bus.rs,367,Open
-F-007,Unsafe Rust Code,Medium,src/memory/bus.rs,368,Open
-F-008,Test Failure,High,,,Open
