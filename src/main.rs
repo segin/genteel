@@ -226,7 +226,7 @@ impl Emulator {
     }
 
     fn debug_log_frame(&self) {
-        if self.internal_frame_count.is_multiple_of(60) || self.internal_frame_count < 5 {
+        if self.internal_frame_count % 60 == 0 || self.internal_frame_count < 5 {
             let bus = self.bus.borrow();
             let disp_en = bus.vdp.display_enabled();
             let dma_en = bus.vdp.dma_enabled();
@@ -294,13 +294,8 @@ impl Emulator {
                     drop(bus);
 
                     if pending_cycles > 0 {
-                        self.sync_z80(
-                            pending_cycles,
-                            line,
-                            active_lines,
-                            cycles_scanline + pending_cycles,
-                            z80_cycle_debt,
-                        );
+                        let trigger_vint = line == active_lines && cycles_scanline < 10;
+                        self.sync_z80(pending_cycles, trigger_vint, z80_cycle_debt);
                         cycles_scanline += pending_cycles;
                     }
                     break;
@@ -323,13 +318,8 @@ impl Emulator {
                         bus.z80_reset = initial_rst;
                         drop(bus);
 
-                        self.sync_z80(
-                            cycles_before,
-                            line,
-                            active_lines,
-                            cycles_scanline + cycles_before,
-                            z80_cycle_debt,
-                        );
+                        let trigger_vint = line == active_lines && cycles_scanline < 10;
+                        self.sync_z80(cycles_before, trigger_vint, z80_cycle_debt);
                         cycles_scanline += cycles_before;
 
                         // Restore new state
@@ -342,13 +332,8 @@ impl Emulator {
                     }
 
                     // Sync current instruction with new state
-                    self.sync_z80(
-                        m68k_cycles,
-                        line,
-                        active_lines,
-                        cycles_scanline + m68k_cycles,
-                        z80_cycle_debt,
-                    );
+                    let trigger_vint = line == active_lines && cycles_scanline < 10;
+                    self.sync_z80(m68k_cycles, trigger_vint, z80_cycle_debt);
                     cycles_scanline += m68k_cycles;
 
                     // Break inner loop (pending_cycles handled)
@@ -361,9 +346,7 @@ impl Emulator {
     fn sync_z80(
         &mut self,
         m68k_cycles: u32,
-        line: u16,
-        active_lines: u16,
-        cycles_scanline: u32,
+        trigger_vint: bool,
         z80_cycle_debt: &mut f32,
     ) {
         const Z80_CYCLES_PER_M68K_CYCLE: f32 = 3.58 / 7.67;
@@ -402,7 +385,7 @@ impl Emulator {
         }
 
         // Trigger Z80 VInt at start of VBlank
-        if line == active_lines && cycles_scanline < m68k_cycles + 5 && !z80_is_reset {
+        if trigger_vint && !z80_is_reset {
             self.z80.trigger_interrupt(0xFF);
         }
 
