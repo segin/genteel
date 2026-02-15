@@ -440,9 +440,15 @@ mod tests {
         // Edge Case 1: Empty script (default InputScript, max_frame = 0)
         let script = InputScript::new();
         manager.set_script(script);
-        assert!(!manager.is_complete(), "Empty script frame 0 should not be complete");
+        assert!(
+            !manager.is_complete(),
+            "Empty script frame 0 should not be complete"
+        );
         manager.advance_frame();
-        assert!(manager.is_complete(), "Empty script frame 1 should be complete");
+        assert!(
+            manager.is_complete(),
+            "Empty script frame 1 should be complete"
+        );
 
         // Edge Case 2: Single frame script at 0
         let script = InputScript::parse("0,........,........").unwrap();
@@ -568,6 +574,62 @@ mod tests {
         let result = InputScript::parse(content);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "Line 1: invalid frame number");
+    }
+
+    #[test]
+    fn test_parse_whitespace_robustness() {
+        let script = InputScript::parse(" 10 , ....A... , .....B.. ").unwrap();
+        let frame = script.get(10).unwrap();
+        assert!(frame.p1.a);
+        assert!(frame.p2.b);
+    }
+
+    #[test]
+    fn test_parse_comments_and_empty_lines() {
+        let script = InputScript::parse(
+            "
+            # Comment 1
+            10, ....A..., ........
+
+            # Comment 2
+            20, .....B.., ........
+        ",
+        )
+        .unwrap();
+
+        assert_eq!(script.max_frame, 20);
+        assert!(script.get(10).unwrap().p1.a);
+        assert!(script.get(20).unwrap().p1.b);
+    }
+
+    #[test]
+    fn test_parse_error_line_numbering() {
+        let content = "
+            # Line 2 (comment)
+            10, ....A..., ........
+
+            invalid_frame, ....A..., ........
+        ";
+        let err = InputScript::parse(content).unwrap_err();
+        assert!(err.contains("Line 5: invalid frame number"));
+    }
+
+    #[test]
+    fn test_parse_extra_fields() {
+        // Extra fields should be ignored based on split(',') logic
+        let script = InputScript::parse("10, ....A..., ........, extra_field").unwrap();
+        let frame = script.get(10).unwrap();
+        assert!(frame.p1.a);
+    }
+
+    #[test]
+    fn test_parse_empty_buttons() {
+        // "10,," -> split gives ["10", "", ""]
+        // parse_buttons("") should return default state (all false)
+        let script = InputScript::parse("10,,").unwrap();
+        let frame = script.get(10).unwrap();
+        assert!(!frame.p1.a);
+        assert!(!frame.p2.a);
     }
 
     #[test]
