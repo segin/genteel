@@ -1,11 +1,14 @@
 #![allow(unused_imports)]
 //! Property-based tests for Z80 CPU using proptest
 
-use super::*; use crate::memory::{MemoryInterface, IoInterface};
+use super::*;
 use crate::memory::Memory;
+use crate::memory::{IoInterface, MemoryInterface};
 use proptest::prelude::*;
 
-fn create_z80_with_program(program: &[u8]) -> Z80<Box<crate::memory::Memory>, Box<crate::z80::test_utils::TestIo>> {
+fn create_z80_with_program(
+    program: &[u8],
+) -> Z80<Box<crate::memory::Memory>, Box<crate::z80::test_utils::TestIo>> {
     let mut memory = Memory::new(0x10000);
     for (i, &byte) in program.iter().enumerate() {
         memory.data[i] = byte;
@@ -279,6 +282,18 @@ proptest! {
         z80.set_bc(0x0000);
         z80.step(); // POP
         prop_assert_eq!(z80.bc(), val);
+        prop_assert_eq!(z80.sp, 0x8000);
+    }
+
+    #[test]
+    fn prop_push_pop_af_roundtrip(val in 0u16..=0xFFFF) {
+        let mut z80 = create_z80_with_program(&[0xF5, 0xF1]); // PUSH AF, POP AF
+        z80.sp = 0x8000;
+        z80.set_af(val);
+        z80.step(); // PUSH
+        z80.set_af(0x0000);
+        z80.step(); // POP
+        prop_assert_eq!(z80.af(), val);
         prop_assert_eq!(z80.sp, 0x8000);
     }
 
