@@ -1,7 +1,7 @@
 use crate::memory::IoInterface;
 
-#[derive(Default, Debug)]
-pub struct TestIo {}
+#[derive(Debug, Default)]
+pub struct TestIo;
 
 impl IoInterface for TestIo {
     fn read_port(&mut self, _port: u16) -> u8 {
