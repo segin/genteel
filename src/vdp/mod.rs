@@ -1245,3 +1245,6 @@ mod tests {
 
 #[cfg(test)]
 mod tests_security;
+
+#[cfg(test)]
+mod tests_bulk_write;
