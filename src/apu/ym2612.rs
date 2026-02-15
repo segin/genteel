@@ -279,6 +279,31 @@ mod tests {
     }
 
     #[test]
+    fn test_frequency_setting_bank1() {
+        let mut ym = Ym2612::new();
+
+        // Set Ch4 Frequency (Bank 1, Channel 0)
+        // This corresponds to channel index 3 in get_frequency.
+        // Bank 1 registers are accessed via port 1 (write_addr1/write_data1).
+        // F-Num low = 0x55 (Reg 0xA0)
+        // Block/F-Num high = 0x22 (Reg 0xA4) -> Block 4, F-Num high 2
+        ym.write_addr1(0xA0);
+        ym.write_data1(0x55);
+        ym.write_addr1(0xA4);
+        ym.write_data1(0x22); // 001 00010 (Block 4, Hi 2)
+
+        let (block, f_num) = ym.get_frequency(3); // Channel 3 is first channel of Bank 1
+        // Reg 0xA4 = 0x22 = 0010 0010. Bits 5-3 are Block (100 = 4). Bits 2-0 are F-High (010 = 2).
+        assert_eq!(block, 4);
+        assert_eq!(f_num, 0x255); // 0x200 | 0x55
+
+        // Verify isolation: Bank 0 Channel 0 (index 0) should be 0
+        let (block0, f_num0) = ym.get_frequency(0);
+        assert_eq!(block0, 0);
+        assert_eq!(f_num0, 0);
+    }
+
+    #[test]
     fn test_frequency_setting() {
         let mut ym = Ym2612::new();
 
@@ -419,10 +444,8 @@ mod tests {
     }
 
     #[test]
-    fn test_frequency_setting_bank1() {
+    fn test_frequency_setting_bank1_offset1() {
         let mut ym = Ym2612::new();
-
-        // Set Ch4 Frequency (Bank 1, offset 1)
         // This corresponds to channel index 4 in get_frequency.
         // Registers are in Bank 1.
         // Base for Bank 1 (offset 1) is:
@@ -464,7 +487,11 @@ mod tests {
 
         // Step for 31 68k cycles (31 * 7 = 217 Master Cycles)
         ym.step(31);
-        assert_eq!(ym.read_status() & 0x80, 0x80, "Should still be busy at 31 cycles");
+        assert_eq!(
+            ym.read_status() & 0x80,
+            0x80,
+            "Should still be busy at 31 cycles"
+        );
 
         // Step 1 more cycle (total 32 * 7 = 224)
         ym.step(1);
