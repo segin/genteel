@@ -32,7 +32,10 @@ def scan_text_patterns():
     secret_patterns = {
         "Generic Secret": re.compile(r"(?i)secret\s*[:=]\s*['\"]"),
         "API Key": re.compile(r"(?i)api[_-]?key\s*[:=]\s*['\"]"),
-        "Password": re.compile(r"(?i)password\s*[:=]\s*['\"]")
+        "Password": re.compile(r"(?i)password\s*[:=]\s*['\"]"),
+        "AWS Key": re.compile(r"AKIA[0-9A-Z]{16}"),
+        "Private Key": re.compile(r"-----BEGIN .* PRIVATE KEY-----"),
+        "Generic Token": re.compile(r"token\s*=\s*['\"][a-zA-Z0-9]{20,}['\"]")
     }
     
     files = []
@@ -43,6 +46,7 @@ def scan_text_patterns():
                 files.append(os.path.join(root, f))
 
     todo_pattern = re.compile(r"(TODO|FIXME|XXX):")
+    unsafe_pattern = re.compile(r"unsafe\s*\{")
 
     for f in files:
         if not os.path.exists(f): continue
@@ -68,6 +72,16 @@ def scan_text_patterns():
                             title="Technical Debt",
                             severity="Low",
                             description="Unresolved TODO/FIXME/XXX tag",
+                            file_path=f,
+                            line_number=i+1
+                        )
+
+                    # Unsafe Code
+                    if unsafe_pattern.search(line_content):
+                        add_finding(
+                            title="Unsafe Code",
+                            severity="Medium",
+                            description="Manual audit required for unsafe block",
                             file_path=f,
                             line_number=i+1
                         )
