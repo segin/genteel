@@ -766,25 +766,6 @@ impl Vdp {
         let tile_v_offset = fetch_py / 8;
         let pixel_v = fetch_py % 8;
 
-<<<<<<< HEAD
-        let sprite_h_tiles = attr.h_size as u16;
-
-        for t in 0..sprite_h_tiles {
-            // Determine which tile column we are fetching from the sprite definition
-            let fetch_tile_idx = if attr.h_flip {
-                (sprite_h_tiles - 1) - t
-            } else {
-                t
-            };
-
-            // In a multi-tile sprite, tiles are arranged vertically first
-            let tile_idx = attr.base_tile + (fetch_tile_idx * attr.v_size as u16) + tile_v_offset;
-
-            // Calculate row address for this tile
-            let row_addr = (tile_idx as usize * 32) + (pixel_v as usize * 4);
-
-            // Bounds check for the row
-=======
         // Iterate by tiles instead of pixels for efficiency
         for t_h in 0..attr.h_size {
             let tile_h_offset = t_h as u16;
@@ -805,24 +786,10 @@ impl Vdp {
             let row_addr = (tile_idx as usize * 32) + (pixel_v as usize * 4);
 
             // Check if row is within VRAM bounds
->>>>>>> main
             if row_addr + 4 > 0x10000 {
                 continue;
             }
 
-<<<<<<< HEAD
-            // Prefetch the 4 bytes of pattern data for this row
-            let p0 = self.vram[row_addr];
-            let p1 = self.vram[row_addr + 1];
-            let p2 = self.vram[row_addr + 2];
-            let p3 = self.vram[row_addr + 3];
-            let patterns = [p0, p1, p2, p3];
-
-            for i in 0..8 {
-                let px_in_sprite = t * 8 + i;
-                let screen_x = attr.h_pos.wrapping_add(px_in_sprite);
-
-=======
             // Prefetch the 4 bytes (8 pixels) for this row
             // We use wrapping arithmetic for safety although checks above should prevent OOB
             let p0 = self.vram[row_addr];
@@ -835,23 +802,14 @@ impl Vdp {
 
             for i in 0..8 {
                 let screen_x = base_screen_x.wrapping_add(i);
->>>>>>> main
                 if screen_x >= screen_width {
                     continue;
                 }
 
-<<<<<<< HEAD
-                // Pixel index within the tile (0-7)
-                let sub_px = if attr.h_flip { 7 - i } else { i };
-
-                let byte = patterns[sub_px as usize / 2];
-                let color_idx = if sub_px % 2 == 0 {
-=======
                 let eff_col = if attr.h_flip { 7 - i } else { i };
 
                 let byte = patterns[(eff_col as usize) / 2];
                 let color_idx = if eff_col % 2 == 0 {
->>>>>>> main
                     byte >> 4
                 } else {
                     byte & 0x0F
@@ -979,7 +937,6 @@ impl Vdp {
         let mut scrolled_h = (0u16).wrapping_sub(h_scroll);
 
         let plane_mask = plane_w - 1;
-        let row_base = name_table_base + (tile_v * plane_w) * 2;
 
         // Prologue: Align to 8-pixel boundary
         let pixel_h = scrolled_h & 7;
@@ -1111,7 +1068,7 @@ impl Vdp {
                     palette,
                     h_flip,
                     0,
-                    count,
+                    count as u16,
                     line_offset + screen_x as usize,
                 );
             }
