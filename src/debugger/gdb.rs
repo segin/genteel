@@ -976,4 +976,26 @@ mod tests {
         assert!(server.process_command("qSupported", &mut regs, &mut mem).contains("PacketSize"));
         assert_eq!(server.process_command("?", &mut regs, &mut mem), "S05");
     }
+
+    #[test]
+    fn test_write_registers_validation() {
+        let mut server = GdbServer {
+            listener: TcpListener::bind("127.0.0.1:0").unwrap(),
+            client: None,
+            breakpoints: HashSet::new(),
+            stop_reason: StopReason::Halted,
+            no_ack_mode: false,
+            password: None,
+            authenticated: true,
+        };
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+
+        // Test with very short data
+        assert_eq!(server.process_command("G00", &mut regs, &mut mem), "E01");
+
+        // Test with 71 chars (one less than the current check of 72)
+        let data = "0".repeat(71);
+        assert_eq!(server.process_command(&format!("G{}", data), &mut regs, &mut mem), "E01");
+    }
 }
