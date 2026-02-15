@@ -3,18 +3,16 @@
 //!
 //! Known edge cases and common emulator bugs.
 
-use super::*; use crate::memory::{MemoryInterface, IoInterface};
+use super::*;
 use crate::memory::Memory;
+use crate::memory::{IoInterface, MemoryInterface};
 
-fn z80(program: &[u8]) -> Z80<Box<crate::memory::Memory>, Box<crate::z80::test_utils::TestIo>> {
+fn z80(program: &[u8]) -> Z80<crate::memory::Memory, crate::z80::test_utils::TestIo> {
     let mut m = Memory::new(0x10000);
     for (i, &b) in program.iter().enumerate() {
         m.data[i] = b;
     }
-    Z80::new(
-        Box::new(m),
-        Box::new(crate::z80::test_utils::TestIo::default()),
-    )
+    Z80::new(m, crate::z80::test_utils::TestIo::default())
 }
 
 // ============ Common emulator bugs ============
@@ -38,6 +36,16 @@ fn regression_djnz_decrements_first() {
     c.step();
     assert_eq!(c.b, 0);
     assert_eq!(c.pc, 2); // Not taken
+}
+
+// Bug: DJNZ wrapping behavior (decrement then test)
+#[test]
+fn regression_djnz_wrap() {
+    let mut c = z80(&[0x10, 0x05]);
+    c.b = 0;
+    c.step();
+    assert_eq!(c.b, 0xFF);
+    assert_eq!(c.pc, 7); // Taken (2 + 5)
 }
 
 // Bug: JR displacement is signed
@@ -119,6 +127,7 @@ fn regression_ex_sp_hl() {
 }
 
 // Bug: INC/DEC not affecting V flag correctly
+// Confirmed fixed: implementation correctly sets P/V flag on overflow.
 #[test]
 fn regression_inc_overflow() {
     let mut c = z80(&[0x3C]); // INC A
@@ -200,8 +209,12 @@ fn regression_neg_80() {
     c.a = 0x80;
     c.step();
     assert_eq!(c.a, 0x80);
-    assert!(c.get_flag(flags::PARITY)); // Overflow
-    assert!(c.get_flag(flags::CARRY)); // Carry should be set (A!=0)
+    assert!(c.get_flag(flags::PARITY), "Parity/Overflow flag should be set (Overflow)");
+    assert!(c.get_flag(flags::CARRY), "Carry flag should be set (A != 0)");
+    assert!(!c.get_flag(flags::ZERO), "Zero flag should not be set");
+    assert!(c.get_flag(flags::SIGN), "Sign flag should be set (Result is 0x80)");
+    assert!(!c.get_flag(flags::HALF_CARRY), "Half Carry flag should not be set (No borrow from bit 4)");
+    assert!(c.get_flag(flags::ADD_SUB), "Add/Subtract flag should be set");
 }
 
 // Regression: NEG with A=0 should clear carry
@@ -311,17 +324,77 @@ fn regression_lddr_bc_zero() {
 // Bug: ADD HL, SP affects only C and H flags
 #[test]
 fn regression_add_hl_sp_flags() {
+    // Case 1: Flags set, should remain set
     let mut c = z80(&[0x39]);
     c.set_hl(0x1234);
     c.sp = 0x4321;
     c.set_flag(flags::ZERO, true);
     c.set_flag(flags::SIGN, true);
     c.set_flag(flags::PARITY, true);
+    c.set_flag(flags::ADD_SUB, true); // Should be reset
     c.step();
     // S, Z, P/V should be preserved
     assert!(c.get_flag(flags::ZERO));
     assert!(c.get_flag(flags::SIGN));
     assert!(c.get_flag(flags::PARITY));
+    // N should be reset
+    assert!(!c.get_flag(flags::ADD_SUB));
+
+    // Case 2: Flags clear, should remain clear
+    let mut c = z80(&[0x39]);
+    c.set_hl(0x1000);
+    c.sp = 0x0500;
+    c.set_flag(flags::ZERO, false);
+    c.set_flag(flags::SIGN, false);
+    c.set_flag(flags::PARITY, false);
+    c.set_flag(flags::ADD_SUB, true); // Should be reset
+    c.step();
+    // S, Z, P/V should be preserved
+    assert!(!c.get_flag(flags::ZERO));
+    assert!(!c.get_flag(flags::SIGN));
+    assert!(!c.get_flag(flags::PARITY));
+    // N should be reset
+    assert!(!c.get_flag(flags::ADD_SUB));
+
+    // Case 3: Carry generation
+    // HL = 0xFFFF, SP = 0x0001 -> Result = 0x0000, Carry = 1
+    let mut c = z80(&[0x39]);
+    c.set_hl(0xFFFF);
+    c.sp = 0x0001;
+    c.step();
+    assert_eq!(c.hl(), 0x0000);
+    assert!(c.get_flag(flags::CARRY));
+    assert!(c.get_flag(flags::HALF_CARRY)); // 0xFFF + 1 = 0x1000 -> Half Carry
+
+    // Check X and Y flags (from high byte of result 0x00)
+    assert!(!c.get_flag(flags::X_FLAG));
+    assert!(!c.get_flag(flags::Y_FLAG));
+
+    // Case 4: No Carry, No Half Carry
+    // HL = 0x1000, SP = 0x0100 -> Result = 0x1100
+    let mut c = z80(&[0x39]);
+    c.set_hl(0x1000);
+    c.sp = 0x0100;
+    c.step();
+    assert_eq!(c.hl(), 0x1100);
+    assert!(!c.get_flag(flags::CARRY));
+    assert!(!c.get_flag(flags::HALF_CARRY));
+
+    // Check X and Y flags (from high byte of result 0x11 = 0001 0001)
+    // Bit 3 (X) = 0, Bit 5 (Y) = 0
+    assert!(!c.get_flag(flags::X_FLAG));
+    assert!(!c.get_flag(flags::Y_FLAG));
+
+    // Case 5: X/Y flags set
+    // HL = 0x2800, SP = 0x0000 -> Result = 0x2800
+    // High byte 0x28 = 0010 1000. Bit 3 is 1 (X), Bit 5 is 1 (Y).
+    let mut c = z80(&[0x39]);
+    c.set_hl(0x2800);
+    c.sp = 0x0000;
+    c.step();
+    assert_eq!(c.hl(), 0x2800);
+    assert!(c.get_flag(flags::X_FLAG));
+    assert!(c.get_flag(flags::Y_FLAG));
 }
 
 // Bug: BIT instruction H flag should always be set
@@ -434,7 +507,6 @@ fn regression_srl_parity() {
     assert!(c.get_flag(flags::ZERO));
     assert!(c.get_flag(flags::PARITY));
 }
-
 
 // Bug: SBC HL, BC with no carry shouldn't borrow
 #[test]
