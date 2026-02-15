@@ -117,7 +117,7 @@ impl Bus {
 
             // Z80 Address Space: 0xA00000-0xA0FFFF
             0xA00000..=0xA01FFF => {
-                // Z80 RAM (8KB)
+                // Z80 RAM (8KB) - Only accessible if Z80 bus is requested (Z80 stopped)
                 if self.z80_bus_request {
                     self.z80_ram[(addr & 0x1FFF) as usize]
                 } else {
@@ -193,6 +193,7 @@ impl Bus {
 
             // Z80 RAM
             0xA00000..=0xA01FFF => {
+                // Only accessible if Z80 bus is requested (Z80 stopped)
                 if self.z80_bus_request {
                     self.z80_ram[(addr & 0x1FFF) as usize] = value;
                 }
@@ -298,14 +299,6 @@ impl Bus {
             return self.vdp.read_hv_counter();
         }
 
-        // Optimize ROM access (0x000000-0x3FFFFF)
-        if addr <= 0x3FFFFE {
-            let rom_addr = addr as usize;
-            if rom_addr + 1 < self.rom.len() {
-                return byte_utils::join_u16(self.rom[rom_addr], self.rom[rom_addr + 1]);
-            }
-        }
-
         // Optimize Work RAM access (0xE00000-0xFFFFFF, 64KB mirrored)
         if addr >= 0xE00000 {
             let r_addr = (addr & 0xFFFF) as usize;
@@ -383,9 +376,9 @@ impl Bus {
             }
         }
 
-        let high = self.read_word(address) as u32;
-        let low = self.read_word(address.wrapping_add(2)) as u32;
-        (high << 16) | low
+        let high = self.read_word(address);
+        let low = self.read_word(address.wrapping_add(2));
+        byte_utils::join_u32_words(high, low)
     }
 
     /// Write a long word (32-bit, big-endian) to the memory map
@@ -405,8 +398,9 @@ impl Bus {
             }
         }
 
-        self.write_word(address, (value >> 16) as u16);
-        self.write_word(address.wrapping_add(2), value as u16);
+        let (high, low) = byte_utils::split_u32_to_words(value);
+        self.write_word(address, high);
+        self.write_word(address.wrapping_add(2), low);
     }
     // === DMA ===
 
@@ -450,8 +444,9 @@ impl Bus {
         }
 
         if !self.vdp.is_dma_transfer() {
-            // Mode 2 (Fill) must wait for data write. Mode 3 (Copy) executes immediately.
-            if (self.vdp.dma_mode() & 0xC0) == 0x80 {
+            if self.vdp.is_dma_fill() {
+                // VRAM Fill (Mode 2) waits for data port write.
+                // Do not execute yet, and keep dma_pending true.
                 return;
             }
             self.vdp.execute_dma();
@@ -621,7 +616,7 @@ mod tests {
         let mut bus = Bus::new();
 
         // Request Z80 bus
-        bus.z80_bus_request = true;
+        bus.write_byte(0xA11100, 0x01);
 
         bus.write_byte(0xA00000, 0x55);
         assert_eq!(bus.read_byte(0xA00000), 0x55);
@@ -791,4 +786,33 @@ mod tests {
         assert_eq!(bus.read_word(0xFFFFFF), 0xBBEE);
     }
 
-}
+    #[test]
+    fn test_z80_bank_register_logic() {
+        let mut bus = Bus::new();
+
+        // Initial state
+        assert_eq!(bus.z80_bank_addr, 0);
+        assert_eq!(bus.z80_bank_bit, 0);
+
+        let bits = [1, 0, 1, 1, 0, 0, 1, 1, 1];
+
+        for (i, &bit) in bits.iter().enumerate() {
+            // Write to 0xA06000 (Z80 Bank Register)
+            bus.write_byte(0xA06000 + (i as u32 % 0x100), bit);
+            assert_eq!(bus.z80_bank_bit, ((i + 1) % 9) as u8);
+        }
+
+        assert_eq!(bus.z80_bank_addr, 0xE68000);
+
+        // Verify wrap-around behavior
+        bus.write_byte(0xA06000, 0);
+        assert_eq!(bus.z80_bank_addr, 0xE60000);
+        assert_eq!(bus.z80_bank_bit, 1);
+
+        // Verify Reset clears bank bit index
+        bus.write_byte(0xA11200, 0x00);
+        assert!(bus.z80_reset);
+        assert_eq!(bus.z80_bank_bit, 0);
+    }
+
+    }
