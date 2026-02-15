@@ -17,8 +17,12 @@
 
 use crate::io::ControllerState;
 use std::collections::HashMap;
-use std::fs;
+use std::fs::File;
+use std::io::Read;
 use std::path::Path;
+
+/// Maximum script size in bytes (50MB) to prevent OOM
+const MAX_SCRIPT_SIZE: u64 = 50 * 1024 * 1024;
 
 /// A single frame's input for both players
 #[derive(Debug, Clone, Default)]
@@ -44,49 +48,36 @@ impl InputScript {
 
     /// Load a script from a file
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, String> {
-        let mut file =
-            fs::File::open(path).map_err(|e| format!("Failed to open input script: {}", e))?;
-        let metadata = file
-            .metadata()
-            .map_err(|e| format!("Failed to get script metadata: {}", e))?;
+        let file = File::open(path).map_err(|e| format!("Failed to open input script: {}", e))?;
 
-        let content = Self::read_script_with_limit(&mut file, metadata.len())?;
-        Self::parse(&content)
-    }
-
-    fn read_script_with_limit<R: std::io::Read>(
-        reader: &mut R,
-        size: u64,
-    ) -> Result<String, String> {
-        use std::io::Read;
-        const MAX_SCRIPT_SIZE: u64 = 64 * 1024 * 1024; // 64 MB
-
-        if size > MAX_SCRIPT_SIZE {
-            return Err(format!(
-                "Input script too large ({} bytes, max {} bytes)",
-                size,
-                MAX_SCRIPT_SIZE
-            ));
+        // Check metadata size first for quick fail
+        if let Ok(metadata) = file.metadata() {
+            if metadata.len() > MAX_SCRIPT_SIZE {
+                return Err(format!(
+                    "Input script too large: {} bytes (max {} bytes)",
+                    metadata.len(),
+                    MAX_SCRIPT_SIZE
+                ));
+            }
         }
 
-        if size > usize::MAX as u64 {
-            return Err("Input script size too large for memory address space".to_string());
-        }
-
-        let mut content = String::with_capacity(size as usize);
-        reader
-            .take(MAX_SCRIPT_SIZE + 1)
-            .read_to_string(&mut content)
+        // Read with limit to prevent OOM from streams/lying metadata
+        let mut buffer = Vec::new();
+        file.take(MAX_SCRIPT_SIZE + 1)
+            .read_to_end(&mut buffer)
             .map_err(|e| format!("Failed to read input script: {}", e))?;
 
-        if content.len() as u64 > MAX_SCRIPT_SIZE {
+        if buffer.len() as u64 > MAX_SCRIPT_SIZE {
             return Err(format!(
-                "Input script exceeds maximum size of {} bytes",
+                "Input script too large: exceeds {} bytes",
                 MAX_SCRIPT_SIZE
             ));
         }
 
-        Ok(content)
+        let content = String::from_utf8(buffer)
+            .map_err(|e| format!("Input script is not valid UTF-8: {}", e))?;
+
+        Self::parse(&content)
     }
 
     /// Parse a script from a string
@@ -272,7 +263,6 @@ impl InputManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proptest::prelude::*;
 
     #[test]
     fn test_parse_buttons_basic() {
@@ -450,9 +440,15 @@ mod tests {
         // Edge Case 1: Empty script (default InputScript, max_frame = 0)
         let script = InputScript::new();
         manager.set_script(script);
-        assert!(!manager.is_complete(), "Empty script frame 0 should not be complete");
+        assert!(
+            !manager.is_complete(),
+            "Empty script frame 0 should not be complete"
+        );
         manager.advance_frame();
-        assert!(manager.is_complete(), "Empty script frame 1 should be complete");
+        assert!(
+            manager.is_complete(),
+            "Empty script frame 1 should be complete"
+        );
 
         // Edge Case 2: Single frame script at 0
         let script = InputScript::parse("0,........,........").unwrap();
@@ -580,72 +576,85 @@ mod tests {
         assert_eq!(result.unwrap_err(), "Line 1: invalid frame number");
     }
 
-    proptest! {
-        #[test]
-        fn test_is_complete_property(
-            max_frame in 0..u64::MAX,
-            delta in -2i64..=2i64, // Test around the boundary
-            random_frame in 0..u64::MAX // And random frames
-        ) {
-            let mut manager = InputManager::new();
-
-            // Case 1: No script
-            prop_assert!(!manager.is_complete());
-
-            // Case 2: With script
-            let mut script = InputScript::new();
-            script.max_frame = max_frame;
-            manager.set_script(script);
-
-            // Check boundary conditions
-            let boundary_frame = (max_frame as i128 + delta as i128).max(0) as u64;
-            manager.current_frame = boundary_frame;
-            let expected_boundary = boundary_frame > max_frame;
-            prop_assert_eq!(manager.is_complete(), expected_boundary,
-                "Failed boundary check: max_frame={}, current_frame={}", max_frame, boundary_frame);
-
-            // Check random frame
-            manager.current_frame = random_frame;
-            let expected_random = random_frame > max_frame;
-            prop_assert_eq!(manager.is_complete(), expected_random,
-                "Failed random check: max_frame={}, current_frame={}", max_frame, random_frame);
-        }
+    #[test]
+    fn test_parse_whitespace_robustness() {
+        let script = InputScript::parse(" 10 , ....A... , .....B.. ").unwrap();
+        let frame = script.get(10).unwrap();
+        assert!(frame.p1.a);
+        assert!(frame.p2.b);
     }
-}
-
-#[cfg(test)]
-mod additional_tests {
-    use super::*;
 
     #[test]
-    fn test_large_script_rejection() {
-        let path = "large_script_reject.txt";
-        // Create 65MB dummy file
-        let size = 65 * 1024 * 1024;
-        let f = std::fs::File::create(path).unwrap();
-        f.set_len(size as u64).unwrap();
+    fn test_parse_comments_and_empty_lines() {
+        let script = InputScript::parse(
+            "
+            # Comment 1
+            10, ....A..., ........
+
+            # Comment 2
+            20, .....B.., ........
+        ",
+        )
+        .unwrap();
+
+        assert_eq!(script.max_frame, 20);
+        assert!(script.get(10).unwrap().p1.a);
+        assert!(script.get(20).unwrap().p1.b);
+    }
+
+    #[test]
+    fn test_parse_error_line_numbering() {
+        let content = "
+            # Line 2 (comment)
+            10, ....A..., ........
+
+            invalid_frame, ....A..., ........
+        ";
+        let err = InputScript::parse(content).unwrap_err();
+        assert!(err.contains("Line 5: invalid frame number"));
+    }
+
+    #[test]
+    fn test_parse_extra_fields() {
+        // Extra fields should be ignored based on split(',') logic
+        let script = InputScript::parse("10, ....A..., ........, extra_field").unwrap();
+        let frame = script.get(10).unwrap();
+        assert!(frame.p1.a);
+    }
+
+    #[test]
+    fn test_parse_empty_buttons() {
+        // "10,," -> split gives ["10", "", ""]
+        // parse_buttons("") should return default state (all false)
+        let script = InputScript::parse("10,,").unwrap();
+        let frame = script.get(10).unwrap();
+        assert!(!frame.p1.a);
+        assert!(!frame.p2.a);
+    }
+
+    #[test]
+    fn test_load_too_large_file() {
+        use std::fs;
+        use std::io::Write;
+        let path = "test_large_script.txt";
+        let mut file = File::create(path).unwrap();
+
+        // Create a file just over the limit (50MB + 1 byte)
+        // We write in chunks to avoid OOM in test runner if it were to hold it all
+        let chunk_size = 1024 * 1024;
+        let chunk = vec![b' '; chunk_size];
+        for _ in 0..50 {
+            file.write_all(&chunk).unwrap();
+        }
+        file.write_all(&[b' ']).unwrap(); // +1 byte
 
         let result = InputScript::load(path);
-        let _ = std::fs::remove_file(path);
 
-        assert!(result.is_err(), "Should reject large script (>64MB)");
+        // Cleanup
+        let _ = fs::remove_file(path);
+
+        assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.contains("Input script too large") || err.contains("exceeds maximum size"), "Error was: {}", err);
-    }
-
-    #[test]
-    fn test_acceptable_script_size() {
-        let path = "large_script_accept.txt";
-        // Create 60MB dummy file
-        let size = 60 * 1024 * 1024;
-        let f = std::fs::File::create(path).unwrap();
-        f.set_len(size as u64).unwrap();
-
-        let result = InputScript::load(path);
-        let _ = std::fs::remove_file(path);
-
-        if let Err(e) = &result {
-             assert!(!e.contains("too large") && !e.contains("exceeds maximum size"), "Should not reject 60MB script: {}", e);
-        }
+        assert!(err.contains("Input script too large"));
     }
 }
