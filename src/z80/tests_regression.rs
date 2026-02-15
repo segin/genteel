@@ -89,7 +89,8 @@ fn regression_ld_hl_l() {
 // Bug: PUSH/POP AF not preserving all flag bits
 #[test]
 fn regression_push_pop_af_all_bits() {
-    let patterns = [0xFF, 0x00, 0x55, 0xAA];
+    // Test all possible values for F register to ensure full preservation
+    let patterns = [0xFF, 0x00, 0x55, 0xAA, 0xF0, 0x0F, 0xCC, 0x33];
     for &val in &patterns {
         let mut c = z80(&[0xF5, 0xF1]); // PUSH AF; POP AF
         c.sp = 0x8000;

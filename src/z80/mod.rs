@@ -1118,6 +1118,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
             4 => {
                 // EX (SP), HL
                 let val = self.read_word(self.sp);
+                self.memptr = val;
                 self.write_word(self.sp, self.hl());
                 self.set_hl(val);
                 19
@@ -1932,6 +1933,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
             0xE3 => {
                 let val = self.read_word(self.sp);
                 let idx = self.get_index_val(is_ix);
+                self.memptr = val;
                 self.write_word(self.sp, idx);
                 self.set_index_val(val, is_ix);
                 23
@@ -2109,3 +2111,6 @@ mod tests_memptr;
 
 #[cfg(test)]
 mod tests_ddcb;
+
+#[cfg(test)]
+pub mod test_utils;
