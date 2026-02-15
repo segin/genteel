@@ -299,14 +299,6 @@ impl Bus {
             return self.vdp.read_hv_counter();
         }
 
-        // Optimize ROM access (0x000000-0x3FFFFF)
-        if addr <= 0x3FFFFE {
-            let rom_addr = addr as usize;
-            if rom_addr + 1 < self.rom.len() {
-                return byte_utils::join_u16(self.rom[rom_addr], self.rom[rom_addr + 1]);
-            }
-        }
-
         // Optimize Work RAM access (0xE00000-0xFFFFFF, 64KB mirrored)
         if addr >= 0xE00000 {
             let r_addr = (addr & 0xFFFF) as usize;
@@ -549,19 +541,75 @@ impl Debuggable for Bus {
         json!({
             "z80_bus_request": self.z80_bus_request,
             "z80_reset": self.z80_reset,
+            "z80_bank_addr": self.z80_bank_addr,
+            "z80_bank_bit": self.z80_bank_bit,
             "tmss_unlocked": self.tmss_unlocked,
             // Sub-components are debugged separately usually, but we could link them
         })
     }
 
-    fn write_state(&mut self, _state: &Value) {
-        // Bus state write not supported
+    fn write_state(&mut self, state: &Value) {
+        if let Some(val) = state.get("z80_bus_request").and_then(|v| v.as_bool()) {
+            self.z80_bus_request = val;
+        }
+        if let Some(val) = state.get("z80_reset").and_then(|v| v.as_bool()) {
+            self.z80_reset = val;
+        }
+        if let Some(val) = state.get("z80_bank_addr").and_then(|v| v.as_u64()) {
+            self.z80_bank_addr = val as u32;
+        }
+        if let Some(val) = state.get("z80_bank_bit").and_then(|v| v.as_u64()) {
+            self.z80_bank_bit = val as u8;
+        }
+        if let Some(val) = state.get("tmss_unlocked").and_then(|v| v.as_bool()) {
+            self.tmss_unlocked = val;
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_bus_debuggable() {
+        let mut bus = Bus::new();
+        bus.z80_bus_request = true;
+        bus.z80_reset = false;
+        bus.z80_bank_addr = 0x123456;
+        bus.z80_bank_bit = 5;
+        bus.tmss_unlocked = true;
+
+        let state = bus.read_state();
+        assert_eq!(state["z80_bus_request"], true);
+        assert_eq!(state["z80_reset"], false);
+        assert_eq!(state["z80_bank_addr"], 0x123456);
+        assert_eq!(state["z80_bank_bit"], 5);
+        assert_eq!(state["tmss_unlocked"], true);
+
+        let new_state = json!({
+            "z80_bus_request": false,
+            "z80_reset": true,
+            "z80_bank_addr": 0x654321,
+            "z80_bank_bit": 2,
+            "tmss_unlocked": false,
+        });
+
+        bus.write_state(&new_state);
+        assert_eq!(bus.z80_bus_request, false);
+        assert_eq!(bus.z80_reset, true);
+        assert_eq!(bus.z80_bank_addr, 0x654321);
+        assert_eq!(bus.z80_bank_bit, 2);
+        assert_eq!(bus.tmss_unlocked, false);
+
+        // Verify partial update
+        let partial_state = json!({
+            "z80_bus_request": true,
+        });
+        bus.write_state(&partial_state);
+        assert_eq!(bus.z80_bus_request, true);
+        assert_eq!(bus.z80_reset, true); // Should remain unchanged
+    }
 
     #[test]
     fn test_rom_loading() {
@@ -794,4 +842,33 @@ mod tests {
         assert_eq!(bus.read_word(0xFFFFFF), 0xBBEE);
     }
 
-}
+    #[test]
+    fn test_z80_bank_register_logic() {
+        let mut bus = Bus::new();
+
+        // Initial state
+        assert_eq!(bus.z80_bank_addr, 0);
+        assert_eq!(bus.z80_bank_bit, 0);
+
+        let bits = [1, 0, 1, 1, 0, 0, 1, 1, 1];
+
+        for (i, &bit) in bits.iter().enumerate() {
+            // Write to 0xA06000 (Z80 Bank Register)
+            bus.write_byte(0xA06000 + (i as u32 % 0x100), bit);
+            assert_eq!(bus.z80_bank_bit, ((i + 1) % 9) as u8);
+        }
+
+        assert_eq!(bus.z80_bank_addr, 0xE68000);
+
+        // Verify wrap-around behavior
+        bus.write_byte(0xA06000, 0);
+        assert_eq!(bus.z80_bank_addr, 0xE60000);
+        assert_eq!(bus.z80_bank_bit, 1);
+
+        // Verify Reset clears bank bit index
+        bus.write_byte(0xA11200, 0x00);
+        assert!(bus.z80_reset);
+        assert_eq!(bus.z80_bank_bit, 0);
+    }
+
+    }

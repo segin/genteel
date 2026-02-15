@@ -35,3 +35,47 @@ pub fn split_u32(value: u32) -> (u8, u8, u8, u8) {
 pub fn join_u32_words(high: u16, low: u16) -> u32 {
     ((high as u32) << 16) | (low as u32)
 }
+
+/// Alias for join_u32_words
+#[inline(always)]
+pub fn join_u32_from_u16(high: u16, low: u16) -> u32 {
+    join_u32_words(high, low)
+}
+
+/// Split a 32-bit long into two 16-bit words (Big Endian)
+#[inline(always)]
+pub fn split_u32_to_words(value: u32) -> (u16, u16) {
+    ((value >> 16) as u16, value as u16)
+}
+
+/// Alias for split_u32_to_words
+#[inline(always)]
+pub fn split_u32_to_u16(long: u32) -> (u16, u16) {
+    split_u32_to_words(long)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_u16_ops() {
+        assert_eq!(join_u16(0x12, 0x34), 0x1234);
+        assert_eq!(split_u16(0x1234), (0x12, 0x34));
+    }
+
+    #[test]
+    fn test_u32_ops() {
+        assert_eq!(join_u32(0x12, 0x34, 0x56, 0x78), 0x12345678);
+        assert_eq!(split_u32(0x12345678), (0x12, 0x34, 0x56, 0x78));
+    }
+
+    #[test]
+    fn test_u32_word_ops() {
+        assert_eq!(join_u32_words(0x1234, 0x5678), 0x12345678);
+        assert_eq!(split_u32_to_words(0x12345678), (0x1234, 0x5678));
+        
+        assert_eq!(join_u32_from_u16(0x1234, 0x5678), 0x12345678);
+        assert_eq!(split_u32_to_u16(0x12345678), (0x1234, 0x5678));
+    }
+}
