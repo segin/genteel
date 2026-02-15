@@ -2109,3 +2109,6 @@ mod tests_memptr;
 
 #[cfg(test)]
 mod tests_ddcb;
+
+#[cfg(test)]
+pub mod test_utils;
