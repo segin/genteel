@@ -4,6 +4,7 @@
 //! that can be executed by the CPU.
 
 use std::fmt;
+use std::sync::OnceLock;
 
 /// Size specifier for M68k instructions
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -259,7 +260,7 @@ impl Condition {
 }
 
 /// Decoded M68k instruction
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Instruction {
     // Data Movement
     Move {
@@ -622,8 +623,21 @@ pub enum BitSource {
     Register(u8), // Bit number in Dn
 }
 
+
+static DECODE_CACHE: OnceLock<Box<[Instruction]>> = OnceLock::new();
+
 /// Decode a single M68k instruction from an opcode
 pub fn decode(opcode: u16) -> Instruction {
+    DECODE_CACHE.get_or_init(|| {
+        let mut cache = Vec::with_capacity(65536);
+        for op in 0..=65535 {
+            cache.push(decode_uncached(op as u16));
+        }
+        cache.into_boxed_slice()
+    })[opcode as usize]
+}
+
+fn decode_uncached(opcode: u16) -> Instruction {
     let group = ((opcode >> 12) & 0x0F) as usize;
     GROUP_DECODERS[group](opcode)
 }
@@ -1451,7 +1465,13 @@ fn decode_shifts(opcode: u16) -> Instruction {
         let ea_reg = (opcode & 0x07) as u8;
         if let Some(dst) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
             let count = ShiftCount::Immediate(1); // Memory shifts are always by 1
-            return make_shift_instruction(op_type, direction, Size::Word, dst, count);
+            return make_shift_instruction(
+                op_type,
+                direction,
+                Size::Word,
+                dst,
+                count,
+            );
         }
     }
 
@@ -1657,4 +1677,9 @@ mod tests {
             Instruction::Unimplemented { opcode: 0x483B }
         );
     }
+}
+
+#[test]
+fn print_instruction_size() {
+    println!("Size of Instruction: {} bytes", std::mem::size_of::<Instruction>());
 }

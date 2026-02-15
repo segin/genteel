@@ -10,7 +10,10 @@ fn create_z80(program: &[u8]) -> Z80<crate::memory::Memory, crate::z80::test_uti
     for (i, &byte) in program.iter().enumerate() {
         memory.data[i] = byte;
     }
-    Z80::new(memory, crate::z80::test_utils::TestIo::default())
+    Z80::new(
+        memory,
+        crate::z80::test_utils::TestIo::default(),
+    )
 }
 
 // ==================== Register Pair Tests ====================
