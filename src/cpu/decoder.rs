@@ -628,18 +628,16 @@ static DECODE_CACHE: OnceLock<Box<[Instruction]>> = OnceLock::new();
 
 /// Decode a single M68k instruction from an opcode
 pub fn decode(opcode: u16) -> Instruction {
-    let cache = DECODE_CACHE.get_or_init(|| {
-        let mut instructions = Vec::with_capacity(65536);
+    DECODE_CACHE.get_or_init(|| {
+        let mut cache = Vec::with_capacity(65536);
         for op in 0..=65535 {
-            instructions.push(decode_uncached(op as u16));
+            cache.push(decode_uncached(op as u16));
         }
-        instructions.into_boxed_slice()
-    });
-    cache[opcode as usize]
+        cache.into_boxed_slice()
+    })[opcode as usize]
 }
 
-/// Decode a single M68k instruction from an opcode (uncached)
-pub fn decode_uncached(opcode: u16) -> Instruction {
+fn decode_uncached(opcode: u16) -> Instruction {
     let group = ((opcode >> 12) & 0x0F) as usize;
     GROUP_DECODERS[group](opcode)
 }
@@ -1679,4 +1677,9 @@ mod tests {
             Instruction::Unimplemented { opcode: 0x483B }
         );
     }
+}
+
+#[test]
+fn print_instruction_size() {
+    println!("Size of Instruction: {} bytes", std::mem::size_of::<Instruction>());
 }
