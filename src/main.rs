@@ -426,9 +426,13 @@ impl Emulator {
             let mut bus = self.bus.borrow_mut();
             for _ in 0..samples_to_run {
                 let sample = bus.apu.step();
-                // Stereo output (duplicate for now)
-                self.audio_buffer.push(sample);
-                self.audio_buffer.push(sample);
+                // Security Fix: Prevent unbounded buffer growth if not consumed
+                // Cap at ~20 frames of audio (32768 samples)
+                if self.audio_buffer.len() < 32768 {
+                    // Stereo output (duplicate for now)
+                    self.audio_buffer.push(sample);
+                    self.audio_buffer.push(sample);
+                }
             }
         }
     }
@@ -469,6 +473,8 @@ impl Emulator {
         println!("Running {} frames headless...", frames);
         for _ in 0..frames {
             self.step_frame(None);
+            // Clear audio buffer in headless mode to prevent memory leak
+            self.audio_buffer.clear();
         }
         println!("Done.");
     }
