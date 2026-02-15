@@ -18,6 +18,19 @@ RISK_CSV = os.path.join(REPORT_DIR, "RISK_REGISTER.csv")
 
 findings = []
 
+# Pre-compiled regex patterns at global scope for performance
+SECRET_PATTERNS = {
+    "Generic Secret": re.compile(r"(?i)secret\s*[:=]\s*['\"]"),
+    "API Key": re.compile(r"(?i)api[_-]?key\s*[:=]\s*['\"]"),
+    "Password": re.compile(r"(?i)password\s*[:=]\s*['\"]"),
+    "AWS Key": re.compile(r"AKIA[0-9A-Z]{16}"),
+    "Private Key": re.compile(r"-----BEGIN .* PRIVATE KEY-----"),
+    "Generic Token": re.compile(r"token\s*=\s*['\"][a-zA-Z0-9]{20,}['\"]")
+}
+
+TODO_PATTERN = re.compile(r"(TODO|FIXME|XXX):")
+UNSAFE_PATTERN = re.compile(r"unsafe\s*\{")
+
 def add_finding(title, severity, description, file_path, line_number=None):
     findings.append({
         "title": title,
@@ -46,19 +59,7 @@ def get_tracked_files():
         return files
 
 def scan_text_patterns():
-    # Pre-compiled regex patterns for performance
-    secret_patterns = {
-        "Generic Secret": re.compile(r"(?i)secret\s*[:=]\s*['\"]"),
-        "API Key": re.compile(r"(?i)api[_-]?key\s*[:=]\s*['\"]"),
-        "Password": re.compile(r"(?i)password\s*[:=]\s*['\"]"),
-        "AWS Key": re.compile(r"AKIA[0-9A-Z]{16}"),
-        "Private Key": re.compile(r"-----BEGIN .* PRIVATE KEY-----"),
-        "Generic Token": re.compile(r"token\s*=\s*['\"][a-zA-Z0-9]{20,}['\"]")
-    }
-    
     files = get_tracked_files()
-    todo_pattern = re.compile(r"(TODO|FIXME|XXX):")
-    unsafe_pattern = re.compile(r"unsafe\s*\{")
 
     for f in files:
         if not os.path.exists(f) or os.path.isdir(f):
@@ -70,7 +71,7 @@ def scan_text_patterns():
             with open(f, 'r', encoding='utf-8', errors='ignore') as fp:
                 for i, line_content in enumerate(fp):
                     # Secrets
-                    for name, compiled_pattern in secret_patterns.items():
+                    for name, compiled_pattern in SECRET_PATTERNS.items():
                         if compiled_pattern.search(line_content):
                             add_finding(
                                 title=f"Potential Secret: {name}",
@@ -81,7 +82,7 @@ def scan_text_patterns():
                             )
                     
                     # Technical Debt
-                    if todo_pattern.search(line_content):
+                    if TODO_PATTERN.search(line_content):
                         add_finding(
                             title="Technical Debt",
                             severity="Low",
@@ -91,7 +92,7 @@ def scan_text_patterns():
                         )
 
                     # Unsafe Code
-                    if unsafe_pattern.search(line_content):
+                    if UNSAFE_PATTERN.search(line_content):
                         add_finding(
                             title="Unsafe Code",
                             severity="Medium",
