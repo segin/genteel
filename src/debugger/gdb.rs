@@ -231,27 +231,7 @@ impl GdbServer {
         }
     }
 
-    /// Process a GDB command and return the response
-    pub fn process_command(
-        &mut self,
-        cmd: &str,
-        registers: &mut GdbRegisters,
-        memory: &mut dyn GdbMemory,
-    ) -> String {
-        // Always allow disconnect/kill/interrupt
-        if cmd == "INTERRUPT" {
-            return format!("S{:02x}", StopReason::Interrupt.signal());
-        }
-        if cmd == "D" {
-            self.client = None;
-            return "OK".to_string();
-        }
-        if cmd == "k" {
-            self.client = None;
-            return "".to_string();
-        }
-
-        // Authentication check
+    fn check_authentication(&self, cmd: &str) -> bool {
         if !self.authenticated {
             let allowed = cmd.starts_with("qSupported")
                 || cmd == "?"
@@ -260,28 +240,65 @@ impl GdbServer {
                 || cmd == "QStartNoAckMode";
 
             if !allowed {
-                return "E01".to_string();
+                return false;
             }
         }
+        true
+    }
 
-        let first_char = cmd.chars().next().unwrap_or('?');
-
+    fn handle_control_command(&mut self, cmd: &str, first_char: char) -> String {
         match first_char {
             '?' => {
                 // Stop reason
                 format!("S{:02x}", self.stop_reason.signal())
             }
+            'c' => {
+                // Continue
+                "CONTINUE".to_string()
+            }
+            's' => {
+                // Single step
+                "STEP".to_string()
+            }
+            'H' => {
+                // Set thread (we only have one, just acknowledge)
+                "OK".to_string()
+            }
+            'D' => {
+                // Detach
+                self.client = None;
+                "OK".to_string()
+            }
+            'k' => {
+                // Kill
+                self.client = None;
+                "".to_string()
+            }
+            _ => {
+                if cmd == "INTERRUPT" {
+                    format!("S{:02x}", StopReason::Interrupt.signal())
+                } else {
+                    "".to_string()
+                }
+            }
+        }
+    }
 
+    fn handle_register_command(
+        &self,
+        cmd: &str,
+        first_char: char,
+        registers: &mut GdbRegisters,
+    ) -> String {
+        match first_char {
             'g' => {
                 // Read all registers
                 self.read_registers(registers)
             }
-
             'G' => {
                 // Write all registers
                 self.write_registers(&cmd[1..], registers)
             }
-
             'p' => {
                 // Read single register
                 if let Ok(reg_num) = u32::from_str_radix(&cmd[1..], 16) {
@@ -290,73 +307,74 @@ impl GdbServer {
                     "E01".to_string()
                 }
             }
-
             'P' => {
                 // Write single register
                 self.write_register(&cmd[1..], registers)
             }
+            _ => "".to_string(),
+        }
+    }
 
+    fn handle_memory_command(
+        &self,
+        cmd: &str,
+        first_char: char,
+        memory: &mut dyn GdbMemory,
+    ) -> String {
+        match first_char {
             'm' => {
                 // Read memory
                 self.read_memory(&cmd[1..], memory)
             }
-
             'M' => {
                 // Write memory
                 self.write_memory(&cmd[1..], memory)
             }
+            _ => "".to_string(),
+        }
+    }
 
-            'c' => {
-                // Continue
-                "CONTINUE".to_string()
-            }
-
-            's' => {
-                // Single step
-                "STEP".to_string()
-            }
-
+    fn handle_breakpoint_command(&mut self, cmd: &str, first_char: char) -> String {
+        match first_char {
             'Z' => {
                 // Set breakpoint
                 self.set_breakpoint(&cmd[1..])
             }
-
             'z' => {
                 // Remove breakpoint
                 self.remove_breakpoint(&cmd[1..])
             }
+            _ => "".to_string(),
+        }
+    }
 
-            'q' => {
-                // Query
-                self.handle_query(cmd)
-            }
+    /// Process a GDB command and return the response
+    pub fn process_command(
+        &mut self,
+        cmd: &str,
+        registers: &mut GdbRegisters,
+        memory: &mut dyn GdbMemory,
+    ) -> String {
+        let first_char = cmd.chars().next().unwrap_or('?');
 
-            'Q' => {
-                // Set
-                self.handle_set(cmd)
-            }
+        // Always allow disconnect/kill/interrupt
+        if cmd == "INTERRUPT" || cmd == "D" || cmd == "k" {
+            return self.handle_control_command(cmd, first_char);
+        }
 
-            'H' => {
-                // Set thread (we only have one, just acknowledge)
-                "OK".to_string()
-            }
+        // Authentication check
+        if !self.check_authentication(cmd) {
+            return "E01".to_string();
+        }
 
-            'D' => {
-                // Detach
-                self.client = None;
-                "OK".to_string()
-            }
-
-            'k' => {
-                // Kill
-                self.client = None;
-                "".to_string()
-            }
-
-            _ => {
-                // Unknown command
-                "".to_string()
-            }
+        match first_char {
+            '?' | 'c' | 's' | 'H' | 'D' | 'k' => self.handle_control_command(cmd, first_char),
+            'g' | 'G' | 'p' | 'P' => self.handle_register_command(cmd, first_char, registers),
+            'm' | 'M' => self.handle_memory_command(cmd, first_char, memory),
+            'Z' | 'z' => self.handle_breakpoint_command(cmd, first_char),
+            'q' => self.handle_query(cmd),
+            'Q' => self.handle_set(cmd),
+            _ => "".to_string(),
         }
     }
 
@@ -879,6 +897,9 @@ mod tests {
 
         assert_eq!(server.process_command("H", &mut regs, &mut mem), "OK");
         assert_eq!(server.process_command("D", &mut regs, &mut mem), "OK");
+        // Test detach with PID (should be handled by match arm after authentication)
+        // Note: early check only catches "D", match catches "D..."
+        assert_eq!(server.process_command("D;1", &mut regs, &mut mem), "OK");
         assert_eq!(server.process_command("k", &mut regs, &mut mem), "");
     }
 
