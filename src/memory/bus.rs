@@ -298,14 +298,6 @@ impl Bus {
             return self.vdp.read_hv_counter();
         }
 
-        // Optimize ROM access (0x000000-0x3FFFFF)
-        if addr <= 0x3FFFFE {
-            let rom_addr = addr as usize;
-            if rom_addr + 1 < self.rom.len() {
-                return byte_utils::join_u16(self.rom[rom_addr], self.rom[rom_addr + 1]);
-            }
-        }
-
         // Optimize Work RAM access (0xE00000-0xFFFFFF, 64KB mirrored)
         if addr >= 0xE00000 {
             let r_addr = (addr & 0xFFFF) as usize;
@@ -383,9 +375,9 @@ impl Bus {
             }
         }
 
-        let high = self.read_word(address) as u32;
-        let low = self.read_word(address.wrapping_add(2)) as u32;
-        (high << 16) | low
+        let high = self.read_word(address);
+        let low = self.read_word(address.wrapping_add(2));
+        byte_utils::join_u32_from_u16(high, low)
     }
 
     /// Write a long word (32-bit, big-endian) to the memory map
@@ -405,8 +397,9 @@ impl Bus {
             }
         }
 
-        self.write_word(address, (value >> 16) as u16);
-        self.write_word(address.wrapping_add(2), value as u16);
+        let (high, low) = byte_utils::split_u32_to_u16(value);
+        self.write_word(address, high);
+        self.write_word(address.wrapping_add(2), low);
     }
     // === DMA ===
 
