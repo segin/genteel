@@ -384,7 +384,8 @@ impl Vdp {
         }
     }
 
-    pub fn read_status(&self) -> u16 {
+    pub fn read_status(&mut self) -> u16 {
+        self.control_pending = false;
         self.status
     }
 
@@ -489,11 +490,6 @@ impl Vdp {
 
     pub fn is_dma_fill(&self) -> bool {
         (self.registers[REG_DMA_SRC_HI] & DMA_MODE_MASK) == DMA_MODE_FILL
-    }
-
-    pub fn is_dma_fill(&self) -> bool {
-        // Bit 7=1, Bit 6=0
-        (self.registers[23] & 0xC0) == 0x80
     }
 
     pub fn execute_dma(&mut self) -> u32 {
