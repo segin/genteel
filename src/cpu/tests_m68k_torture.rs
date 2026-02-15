@@ -434,5 +434,8 @@ fn test_stop_user_mode_privilege_violation() {
 
     // Should trap
     assert_eq!(cpu.pc, 0x3000, "Should privilege trap");
-    assert!(cpu.get_flag(flags::SUPERVISOR), "Should be in supervisor mode");
+    assert!(
+        cpu.get_flag(flags::SUPERVISOR),
+        "Should be in supervisor mode"
+    );
 }
