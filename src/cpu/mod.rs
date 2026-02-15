@@ -22,6 +22,8 @@ mod tests_m68k_extended;
 mod tests_m68k_shift;
 #[cfg(test)]
 mod tests_m68k_torture;
+#[cfg(test)]
+mod tests_performance;
 
 use self::addressing::{read_ea, write_ea, EffectiveAddress};
 use self::decoder::{decode, BitSource, Condition, Instruction, Size};
@@ -767,7 +769,6 @@ impl Cpu {
         }
     }
 
-
     pub(crate) fn cpu_read_ea<M: MemoryInterface>(
         &mut self,
         ea: EffectiveAddress,
@@ -1489,9 +1490,16 @@ mod tests {
         }
 
         let duration = start.elapsed();
-        println!("Benchmark interrupt handler: {:?} for {} iterations", duration, iterations);
+        println!(
+            "Benchmark interrupt handler: {:?} for {} iterations",
+            duration, iterations
+        );
 
         // Assert that it takes less than 500ms
-        assert!(duration.as_millis() < 500, "Interrupt handler too slow! Duration: {:?}", duration);
+        assert!(
+            duration.as_millis() < 500,
+            "Interrupt handler too slow! Duration: {:?}",
+            duration
+        );
     }
 }
