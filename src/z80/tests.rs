@@ -1,15 +1,19 @@
 #![allow(unused_imports)]
 //! Comprehensive unit tests for Z80 CPU
 
-use super::*; use crate::memory::{MemoryInterface, IoInterface};
+use super::*;
 use crate::memory::Memory;
+use crate::memory::{IoInterface, MemoryInterface};
 
 fn create_z80(program: &[u8]) -> Z80<crate::memory::Memory, crate::z80::test_utils::TestIo> {
     let mut memory = Memory::new(0x10000);
     for (i, &byte) in program.iter().enumerate() {
         memory.data[i] = byte;
     }
-    Z80::new(memory, crate::z80::test_utils::TestIo::default())
+    Z80::new(
+        memory,
+        crate::z80::test_utils::TestIo::default(),
+    )
 }
 
 // ==================== Register Pair Tests ====================
