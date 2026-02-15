@@ -24,6 +24,42 @@ const VSRAM_READ: u8 = 0x04;
 const VSRAM_WRITE: u8 = 0x05;
 const CRAM_READ: u8 = 0x08;
 
+// Register indices
+const REG_MODE1: usize = 0;
+const REG_MODE2: usize = 1;
+const REG_PLANE_A: usize = 2;
+const REG_PLANE_B: usize = 4;
+const REG_SPRITE_TABLE: usize = 5;
+const REG_BG_COLOR: usize = 7;
+const REG_MODE4: usize = 12;
+const REG_HSCROLL: usize = 13;
+const REG_AUTO_INC: usize = 15;
+const REG_PLANE_SIZE: usize = 16;
+const REG_DMA_LEN_LO: usize = 19;
+const REG_DMA_LEN_HI: usize = 20;
+const REG_DMA_SRC_LO: usize = 21;
+const REG_DMA_SRC_MID: usize = 22;
+const REG_DMA_SRC_HI: usize = 23;
+
+// Mode bits
+const MODE1_HINT_ENABLE: u8 = 0x10;
+const MODE2_V30_MODE: u8 = 0x08;
+const MODE2_DMA_ENABLE: u8 = 0x10;
+const MODE2_VINT_ENABLE: u8 = 0x20;
+const MODE2_DISPLAY_ENABLE: u8 = 0x40;
+const MODE4_H40_MODE: u8 = 0x81; // H40 mode check mask
+
+// DMA Modes
+const DMA_MODE_MASK: u8 = 0xC0;
+const DMA_MODE_FILL: u8 = 0x80;
+const DMA_MODE_COPY: u8 = 0xC0;
+const DMA_TYPE_BIT: u8 = 0x80; // 0=Transfer, 1=Fill/Copy
+
+// Status bits
+const STATUS_VBLANK: u16 = 0x0008;
+const STATUS_VINT_PENDING: u16 = 0x0080;
+
+#[derive(Clone, Copy, Debug, Default)]
 struct SpriteAttributes {
     v_pos: u16,
     h_pos: u16,
@@ -83,49 +119,6 @@ const CTRL_CODE_LOW_SHIFT: u16 = 14;
 const CTRL_CODE_HIGH_SHIFT: u16 = 2;
 const CTRL_ADDR_HI_SHIFT: u16 = 14;
 
-// VDP Registers
-const REG_MODE1: usize = 0;
-const REG_MODE2: usize = 1;
-const REG_PLANE_A: usize = 2;
-// const REG_WINDOW: usize = 3;
-const REG_PLANE_B: usize = 4;
-const REG_SPRITE_TABLE: usize = 5;
-// const REG_SPRITE_PATTERN: usize = 6;
-const REG_BG_COLOR: usize = 7;
-// const REG_H_INT: usize = 10;
-// const REG_MODE3: usize = 11;
-const REG_MODE4: usize = 12;
-const REG_HSCROLL: usize = 13;
-const REG_AUTO_INC: usize = 15;
-const REG_PLANE_SIZE: usize = 16;
-// const REG_WINDOW_H: usize = 17;
-// const REG_WINDOW_V: usize = 18;
-const REG_DMA_LEN_LO: usize = 19;
-const REG_DMA_LEN_HI: usize = 20;
-const REG_DMA_SRC_LO: usize = 21;
-const REG_DMA_SRC_MID: usize = 22;
-const REG_DMA_SRC_HI: usize = 23;
-
-// Register Flags
-const MODE1_HINT_ENABLE: u8 = 0x10;
-
-const MODE2_V30_MODE: u8 = 0x08;
-const MODE2_DMA_ENABLE: u8 = 0x10;
-const MODE2_VINT_ENABLE: u8 = 0x20;
-const MODE2_DISPLAY_ENABLE: u8 = 0x40;
-
-const MODE4_H40_MODE: u8 = 0x81; // H40 mode check mask
-
-// DMA Modes (Reg 23)
-const DMA_MODE_MASK: u8 = 0xC0;
-const DMA_MODE_FILL: u8 = 0x80;
-const DMA_MODE_COPY: u8 = 0xC0;
-const DMA_TYPE_BIT: u8 = 0x80; // 0=Transfer, 1=Fill/Copy
-
-// Status Register Flags
-const STATUS_VBLANK: u16 = 0x0008;
-const STATUS_VINT_PENDING: u16 = 0x0080;
-
 const REG_WRITE_TAG: u16 = 0x8000; // Value indicating register write
 const REG_WRITE_MASK: u16 = 0xC000; // Mask to check register write tag
 const REG_IDX_MASK: u16 = 0x1F; // Register index mask (5 bits)
@@ -179,6 +172,9 @@ pub struct Vdp {
 
     /// Framebuffer (320x240 RGB565)
     pub framebuffer: Vec<u16>,
+
+    /// Reused buffer for sprite rendering to avoid allocation
+    sprite_buffer: Vec<SpriteAttributes>,
 }
 
 impl Default for Vdp {
@@ -207,6 +203,7 @@ impl Vdp {
             v30_offset: 0,
             is_pal: false,
             framebuffer: vec![0; 320 * 240],
+            sprite_buffer: Vec::with_capacity(80),
         }
     }
 
@@ -223,22 +220,23 @@ impl Vdp {
             let mut addr = self.control_address as usize;
             for chunk in data.chunks_exact(2) {
                 if addr < 0x10000 {
+<<<<<<< HEAD
                     // Big-endian source: chunk[0] is high byte, chunk[1] is low byte.
-                    // VRAM is byte array.
-                    // write_data logic:
-                    // self.vram[addr] = (value >> 8) as u8;
-                    // self.vram[addr ^ 1] = (value & 0xFF) as u8;
-
-                    // So:
-                    // self.vram[addr] = chunk[0];
-                    // self.vram[addr ^ 1] = chunk[1];
-
-                    // If addr is even: vram[addr] = chunk[0], vram[addr+1] = chunk[1].
-                    // If addr is odd: vram[addr] = chunk[0], vram[addr-1] = chunk[1].
-
-                    // Since inc=2, addr parity is preserved.
+                    // Standard write_data logic writes high byte to addr, low byte to addr ^ 1.
+                    // Since auto-increment is 2, address parity is preserved, so we can
+                    // directly write chunk[0] to addr and chunk[1] to addr ^ 1.
                     self.vram[addr] = chunk[0];
                     self.vram[addr ^ 1] = chunk[1];
+=======
+                    // Optimized direct write
+                    if (addr & 1) == 0 {
+                        self.vram[addr] = chunk[0];
+                        self.vram[addr + 1] = chunk[1];
+                    } else {
+                        self.vram[addr] = chunk[0];
+                        self.vram[addr - 1] = chunk[1];
+                    }
+>>>>>>> main
                 }
                 addr = (addr + 2) & 0xFFFF;
             }
@@ -265,12 +263,25 @@ impl Vdp {
         self.last_data_write = value;
 
         // DMA Fill (Mode 2) check
-        // Enabled (Reg 1 bit 4) AND Mode 2 (Reg 23 bits 7,6 = 1,0) AND DMA Pending (CD5=1)
-        if (self.registers[REG_MODE2] & MODE2_DMA_ENABLE) != 0 
-            && self.is_dma_fill() 
-            && self.dma_pending 
+        if (self.registers[REG_MODE2] & MODE2_DMA_ENABLE) != 0
+            && (self.registers[REG_DMA_SRC_HI] & DMA_MODE_MASK) == DMA_MODE_FILL
+            && self.dma_pending
         {
-            self.execute_dma();
+            let length = self.dma_length();
+            let mut addr = self.control_address;
+            let inc = self.auto_increment() as u16;
+            let fill_byte = (value >> 8) as u8;
+
+            // DMA Fill writes bytes. Length register specifies number of bytes.
+            // If length is 0, it is treated as 0x10000 (64KB).
+            let len = if length == 0 { 0x10000 } else { length };
+
+            for _ in 0..len {
+                // VRAM is byte-addressable in this emulator
+                self.vram[addr as usize] = fill_byte;
+                addr = addr.wrapping_add(inc);
+            }
+            self.control_address = addr;
             self.dma_pending = false;
             return;
         }
@@ -280,7 +291,6 @@ impl Vdp {
                 // Write VRAM
                 let addr = self.control_address as usize;
                 if addr < 0x10000 {
-                    // Byte swap needed? VRAM is accessed as bytes usually
                     self.vram[addr] = (value >> 8) as u8;
                     self.vram[addr ^ 1] = (value & 0xFF) as u8;
                 }
@@ -293,10 +303,9 @@ impl Vdp {
                 }
                 let addr = (self.control_address & 0x7E) as usize;
                 // Pack 9-bit color to RGB565
-                let r = (val & 0xE) << 1; // 3 bits -> 4 bits
-                let g = (val & 0xE0) >> 3; // 3 bits -> 4 bits
-                let b = (val & 0xE00) >> 7; // 3 bits -> 4 bits
-                                            // Expand to 5/6/5
+                let r = (val & 0xE) << 1;
+                let g = (val & 0xE0) >> 3;
+                let b = (val & 0xE00) >> 7;
                 let r5 = (r << 1) | (r >> 3);
                 let g6 = (g << 2) | (g >> 2);
                 let b5 = (b << 1) | (b >> 3);
@@ -368,6 +377,8 @@ impl Vdp {
             if (self.control_code & CTRL_DMA_BIT) != 0 {
                 // DMA requested
                 self.dma_pending = true;
+            } else {
+                self.dma_pending = false;
             }
         } else if (value & REG_WRITE_MASK) == REG_WRITE_TAG {
             // Register write
@@ -391,21 +402,6 @@ impl Vdp {
     /// Reset VDP state
     pub fn reset(&mut self) {
         *self = Self::new();
-    }
-
-    #[cfg(test)]
-    pub fn get_control_code(&self) -> u8 {
-        self.control_code
-    }
-
-    #[cfg(test)]
-    pub fn get_control_address(&self) -> u16 {
-        self.control_address
-    }
-
-    #[cfg(test)]
-    pub fn get_cram_color_pub(&self, palette: u8, color: u8) -> u16 {
-        self.get_cram_color(palette, color)
     }
 
     // Helper methods
@@ -454,9 +450,6 @@ impl Vdp {
     }
 
     pub fn dma_mode(&self) -> u8 {
-        // Bit 4 of Reg 23 determines mode (0=memory, 1=vram fill/copy)
-        // Bit 5 is unused? Actually bit 6 and 7 of reg 23 are type.
-        // Simplified: Reg 23
         self.registers[REG_DMA_SRC_HI]
     }
 
@@ -478,12 +471,6 @@ impl Vdp {
 
     /// Check if DMA mode is 0 or 1 (68k Transfer)
     pub fn is_dma_transfer(&self) -> bool {
-        // Mode bit is bit 7 of reg 23?
-        // Actually:
-        // Reg 23:
-        // Bit 7: Type (0=transfer, 1=fill/copy)
-        // Bit 6: Type (0=fill, 1=copy) - only if Bit 7 is 1
-        // So for transfer, Bit 7 must be 0.
         (self.registers[REG_DMA_SRC_HI] & DMA_TYPE_BIT) == 0
     }
 
@@ -494,30 +481,25 @@ impl Vdp {
     pub fn execute_dma(&mut self) -> u32 {
         let length = self.dma_length();
         // If length is 0, it is treated as 0x10000 (64KB)
-        let len = if length == 0 { 0x10000 } else { length as usize };
+        let len = if length == 0 { 0x10000 } else { length };
 
         let mode = self.registers[REG_DMA_SRC_HI] & DMA_MODE_MASK;
 
         match mode {
             DMA_MODE_FILL => {
-                // VRAM Fill (Mode 2)
                 let data = self.last_data_write;
                 let mut addr = self.control_address;
                 let inc = self.auto_increment() as u16;
                 let fill_byte = (data >> 8) as u8;
 
                 for _ in 0..len {
+                    // VRAM is byte-addressable in this emulator
                     self.vram[addr as usize] = fill_byte;
                     addr = addr.wrapping_add(inc);
                 }
                 self.control_address = addr;
-
-                // Clear DMA length registers
-                self.registers[REG_DMA_LEN_LO] = 0;
-                self.registers[REG_DMA_LEN_HI] = 0;
             }
             DMA_MODE_COPY => {
-                // VRAM Copy (Mode 3)
                 let mut source = (self.dma_source() & 0xFFFF) as u16;
                 let mut dest = self.control_address;
                 let inc = self.auto_increment() as u16;
@@ -529,21 +511,16 @@ impl Vdp {
                     dest = dest.wrapping_add(inc);
                 }
                 self.control_address = dest;
-
-                // Clear DMA length registers
-                self.registers[REG_DMA_LEN_LO] = 0;
-                self.registers[REG_DMA_LEN_HI] = 0;
             }
             _ => {}
         }
 
         self.dma_pending = false;
-        len as u32
+        len
     }
 
     pub fn sprite_table_address(&self) -> u16 {
-        let mask = 0xFE00; // simplified
-        ((self.registers[REG_SPRITE_TABLE] as u16) << 9) & mask
+        ((self.registers[REG_SPRITE_TABLE] as u16) << 9) & 0xFE00
     }
 
     pub fn plane_a_address(&self) -> usize {
@@ -562,7 +539,7 @@ impl Vdp {
         let w = match self.registers[REG_PLANE_SIZE] & 0x03 {
             0 => 32,
             1 => 64,
-            _ => 128, // 2 and 3 are invalid but behave like 64 or 128
+            _ => 128,
         };
         let h = match (self.registers[REG_PLANE_SIZE] >> 4) & 0x03 {
             0 => 32,
@@ -586,23 +563,16 @@ impl Vdp {
 
     // VDP State management
 
-    /// Called every scanline
-    pub fn step(&mut self, _cycles: u64) {
-        // Very simplified timing
-        // In reality, we'd update counters based on cycles
-        // For now, this is driven by the main loop calling render_line
-    }
+    pub fn step(&mut self, _cycles: u64) {}
 
-    /// Check if VBlank interrupt is pending
     pub fn vblank_pending(&self) -> bool {
-        (self.status & STATUS_VBLANK) != 0 && (self.registers[REG_MODE2] & MODE2_VINT_ENABLE) != 0
+        (self.status & STATUS_VINT_PENDING) != 0 && (self.registers[REG_MODE2] & MODE2_VINT_ENABLE) != 0
     }
 
-    /// Set VBlank status
     pub fn set_vblank(&mut self, active: bool) {
         if active {
-            self.status |= STATUS_VBLANK; // VBlank flag
-            self.status |= STATUS_VINT_PENDING; // VInterrupt pending
+            self.status |= STATUS_VBLANK;
+            self.status |= STATUS_VINT_PENDING;
         } else {
             self.status &= !STATUS_VBLANK;
             self.status &= !STATUS_VINT_PENDING;
@@ -613,18 +583,12 @@ impl Vdp {
         self.status |= STATUS_VINT_PENDING;
     }
 
-    /// Check if HBlank interrupt is pending
     pub fn hblank_pending(&self) -> bool {
-        // Simplified
         (self.registers[REG_MODE1] & MODE1_HINT_ENABLE) != 0
     }
 
-    /// Update V30 rolling offset for NTSC mode
     pub fn update_v30_offset(&mut self) {
         if !self.is_pal && self.v30_mode() {
-            // Calculated optimal increment for NTSC (60Hz) running V30 (312 lines timing):
-            // 262 mod 240 = 22.
-            // This simulates the drift of a 50Hz signal on a 60Hz display.
             self.v30_offset = (self.v30_offset + 22) % 240;
         }
     }
@@ -638,13 +602,11 @@ impl Vdp {
         self.cram.to_vec()
     }
 
-    /// Check if control is pending (for testing)
     #[cfg(test)]
     pub fn is_control_pending(&self) -> bool {
         self.control_pending
     }
 
-    /// Read H/V counter
     pub fn read_hv_counter(&self) -> u16 {
         let h = (self.h_counter >> 1) as u8;
         let v = if self.v_counter > 0xFF {
@@ -655,19 +617,16 @@ impl Vdp {
         ((v as u16) << 8) | (h as u16)
     }
 
-    /// Set V-counter (scanline)
     pub fn set_v_counter(&mut self, v: u16) {
         self.v_counter = v;
     }
 
-    /// Set H-counter
     pub fn set_h_counter(&mut self, h: u16) {
         self.h_counter = h;
     }
 
     // === Rendering ===
 
-    /// Render a single scanline
     pub fn render_line(&mut self, line: u16) {
         if line >= self.screen_height() {
             return;
@@ -683,29 +642,33 @@ impl Vdp {
 
         let line_offset = (draw_line as usize) * 320;
 
-        // Get background color
         let (pal_line, color_idx) = self.bg_color();
         let bg_color = self.get_cram_color(pal_line, color_idx);
 
-        // Fill with background color
         self.framebuffer[line_offset..line_offset + width as usize].fill(bg_color);
 
         if !self.display_enabled() {
             return;
         }
 
-        // Plane rendering (Low priority)
-        self.render_plane(false, fetch_line, draw_line, false); // Plane B low
-        self.render_plane(true, fetch_line, draw_line, false); // Plane A low
+        // Collect sprites once per scanline on the stack
+        let mut sprites = [SpriteAttributes::default(); 80];
+        let mut count = 0;
+        for attr in self.sprite_iter() {
+            sprites[count] = attr;
+            count += 1;
+            if count >= 80 {
+                break;
+            }
+        }
+        let active_sprites = &sprites[0..count];
 
-        // Sprites low priority
-        self.render_sprites(fetch_line, draw_line, false);
-
-        // Plane rendering (High priority)
-        self.render_plane(false, fetch_line, draw_line, true); // Plane B high
-        self.render_plane(true, fetch_line, draw_line, true); // Plane A high
-                                                              // Sprites high priority
-        self.render_sprites(fetch_line, draw_line, true);
+        self.render_plane(false, fetch_line, draw_line, false);
+        self.render_plane(true, fetch_line, draw_line, false);
+        self.render_sprites(fetch_line, draw_line, false, active_sprites);
+        self.render_plane(false, fetch_line, draw_line, true);
+        self.render_plane(true, fetch_line, draw_line, true);
+        self.render_sprites(fetch_line, draw_line, true, active_sprites);
     }
 
     fn sprite_iter(&self) -> SpriteIterator<'_> {
@@ -833,24 +796,6 @@ impl Vdp {
         }
     }
 
-    fn render_sprites(&mut self, fetch_line: u16, draw_line: u16, priority_filter: bool) {
-        let screen_width = self.screen_width();
-        let line_offset = (draw_line as usize) * 320;
-
-        let sprites: Vec<_> = self.sprite_iter().collect();
-
-        for attr in sprites {
-            // Check if sprite is visible on this line
-            let sprite_v_px = (attr.v_size as u16) * 8;
-            if attr.priority == priority_filter
-                && fetch_line >= attr.v_pos
-                && fetch_line < attr.v_pos + sprite_v_px
-            {
-                self.render_sprite_scanline(fetch_line, &attr, line_offset, screen_width);
-            }
-        }
-    }
-
     fn get_scroll_values(&self, is_plane_a: bool) -> (u16, u16) {
         let vs_addr = if is_plane_a { 0 } else { 2 };
         let v_scroll =
@@ -888,34 +833,77 @@ impl Vdp {
         [p0, p1, p2, p3]
     }
 
-    fn draw_tile_segment(
+    fn draw_full_tile_row(
         &mut self,
-        patterns: [u8; 4],
+        tile_index: u16,
         palette: u8,
+        v_flip: bool,
         h_flip: bool,
-        pixel_h: u16,
-        count: u16,
-        start_idx: usize,
+        pixel_v: u16,
+        dest_idx: usize,
     ) {
-        for i in 0..count {
-            let current_pixel_h = pixel_h + i;
-            let eff_col = if h_flip {
-                7 - current_pixel_h
-            } else {
-                current_pixel_h
-            };
+        let patterns = self.fetch_tile_pattern(tile_index, pixel_v, v_flip);
+        let p0 = patterns[0];
+        let p1 = patterns[1];
+        let p2 = patterns[2];
+        let p3 = patterns[3];
+        let palette_base = (palette as usize) * 16;
 
-            let byte = patterns[(eff_col as usize) / 2];
+        if h_flip {
+            let mut col = p3 & 0x0F;
+            if col != 0 { self.framebuffer[dest_idx] = self.cram_cache[palette_base + col as usize]; }
+            col = p3 >> 4;
+            if col != 0 { self.framebuffer[dest_idx + 1] = self.cram_cache[palette_base + col as usize]; }
+            col = p2 & 0x0F;
+            if col != 0 { self.framebuffer[dest_idx + 2] = self.cram_cache[palette_base + col as usize]; }
+            col = p2 >> 4;
+            if col != 0 { self.framebuffer[dest_idx + 3] = self.cram_cache[palette_base + col as usize]; }
+            col = p1 & 0x0F;
+            if col != 0 { self.framebuffer[dest_idx + 4] = self.cram_cache[palette_base + col as usize]; }
+            col = p1 >> 4;
+            if col != 0 { self.framebuffer[dest_idx + 5] = self.cram_cache[palette_base + col as usize]; }
+            col = p0 & 0x0F;
+            if col != 0 { self.framebuffer[dest_idx + 6] = self.cram_cache[palette_base + col as usize]; }
+            col = p0 >> 4;
+            if col != 0 { self.framebuffer[dest_idx + 7] = self.cram_cache[palette_base + col as usize]; }
+        } else {
+            let mut col = p0 >> 4;
+            if col != 0 { self.framebuffer[dest_idx] = self.cram_cache[palette_base + col as usize]; }
+            col = p0 & 0x0F;
+            if col != 0 { self.framebuffer[dest_idx + 1] = self.cram_cache[palette_base + col as usize]; }
+            col = p1 >> 4;
+            if col != 0 { self.framebuffer[dest_idx + 2] = self.cram_cache[palette_base + col as usize]; }
+            col = p1 & 0x0F;
+            if col != 0 { self.framebuffer[dest_idx + 3] = self.cram_cache[palette_base + col as usize]; }
+            col = p2 >> 4;
+            if col != 0 { self.framebuffer[dest_idx + 4] = self.cram_cache[palette_base + col as usize]; }
+            col = p2 & 0x0F;
+            if col != 0 { self.framebuffer[dest_idx + 5] = self.cram_cache[palette_base + col as usize]; }
+            col = p3 >> 4;
+            if col != 0 { self.framebuffer[dest_idx + 6] = self.cram_cache[palette_base + col as usize]; }
+            col = p3 & 0x0F;
+            if col != 0 { self.framebuffer[dest_idx + 7] = self.cram_cache[palette_base + col as usize]; }
+        }
+    }
 
-            let col = if eff_col % 2 == 0 {
-                byte >> 4
-            } else {
-                byte & 0x0F
-            };
+    fn render_sprites(
+        &mut self,
+        fetch_line: u16,
+        draw_line: u16,
+        priority_filter: bool,
+        sprites: &[SpriteAttributes],
+    ) {
+        let screen_width = self.screen_width();
+        let line_offset = (draw_line as usize) * 320;
 
-            if col != 0 {
-                let color = self.get_cram_color(palette, col);
-                self.framebuffer[start_idx + i as usize] = color;
+        for attr in sprites {
+            // Check if sprite is visible on this line
+            let sprite_v_px = (attr.v_size as u16) * 8;
+            if attr.priority == priority_filter
+                && fetch_line >= attr.v_pos
+                && fetch_line < attr.v_pos + sprite_v_px
+            {
+                self.render_sprite_scanline(fetch_line, attr, line_offset, screen_width);
             }
         }
     }
@@ -946,9 +934,7 @@ impl Vdp {
         let mut screen_x: u16 = 0;
         let mut scrolled_h = (0u16).wrapping_sub(h_scroll);
 
-        // Pre-calculate constants
         let plane_w_mask = plane_w - 1;
-        let mut tile_h = (scrolled_h as usize >> 3) & plane_w_mask;
 
         // Prologue: Handle unaligned start
         let pixel_h = scrolled_h % 8;
@@ -956,6 +942,7 @@ impl Vdp {
             let pixels_left_in_tile = 8 - pixel_h;
             let pixels_to_process = std::cmp::min(pixels_left_in_tile, screen_width - screen_x);
 
+            let tile_h = (scrolled_h as usize >> 3) & plane_w_mask;
             let entry = self.fetch_nametable_entry(name_table_base, tile_v, tile_h, plane_w);
 
             let priority = (entry & 0x8000) != 0;
@@ -967,105 +954,52 @@ impl Vdp {
 
                 let patterns = self.fetch_tile_pattern(tile_index, pixel_v as u16, v_flip);
 
-                self.draw_tile_segment(
-                    patterns,
-                    palette,
-                    h_flip,
-                    pixel_h,
-                    pixels_to_process,
-                    line_offset + screen_x as usize,
-                );
+                for i in 0..pixels_to_process {
+                    let current_pixel_h = pixel_h + i;
+                    let eff_col = if h_flip { 7 - current_pixel_h } else { current_pixel_h };
+                    let byte = patterns[(eff_col as usize) / 2];
+                    let col = if eff_col % 2 == 0 { byte >> 4 } else { byte & 0x0F };
+
+                    if col != 0 {
+                        let color = self.get_cram_color(palette, col);
+                        self.framebuffer[line_offset + (screen_x + i) as usize] = color;
+                    }
+                }
             }
             screen_x += pixels_to_process;
             scrolled_h = scrolled_h.wrapping_add(pixels_to_process);
-            tile_h = (tile_h + 1) & plane_w_mask;
         }
 
         // Main Loop: Process full 8-pixel tiles
         while screen_x + 8 <= screen_width {
+            let tile_h = (scrolled_h as usize >> 3) & plane_w_mask;
             let entry = self.fetch_nametable_entry(name_table_base, tile_v, tile_h, plane_w);
 
             let priority = (entry & 0x8000) != 0;
             if priority != priority_filter {
                 screen_x += 8;
                 scrolled_h = scrolled_h.wrapping_add(8);
-                tile_h = (tile_h + 1) & plane_w_mask;
                 continue;
             }
 
             let palette = ((entry >> 13) & 0x03) as u8;
-            let palette_base = (palette as usize) * 16;
-
             let v_flip = (entry & 0x1000) != 0;
             let h_flip = (entry & 0x0800) != 0;
             let tile_index = entry & 0x07FF;
 
-            let patterns = self.fetch_tile_pattern(tile_index, pixel_v as u16, v_flip);
-            let p0 = patterns[0];
-            let p1 = patterns[1];
-            let p2 = patterns[2];
-            let p3 = patterns[3];
-
-            let dest_idx = line_offset + (screen_x as usize);
-
-            if h_flip {
-                let mut col = p3 & 0x0F;
-                if col != 0 { self.framebuffer[dest_idx] = self.cram_cache[palette_base + col as usize]; }
-
-                col = p3 >> 4;
-                if col != 0 { self.framebuffer[dest_idx + 1] = self.cram_cache[palette_base + col as usize]; }
-
-                col = p2 & 0x0F;
-                if col != 0 { self.framebuffer[dest_idx + 2] = self.cram_cache[palette_base + col as usize]; }
-
-                col = p2 >> 4;
-                if col != 0 { self.framebuffer[dest_idx + 3] = self.cram_cache[palette_base + col as usize]; }
-
-                col = p1 & 0x0F;
-                if col != 0 { self.framebuffer[dest_idx + 4] = self.cram_cache[palette_base + col as usize]; }
-
-                col = p1 >> 4;
-                if col != 0 { self.framebuffer[dest_idx + 5] = self.cram_cache[palette_base + col as usize]; }
-
-                col = p0 & 0x0F;
-                if col != 0 { self.framebuffer[dest_idx + 6] = self.cram_cache[palette_base + col as usize]; }
-
-                col = p0 >> 4;
-                if col != 0 { self.framebuffer[dest_idx + 7] = self.cram_cache[palette_base + col as usize]; }
-            } else {
-                let mut col = p0 >> 4;
-                if col != 0 { self.framebuffer[dest_idx] = self.cram_cache[palette_base + col as usize]; }
-
-                col = p0 & 0x0F;
-                if col != 0 { self.framebuffer[dest_idx + 1] = self.cram_cache[palette_base + col as usize]; }
-
-                col = p1 >> 4;
-                if col != 0 { self.framebuffer[dest_idx + 2] = self.cram_cache[palette_base + col as usize]; }
-
-                col = p1 & 0x0F;
-                if col != 0 { self.framebuffer[dest_idx + 3] = self.cram_cache[palette_base + col as usize]; }
-
-                col = p2 >> 4;
-                if col != 0 { self.framebuffer[dest_idx + 4] = self.cram_cache[palette_base + col as usize]; }
-
-                col = p2 & 0x0F;
-                if col != 0 { self.framebuffer[dest_idx + 5] = self.cram_cache[palette_base + col as usize]; }
-
-                col = p3 >> 4;
-                if col != 0 { self.framebuffer[dest_idx + 6] = self.cram_cache[palette_base + col as usize]; }
-
-                col = p3 & 0x0F;
-                if col != 0 { self.framebuffer[dest_idx + 7] = self.cram_cache[palette_base + col as usize]; }
-            }
+            self.draw_full_tile_row(tile_index, palette, v_flip, h_flip, pixel_v as u16, line_offset + screen_x as usize);
 
             screen_x += 8;
             scrolled_h = scrolled_h.wrapping_add(8);
-            tile_h = (tile_h + 1) & plane_w_mask;
         }
 
         // Epilogue: Handle remaining pixels
-        if screen_x < screen_width {
-            let count = (screen_width - screen_x) as u16;
+        while screen_x < screen_width {
+            let pixel_h = scrolled_h % 8;
+            let pixels_left_in_tile = 8 - pixel_h;
+            let pixels_to_process = std::cmp::min(pixels_left_in_tile, screen_width - screen_x);
+
+            let tile_h = (scrolled_h as usize >> 3) & plane_w_mask;
             let entry = self.fetch_nametable_entry(name_table_base, tile_v, tile_h, plane_w);
 
             let priority = (entry & 0x8000) != 0;
@@ -1077,18 +1011,22 @@ impl Vdp {
 
                 let patterns = self.fetch_tile_pattern(tile_index, pixel_v as u16, v_flip);
 
-                self.draw_tile_segment(
-                    patterns,
-                    palette,
-                    h_flip,
-                    0,
-                    count,
-                    line_offset + screen_x as usize,
-                );
+                for i in 0..pixels_to_process {
+                    let current_pixel_h = pixel_h + i;
+                    let eff_col = if h_flip { 7 - current_pixel_h } else { current_pixel_h };
+                    let byte = patterns[(eff_col as usize) / 2];
+                    let col = if eff_col % 2 == 0 { byte >> 4 } else { byte & 0x0F };
+
+                    if col != 0 {
+                        let color = self.get_cram_color(palette, col);
+                        self.framebuffer[line_offset + (screen_x + i) as usize] = color;
+                    }
+                }
             }
+            screen_x += pixels_to_process;
+            scrolled_h = scrolled_h.wrapping_add(pixels_to_process);
         }
     }
-
 }
 
 impl Debuggable for Vdp {
@@ -1103,7 +1041,14 @@ impl Debuggable for Vdp {
                 "pending": self.control_pending,
                 "code": self.control_code,
                 "address": self.control_address,
-            }
+            },
+            "vram": &self.vram[..],
+            "cram": &self.cram[..],
+            "vsram": &self.vsram[..],
+            "line_counter": self.line_counter,
+            "last_data_write": self.last_data_write,
+            "v30_offset": self.v30_offset,
+            "is_pal": self.is_pal
         })
     }
 
@@ -1141,6 +1086,64 @@ impl Debuggable for Vdp {
         if let Some(address) = control["address"].as_u64() {
             self.control_address = address as u16;
         }
+
+        if let Some(vram) = state["vram"].as_array() {
+            for (i, val) in vram.iter().enumerate() {
+                if i < self.vram.len() {
+                    if let Some(v) = val.as_u64() {
+                        self.vram[i] = v as u8;
+                    }
+                }
+            }
+        }
+
+        if let Some(cram) = state["cram"].as_array() {
+            for (i, val) in cram.iter().enumerate() {
+                if i < self.cram.len() {
+                    if let Some(v) = val.as_u64() {
+                        self.cram[i] = v as u8;
+                    }
+                }
+            }
+            // Reconstruct CRAM Cache
+            for i in 0..64 {
+                let addr = i * 2;
+                if addr + 1 < self.cram.len() {
+                    let val = ((self.cram[addr + 1] as u16) << 8) | (self.cram[addr] as u16);
+                    // Pack 9-bit color to RGB565
+                    let r = (val & 0xE) << 1;
+                    let g = (val & 0xE0) >> 3;
+                    let b = (val & 0xE00) >> 7;
+                    let r5 = (r << 1) | (r >> 3);
+                    let g6 = (g << 2) | (g >> 2);
+                    let b5 = (b << 1) | (b >> 3);
+                    self.cram_cache[i] = (r5 << 11) | (g6 << 5) | b5;
+                }
+            }
+        }
+
+        if let Some(vsram) = state["vsram"].as_array() {
+            for (i, val) in vsram.iter().enumerate() {
+                if i < self.vsram.len() {
+                    if let Some(v) = val.as_u64() {
+                        self.vsram[i] = v as u8;
+                    }
+                }
+            }
+        }
+
+        if let Some(line_counter) = state["line_counter"].as_u64() {
+            self.line_counter = line_counter as u8;
+        }
+        if let Some(last_data_write) = state["last_data_write"].as_u64() {
+            self.last_data_write = last_data_write as u16;
+        }
+        if let Some(v30_offset) = state["v30_offset"].as_u64() {
+            self.v30_offset = v30_offset as u16;
+        }
+        if let Some(is_pal) = state["is_pal"].as_bool() {
+            self.is_pal = is_pal;
+        }
     }
 }
 
@@ -1149,6 +1152,9 @@ mod tests_render;
 
 #[cfg(test)]
 mod tests_dma;
+
+#[cfg(test)]
+mod tests_dma_helpers;
 
 #[cfg(test)]
 mod test_command;
@@ -1162,43 +1168,77 @@ mod tests_properties;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     #[test]
     fn test_vdp_debuggable() {
         let mut vdp = Vdp::new();
-        let state = json!({
-            "status": 0x1234,
-            "h_counter": 0x56,
-            "v_counter": 0x78,
-            "dma_pending": true,
-            "registers": [
-                1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24
-            ],
-            "control": {
-                "pending": true,
-                "code": 0x0F,
-                "address": 0x3FFF
-            }
-        });
+        // Set some non-default state
+        vdp.status = 0x1234;
+        vdp.h_counter = 0x56;
+        vdp.v_counter = 0x78;
+        vdp.dma_pending = true;
+        for i in 0..24 {
+            vdp.registers[i] = (i + 1) as u8;
+        }
+        vdp.control_pending = true;
+        vdp.control_code = 0x0F;
+        vdp.control_address = 0x3FFF;
 
-        vdp.write_state(&state);
+        // Memory state
+        vdp.vram[0] = 0xAA;
+        vdp.vram[0xFFFF] = 0xBB;
+        vdp.cram[0] = 0xCC;
+        vdp.cram[127] = 0xDD;
+        vdp.vsram[0] = 0xEE;
+        vdp.vsram[79] = 0xFF;
 
-        assert_eq!(vdp.status, 0x1234);
-        assert_eq!(vdp.h_counter, 0x56);
-        assert_eq!(vdp.v_counter, 0x78);
-        assert_eq!(vdp.dma_pending, true);
-        assert_eq!(vdp.registers[0], 1);
-        assert_eq!(vdp.registers[23], 24);
-        assert_eq!(vdp.control_pending, true);
-        assert_eq!(vdp.control_code, 0x0F);
-        assert_eq!(vdp.control_address, 0x3FFF);
+        vdp.line_counter = 42;
+        vdp.last_data_write = 0xCAFE;
+        vdp.v30_offset = 123;
+        vdp.is_pal = true;
 
-        // Verify read_state mirrors the written state
-        let new_state = vdp.read_state();
-        assert_eq!(new_state["status"], 0x1234);
-        assert_eq!(new_state["registers"][23], 24);
-        assert_eq!(new_state["control"]["address"], 0x3FFF);
+        // Set a color in CRAM to verify cache reconstruction
+        // Color 1: White (0x0EEE) -> stored as low: 0xEE, high: 0x0E
+        vdp.cram[2] = 0xEE;
+        vdp.cram[3] = 0x0E;
+
+        // Serialize
+        let state = vdp.read_state();
+
+        // Reset VDP
+        let mut vdp2 = Vdp::new();
+
+        // Deserialize
+        vdp2.write_state(&state);
+
+        // Verify basic registers
+        assert_eq!(vdp2.status, 0x1234);
+        assert_eq!(vdp2.h_counter, 0x56);
+        assert_eq!(vdp2.v_counter, 0x78);
+        assert_eq!(vdp2.dma_pending, true);
+        assert_eq!(vdp2.registers[0], 1);
+        assert_eq!(vdp2.registers[23], 24);
+        assert_eq!(vdp2.control_pending, true);
+        assert_eq!(vdp2.control_code, 0x0F);
+        assert_eq!(vdp2.control_address, 0x3FFF);
+
+        // Verify Memory
+        assert_eq!(vdp2.vram[0], 0xAA);
+        assert_eq!(vdp2.vram[0xFFFF], 0xBB);
+        assert_eq!(vdp2.cram[0], 0xCC);
+        assert_eq!(vdp2.cram[127], 0xDD);
+        assert_eq!(vdp2.vsram[0], 0xEE);
+        assert_eq!(vdp2.vsram[79], 0xFF);
+
+        // Verify internal state
+        assert_eq!(vdp2.line_counter, 42);
+        assert_eq!(vdp2.last_data_write, 0xCAFE);
+        assert_eq!(vdp2.v_counter, 0x78);
+        assert_eq!(vdp2.v30_offset, 123);
+        assert_eq!(vdp2.is_pal, true);
+
+        // Verify CRAM Cache
+        assert_eq!(vdp2.cram_cache[1], 0xDEFB);
     }
 }
 

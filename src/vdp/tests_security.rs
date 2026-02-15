@@ -9,8 +9,6 @@ fn test_vram_access_out_of_bounds() {
     vdp.write_control(0x8238);
 
     // Set Plane Size to 128x128 (Reg 16 = 0x33)
-    // 0011 0011 -> 0x33
-    // But Reg 16 only uses bits 0-1 and 4-5.
     // 0011 0011 -> Size = 128x128
     vdp.write_control(0x9033);
 
@@ -23,75 +21,51 @@ fn test_vram_access_out_of_bounds() {
     // `tile_v` depends on `scrolled_v`. `scrolled_v = fetch_line + v_scroll`.
     // `tile_h` depends on `scrolled_h`. `scrolled_h = screen_x - h_scroll`.
 
-    // Let's set VScroll to 0 (default).
-    // Let's set HScroll to 0 (default).
-
-    // `fetch_line` = `draw_line` (assuming not PAL/V30).
-    // Let's pick `draw_line` = 200.
-
-    // To get `tile_v` large, we need `scrolled_v` large.
-    // `scrolled_v` wraps at `plane_h * 8`.
-    // If plane_h is 128, max pixel height is 1024.
-
-    // Wait, `tile_v = (scrolled_v / 8) % plane_h`.
-    // If we want `tile_v` = 127. We need `scrolled_v` around 127 * 8 = 1016.
-    // VDP height is usually 224 or 240. So `scrolled_v` (without scroll) is max 239.
-    // So `tile_v` will be at most 239/8 = 29.
-
-    // To get `tile_v` higher, we need to use VScroll.
-    // VSRAM entry 0 (Plane A).
-    // `vdp.vsram[0]`, `vdp.vsram[1]`.
-    // Let's set VScroll to a value that makes `scrolled_v` point to bottom of plane.
-    // If we want `tile_v` = 127. `scrolled_v` should be 1016.
-    // If `fetch_line` is 0. `v_scroll` should be 1016.
-    // VSRAM is 10 bits? Masked with 0x3FF (1023).
-    // So we can set `v_scroll` to 1016.
-
+    // Set VScroll to 1016.
+    // `tile_v` = (1016 / 8) % 128 = 127.
     vdp.vsram[0] = (1016 >> 8) as u8;
     vdp.vsram[1] = (1016 & 0xFF) as u8;
 
-    // Now `tile_v` will be around 127.
-
-    // To get `tile_h` large, we need `scrolled_h` large.
-    // `scrolled_h = screen_x - h_scroll`.
-    // `screen_x` goes from 0 to 319.
-    // If `h_scroll` is 0, `tile_h` goes from 0 to 39.
-
-    // We want `tile_h` = 127.
-    // We need `scrolled_h` around 1016.
-    // `scrolled_h` is `u16`. Wrapping subtract.
-    // If we want `scrolled_h` = 1016.
-    // And `screen_x` = 0.
-    // `0 - h_scroll` = 1016 (mod 1024? No, hscroll is 10 bits masked).
-    // The code:
-    // `let scrolled_h = (screen_x as u16).wrapping_sub(h_scroll);`
-    // `let tile_h = (scrolled_h as usize / 8) % plane_w;`
-    // So if `screen_x` = 0. `0 - h_scroll` = large.
-    // If `h_scroll` is small positive, `scrolled_h` becomes large (near 65535).
-    // `tile_h` = `(65535 / 8) % 128` = `8191 % 128` = `127`.
-
-    // So setting `h_scroll` = 1 should be enough to get high `tile_h` for `screen_x=0`.
-
-    // Set HScroll for Plane A.
+    // Set HScroll for Plane A to 1.
     // `hs_base = hscroll_address()`. Default is 0.
-    // `hs_addr` for Plane A is `hs_base`.
-    // We need to write to VRAM at `hs_base`.
-    // Let's assume `hs_base` is 0 for now (default Reg 13 = 0).
-    // Write 1 to VRAM[0..1].
-    // `h_scroll` = `vram[0] << 8 | vram[1]`.
-    // Wait, `h_scroll` calculation:
-    // `let hi = self.vram[hs_addr]; let lo = self.vram[hs_addr + 1];`
-    // We want `h_scroll` = 1.
+    // `hs_addr` for Plane A is `hs_base` (0).
+    // Write 1 to VRAM[0..1] (h_scroll).
     vdp.vram[0] = 0;
     vdp.vram[1] = 1;
 
     // Now `scrolled_h` for `screen_x=0` will be `0 - 1 = 65535`.
-    // `tile_h` = 127.
+    // `tile_h` = (65535 / 8) % 128 = 8191 % 128 = 127.
 
     // With `tile_v` = 127 and `tile_h` = 127.
     // `nt_entry_addr` = `0xE000 + (127 * 128 + 127) * 2`.
     // = `57344 + 32766` = `90110`.
 
-    // This should panic.
+    // The wrapped address should be 90110 & 0xFFFF = 24574 (0x5FFE).
+    let wrapped_addr = 24574;
+
+    // Write nametable entry at wrapped address.
+    // Entry: Priority=1, Palette=0, VFlip=0, HFlip=0, Tile=1.
+    // 0x8001.
+    vdp.vram[wrapped_addr] = 0x80;
+    vdp.vram[wrapped_addr + 1] = 0x01;
+
+    // Write Tile 1 pattern (at address 1 * 32 = 32).
+    // We want color index 1.
+    // Byte: 0x11 (pixels 0,1), 0x11 (pixels 2,3), etc.
+    for i in 0..4 {
+        vdp.vram[32 + i] = 0x11;
+    }
+
+    // Set CRAM color 1 (Palette 0) to Red (0xF800).
+    // Palette 0, Color 1 is at index 1.
+    vdp.cram_cache[1] = 0xF800;
+
+    // Clear framebuffer
+    vdp.framebuffer.fill(0);
+
+    // This should NOT panic, and should render correctly.
     vdp.render_line(0);
+
+    // Verify pixel at 0,0 is Red.
+    assert_eq!(vdp.framebuffer[0], 0xF800, "Pixel at 0,0 should be Red (0xF800), indicating correct wrapping");
 }
