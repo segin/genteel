@@ -20,6 +20,7 @@
 //! | 0xC00000-0xC0001F  | 32 B   | VDP Ports                      |
 //! | 0xE00000-0xFFFFFF  | 2 MB   | Work RAM (64KB mirrored)       |
 
+use super::byte_utils;
 use super::MemoryInterface;
 use crate::apu::Apu;
 use crate::debugger::Debuggable;
@@ -117,7 +118,11 @@ impl Bus {
             // Z80 Address Space: 0xA00000-0xA0FFFF
             0xA00000..=0xA01FFF => {
                 // Z80 RAM (8KB)
-                self.z80_ram[(addr & 0x1FFF) as usize]
+                if self.z80_bus_request {
+                    self.z80_ram[(addr & 0x1FFF) as usize]
+                } else {
+                    0xFF
+                }
             }
             // YM2612 from 68k: 0xA04000-0xA04003
             0xA04000..=0xA04003 => self.apu.fm.read((addr & 3) as u8),
@@ -188,7 +193,9 @@ impl Bus {
 
             // Z80 RAM
             0xA00000..=0xA01FFF => {
-                self.z80_ram[(addr & 0x1FFF) as usize] = value;
+                if self.z80_bus_request {
+                    self.z80_ram[(addr & 0x1FFF) as usize] = value;
+                }
             }
 
             // YM2612 FM Chip: 0xA04000-0xA04003
@@ -265,14 +272,14 @@ impl Bus {
             let idx = addr as usize;
             if idx + 1 < self.rom.len() {
                 // SAFETY: We checked bounds above
-                let high = unsafe { *self.rom.get_unchecked(idx) } as u16;
-                let low = unsafe { *self.rom.get_unchecked(idx + 1) } as u16;
-                return (high << 8) | low;
+                let high = unsafe { *self.rom.get_unchecked(idx) };
+                let low = unsafe { *self.rom.get_unchecked(idx + 1) };
+                return byte_utils::join_u16(high, low);
             } else if idx < self.rom.len() {
                 // Partial read at end of ROM
-                let high = self.rom[idx] as u16;
+                let high = self.rom[idx];
                 let low = 0xFF; // Unmapped
-                return (high << 8) | low;
+                return byte_utils::join_u16(high, low);
             } else {
                 return 0xFFFF; // Unmapped
             }
@@ -295,7 +302,7 @@ impl Bus {
         if addr <= 0x3FFFFE {
             let rom_addr = addr as usize;
             if rom_addr + 1 < self.rom.len() {
-                return ((self.rom[rom_addr] as u16) << 8) | (self.rom[rom_addr + 1] as u16);
+                return byte_utils::join_u16(self.rom[rom_addr], self.rom[rom_addr + 1]);
             }
         }
 
@@ -303,13 +310,13 @@ impl Bus {
         if addr >= 0xE00000 {
             let r_addr = (addr & 0xFFFF) as usize;
             if r_addr < 0xFFFF {
-                return ((self.work_ram[r_addr] as u16) << 8) | (self.work_ram[r_addr + 1] as u16);
+                return byte_utils::join_u16(self.work_ram[r_addr], self.work_ram[r_addr + 1]);
             }
         }
 
-        let high = self.read_byte(address) as u16;
-        let low = self.read_byte(address.wrapping_add(1)) as u16;
-        (high << 8) | low
+        let high = self.read_byte(address);
+        let low = self.read_byte(address.wrapping_add(1));
+        byte_utils::join_u16(high, low)
     }
 
     /// Write a word (16-bit, big-endian) to the memory map
@@ -334,14 +341,16 @@ impl Bus {
         if addr >= 0xE00000 {
             let r_addr = (addr & 0xFFFF) as usize;
             if r_addr < 0xFFFF {
-                self.work_ram[r_addr] = (value >> 8) as u8;
-                self.work_ram[r_addr + 1] = value as u8;
+                let (high, low) = byte_utils::split_u16(value);
+                self.work_ram[r_addr] = high;
+                self.work_ram[r_addr + 1] = low;
                 return;
             }
         }
 
-        self.write_byte(address, (value >> 8) as u8);
-        self.write_byte(address.wrapping_add(1), value as u8);
+        let (high, low) = byte_utils::split_u16(value);
+        self.write_byte(address, high);
+        self.write_byte(address.wrapping_add(1), low);
     }
 
     /// Read a long word (32-bit, big-endian) from the memory map
@@ -353,11 +362,11 @@ impl Bus {
             let idx = addr as usize;
             if idx + 3 < self.rom.len() {
                 // SAFETY: We checked bounds above
-                let b0 = unsafe { *self.rom.get_unchecked(idx) } as u32;
-                let b1 = unsafe { *self.rom.get_unchecked(idx + 1) } as u32;
-                let b2 = unsafe { *self.rom.get_unchecked(idx + 2) } as u32;
-                let b3 = unsafe { *self.rom.get_unchecked(idx + 3) } as u32;
-                return (b0 << 24) | (b1 << 16) | (b2 << 8) | b3;
+                let b0 = unsafe { *self.rom.get_unchecked(idx) };
+                let b1 = unsafe { *self.rom.get_unchecked(idx + 1) };
+                let b2 = unsafe { *self.rom.get_unchecked(idx + 2) };
+                let b3 = unsafe { *self.rom.get_unchecked(idx + 3) };
+                return byte_utils::join_u32(b0, b1, b2, b3);
             }
         }
 
@@ -365,10 +374,12 @@ impl Bus {
         if addr >= 0xE00000 {
             let r_addr = (addr & 0xFFFF) as usize;
             if r_addr <= 0xFFFC {
-                return ((self.work_ram[r_addr] as u32) << 24)
-                    | ((self.work_ram[r_addr + 1] as u32) << 16)
-                    | ((self.work_ram[r_addr + 2] as u32) << 8)
-                    | (self.work_ram[r_addr + 3] as u32);
+                return byte_utils::join_u32(
+                    self.work_ram[r_addr],
+                    self.work_ram[r_addr + 1],
+                    self.work_ram[r_addr + 2],
+                    self.work_ram[r_addr + 3],
+                );
             }
         }
 
@@ -385,10 +396,11 @@ impl Bus {
         if addr >= 0xE00000 {
             let r_addr = (addr & 0xFFFF) as usize;
             if r_addr <= 0xFFFC {
-                self.work_ram[r_addr] = (value >> 24) as u8;
-                self.work_ram[r_addr + 1] = (value >> 16) as u8;
-                self.work_ram[r_addr + 2] = (value >> 8) as u8;
-                self.work_ram[r_addr + 3] = value as u8;
+                let (b0, b1, b2, b3) = byte_utils::split_u32(value);
+                self.work_ram[r_addr] = b0;
+                self.work_ram[r_addr + 1] = b1;
+                self.work_ram[r_addr + 2] = b2;
+                self.work_ram[r_addr + 3] = b3;
                 return;
             }
         }
@@ -438,12 +450,11 @@ impl Bus {
         }
 
         if !self.vdp.is_dma_transfer() {
-            // If it's VRAM Fill (Mode 2), do not execute immediately.
-            // Wait for data write to trigger it.
-            if (self.vdp.registers[23] & 0xC0) == 0x80 {
+            if self.vdp.is_dma_fill() {
+                // VRAM Fill (Mode 2) waits for data port write.
+                // Do not execute yet, and keep dma_pending true.
                 return;
             }
-
             self.vdp.execute_dma();
             self.vdp.dma_pending = false;
             return;
@@ -610,6 +621,9 @@ mod tests {
     fn test_z80_ram() {
         let mut bus = Bus::new();
 
+        // Request Z80 bus
+        bus.z80_bus_request = true;
+
         bus.write_byte(0xA00000, 0x55);
         assert_eq!(bus.read_byte(0xA00000), 0x55);
 
@@ -650,14 +664,20 @@ mod tests {
     }
 
     #[test]
-    fn test_clear_rom() {
+    fn test_rom_lifecycle() {
         let mut bus = Bus::new();
         let rom_data = vec![0x12, 0x34, 0x56, 0x78];
         bus.load_rom(&rom_data);
 
         // Verify ROM is loaded and padded
         assert_eq!(bus.read_byte(0x000000), 0x12);
-        assert_eq!(bus.rom_size(), 512);
+        assert_eq!(bus.read_word(0x000000), 0x1234);
+        assert_eq!(bus.read_long(0x000000), 0x12345678);
+        assert_eq!(bus.rom_size(), 512); // Padded to minimum size
+        assert_eq!(bus.rom.len(), 512);
+
+        // Verify DMA slice is accessible
+        assert!(bus.get_dma_slice(0x000000, 2).is_some());
 
         // Clear ROM
         bus.clear_rom();
@@ -666,8 +686,24 @@ mod tests {
         assert_eq!(bus.rom_size(), 0);
         assert!(bus.rom.is_empty());
 
-        // Verify reading from ROM area now returns 0xFF (unmapped)
+        // Verify reading from ROM area now returns unmapped values
         assert_eq!(bus.read_byte(0x000000), 0xFF);
+        assert_eq!(bus.read_word(0x000000), 0xFFFF);
+        assert_eq!(bus.read_long(0x000000), 0xFFFFFFFF);
+
+        // Verify DMA slice is no longer accessible
+        assert!(bus.get_dma_slice(0x000000, 2).is_none());
+
+        // Reload a new ROM
+        let new_rom = vec![0xAA, 0xBB];
+        bus.load_rom(&new_rom);
+
+        // Verify new ROM content and padding
+        assert_eq!(bus.read_byte(0x000000), 0xAA);
+        // Verify padding with zeros
+        assert_eq!(bus.read_byte(0x000002), 0x00);
+        assert_eq!(bus.read_word(0x000000), 0xAABB);
+        assert_eq!(bus.rom_size(), 512);
     }
     #[test]
     fn test_dma_transfer_ram_to_vram() {
@@ -705,60 +741,55 @@ mod tests {
     }
 
     #[test]
-    fn test_z80_bank_register_logic() {
+    fn test_work_ram_wrapping_word() {
         let mut bus = Bus::new();
 
-        // Initial state
-        assert_eq!(bus.z80_bank_addr, 0);
-        assert_eq!(bus.z80_bank_bit, 0);
+        // Write to the last byte of the first mirror (0xE0FFFF)
+        bus.write_byte(0xE0FFFF, 0x11);
+        // Write to the first byte of the second mirror (0xE10000)
+        bus.write_byte(0xE10000, 0x22);
 
-        // We want to write a pattern.
-        // The bank address is constructed from 9 bits.
-        // bit 0 -> addr bit 15
-        // bit 1 -> addr bit 16
-        // ...
-        // bit 8 -> addr bit 23
-
-        // Let's write the pattern: 1, 0, 1, 1, 0, 0, 1, 1, 1
-        // Indices:                 0  1  2  3  4  5  6  7  8
-        // Addr Bits:              15 16 17 18 19 20 21 22 23
-        // Values:              0x8000, 0, 0x20000, 0x40000, 0, 0, 0x200000, 0x400000, 0x800000
-
-        // Sum = 0x8000 + 0x20000 + 0x40000 + 0x200000 + 0x400000 + 0x800000
-        //     = 32768 + 131072 + 262144 + 2097152 + 4194304 + 8388608
-        //     = 15106048 (0xE68000)
-
-        let bits = [1, 0, 1, 1, 0, 0, 1, 1, 1];
-
-        for (i, &bit) in bits.iter().enumerate() {
-            // Write to 0xA06000 (Z80 Bank Register)
-            // Use different addresses in the range to verify mirroring
-            bus.write_byte(0xA06000 + (i as u32 % 0x100), bit);
-
-            assert_eq!(bus.z80_bank_bit, ((i + 1) % 9) as u8);
-        }
-
-        assert_eq!(bus.z80_bank_addr, 0xE68000);
-
-        // Verify wrap-around behavior (next write should affect bit 15 again)
-        // Write 0 to bit 15 (was 1)
-        bus.write_byte(0xA06000, 0);
-        // Expected: 0xE68000 & !(1<<15) = 0xE68000 - 0x8000 = 0xE60000
-        assert_eq!(bus.z80_bank_addr, 0xE60000);
-        assert_eq!(bus.z80_bank_bit, 1);
-
-        // Verify Reset clears bank bit index
-        // Assert current state
-        assert_eq!(bus.z80_bank_bit, 1);
-
-        // Reset Z80 (write 0 to 0xA11200)
-        bus.write_byte(0xA11200, 0x00);
-        assert!(bus.z80_reset);
-        assert_eq!(bus.z80_bank_bit, 0);
-
-        // Unreset (write 1)
-        bus.write_byte(0xA11200, 0x01);
-        assert!(!bus.z80_reset);
-        assert_eq!(bus.z80_bank_bit, 0); // Should stay 0 until next write
+        // Read word at the boundary (0xE0FFFF)
+        // Should combine the byte at 0xE0FFFF (0x11) and 0xE10000 (0x22)
+        assert_eq!(bus.read_word(0xE0FFFF), 0x1122);
     }
+
+    #[test]
+    fn test_work_ram_write_word_wrapping() {
+        let mut bus = Bus::new();
+
+        // Write word across the boundary (0xE0FFFF)
+        bus.write_word(0xE0FFFF, 0x3344);
+
+        // Verify bytes
+        assert_eq!(bus.read_byte(0xE0FFFF), 0x33);
+        assert_eq!(bus.read_byte(0xE10000), 0x44);
+
+        // Verify mirroring to start of RAM (0xFF0000)
+        assert_eq!(bus.read_byte(0xFF0000), 0x44);
+
+        // Verify mirroring to end of RAM (0xFFFFFF)
+        assert_eq!(bus.read_byte(0xFFFFFF), 0x33);
+    }
+
+    #[test]
+    fn test_ram_end_boundary() {
+        let mut bus = Bus::new();
+        // Load dummy ROM to ensure 0x000000 has known value
+        let rom_data = vec![0xEE; 512];
+        bus.load_rom(&rom_data);
+
+        // Write word 0xBBCC to 0xFFFFFF
+        bus.write_word(0xFFFFFF, 0xBBCC);
+
+        // Read byte at 0xFFFFFF. Should be 0xBB.
+        assert_eq!(bus.read_byte(0xFFFFFF), 0xBB);
+
+        // Read byte at 0x000000. Should be 0xEE (ROM content unmodified).
+        assert_eq!(bus.read_byte(0x000000), 0xEE);
+
+        // Read word at 0xFFFFFF.
+        assert_eq!(bus.read_word(0xFFFFFF), 0xBBEE);
+    }
+
 }

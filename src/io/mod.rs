@@ -533,4 +533,31 @@ mod tests {
         assert!(io.controller(3).is_none());
         assert!(io.controller(99).is_none());
     }
+
+    #[test]
+    fn test_set_controller_type() {
+        let mut io = Io::new();
+
+        // Verify initial state
+        assert_eq!(io.port1.controller_type, ControllerType::ThreeButton);
+        assert_eq!(io.port2.controller_type, ControllerType::ThreeButton);
+
+        // Change port 1 to SixButton
+        io.set_controller_type(1, ControllerType::SixButton);
+        assert_eq!(io.port1.controller_type, ControllerType::SixButton);
+        assert_eq!(io.port2.controller_type, ControllerType::ThreeButton);
+
+        // Change port 2 to None
+        io.set_controller_type(2, ControllerType::None);
+        assert_eq!(io.port1.controller_type, ControllerType::SixButton);
+        assert_eq!(io.port2.controller_type, ControllerType::None);
+
+        // Try invalid port (should do nothing)
+        io.set_controller_type(0, ControllerType::SixButton);
+        io.set_controller_type(3, ControllerType::SixButton);
+
+        // Verify no changes from invalid ports
+        assert_eq!(io.port1.controller_type, ControllerType::SixButton);
+        assert_eq!(io.port2.controller_type, ControllerType::None);
+    }
 }
