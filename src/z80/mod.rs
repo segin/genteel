@@ -2079,6 +2079,22 @@ impl<M: MemoryInterface, I: IoInterface> Debuggable for Z80<M, I> {
 pub mod test_utils;
 
 #[cfg(test)]
+pub mod test_utils {
+    use crate::memory::IoInterface;
+
+    #[derive(Debug, Default)]
+    pub struct TestIo;
+
+    impl IoInterface for TestIo {
+        fn read_port(&mut self, _port: u16) -> u8 {
+            0
+        }
+
+        fn write_port(&mut self, _port: u16, _value: u8) {}
+    }
+}
+
+#[cfg(test)]
 mod tests;
 
 #[cfg(test)]
