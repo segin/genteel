@@ -1117,7 +1117,6 @@ mod tests {
         emulator.step_frame(None);
         assert_eq!(emulator.internal_frame_count, 2);
     }
-}
 
     #[test]
     fn test_large_raw_rom_prevention() {
@@ -1136,3 +1135,4 @@ mod tests {
         // Verify rejection
         assert!(result.is_err(), "Should reject large ROM file (>32MB)");
     }
+}
