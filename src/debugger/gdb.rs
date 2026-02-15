@@ -4,10 +4,10 @@
 //! Connect with: `m68k-elf-gdb -ex "target remote :1234"`
 
 use std::collections::HashSet;
-use std::collections::hash_map::RandomState;
-use std::hash::{BuildHasher, Hasher};
 use std::io::{BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
+
+use rand::Rng;
 
 /// Default GDB server port
 pub const DEFAULT_PORT: u16 = 1234;
@@ -72,14 +72,7 @@ impl GdbServer {
             (Some(pwd), false)
         } else {
             // Generate a random token for default security
-            let mut hasher = RandomState::new().build_hasher();
-            hasher.write_usize(
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_nanos() as usize,
-            );
-            let token = format!("{:016x}", hasher.finish());
+            let token = format!("{:016x}", rand::rng().random::<u64>());
 
             eprintln!(
                 "🔒 GDB Server listening on 127.0.0.1:{}. Protected with generated token.",
