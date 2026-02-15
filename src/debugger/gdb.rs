@@ -3,12 +3,9 @@
 //! Implements a GDB stub for debugging M68k code running in the emulator.
 //! Connect with: `m68k-elf-gdb -ex "target remote :1234"`
 
-use std::collections::hash_map::RandomState;
 use std::collections::HashSet;
-use std::hash::{BuildHasher, Hasher};
 use std::io::{BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::time::SystemTime;
 
 /// Default GDB server port
 pub const DEFAULT_PORT: u16 = 1234;
@@ -59,19 +56,6 @@ pub struct GdbServer {
     authenticated: bool,
 }
 
-fn generate_token() -> String {
-    let s = RandomState::new();
-    let mut hasher = s.build_hasher();
-    hasher.write_usize(std::process::id() as usize);
-    hasher.write_u64(
-        SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos() as u64,
-    );
-    format!("{:016x}", hasher.finish())
-}
-
 impl GdbServer {
     /// Create a new GDB server
     pub fn new(port: u16, password: Option<String>) -> std::io::Result<Self> {
@@ -85,7 +69,7 @@ impl GdbServer {
             );
             Some(pwd)
         } else {
-            let token = generate_token();
+            let token = format!("{:016x}", rand::random::<u64>());
             eprintln!(
                 "🔒 GDB Server listening on 127.0.0.1:{}. Protected with auto-generated token.",
                 port
