@@ -944,6 +944,14 @@ impl Vdp {
             let pixels_left = 8 - pixel_h;
             let count = std::cmp::min(pixels_left, screen_width - screen_x);
 
+<<<<<<< HEAD
+            // Fetch nametable entry (2 bytes)
+            let nt_entry_addr = name_table_base + (tile_v * plane_w + tile_h) * 2;
+            // Security: Mask with 0xFFFF to prevent out-of-bounds access if name_table_base + offset exceeds 64KB
+            let hi = self.vram[nt_entry_addr & 0xFFFF];
+            let lo = self.vram[(nt_entry_addr + 1) & 0xFFFF];
+            let entry = ((hi as u16) << 8) | (lo as u16);
+=======
             let tile_h = ((scrolled_h as usize) >> 3) & plane_mask;
             let entry = self.fetch_nametable_entry(name_table_base, tile_v, tile_h, plane_w);
 
@@ -973,6 +981,7 @@ impl Vdp {
         while screen_x + 8 <= screen_width {
             let tile_h = ((scrolled_h as usize) >> 3) & plane_mask;
             let entry = self.fetch_nametable_entry(name_table_base, tile_v, tile_h, plane_w);
+>>>>>>> main
 
             let priority = (entry & 0x8000) != 0;
             if priority != priority_filter {
