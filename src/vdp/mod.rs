@@ -255,27 +255,6 @@ impl Vdp {
         self.last_data_write = value;
 
         // DMA Fill (Mode 2) check
-<<<<<<< HEAD
-        // Enabled (Reg 1 bit 4) AND Mode 2 (Reg 23 bits 7,6 = 1,0)
-        if (self.registers[REG_MODE2] & MODE2_DMA_ENABLE) != 0
-            && (self.registers[REG_DMA_SRC_HI] & DMA_MODE_MASK) == DMA_MODE_FILL
-        {
-            let length = self.dma_length();
-            let mut addr = self.control_address;
-            let inc = self.auto_increment() as u16;
-            let fill_byte = (value >> 8) as u8;
-
-            // DMA Fill writes bytes. Length register specifies number of bytes.
-            // If length is 0, it is treated as 0x10000 (64KB).
-            let len = if length == 0 { 0x10000 } else { length };
-
-            for _ in 0..len {
-                // VRAM is byte-addressable in this emulator
-                self.vram[addr as usize] = fill_byte;
-                addr = addr.wrapping_add(inc);
-            }
-            self.control_address = addr;
-=======
         // Enabled (Reg 1 bit 4) AND Mode 2 (Reg 23 bits 7,6 = 1,0) AND DMA Pending (CD5=1)
         if (self.registers[REG_MODE2] & MODE2_DMA_ENABLE) != 0 
             && self.is_dma_fill() 
@@ -283,7 +262,6 @@ impl Vdp {
         {
             self.execute_dma();
             self.dma_pending = false;
->>>>>>> main
             return;
         }
 
@@ -497,13 +475,10 @@ impl Vdp {
         // Bit 6: Type (0=fill, 1=copy) - only if Bit 7 is 1
         // So for transfer, Bit 7 must be 0.
         (self.registers[REG_DMA_SRC_HI] & DMA_TYPE_BIT) == 0
-<<<<<<< HEAD
-=======
     }
 
     pub fn is_dma_fill(&self) -> bool {
         (self.registers[REG_DMA_SRC_HI] & DMA_MODE_MASK) == DMA_MODE_FILL
->>>>>>> main
     }
 
     pub fn execute_dma(&mut self) -> u32 {
@@ -791,17 +766,11 @@ impl Vdp {
         let tile_v_offset = fetch_py / 8;
         let pixel_v = fetch_py % 8;
 
-<<<<<<< HEAD
-        for px in (0..sprite_h_px).step_by(2) {
-            let fetch_px = if attr.h_flip {
-                (sprite_h_px - 1) - px
-=======
         // Iterate by tiles instead of pixels for efficiency
         for t_h in 0..attr.h_size {
             let tile_h_offset = t_h as u16;
             let fetch_tile_h_offset = if attr.h_flip {
                 (attr.h_size as u16 - 1) - tile_h_offset
->>>>>>> main
             } else {
                 tile_h_offset
             };
@@ -821,31 +790,6 @@ impl Vdp {
                 continue;
             }
 
-<<<<<<< HEAD
-            let byte = self.vram[pattern_addr as usize];
-
-            let (c1, c2) = if attr.h_flip {
-                (byte & 0x0F, byte >> 4)
-            } else {
-                (byte >> 4, byte & 0x0F)
-            };
-
-            // Pixel 1
-            let screen_x_1 = attr.h_pos.wrapping_add(px);
-            if screen_x_1 < screen_width {
-                if c1 != 0 {
-                    let color = self.get_cram_color(attr.palette, c1);
-                    self.framebuffer[line_offset + screen_x_1 as usize] = color;
-                }
-            }
-
-            // Pixel 2
-            let screen_x_2 = attr.h_pos.wrapping_add(px + 1);
-            if screen_x_2 < screen_width {
-                if c2 != 0 {
-                    let color = self.get_cram_color(attr.palette, c2);
-                    self.framebuffer[line_offset + screen_x_2 as usize] = color;
-=======
             // Prefetch the 4 bytes (8 pixels) for this row
             // We use wrapping arithmetic for safety although checks above should prevent OOB
             let p0 = self.vram[row_addr];
@@ -874,7 +818,6 @@ impl Vdp {
                 if color_idx != 0 {
                     let color = self.get_cram_color(attr.palette, color_idx);
                     self.framebuffer[line_offset + screen_x as usize] = color;
->>>>>>> main
                 }
             }
         }
