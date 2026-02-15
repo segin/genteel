@@ -33,6 +33,16 @@ metrics = {
 
 TRACKED_FILES = None
 
+# Regex Patterns
+SECRET_PATTERNS = {
+    "AWS Key": re.compile(r"AKIA[0-9A-Z]{16}"),
+    "Private Key": re.compile(r"-----BEGIN .* PRIVATE KEY-----"),
+    "Generic Token": re.compile(r"token\s*=\s*['\"][a-zA-Z0-9]{20,}['\"]"),
+}
+
+UNSAFE_PATTERN = re.compile(r"unsafe\s*\{")
+TODO_PATTERN = re.compile(r"(TODO|FIXME|XXX):")
+
 def run_command(command, cwd=None, capture_output=True):
     try:
         result = subprocess.run(
@@ -169,15 +179,6 @@ def scan_text_patterns():
     print("[*] Scanning for secrets and unsafe patterns...")
     files = get_tracked_files()
 
-    secret_patterns = {
-        "AWS Key": re.compile(r"AKIA[0-9A-Z]{16}"),
-        "Private Key": re.compile(r"-----BEGIN .* PRIVATE KEY-----"),
-        "Generic Token": re.compile(r"token\s*=\s*['\"][a-zA-Z0-9]{20,}['\"]"),
-    }
-
-    unsafe_pattern = re.compile(r"unsafe\s*\{")
-    todo_pattern = re.compile(r"(TODO|FIXME|XXX):")
-
     for f in files:
         if not os.path.exists(f): continue
         if os.path.isdir(f): continue
@@ -186,7 +187,7 @@ def scan_text_patterns():
             with open(f, 'r', encoding='utf-8', errors='ignore') as fp:
                 for i, line_content in enumerate(fp):
                     # Secrets
-                    for name, compiled_pattern in secret_patterns.items():
+                    for name, compiled_pattern in SECRET_PATTERNS.items():
                         if compiled_pattern.search(line_content):
                             add_finding(
                                 title=f"Potential Secret: {name}",
@@ -199,7 +200,7 @@ def scan_text_patterns():
                             metrics["secrets_found"] += 1
 
                     # Unsafe
-                    if unsafe_pattern.search(line_content):
+                    if UNSAFE_PATTERN.search(line_content):
                         add_finding(
                             title="Unsafe Rust Code",
                             severity="Medium",
@@ -210,7 +211,7 @@ def scan_text_patterns():
                         )
 
                     # TODOs
-                    if todo_pattern.search(line_content):
+                    if TODO_PATTERN.search(line_content):
                         add_finding(
                             title="Technical Debt (TODO/FIXME)",
                             severity="Info",
