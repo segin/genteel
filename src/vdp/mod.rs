@@ -491,11 +491,6 @@ impl Vdp {
         (self.registers[REG_DMA_SRC_HI] & DMA_MODE_MASK) == DMA_MODE_FILL
     }
 
-    pub fn is_dma_fill(&self) -> bool {
-        // Bit 7=1, Bit 6=0
-        (self.registers[23] & 0xC0) == 0x80
-    }
-
     pub fn execute_dma(&mut self) -> u32 {
         let length = self.dma_length();
         // If length is 0, it is treated as 0x10000 (64KB)
@@ -893,6 +888,102 @@ impl Vdp {
         [p0, p1, p2, p3]
     }
 
+    #[inline(always)]
+    fn draw_full_tile_row(
+        &mut self,
+        patterns: [u8; 4],
+        palette_base: usize,
+        h_flip: bool,
+        dest_idx: usize,
+    ) {
+        let p0 = patterns[0];
+        let p1 = patterns[1];
+        let p2 = patterns[2];
+        let p3 = patterns[3];
+
+        if h_flip {
+            let mut col = p3 & 0x0F;
+            if col != 0 {
+                self.framebuffer[dest_idx] = self.cram_cache[palette_base + col as usize];
+            }
+
+            col = p3 >> 4;
+            if col != 0 {
+                self.framebuffer[dest_idx + 1] = self.cram_cache[palette_base + col as usize];
+            }
+
+            col = p2 & 0x0F;
+            if col != 0 {
+                self.framebuffer[dest_idx + 2] = self.cram_cache[palette_base + col as usize];
+            }
+
+            col = p2 >> 4;
+            if col != 0 {
+                self.framebuffer[dest_idx + 3] = self.cram_cache[palette_base + col as usize];
+            }
+
+            col = p1 & 0x0F;
+            if col != 0 {
+                self.framebuffer[dest_idx + 4] = self.cram_cache[palette_base + col as usize];
+            }
+
+            col = p1 >> 4;
+            if col != 0 {
+                self.framebuffer[dest_idx + 5] = self.cram_cache[palette_base + col as usize];
+            }
+
+            col = p0 & 0x0F;
+            if col != 0 {
+                self.framebuffer[dest_idx + 6] = self.cram_cache[palette_base + col as usize];
+            }
+
+            col = p0 >> 4;
+            if col != 0 {
+                self.framebuffer[dest_idx + 7] = self.cram_cache[palette_base + col as usize];
+            }
+        } else {
+            let mut col = p0 >> 4;
+            if col != 0 {
+                self.framebuffer[dest_idx] = self.cram_cache[palette_base + col as usize];
+            }
+
+            col = p0 & 0x0F;
+            if col != 0 {
+                self.framebuffer[dest_idx + 1] = self.cram_cache[palette_base + col as usize];
+            }
+
+            col = p1 >> 4;
+            if col != 0 {
+                self.framebuffer[dest_idx + 2] = self.cram_cache[palette_base + col as usize];
+            }
+
+            col = p1 & 0x0F;
+            if col != 0 {
+                self.framebuffer[dest_idx + 3] = self.cram_cache[palette_base + col as usize];
+            }
+
+            col = p2 >> 4;
+            if col != 0 {
+                self.framebuffer[dest_idx + 4] = self.cram_cache[palette_base + col as usize];
+            }
+
+            col = p2 & 0x0F;
+            if col != 0 {
+                self.framebuffer[dest_idx + 5] = self.cram_cache[palette_base + col as usize];
+            }
+
+            col = p3 >> 4;
+            if col != 0 {
+                self.framebuffer[dest_idx + 6] = self.cram_cache[palette_base + col as usize];
+            }
+
+            col = p3 & 0x0F;
+            if col != 0 {
+                self.framebuffer[dest_idx + 7] = self.cram_cache[palette_base + col as usize];
+            }
+        }
+    }
+
     fn draw_tile_segment(
         &mut self,
         patterns: [u8; 4],
@@ -1006,62 +1097,9 @@ impl Vdp {
             let tile_index = entry & 0x07FF;
 
             let patterns = self.fetch_tile_pattern(tile_index, pixel_v as u16, v_flip);
-            let p0 = patterns[0];
-            let p1 = patterns[1];
-            let p2 = patterns[2];
-            let p3 = patterns[3];
 
             let dest_idx = line_offset + (screen_x as usize);
-
-            if h_flip {
-                let mut col = p3 & 0x0F;
-                if col != 0 { self.framebuffer[dest_idx] = self.cram_cache[palette_base + col as usize]; }
-
-                col = p3 >> 4;
-                if col != 0 { self.framebuffer[dest_idx + 1] = self.cram_cache[palette_base + col as usize]; }
-
-                col = p2 & 0x0F;
-                if col != 0 { self.framebuffer[dest_idx + 2] = self.cram_cache[palette_base + col as usize]; }
-
-                col = p2 >> 4;
-                if col != 0 { self.framebuffer[dest_idx + 3] = self.cram_cache[palette_base + col as usize]; }
-
-                col = p1 & 0x0F;
-                if col != 0 { self.framebuffer[dest_idx + 4] = self.cram_cache[palette_base + col as usize]; }
-
-                col = p1 >> 4;
-                if col != 0 { self.framebuffer[dest_idx + 5] = self.cram_cache[palette_base + col as usize]; }
-
-                col = p0 & 0x0F;
-                if col != 0 { self.framebuffer[dest_idx + 6] = self.cram_cache[palette_base + col as usize]; }
-
-                col = p0 >> 4;
-                if col != 0 { self.framebuffer[dest_idx + 7] = self.cram_cache[palette_base + col as usize]; }
-            } else {
-                let mut col = p0 >> 4;
-                if col != 0 { self.framebuffer[dest_idx] = self.cram_cache[palette_base + col as usize]; }
-
-                col = p0 & 0x0F;
-                if col != 0 { self.framebuffer[dest_idx + 1] = self.cram_cache[palette_base + col as usize]; }
-
-                col = p1 >> 4;
-                if col != 0 { self.framebuffer[dest_idx + 2] = self.cram_cache[palette_base + col as usize]; }
-
-                col = p1 & 0x0F;
-                if col != 0 { self.framebuffer[dest_idx + 3] = self.cram_cache[palette_base + col as usize]; }
-
-                col = p2 >> 4;
-                if col != 0 { self.framebuffer[dest_idx + 4] = self.cram_cache[palette_base + col as usize]; }
-
-                col = p2 & 0x0F;
-                if col != 0 { self.framebuffer[dest_idx + 5] = self.cram_cache[palette_base + col as usize]; }
-
-                col = p3 >> 4;
-                if col != 0 { self.framebuffer[dest_idx + 6] = self.cram_cache[palette_base + col as usize]; }
-
-                col = p3 & 0x0F;
-                if col != 0 { self.framebuffer[dest_idx + 7] = self.cram_cache[palette_base + col as usize]; }
-            }
+            self.draw_full_tile_row(patterns, palette_base, h_flip, dest_idx);
 
             screen_x += 8;
             scrolled_h = scrolled_h.wrapping_add(8);
