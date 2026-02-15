@@ -5,7 +5,7 @@
     "severity": "Critical",
     "description": "Found pattern matching Private Key",
     "file": "audit_tool.py",
-    "line": 167,
+    "line": 174,
     "remediation": "Rotate secret and remove from history."
   },
   {
@@ -13,8 +13,8 @@
     "title": "Unsafe Rust Code",
     "severity": "Medium",
     "description": "Usage of `unsafe` block detected. Verify memory safety manually.",
-    "file": "fuzz/target/debug/deps/libcc-a62066ce084a8d02.rlib",
-    "line": 1459,
+    "file": "src/memory/bus.rs",
+    "line": 275,
     "remediation": "Audit unsafe block for soundness."
   },
   {
@@ -22,8 +22,8 @@
     "title": "Unsafe Rust Code",
     "severity": "Medium",
     "description": "Usage of `unsafe` block detected. Verify memory safety manually.",
-    "file": "fuzz/target/debug/deps/libcc-a62066ce084a8d02.rmeta",
-    "line": 1439,
+    "file": "src/memory/bus.rs",
+    "line": 276,
     "remediation": "Audit unsafe block for soundness."
   },
   {
@@ -31,8 +31,8 @@
     "title": "Unsafe Rust Code",
     "severity": "Medium",
     "description": "Usage of `unsafe` block detected. Verify memory safety manually.",
-    "file": "fuzz/target/debug/deps/libjobserver-25adbc36fdf7bdfe.rlib",
-    "line": 161,
+    "file": "src/memory/bus.rs",
+    "line": 365,
     "remediation": "Audit unsafe block for soundness."
   },
   {
@@ -40,8 +40,8 @@
     "title": "Unsafe Rust Code",
     "severity": "Medium",
     "description": "Usage of `unsafe` block detected. Verify memory safety manually.",
-    "file": "fuzz/target/debug/deps/libjobserver-25adbc36fdf7bdfe.rlib",
-    "line": 166,
+    "file": "src/memory/bus.rs",
+    "line": 366,
     "remediation": "Audit unsafe block for soundness."
   },
   {
@@ -49,8 +49,8 @@
     "title": "Unsafe Rust Code",
     "severity": "Medium",
     "description": "Usage of `unsafe` block detected. Verify memory safety manually.",
-    "file": "fuzz/target/debug/deps/libjobserver-25adbc36fdf7bdfe.rmeta",
-    "line": 153,
+    "file": "src/memory/bus.rs",
+    "line": 367,
     "remediation": "Audit unsafe block for soundness."
   },
   {
@@ -58,102 +58,12 @@
     "title": "Unsafe Rust Code",
     "severity": "Medium",
     "description": "Usage of `unsafe` block detected. Verify memory safety manually.",
-    "file": "fuzz/target/debug/deps/libjobserver-25adbc36fdf7bdfe.rmeta",
-    "line": 158,
+    "file": "src/memory/bus.rs",
+    "line": 368,
     "remediation": "Audit unsafe block for soundness."
   },
   {
     "id": "F-008",
-    "title": "Unsafe Rust Code",
-    "severity": "Medium",
-    "description": "Usage of `unsafe` block detected. Verify memory safety manually.",
-    "file": "fuzz/target/debug/deps/liblibfuzzer_sys-691fbdf079f0efb7.rmeta",
-    "line": 94,
-    "remediation": "Audit unsafe block for soundness."
-  },
-  {
-    "id": "F-009",
-    "title": "Unsafe Rust Code",
-    "severity": "Medium",
-    "description": "Usage of `unsafe` block detected. Verify memory safety manually.",
-    "file": "fuzz/target/debug/deps/liblibfuzzer_sys-691fbdf079f0efb7.rmeta",
-    "line": 95,
-    "remediation": "Audit unsafe block for soundness."
-  },
-  {
-    "id": "F-010",
-    "title": "Unsafe Rust Code",
-    "severity": "Medium",
-    "description": "Usage of `unsafe` block detected. Verify memory safety manually.",
-    "file": "fuzz/target/debug/deps/libsyn-f935f9f7c4762fcb.rlib",
-    "line": 8107,
-    "remediation": "Audit unsafe block for soundness."
-  },
-  {
-    "id": "F-011",
-    "title": "Unsafe Rust Code",
-    "severity": "Medium",
-    "description": "Usage of `unsafe` block detected. Verify memory safety manually.",
-    "file": "fuzz/target/debug/deps/libsyn-f935f9f7c4762fcb.rmeta",
-    "line": 8087,
-    "remediation": "Audit unsafe block for soundness."
-  },
-  {
-    "id": "F-012",
-    "title": "Unsafe Rust Code",
-    "severity": "Medium",
-    "description": "Usage of `unsafe` block detected. Verify memory safety manually.",
-    "file": "src/memory/bus.rs",
-    "line": 268,
-    "remediation": "Audit unsafe block for soundness."
-  },
-  {
-    "id": "F-013",
-    "title": "Unsafe Rust Code",
-    "severity": "Medium",
-    "description": "Usage of `unsafe` block detected. Verify memory safety manually.",
-    "file": "src/memory/bus.rs",
-    "line": 269,
-    "remediation": "Audit unsafe block for soundness."
-  },
-  {
-    "id": "F-014",
-    "title": "Unsafe Rust Code",
-    "severity": "Medium",
-    "description": "Usage of `unsafe` block detected. Verify memory safety manually.",
-    "file": "src/memory/bus.rs",
-    "line": 356,
-    "remediation": "Audit unsafe block for soundness."
-  },
-  {
-    "id": "F-015",
-    "title": "Unsafe Rust Code",
-    "severity": "Medium",
-    "description": "Usage of `unsafe` block detected. Verify memory safety manually.",
-    "file": "src/memory/bus.rs",
-    "line": 357,
-    "remediation": "Audit unsafe block for soundness."
-  },
-  {
-    "id": "F-016",
-    "title": "Unsafe Rust Code",
-    "severity": "Medium",
-    "description": "Usage of `unsafe` block detected. Verify memory safety manually.",
-    "file": "src/memory/bus.rs",
-    "line": 358,
-    "remediation": "Audit unsafe block for soundness."
-  },
-  {
-    "id": "F-017",
-    "title": "Unsafe Rust Code",
-    "severity": "Medium",
-    "description": "Usage of `unsafe` block detected. Verify memory safety manually.",
-    "file": "src/memory/bus.rs",
-    "line": 359,
-    "remediation": "Audit unsafe block for soundness."
-  },
-  {
-    "id": "F-018",
     "title": "Test Failure",
     "severity": "High",
     "description": "Run `cargo test` to see failures.",
