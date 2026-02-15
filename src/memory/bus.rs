@@ -794,4 +794,32 @@ mod tests {
         assert_eq!(bus.read_word(0xFFFFFF), 0xBBEE);
     }
 
+    #[test]
+    fn test_z80_bank_register_logic() {
+        let mut bus = Bus::new();
+
+        // Initial state
+        assert_eq!(bus.z80_bank_addr, 0);
+        assert_eq!(bus.z80_bank_bit, 0);
+
+        let bits = [1, 0, 1, 1, 0, 0, 1, 1, 1];
+
+        for (i, &bit) in bits.iter().enumerate() {
+            // Write to 0xA06000 (Z80 Bank Register)
+            bus.write_byte(0xA06000 + (i as u32 % 0x100), bit);
+            assert_eq!(bus.z80_bank_bit, ((i + 1) % 9) as u8);
+        }
+
+        assert_eq!(bus.z80_bank_addr, 0xE68000);
+
+        // Verify wrap-around behavior
+        bus.write_byte(0xA06000, 0);
+        assert_eq!(bus.z80_bank_addr, 0xE60000);
+        assert_eq!(bus.z80_bank_bit, 1);
+
+        // Verify Reset clears bank bit index
+        bus.write_byte(0xA11200, 0x00);
+        assert!(bus.z80_reset);
+        assert_eq!(bus.z80_bank_bit, 0);
+    }
 }
