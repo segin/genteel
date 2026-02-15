@@ -6,6 +6,9 @@
 
 use crate::memory::{IoInterface, MemoryInterface};
 
+#[cfg(test)]
+pub mod test_utils;
+
 /// Z80 Flag bits in the F register
 pub mod flags {
     pub const CARRY: u8 = 0b0000_0001; // C - Carry flag
@@ -72,10 +75,10 @@ pub struct Z80<M: MemoryInterface, I: IoInterface> {
     // Interrupt logic
     pub pending_ei: bool,
 
-    // Memory interface
+    // Memory interface (Generic for static dispatch performance)
     pub memory: M,
 
-    // I/O interface
+    // I/O interface (Generic for static dispatch performance)
     pub io: I,
 
     // Cycle counter for timing
@@ -282,9 +285,15 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         self.a = result as u8;
 
         let mut f = 0;
-        if result > 0xFF { f |= flags::CARRY; }
-        if half_carry { f |= flags::HALF_CARRY; }
-        if overflow { f |= flags::PARITY; }
+        if result > 0xFF {
+            f |= flags::CARRY;
+        }
+        if half_carry {
+            f |= flags::HALF_CARRY;
+        }
+        if overflow {
+            f |= flags::PARITY;
+        }
         // ADD_SUB is false (0)
 
         // Inline set_sz_flags logic
@@ -313,9 +322,15 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
 
         let mut f = flags::ADD_SUB;
-        if result > 0xFF { f |= flags::CARRY; }
-        if half_carry { f |= flags::HALF_CARRY; }
-        if overflow { f |= flags::PARITY; }
+        if result > 0xFF {
+            f |= flags::CARRY;
+        }
+        if half_carry {
+            f |= flags::HALF_CARRY;
+        }
+        if overflow {
+            f |= flags::PARITY;
+        }
 
         let res_u8 = result as u8;
         f |= res_u8 & (flags::SIGN | flags::Y_FLAG | flags::X_FLAG);
@@ -389,8 +404,12 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         let result = value.wrapping_add(1);
 
         let mut f = self.f & flags::CARRY; // Preserve Carry
-        if (value & 0x0F) == 0x0F { f |= flags::HALF_CARRY; }
-        if value == 0x7F { f |= flags::PARITY; }
+        if (value & 0x0F) == 0x0F {
+            f |= flags::HALF_CARRY;
+        }
+        if value == 0x7F {
+            f |= flags::PARITY;
+        }
         // ADD_SUB is false (0)
 
         f |= result & (flags::SIGN | flags::Y_FLAG | flags::X_FLAG);
@@ -406,8 +425,12 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         let result = value.wrapping_sub(1);
 
         let mut f = (self.f & flags::CARRY) | flags::ADD_SUB; // Preserve Carry, set N
-        if (value & 0x0F) == 0x00 { f |= flags::HALF_CARRY; }
-        if value == 0x80 { f |= flags::PARITY; }
+        if (value & 0x0F) == 0x00 {
+            f |= flags::HALF_CARRY;
+        }
+        if value == 0x80 {
+            f |= flags::PARITY;
+        }
 
         f |= result & (flags::SIGN | flags::Y_FLAG | flags::X_FLAG);
         if result == 0 {
@@ -1298,7 +1321,11 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 // Rotate/shift
                 let result = self.cb_rotate_shift(val, y);
                 self.set_reg(z, result);
-                if z == 6 { 15 } else { 8 }
+                if z == 6 {
+                    15
+                } else {
+                    8
+                }
             }
             1 => {
                 // BIT y, r
@@ -1314,19 +1341,31 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                     self.set_flag(flags::Y_FLAG, (h_memptr & 0x20) != 0);
                 }
 
-                if z == 6 { 12 } else { 8 }
+                if z == 6 {
+                    12
+                } else {
+                    8
+                }
             }
             2 => {
                 // RES y, r
                 let result = self.cb_res(val, y);
                 self.set_reg(z, result);
-                if z == 6 { 15 } else { 8 }
+                if z == 6 {
+                    15
+                } else {
+                    8
+                }
             }
             3 => {
                 // SET y, r
                 let result = self.cb_set(val, y);
                 self.set_reg(z, result);
-                if z == 6 { 15 } else { 8 }
+                if z == 6 {
+                    15
+                } else {
+                    8
+                }
             }
             _ => 8,
         }
@@ -1862,9 +1901,8 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 23
             }
             0x36 => {
-                let d = self.fetch_byte() as i8;
+                let addr = self.calc_index_addr(is_ix);
                 let n = self.fetch_byte();
-                let addr = self.calc_index_addr(d, is_ix);
                 self.write_byte(addr, n);
                 19
             }
@@ -1953,8 +1991,8 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
             }
             0xCB => {
                 let d = self.fetch_byte() as i8;
-                let opcode = self.fetch_byte();
                 let addr = self.calc_index_addr(d, is_ix);
+                let opcode = self.fetch_byte();
                 self.execute_indexed_cb(opcode, addr)
             }
             _ => 8, // Treat as NOP
@@ -2038,79 +2076,168 @@ impl<M: MemoryInterface, I: IoInterface> Debuggable for Z80<M, I> {
     }
 
     fn write_state(&mut self, state: &Value) {
-        if let Some(a) = state["a"].as_u64() { self.a = a as u8; }
-        if let Some(f) = state["f"].as_u64() { self.f = f as u8; }
-        if let Some(b) = state["b"].as_u64() { self.b = b as u8; }
-        if let Some(c) = state["c"].as_u64() { self.c = c as u8; }
-        if let Some(d) = state["d"].as_u64() { self.d = d as u8; }
-        if let Some(e) = state["e"].as_u64() { self.e = e as u8; }
-        if let Some(h) = state["h"].as_u64() { self.h = h as u8; }
-        if let Some(l) = state["l"].as_u64() { self.l = l as u8; }
-        if let Some(ix) = state["ix"].as_u64() { self.ix = ix as u16; }
-        if let Some(iy) = state["iy"].as_u64() { self.iy = iy as u16; }
-        if let Some(sp) = state["sp"].as_u64() { self.sp = sp as u16; }
-        if let Some(pc) = state["pc"].as_u64() { self.pc = pc as u16; }
-        if let Some(iff1) = state["iff1"].as_bool() { self.iff1 = iff1; }
-        if let Some(iff2) = state["iff2"].as_bool() { self.iff2 = iff2; }
-        if let Some(im) = state["im"].as_u64() { self.im = im as u8; }
-        if let Some(halted) = state["halted"].as_bool() { self.halted = halted; }
-        if let Some(cycles) = state["cycles"].as_u64() { self.cycles = cycles; }
+        if let Some(a) = state["a"].as_u64() {
+            self.a = a as u8;
+        }
+        if let Some(f) = state["f"].as_u64() {
+            self.f = f as u8;
+        }
+        if let Some(b) = state["b"].as_u64() {
+            self.b = b as u8;
+        }
+        if let Some(c) = state["c"].as_u64() {
+            self.c = c as u8;
+        }
+        if let Some(d) = state["d"].as_u64() {
+            self.d = d as u8;
+        }
+        if let Some(e) = state["e"].as_u64() {
+            self.e = e as u8;
+        }
+        if let Some(h) = state["h"].as_u64() {
+            self.h = h as u8;
+        }
+        if let Some(l) = state["l"].as_u64() {
+            self.l = l as u8;
+        }
+        if let Some(ix) = state["ix"].as_u64() {
+            self.ix = ix as u16;
+        }
+        if let Some(iy) = state["iy"].as_u64() {
+            self.iy = iy as u16;
+        }
+        if let Some(sp) = state["sp"].as_u64() {
+            self.sp = sp as u16;
+        }
+        if let Some(pc) = state["pc"].as_u64() {
+            self.pc = pc as u16;
+        }
+        if let Some(iff1) = state["iff1"].as_bool() {
+            self.iff1 = iff1;
+        }
+        if let Some(iff2) = state["iff2"].as_bool() {
+            self.iff2 = iff2;
+        }
+        if let Some(im) = state["im"].as_u64() {
+            self.im = im as u8;
+        }
+        if let Some(halted) = state["halted"].as_bool() {
+            self.halted = halted;
+        }
+        if let Some(cycles) = state["cycles"].as_u64() {
+            self.cycles = cycles;
+        }
     }
 }
 
+pub mod test_utils;
+
 #[cfg(test)]
+pub mod test_utils {
+    use crate::memory::IoInterface;
+
+    #[derive(Debug, Default)]
+    pub struct TestIo;
+
+    impl IoInterface for TestIo {
+        fn read_port(&mut self, _port: u16) -> u8 {
+            0
+        }
+
+        fn write_port(&mut self, _port: u16, _value: u8) {}
+    }
+}
+
+<<<<<<< HEAD
+pub mod test_utils;
+
+#[cfg(test)]
+=======
+<<<<<<< HEAD
+// #[cfg(test)]
+>>>>>>> main
 mod tests;
+=======
+pub mod test_utils;
 
 #[cfg(test)]
-mod tests_alu;
+pub mod test_utils {
+    use crate::memory::IoInterface;
 
-#[cfg(test)]
-mod tests_cb;
+    #[derive(Debug, Default)]
+    pub struct TestIo;
 
-#[cfg(test)]
-mod tests_control;
+    impl IoInterface for TestIo {
+        fn read_port(&mut self, _port: u16) -> u8 {
+            0
+        }
 
-#[cfg(test)]
-mod tests_load;
+        fn write_port(&mut self, _port: u16, _value: u8) {}
+    }
+}
 
-#[cfg(test)]
-mod tests_regression;
-
-#[cfg(test)]
-mod tests_undoc;
-
-#[cfg(test)]
-mod tests_exhaustive;
-
-#[cfg(test)]
-mod tests_block;
-
-#[cfg(test)]
-mod tests_halfcarry;
-
-#[cfg(test)]
-mod tests_interrupt;
-
-#[cfg(test)]
-mod tests_reset;
-
-#[cfg(test)]
-mod tests_rrd_rld;
-
-#[cfg(test)]
-mod tests_timing;
-
-#[cfg(test)]
-mod tests_torture;
-
-#[cfg(test)]
-mod tests_gaps;
-
-#[cfg(test)]
-mod tests_memptr;
-
-#[cfg(test)]
-mod tests_ddcb;
+pub mod test_utils;
 
 #[cfg(test)]
 pub mod test_utils;
+
+#[cfg(test)]
+>>>>>>> main
+
+// #[cfg(test)]
+mod tests_alu;
+
+// #[cfg(test)]
+mod tests_cb;
+
+// #[cfg(test)]
+mod tests_control;
+
+// #[cfg(test)]
+mod tests_load;
+
+// #[cfg(test)]
+mod tests_regression;
+
+// #[cfg(test)]
+mod tests_undoc;
+
+// #[cfg(test)]
+mod tests_exhaustive;
+
+// #[cfg(test)]
+mod tests_block;
+
+// #[cfg(test)]
+mod tests_halfcarry;
+
+// #[cfg(test)]
+mod tests_interrupt;
+
+// #[cfg(test)]
+mod tests_reset;
+
+// #[cfg(test)]
+mod tests_rrd_rld;
+
+// #[cfg(test)]
+mod tests_timing;
+
+// #[cfg(test)]
+mod tests_torture;
+
+// #[cfg(test)]
+mod tests_gaps;
+
+// #[cfg(test)]
+mod tests_memptr;
+
+<<<<<<< HEAD
+// #[cfg(test)]
+mod tests_ddcb;
+=======
+#[cfg(test)]
+
+#[cfg(test)]
+mod tests_ex_sp_hl_expanded;
+>>>>>>> main
