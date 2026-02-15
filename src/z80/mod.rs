@@ -1901,7 +1901,8 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 23
             }
             0x36 => {
-                let addr = self.calc_index_addr(is_ix);
+                let d = self.fetch_byte() as i8;
+                let addr = self.calc_index_addr(d, is_ix);
                 let n = self.fetch_byte();
                 self.write_byte(addr, n);
                 19
@@ -2130,114 +2131,59 @@ impl<M: MemoryInterface, I: IoInterface> Debuggable for Z80<M, I> {
     }
 }
 
-pub mod test_utils;
-
 #[cfg(test)]
-pub mod test_utils {
-    use crate::memory::IoInterface;
-
-    #[derive(Debug, Default)]
-    pub struct TestIo;
-
-    impl IoInterface for TestIo {
-        fn read_port(&mut self, _port: u16) -> u8 {
-            0
-        }
-
-        fn write_port(&mut self, _port: u16, _value: u8) {}
-    }
-}
-
-<<<<<<< HEAD
-pub mod test_utils;
-
-#[cfg(test)]
-=======
-<<<<<<< HEAD
-// #[cfg(test)]
->>>>>>> main
 mod tests;
-=======
-pub mod test_utils;
 
 #[cfg(test)]
-pub mod test_utils {
-    use crate::memory::IoInterface;
-
-    #[derive(Debug, Default)]
-    pub struct TestIo;
-
-    impl IoInterface for TestIo {
-        fn read_port(&mut self, _port: u16) -> u8 {
-            0
-        }
-
-        fn write_port(&mut self, _port: u16, _value: u8) {}
-    }
-}
-
-pub mod test_utils;
-
-#[cfg(test)]
-pub mod test_utils;
-
-#[cfg(test)]
->>>>>>> main
-
-// #[cfg(test)]
 mod tests_alu;
 
-// #[cfg(test)]
+#[cfg(test)]
 mod tests_cb;
 
-// #[cfg(test)]
+#[cfg(test)]
 mod tests_control;
 
-// #[cfg(test)]
+#[cfg(test)]
 mod tests_load;
 
-// #[cfg(test)]
+#[cfg(test)]
 mod tests_regression;
 
-// #[cfg(test)]
+#[cfg(test)]
 mod tests_undoc;
 
-// #[cfg(test)]
+#[cfg(test)]
 mod tests_exhaustive;
 
-// #[cfg(test)]
+#[cfg(test)]
 mod tests_block;
 
-// #[cfg(test)]
+#[cfg(test)]
 mod tests_halfcarry;
 
-// #[cfg(test)]
+#[cfg(test)]
 mod tests_interrupt;
 
-// #[cfg(test)]
+#[cfg(test)]
 mod tests_reset;
 
-// #[cfg(test)]
+#[cfg(test)]
 mod tests_rrd_rld;
 
-// #[cfg(test)]
+#[cfg(test)]
 mod tests_timing;
 
-// #[cfg(test)]
+#[cfg(test)]
 mod tests_torture;
 
-// #[cfg(test)]
+#[cfg(test)]
 mod tests_gaps;
 
-// #[cfg(test)]
+#[cfg(test)]
 mod tests_memptr;
 
-<<<<<<< HEAD
-// #[cfg(test)]
-mod tests_ddcb;
-=======
 #[cfg(test)]
+mod tests_ddcb;
 
 #[cfg(test)]
 mod tests_ex_sp_hl_expanded;
->>>>>>> main

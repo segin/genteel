@@ -444,10 +444,8 @@ mod tests {
     }
 
     #[test]
-    fn test_frequency_setting_bank1() {
+    fn test_frequency_setting_bank1_offset1() {
         let mut ym = Ym2612::new();
-
-        // Set Ch4 Frequency (Bank 1, offset 1)
         // This corresponds to channel index 4 in get_frequency.
         // Registers are in Bank 1.
         // Base for Bank 1 (offset 1) is:

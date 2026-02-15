@@ -11,7 +11,8 @@ fn main() {
     vdp.registers[2] = 0x30;
 
     // Palette 0, Color 1: Red
-    vdp.write_control(0xC0000000); // Access CRAM addr 0
+    vdp.write_control(0xC000); // Access CRAM addr 0
+    vdp.write_control(0x0000);
     vdp.write_data(0xF800);
 
     // Set Tile 1 to solid Color 1

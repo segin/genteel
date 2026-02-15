@@ -172,9 +172,6 @@ pub struct Vdp {
 
     /// Framebuffer (320x240 RGB565)
     pub framebuffer: Vec<u16>,
-
-    /// Reused buffer for sprite rendering to avoid allocation
-    sprite_buffer: Vec<SpriteAttributes>,
 }
 
 impl Default for Vdp {
@@ -203,7 +200,6 @@ impl Vdp {
             v30_offset: 0,
             is_pal: false,
             framebuffer: vec![0; 320 * 240],
-            sprite_buffer: Vec::with_capacity(80),
         }
     }
 
@@ -220,23 +216,12 @@ impl Vdp {
             let mut addr = self.control_address as usize;
             for chunk in data.chunks_exact(2) {
                 if addr < 0x10000 {
-<<<<<<< HEAD
                     // Big-endian source: chunk[0] is high byte, chunk[1] is low byte.
                     // Standard write_data logic writes high byte to addr, low byte to addr ^ 1.
                     // Since auto-increment is 2, address parity is preserved, so we can
                     // directly write chunk[0] to addr and chunk[1] to addr ^ 1.
                     self.vram[addr] = chunk[0];
                     self.vram[addr ^ 1] = chunk[1];
-=======
-                    // Optimized direct write
-                    if (addr & 1) == 0 {
-                        self.vram[addr] = chunk[0];
-                        self.vram[addr + 1] = chunk[1];
-                    } else {
-                        self.vram[addr] = chunk[0];
-                        self.vram[addr - 1] = chunk[1];
-                    }
->>>>>>> main
                 }
                 addr = (addr + 2) & 0xFFFF;
             }
@@ -606,6 +591,21 @@ impl Vdp {
     #[cfg(test)]
     pub fn is_control_pending(&self) -> bool {
         self.control_pending
+    }
+
+    #[cfg(test)]
+    pub fn get_control_code(&self) -> u8 {
+        self.control_code
+    }
+
+    #[cfg(test)]
+    pub fn get_control_address(&self) -> u16 {
+        self.control_address
+    }
+
+    #[cfg(test)]
+    pub fn get_cram_color_pub(&self, palette: u8, index: u8) -> u16 {
+        self.get_cram_color(palette, index)
     }
 
     pub fn read_hv_counter(&self) -> u16 {
