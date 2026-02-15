@@ -141,14 +141,15 @@ impl MemoryInterface for Z80Bus {
     }
 
     fn read_long(&mut self, address: u32) -> u32 {
-        let hi = self.read_word(address) as u32;
-        let lo = self.read_word(address.wrapping_add(2)) as u32;
-        (hi << 16) | lo
+        let hi = self.read_word(address);
+        let lo = self.read_word(address.wrapping_add(2));
+        byte_utils::join_u32_from_u16(hi, lo)
     }
 
     fn write_long(&mut self, address: u32, value: u32) {
-        self.write_word(address, (value >> 16) as u16);
-        self.write_word(address.wrapping_add(2), value as u16);
+        let (high, low) = byte_utils::split_u32_to_u16(value);
+        self.write_word(address, high);
+        self.write_word(address.wrapping_add(2), low);
     }
 
     fn read_size(&mut self, address: u32, size: crate::cpu::decoder::Size) -> u32 {
