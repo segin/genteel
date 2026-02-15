@@ -680,7 +680,7 @@ impl Vdp {
         let bg_color = self.get_cram_color(pal_line, color_idx);
 
         // Fill with background color
-        self.framebuffer[line_offset..line_offset + width as usize].fill(bg_color);
+        self.framebuffer[line_offset..(line_offset + width as usize)].fill(bg_color);
 
         if !self.display_enabled() {
             return;
