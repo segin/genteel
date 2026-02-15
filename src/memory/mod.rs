@@ -5,6 +5,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 pub mod bus;
+pub mod byte_utils;
 pub mod tests_performance;
 pub mod z80_bus;
 use bus::Bus;
@@ -170,29 +171,33 @@ impl MemoryInterface for Memory {
 
     fn read_word(&mut self, address: u32) -> u16 {
         let address = address as usize;
-        (self.data[address] as u16) << 8 | (self.data[address + 1] as u16)
+        byte_utils::join_u16(self.data[address], self.data[address + 1])
     }
 
     fn write_word(&mut self, address: u32, value: u16) {
         let address = address as usize;
-        self.data[address] = (value >> 8) as u8;
-        self.data[address + 1] = value as u8;
+        let (high, low) = byte_utils::split_u16(value);
+        self.data[address] = high;
+        self.data[address + 1] = low;
     }
 
     fn read_long(&mut self, address: u32) -> u32 {
         let address = address as usize;
-        (self.data[address] as u32) << 24
-            | (self.data[address + 1] as u32) << 16
-            | (self.data[address + 2] as u32) << 8
-            | (self.data[address + 3] as u32)
+        byte_utils::join_u32(
+            self.data[address],
+            self.data[address + 1],
+            self.data[address + 2],
+            self.data[address + 3],
+        )
     }
 
     fn write_long(&mut self, address: u32, value: u32) {
         let address = address as usize;
-        self.data[address] = (value >> 24) as u8;
-        self.data[address + 1] = (value >> 16) as u8;
-        self.data[address + 2] = (value >> 8) as u8;
-        self.data[address + 3] = value as u8;
+        let (b0, b1, b2, b3) = byte_utils::split_u32(value);
+        self.data[address] = b0;
+        self.data[address + 1] = b1;
+        self.data[address + 2] = b2;
+        self.data[address + 3] = b3;
     }
 }
 
@@ -200,7 +205,7 @@ impl Memory {
     #[cfg(test)]
     pub fn hex_dump(&self, start: u32, end: u32) -> String {
         use std::fmt::Write;
-        let mut output = String::new();
+        let mut output = String::with_capacity((((end - start) as usize / 16) + 1) * 80);
         for i in (start..=end).step_by(16) {
             write!(output, "{:08x}: ", i).unwrap();
             for j in 0..16 {
@@ -210,7 +215,7 @@ impl Memory {
                     output.push_str("   ");
                 }
             }
-            output.push_str(" "); // Add space before ASCII part
+            output.push(' '); // Add space before ASCII part
 
             for j in 0..16 {
                 if (i + j) <= end {
