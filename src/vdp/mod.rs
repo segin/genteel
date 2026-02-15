@@ -491,11 +491,6 @@ impl Vdp {
         (self.registers[REG_DMA_SRC_HI] & DMA_MODE_MASK) == DMA_MODE_FILL
     }
 
-    pub fn is_dma_fill(&self) -> bool {
-        // Bit 7=1, Bit 6=0
-        (self.registers[23] & 0xC0) == 0x80
-    }
-
     pub fn execute_dma(&mut self) -> u32 {
         let length = self.dma_length();
         // If length is 0, it is treated as 0x10000 (64KB)
@@ -1102,13 +1097,20 @@ impl Debuggable for Vdp {
             "status": self.status,
             "h_counter": self.h_counter,
             "v_counter": self.v_counter,
+            "line_counter": self.line_counter,
             "dma_pending": self.dma_pending,
             "registers": self.registers,
+            "last_data_write": self.last_data_write,
+            "v30_offset": self.v30_offset,
+            "is_pal": self.is_pal,
             "control": {
                 "pending": self.control_pending,
                 "code": self.control_code,
                 "address": self.control_address,
-            }
+            },
+            "vram": &self.vram[..],
+            "cram": &self.cram[..],
+            "vsram": &self.vsram[..]
         })
     }
 
@@ -1122,8 +1124,20 @@ impl Debuggable for Vdp {
         if let Some(v_counter) = state["v_counter"].as_u64() {
             self.v_counter = v_counter as u16;
         }
+        if let Some(line_counter) = state["line_counter"].as_u64() {
+            self.line_counter = line_counter as u8;
+        }
         if let Some(dma_pending) = state["dma_pending"].as_bool() {
             self.dma_pending = dma_pending;
+        }
+        if let Some(last_data_write) = state["last_data_write"].as_u64() {
+            self.last_data_write = last_data_write as u16;
+        }
+        if let Some(v30_offset) = state["v30_offset"].as_u64() {
+            self.v30_offset = v30_offset as u16;
+        }
+        if let Some(is_pal) = state["is_pal"].as_bool() {
+            self.is_pal = is_pal;
         }
 
         if let Some(registers) = state["registers"].as_array() {
@@ -1145,6 +1159,53 @@ impl Debuggable for Vdp {
         }
         if let Some(address) = control["address"].as_u64() {
             self.control_address = address as u16;
+        }
+
+        if let Some(vram) = state["vram"].as_array() {
+            for (i, val) in vram.iter().enumerate() {
+                if i < self.vram.len() {
+                    if let Some(byte) = val.as_u64() {
+                        self.vram[i] = byte as u8;
+                    }
+                }
+            }
+        }
+
+        if let Some(cram) = state["cram"].as_array() {
+            for (i, val) in cram.iter().enumerate() {
+                if i < self.cram.len() {
+                    if let Some(byte) = val.as_u64() {
+                        self.cram[i] = byte as u8;
+                    }
+                }
+            }
+
+            // Reconstruct cram_cache
+            for i in 0..64 {
+                let addr = i * 2;
+                let low = self.cram[addr] as u16;
+                let high = self.cram[addr + 1] as u16;
+                let val = (high << 8) | low;
+
+                let r = (val & 0xE) << 1; // 3 bits -> 4 bits
+                let g = (val & 0xE0) >> 3; // 3 bits -> 4 bits
+                let b = (val & 0xE00) >> 7; // 3 bits -> 4 bits
+                                            // Expand to 5/6/5
+                let r5 = (r << 1) | (r >> 3);
+                let g6 = (g << 2) | (g >> 2);
+                let b5 = (b << 1) | (b >> 3);
+                self.cram_cache[i] = (r5 << 11) | (g6 << 5) | b5;
+            }
+        }
+
+        if let Some(vsram) = state["vsram"].as_array() {
+            for (i, val) in vsram.iter().enumerate() {
+                if i < self.vsram.len() {
+                    if let Some(byte) = val.as_u64() {
+                        self.vsram[i] = byte as u8;
+                    }
+                }
+            }
         }
     }
 }
@@ -1172,11 +1233,29 @@ mod tests {
     #[test]
     fn test_vdp_debuggable() {
         let mut vdp = Vdp::new();
+
+        // Prepare some data
+        let mut vram = vec![0; 0x10000];
+        vram[0] = 0xAB;
+        vram[0xFFFF] = 0xCD;
+
+        let mut cram = vec![0; 128];
+        cram[0] = 0xEE; // Low byte of color 0
+        cram[1] = 0x0E; // High byte of color 0
+
+        let mut vsram = vec![0; 80];
+        vsram[0] = 0x12;
+        vsram[1] = 0x34;
+
         let state = json!({
             "status": 0x1234,
             "h_counter": 0x56,
             "v_counter": 0x78,
+            "line_counter": 0x9A,
             "dma_pending": true,
+            "last_data_write": 0xBEEF,
+            "v30_offset": 0x22,
+            "is_pal": true,
             "registers": [
                 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24
             ],
@@ -1184,7 +1263,10 @@ mod tests {
                 "pending": true,
                 "code": 0x0F,
                 "address": 0x3FFF
-            }
+            },
+            "vram": vram,
+            "cram": cram,
+            "vsram": vsram
         });
 
         vdp.write_state(&state);
@@ -1192,18 +1274,41 @@ mod tests {
         assert_eq!(vdp.status, 0x1234);
         assert_eq!(vdp.h_counter, 0x56);
         assert_eq!(vdp.v_counter, 0x78);
+        assert_eq!(vdp.line_counter, 0x9A);
         assert_eq!(vdp.dma_pending, true);
+        assert_eq!(vdp.last_data_write, 0xBEEF);
+        assert_eq!(vdp.v30_offset, 0x22);
+        assert_eq!(vdp.is_pal, true);
+
         assert_eq!(vdp.registers[0], 1);
         assert_eq!(vdp.registers[23], 24);
+
         assert_eq!(vdp.control_pending, true);
         assert_eq!(vdp.control_code, 0x0F);
         assert_eq!(vdp.control_address, 0x3FFF);
+
+        assert_eq!(vdp.vram[0], 0xAB);
+        assert_eq!(vdp.vram[0xFFFF], 0xCD);
+
+        assert_eq!(vdp.cram[0], 0xEE);
+        assert_eq!(vdp.cram[1], 0x0E);
+
+        assert_eq!(vdp.vsram[0], 0x12);
+        assert_eq!(vdp.vsram[1], 0x34);
+
+        // Verify CRAM cache reconstruction happened (non-zero)
+        assert_ne!(vdp.cram_cache[0], 0);
 
         // Verify read_state mirrors the written state
         let new_state = vdp.read_state();
         assert_eq!(new_state["status"], 0x1234);
         assert_eq!(new_state["registers"][23], 24);
         assert_eq!(new_state["control"]["address"], 0x3FFF);
+        assert_eq!(new_state["vram"][0], 0xAB);
+        assert_eq!(new_state["cram"][0], 0xEE);
+        assert_eq!(new_state["vsram"][0], 0x12);
+        assert_eq!(new_state["line_counter"], 0x9A);
+        assert_eq!(new_state["is_pal"], true);
     }
 }
 

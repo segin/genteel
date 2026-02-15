@@ -263,6 +263,7 @@ impl InputManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[allow(unused_imports)]
     use proptest::prelude::*;
 
     #[test]
