@@ -822,4 +822,40 @@ mod tests {
         assert!(bus.z80_reset);
         assert_eq!(bus.z80_bank_bit, 0);
     }
+
+    #[test]
+    fn test_work_ram_wrapping_word() {
+        let mut bus = Bus::new();
+
+        // 1. Load a dummy ROM to control what is at 0x000000
+        let rom_data = vec![0xCD];
+        bus.load_rom(&rom_data);
+
+        // 2. Setup initial RAM state
+        bus.work_ram[0xFFFF] = 0x12;
+        bus.work_ram[0x0000] = 0x34;
+
+        // 3. Test wrapping at 0xE0FFFF (end of first 64KB mirror)
+        // Should read 0xFFFF (0x12) and 0x0000 (0x34)
+        assert_eq!(bus.read_word(0xE0FFFF), 0x1234);
+
+        // 4. Test writing across boundary at 0xE0FFFF
+        bus.write_word(0xE0FFFF, 0x5678);
+        assert_eq!(bus.work_ram[0xFFFF], 0x56);
+        assert_eq!(bus.work_ram[0x0000], 0x78);
+
+        // 5. Test wrapping at 0xFFFFFF (end of RAM space)
+        // Should read 0xFFFF (0x56) and ROM[0] (0xCD)
+        // Set RAM[0xFFFF] to a distinct value
+        bus.work_ram[0xFFFF] = 0xAB;
+        // ROM[0] is 0xCD
+
+        assert_eq!(bus.read_word(0xFFFFFF), 0xABCD);
+
+        // 6. Test writing at 0xFFFFFF
+        // Should write high byte to RAM[0xFFFF], low byte to ROM[0] (ignored)
+        bus.write_word(0xFFFFFF, 0xAABB);
+        assert_eq!(bus.work_ram[0xFFFF], 0xAA);
+        assert_eq!(bus.rom[0], 0xCD); // ROM write ignored
+    }
 }
