@@ -17,11 +17,12 @@
 
 use crate::io::ControllerState;
 use std::collections::HashMap;
-use std::fs;
+use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
-const MAX_SCRIPT_SIZE: u64 = 64 * 1024 * 1024; // 64 MB
+/// Maximum script size in bytes (50MB) to prevent OOM
+const MAX_SCRIPT_SIZE: u64 = 50 * 1024 * 1024;
 
 /// A single frame's input for both players
 #[derive(Debug, Clone, Default)]
@@ -47,36 +48,36 @@ impl InputScript {
 
     /// Load a script from a file
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, String> {
-        let mut file =
-            fs::File::open(&path).map_err(|e| format!("Failed to read input script: {}", e))?;
+        let file = File::open(path).map_err(|e| format!("Failed to open input script: {}", e))?;
 
+        // Check metadata size first for quick fail
         if let Ok(metadata) = file.metadata() {
             if metadata.len() > MAX_SCRIPT_SIZE {
                 return Err(format!(
-                    "Script size {} exceeds limit of {} bytes",
+                    "Input script too large: {} bytes (max {} bytes)",
                     metadata.len(),
                     MAX_SCRIPT_SIZE
                 ));
             }
         }
 
-        let content = Self::read_script_with_limit(&mut file, MAX_SCRIPT_SIZE)?;
-        Self::parse(&content)
-    }
-
-    fn read_script_with_limit<R: Read>(reader: &mut R, limit: u64) -> Result<String, String> {
+        // Read with limit to prevent OOM from streams/lying metadata
         let mut buffer = Vec::new();
-        // Read up to limit + 1 bytes to detect truncation
-        reader
-            .take(limit + 1)
+        file.take(MAX_SCRIPT_SIZE + 1)
             .read_to_end(&mut buffer)
-            .map_err(|e| format!("Failed to read script: {}", e))?;
+            .map_err(|e| format!("Failed to read input script: {}", e))?;
 
-        if buffer.len() as u64 > limit {
-            return Err(format!("Script size exceeds limit of {} bytes", limit));
+        if buffer.len() as u64 > MAX_SCRIPT_SIZE {
+            return Err(format!(
+                "Input script too large: exceeds {} bytes",
+                MAX_SCRIPT_SIZE
+            ));
         }
 
-        String::from_utf8(buffer).map_err(|e| format!("Invalid UTF-8 in script: {}", e))
+        let content = String::from_utf8(buffer)
+            .map_err(|e| format!("Input script is not valid UTF-8: {}", e))?;
+
+        Self::parse(&content)
     }
 
     /// Parse a script from a string
@@ -439,9 +440,15 @@ mod tests {
         // Edge Case 1: Empty script (default InputScript, max_frame = 0)
         let script = InputScript::new();
         manager.set_script(script);
-        assert!(!manager.is_complete(), "Empty script frame 0 should not be complete");
+        assert!(
+            !manager.is_complete(),
+            "Empty script frame 0 should not be complete"
+        );
         manager.advance_frame();
-        assert!(manager.is_complete(), "Empty script frame 1 should be complete");
+        assert!(
+            manager.is_complete(),
+            "Empty script frame 1 should be complete"
+        );
 
         // Edge Case 2: Single frame script at 0
         let script = InputScript::parse("0,........,........").unwrap();
@@ -550,7 +557,7 @@ mod tests {
         let result = InputScript::load("non_existent_file.txt");
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.contains("Failed to read input script"));
+        assert!(err.contains("Failed to open input script"));
     }
 
     #[test]
@@ -570,44 +577,84 @@ mod tests {
     }
 
     #[test]
-    fn test_read_limit() {
-        use std::io::Cursor;
-
-        // Test with a small limit
-        let data = "1234567890".as_bytes();
-        let mut reader = Cursor::new(data);
-        let limit = 5;
-
-        let result = InputScript::read_script_with_limit(&mut reader, limit);
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .contains("Script size exceeds limit of 5 bytes"));
-
-        // Test with exact limit
-        let mut reader = Cursor::new(data);
-        let limit = 10;
-        let result = InputScript::read_script_with_limit(&mut reader, limit);
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "1234567890");
-
-        // Test with limit larger than data
-        let mut reader = Cursor::new(data);
-        let limit = 20;
-        let result = InputScript::read_script_with_limit(&mut reader, limit);
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "1234567890");
+    fn test_parse_whitespace_robustness() {
+        let script = InputScript::parse(" 10 , ....A... , .....B.. ").unwrap();
+        let frame = script.get(10).unwrap();
+        assert!(frame.p1.a);
+        assert!(frame.p2.b);
     }
 
     #[test]
-    fn test_read_invalid_utf8() {
-        use std::io::Cursor;
-        let data = vec![0xFF, 0xFF]; // Invalid UTF-8
-        let mut reader = Cursor::new(data);
-        let limit = 10;
+    fn test_parse_comments_and_empty_lines() {
+        let script = InputScript::parse(
+            "
+            # Comment 1
+            10, ....A..., ........
 
-        let result = InputScript::read_script_with_limit(&mut reader, limit);
+            # Comment 2
+            20, .....B.., ........
+        ",
+        )
+        .unwrap();
+
+        assert_eq!(script.max_frame, 20);
+        assert!(script.get(10).unwrap().p1.a);
+        assert!(script.get(20).unwrap().p1.b);
+    }
+
+    #[test]
+    fn test_parse_error_line_numbering() {
+        let content = "
+            # Line 2 (comment)
+            10, ....A..., ........
+
+            invalid_frame, ....A..., ........
+        ";
+        let err = InputScript::parse(content).unwrap_err();
+        assert!(err.contains("Line 5: invalid frame number"));
+    }
+
+    #[test]
+    fn test_parse_extra_fields() {
+        // Extra fields should be ignored based on split(',') logic
+        let script = InputScript::parse("10, ....A..., ........, extra_field").unwrap();
+        let frame = script.get(10).unwrap();
+        assert!(frame.p1.a);
+    }
+
+    #[test]
+    fn test_parse_empty_buttons() {
+        // "10,," -> split gives ["10", "", ""]
+        // parse_buttons("") should return default state (all false)
+        let script = InputScript::parse("10,,").unwrap();
+        let frame = script.get(10).unwrap();
+        assert!(!frame.p1.a);
+        assert!(!frame.p2.a);
+    }
+
+    #[test]
+    fn test_load_too_large_file() {
+        use std::fs;
+        use std::io::Write;
+        let path = "test_large_script.txt";
+        let mut file = File::create(path).unwrap();
+
+        // Create a file just over the limit (50MB + 1 byte)
+        // We write in chunks to avoid OOM in test runner if it were to hold it all
+        let chunk_size = 1024 * 1024;
+        let chunk = vec![b' '; chunk_size];
+        for _ in 0..50 {
+            file.write_all(&chunk).unwrap();
+        }
+        file.write_all(&[b' ']).unwrap(); // +1 byte
+
+        let result = InputScript::load(path);
+
+        // Cleanup
+        let _ = fs::remove_file(path);
+
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Invalid UTF-8"));
+        let err = result.unwrap_err();
+        assert!(err.contains("Input script too large"));
     }
 }
