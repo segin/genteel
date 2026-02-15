@@ -209,8 +209,12 @@ fn regression_neg_80() {
     c.a = 0x80;
     c.step();
     assert_eq!(c.a, 0x80);
-    assert!(c.get_flag(flags::PARITY)); // Overflow
-    assert!(c.get_flag(flags::CARRY)); // Carry should be set (A!=0)
+    assert!(c.get_flag(flags::PARITY), "Parity/Overflow flag should be set (Overflow)");
+    assert!(c.get_flag(flags::CARRY), "Carry flag should be set (A != 0)");
+    assert!(!c.get_flag(flags::ZERO), "Zero flag should not be set");
+    assert!(c.get_flag(flags::SIGN), "Sign flag should be set (Result is 0x80)");
+    assert!(!c.get_flag(flags::HALF_CARRY), "Half Carry flag should not be set (No borrow from bit 4)");
+    assert!(c.get_flag(flags::ADD_SUB), "Add/Subtract flag should be set");
 }
 
 // Regression: NEG with A=0 should clear carry
