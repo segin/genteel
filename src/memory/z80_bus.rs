@@ -7,7 +7,7 @@
 //! - 7F11h: SN76489 PSG
 //! - 8000h-FFFFh: Banked 68k Memory (32KB window)
 
-use super::{IoInterface, MemoryInterface, SharedBus};
+use super::{byte_utils, IoInterface, MemoryInterface, SharedBus};
 
 /// Z80 Bus adapter that routes memory accesses to Genesis components
 #[derive(Debug, Clone)]
@@ -123,23 +123,21 @@ impl MemoryInterface for Z80Bus {
             0x8000..=0xFFFF => {
                 let bank_addr = self.bus.bus.borrow().z80_bank_addr;
                 let effective_addr = bank_addr | ((addr as u32) & 0x7FFF);
-                if effective_addr == 0xFFF605 || effective_addr == 0xFFF62A {
-                    // eprintln!("DEBUG: Z80 SYNC WRITE: addr=0x{:06X} val=0x{:02X}", effective_addr, value);
-                }
                 self.bus.bus.borrow_mut().write_byte(effective_addr, value);
             }
         }
     }
 
     fn read_word(&mut self, address: u32) -> u16 {
-        let hi = self.read_byte(address) as u16;
-        let lo = self.read_byte(address.wrapping_add(1)) as u16;
-        (hi << 8) | lo
+        let hi = self.read_byte(address);
+        let lo = self.read_byte(address.wrapping_add(1));
+        byte_utils::join_u16(hi, lo)
     }
 
     fn write_word(&mut self, address: u32, value: u16) {
-        self.write_byte(address, (value >> 8) as u8);
-        self.write_byte(address.wrapping_add(1), value as u8);
+        let (high, low) = byte_utils::split_u16(value);
+        self.write_byte(address, high);
+        self.write_byte(address.wrapping_add(1), low);
     }
 
     fn read_long(&mut self, address: u32) -> u32 {
