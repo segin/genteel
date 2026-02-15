@@ -241,7 +241,7 @@ impl Emulator {
     }
 
     fn debug_log_frame(&self) {
-        if self.internal_frame_count.is_multiple_of(60) || self.internal_frame_count < 5 {
+        if self.internal_frame_count % 60 == 0 || self.internal_frame_count < 5 {
             let bus = self.bus.borrow();
             let disp_en = bus.vdp.display_enabled();
             let dma_en = bus.vdp.dma_enabled();
@@ -342,13 +342,8 @@ impl Emulator {
             }
 
             if result.cycles > 0 {
-                self.sync_z80(
-                    result.cycles,
-                    line,
-                    active_lines,
-                    cycles_scanline + result.cycles,
-                    z80_cycle_debt,
-                );
+                let trigger_vint = line == active_lines && cycles_scanline < 10;
+                self.sync_z80(result.cycles, trigger_vint, z80_cycle_debt);
                 cycles_scanline += result.cycles;
             }
 
@@ -360,13 +355,8 @@ impl Emulator {
                     bus.z80_reset = change.new_rst;
                 }
 
-                self.sync_z80(
-                    change.instruction_cycles,
-                    line,
-                    active_lines,
-                    cycles_scanline + change.instruction_cycles,
-                    z80_cycle_debt,
-                );
+                let trigger_vint = line == active_lines && cycles_scanline < 10;
+                self.sync_z80(change.instruction_cycles, trigger_vint, z80_cycle_debt);
                 cycles_scanline += change.instruction_cycles;
             }
         }
@@ -375,9 +365,7 @@ impl Emulator {
     fn sync_z80(
         &mut self,
         m68k_cycles: u32,
-        line: u16,
-        active_lines: u16,
-        cycles_scanline: u32,
+        trigger_vint: bool,
         z80_cycle_debt: &mut f32,
     ) {
         const Z80_CYCLES_PER_M68K_CYCLE: f32 = 3.58 / 7.67;
@@ -416,7 +404,7 @@ impl Emulator {
         }
 
         // Trigger Z80 VInt at start of VBlank
-        if line == active_lines && cycles_scanline < m68k_cycles + 5 && !z80_is_reset {
+        if trigger_vint && !z80_is_reset {
             self.z80.trigger_interrupt(0xFF);
         }
 
@@ -491,7 +479,10 @@ impl Emulator {
 
         println!("Waiting for GDB connection on port {}...", port);
         if let Some(pwd) = password {
-            println!("🔒 Password protected. After connecting, run: monitor auth {}", pwd);
+            println!(
+                "🔒 Password protected. After connecting, run: monitor auth {}",
+                pwd
+            );
         }
         println!(
             "Connect with: m68k-elf-gdb -ex \"target remote :{}\" <elf_file>",
@@ -772,7 +763,6 @@ impl Emulator {
             })
             .map_err(|e| e.to_string())
     }
-
 }
 
 fn print_usage() {
@@ -1057,6 +1047,9 @@ mod tests {
         emulator.step_frame_internal();
         emulator.step_frame_internal();
 
+        // Request bus to read result (Z80 RAM is only accessible when Z80 is stopped)
+        emulator.bus.borrow_mut().write_word(0xA11100, 0x0100);
+
         // Check if 0xA01FFD is 0x80
         // We use read_byte on bus.
         // We must request the bus first to read Z80 RAM
@@ -1131,7 +1124,6 @@ mod tests {
         emulator.step_frame(None);
         assert_eq!(emulator.internal_frame_count, 2);
     }
-}
 
     #[test]
     fn test_large_raw_rom_prevention() {
@@ -1150,3 +1142,4 @@ mod tests {
         // Verify rejection
         assert!(result.is_err(), "Should reject large ROM file (>32MB)");
     }
+}

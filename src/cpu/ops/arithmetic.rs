@@ -1,4 +1,4 @@
-use crate::cpu::addressing::{calculate_ea};
+use crate::cpu::addressing::calculate_ea;
 use crate::cpu::decoder::{AddressingMode, Size};
 use crate::cpu::{flags, Cpu};
 use crate::memory::MemoryInterface;
@@ -493,7 +493,8 @@ pub fn exec_mulu<M: MemoryInterface>(
     dst_reg: u8,
     memory: &mut M,
 ) -> u32 {
-    let (src_ea, cycles) = calculate_ea(src, Size::Word, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
+    let (src_ea, cycles) =
+        calculate_ea(src, Size::Word, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     let src_val = cpu.cpu_read_ea(src_ea, Size::Word, memory) as u16;
     let dst_val = (cpu.d[dst_reg as usize] & 0xFFFF) as u16;
 
@@ -514,7 +515,8 @@ pub fn exec_muls<M: MemoryInterface>(
     dst_reg: u8,
     memory: &mut M,
 ) -> u32 {
-    let (src_ea, cycles) = calculate_ea(src, Size::Word, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
+    let (src_ea, cycles) =
+        calculate_ea(src, Size::Word, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     let src_val = cpu.cpu_read_ea(src_ea, Size::Word, memory) as i16;
     let dst_val = (cpu.d[dst_reg as usize] & 0xFFFF) as i16;
 
@@ -535,7 +537,8 @@ pub fn exec_divu<M: MemoryInterface>(
     dst_reg: u8,
     memory: &mut M,
 ) -> u32 {
-    let (src_ea, cycles) = calculate_ea(src, Size::Word, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
+    let (src_ea, cycles) =
+        calculate_ea(src, Size::Word, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     let divisor = cpu.cpu_read_ea(src_ea, Size::Word, memory) as u16;
 
     if divisor == 0 {
@@ -566,7 +569,8 @@ pub fn exec_divs<M: MemoryInterface>(
     dst_reg: u8,
     memory: &mut M,
 ) -> u32 {
-    let (src_ea, cycles) = calculate_ea(src, Size::Word, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
+    let (src_ea, cycles) =
+        calculate_ea(src, Size::Word, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     let divisor = cpu.cpu_read_ea(src_ea, Size::Word, memory) as i16;
 
     if divisor == 0 {
@@ -581,8 +585,7 @@ pub fn exec_divs<M: MemoryInterface>(
     if !(-32768..=32767).contains(&quotient) {
         cpu.set_flag(flags::OVERFLOW, true);
     } else {
-        cpu.d[dst_reg as usize] =
-            ((remainder as u32) << 16) | ((quotient as u32) & 0xFFFF);
+        cpu.d[dst_reg as usize] = ((remainder as u32) << 16) | ((quotient as u32) & 0xFFFF);
         cpu.set_flag(flags::ZERO, (quotient as i16) == 0);
         cpu.set_flag(flags::NEGATIVE, (quotient as i16) < 0);
         cpu.set_flag(flags::OVERFLOW, false);
@@ -635,8 +638,11 @@ pub fn exec_abcd<M: MemoryInterface>(
     let (src_val, dst_val, dst_addr) =
         fetch_predec_or_reg_operands(cpu, src_reg, dst_reg, Size::Byte, memory_mode, memory);
 
-    let mut result = (src_val & 0x0F) + (dst_val & 0x0F) + (if cpu.get_flag(flags::EXTEND) { 1 } else { 0 });
-    if result > 9 { result += 6; }
+    let mut result =
+        (src_val & 0x0F) + (dst_val & 0x0F) + (if cpu.get_flag(flags::EXTEND) { 1 } else { 0 });
+    if result > 9 {
+        result += 6;
+    }
     let mut carry = result > 0x0F;
     result = (src_val & 0xF0) + (dst_val & 0xF0) + (if carry { 0x10 } else { 0 }) + (result & 0x0F);
     if result > 0x9F {
@@ -659,7 +665,11 @@ pub fn exec_abcd<M: MemoryInterface>(
     cpu.set_flag(flags::CARRY, carry);
     cpu.set_flag(flags::EXTEND, carry);
 
-    if memory_mode { 18 } else { 6 }
+    if memory_mode {
+        18
+    } else {
+        6
+    }
 }
 
 pub fn exec_sbcd<M: MemoryInterface>(
@@ -672,10 +682,15 @@ pub fn exec_sbcd<M: MemoryInterface>(
     let (src_val, dst_val, dst_addr) =
         fetch_predec_or_reg_operands(cpu, src_reg, dst_reg, Size::Byte, memory_mode, memory);
 
-    let mut result = (dst_val as i32 & 0x0F) - (src_val as i32 & 0x0F) - (if cpu.get_flag(flags::EXTEND) { 1 } else { 0 });
-    if result < 0 { result -= 6; }
+    let mut result = (dst_val as i32 & 0x0F)
+        - (src_val as i32 & 0x0F)
+        - (if cpu.get_flag(flags::EXTEND) { 1 } else { 0 });
+    if result < 0 {
+        result -= 6;
+    }
     let mut carry = result < 0;
-    result = (dst_val as i32 & 0xF0) - (src_val as i32 & 0xF0) - (if carry { 0x10 } else { 0 }) + (result & 0x0F);
+    result = (dst_val as i32 & 0xF0) - (src_val as i32 & 0xF0) - (if carry { 0x10 } else { 0 })
+        + (result & 0x0F);
     if result < 0 {
         result -= 0x60;
         carry = true;
@@ -696,19 +711,22 @@ pub fn exec_sbcd<M: MemoryInterface>(
     cpu.set_flag(flags::CARRY, carry);
     cpu.set_flag(flags::EXTEND, carry);
 
-    if memory_mode { 18 } else { 6 }
+    if memory_mode {
+        18
+    } else {
+        6
+    }
 }
 
-pub fn exec_nbcd<M: MemoryInterface>(
-    cpu: &mut Cpu,
-    dst: AddressingMode,
-    memory: &mut M,
-) -> u32 {
-    let (dst_ea, cycles) = calculate_ea(dst, Size::Byte, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
+pub fn exec_nbcd<M: MemoryInterface>(cpu: &mut Cpu, dst: AddressingMode, memory: &mut M) -> u32 {
+    let (dst_ea, cycles) =
+        calculate_ea(dst, Size::Byte, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     let val = cpu.cpu_read_ea(dst_ea, Size::Byte, memory);
 
     let mut result = 0i32 - (val as i32 & 0x0F) - (if cpu.get_flag(flags::EXTEND) { 1 } else { 0 });
-    if result < 0 { result -= 6; }
+    if result < 0 {
+        result -= 6;
+    }
     let mut carry = result < 0;
     result = 0i32 - (val as i32 & 0xF0) - (if carry { 0x10 } else { 0 }) + (result & 0x0F);
     if result < 0 {
@@ -736,14 +754,15 @@ pub fn exec_chk<M: MemoryInterface>(
     dst_reg: u8,
     memory: &mut M,
 ) -> u32 {
-    let (src_ea, cycles) = calculate_ea(src, Size::Word, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
+    let (src_ea, cycles) =
+        calculate_ea(src, Size::Word, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     let bound = cpu.cpu_read_ea(src_ea, Size::Word, memory) as i16;
     let val = (cpu.d[dst_reg as usize] & 0xFFFF) as i16;
 
     cpu.set_flag(flags::ZERO, val == 0);
     cpu.set_flag(flags::NEGATIVE, val < 0);
     // X is unaffected, C and V are undefined? Some sources say N is set if val < 0, val > bound.
-    
+
     if val < 0 {
         cpu.set_flag(flags::NEGATIVE, true);
         cpu.process_exception(6, memory);
@@ -774,11 +793,7 @@ fn fetch_predec_or_reg_operands<M: MemoryInterface>(
 
         (src, dst, Some(dst_addr))
     } else {
-        (
-            cpu.d[src_reg as usize],
-            cpu.d[dst_reg as usize],
-            None,
-        )
+        (cpu.d[src_reg as usize], cpu.d[dst_reg as usize], None)
     }
 }
 

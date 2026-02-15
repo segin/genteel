@@ -47,6 +47,9 @@ mod performance_tests {
         }
 
         let duration = start.elapsed();
-        println!("DMA Benchmark: {:?} for {} iterations of 64KB transfer", duration, iterations);
+        println!(
+            "DMA Benchmark: {:?} for {} iterations of 64KB transfer",
+            duration, iterations
+        );
     }
 }
