@@ -3,6 +3,7 @@ import os
 import re
 import json
 import csv
+import subprocess
 from datetime import datetime
 
 # =============================================================================
@@ -27,6 +28,23 @@ def add_finding(title, severity, description, file_path, line_number=None):
         "timestamp": datetime.now().isoformat()
     })
 
+def get_tracked_files():
+    try:
+        out = subprocess.check_output(["git", "ls-files"], stderr=subprocess.STDOUT).decode("utf-8")
+        files = out.splitlines()
+        # Filter out target directories and audit reports
+        return [f for f in files if not f.startswith("audit_reports/") and "/target/" not in f and not f.startswith("target/")]
+    except:
+        # Fallback to manual scan if git fails
+        files = []
+        for root, _, filenames in os.walk("."):
+            if ".git" in root or "target" in root or "audit_reports" in root:
+                continue
+            for f in filenames:
+                if f.endswith((".rs", ".py", ".md", ".sh", ".toml")):
+                    files.append(os.path.join(root, f))
+        return files
+
 def scan_text_patterns():
     # Pre-compiled regex patterns for performance
     secret_patterns = {
@@ -38,19 +56,15 @@ def scan_text_patterns():
         "Generic Token": re.compile(r"token\s*=\s*['\"][a-zA-Z0-9]{20,}['\"]")
     }
     
-    files = []
-    for root, _, filenames in os.walk("."):
-        if ".git" in root or "target" in root: continue
-        for f in filenames:
-            if f.endswith((".rs", ".py", ".md", ".sh", ".toml")):
-                files.append(os.path.join(root, f))
-
+    files = get_tracked_files()
     todo_pattern = re.compile(r"(TODO|FIXME|XXX):")
     unsafe_pattern = re.compile(r"unsafe\s*\{")
 
     for f in files:
-        if not os.path.exists(f): continue
-        if os.path.isdir(f): continue
+        if not os.path.exists(f) or os.path.isdir(f):
+            continue
+        if not f.endswith((".rs", ".py", ".md", ".sh", ".toml")):
+            continue
 
         try:
             with open(f, 'r', encoding='utf-8', errors='ignore') as fp:
