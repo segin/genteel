@@ -204,13 +204,14 @@ fn regression_neg_80() {
     assert!(c.get_flag(flags::CARRY)); // Carry should be set (A!=0)
 }
 
-// Regression: NEG with A=0 should clear carry
+// Regression: NEG with A=0 should clear Carry flag
 #[test]
 fn regression_neg_00() {
     let mut c = z80(&[0xED, 0x44]);
     c.a = 0x00;
     c.step();
     assert_eq!(c.a, 0x00);
+    // Carry should be cleared when A=0
     assert!(!c.get_flag(flags::CARRY));
 }
 
