@@ -491,11 +491,6 @@ impl Vdp {
         (self.registers[REG_DMA_SRC_HI] & DMA_MODE_MASK) == DMA_MODE_FILL
     }
 
-    pub fn is_dma_fill(&self) -> bool {
-        // Bit 7=1, Bit 6=0
-        (self.registers[23] & 0xC0) == 0x80
-    }
-
     pub fn execute_dma(&mut self) -> u32 {
         let length = self.dma_length();
         // If length is 0, it is treated as 0x10000 (64KB)
@@ -942,8 +937,8 @@ impl Vdp {
         let (v_scroll, h_scroll) = self.get_scroll_values(is_plane_a);
 
         let scrolled_v = fetch_line.wrapping_add(v_scroll);
-        let tile_v = (scrolled_v as usize / 8) % plane_h;
-        let pixel_v = scrolled_v % 8;
+        let tile_v = ((scrolled_v as usize) >> 3) & (plane_h - 1);
+        let pixel_v = scrolled_v & 7;
 
         let screen_width = self.screen_width();
         let line_offset = (draw_line as usize) * 320;
@@ -951,16 +946,16 @@ impl Vdp {
         let mut screen_x: u16 = 0;
         let mut scrolled_h = (0u16).wrapping_sub(h_scroll);
 
-        // Pre-calculate constants
-        let plane_w_mask = plane_w - 1;
-        let mut tile_h = (scrolled_h as usize >> 3) & plane_w_mask;
+        let plane_mask = plane_w - 1;
+        let row_base = name_table_base + (tile_v * plane_w) * 2;
 
-        // Prologue: Handle unaligned start
-        let pixel_h = scrolled_h % 8;
+        // Prologue: Align to 8-pixel boundary
+        let pixel_h = scrolled_h & 7;
         if pixel_h != 0 {
-            let pixels_left_in_tile = 8 - pixel_h;
-            let pixels_to_process = std::cmp::min(pixels_left_in_tile, screen_width - screen_x);
+            let pixels_left = 8 - pixel_h;
+            let count = std::cmp::min(pixels_left, screen_width - screen_x);
 
+            let tile_h = ((scrolled_h as usize) >> 3) & plane_mask;
             let entry = self.fetch_nametable_entry(name_table_base, tile_v, tile_h, plane_w);
 
             let priority = (entry & 0x8000) != 0;
@@ -977,30 +972,28 @@ impl Vdp {
                     palette,
                     h_flip,
                     pixel_h,
-                    pixels_to_process,
+                    count,
                     line_offset + screen_x as usize,
                 );
             }
-            screen_x += pixels_to_process;
-            scrolled_h = scrolled_h.wrapping_add(pixels_to_process);
-            tile_h = (tile_h + 1) & plane_w_mask;
+            screen_x += count;
+            scrolled_h = scrolled_h.wrapping_add(count);
         }
 
-        // Main Loop: Process full 8-pixel tiles
+        // Main Loop: Process 8 pixels at a time
         while screen_x + 8 <= screen_width {
+            let tile_h = ((scrolled_h as usize) >> 3) & plane_mask;
             let entry = self.fetch_nametable_entry(name_table_base, tile_v, tile_h, plane_w);
 
             let priority = (entry & 0x8000) != 0;
             if priority != priority_filter {
                 screen_x += 8;
                 scrolled_h = scrolled_h.wrapping_add(8);
-                tile_h = (tile_h + 1) & plane_w_mask;
                 continue;
             }
 
             let palette = ((entry >> 13) & 0x03) as u8;
             let palette_base = (palette as usize) * 16;
-
             let v_flip = (entry & 0x1000) != 0;
             let h_flip = (entry & 0x0800) != 0;
             let tile_index = entry & 0x07FF;
@@ -1062,15 +1055,14 @@ impl Vdp {
                 col = p3 & 0x0F;
                 if col != 0 { self.framebuffer[dest_idx + 7] = self.cram_cache[palette_base + col as usize]; }
             }
-
             screen_x += 8;
             scrolled_h = scrolled_h.wrapping_add(8);
-            tile_h = (tile_h + 1) & plane_w_mask;
         }
 
-        // Epilogue: Handle remaining pixels
+        // Epilogue: Remaining pixels
         if screen_x < screen_width {
-            let count = (screen_width - screen_x) as u16;
+            let count = screen_width - screen_x;
+            let tile_h = ((scrolled_h as usize) >> 3) & plane_mask;
             let entry = self.fetch_nametable_entry(name_table_base, tile_v, tile_h, plane_w);
 
             let priority = (entry & 0x8000) != 0;
