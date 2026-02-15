@@ -699,6 +699,28 @@ mod tests {
     }
 
     #[test]
+    fn test_handle_monitor_command_unrecognized() {
+        let mut server = GdbServer {
+            listener: TcpListener::bind("127.0.0.1:0").unwrap(),
+            client: None,
+            breakpoints: HashSet::new(),
+            stop_reason: StopReason::Halted,
+            no_ack_mode: false,
+            password: None,
+            authenticated: true,
+        };
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+
+        // Unrecognized monitor command should return "OK" when authenticated
+        // "test" in hex: 74657374
+        assert_eq!(
+            server.process_command("qRcmd,74657374", &mut regs, &mut mem),
+            "OK"
+        );
+    }
+
+    #[test]
     fn test_checksum() {
         let data = "OK";
         let checksum = data.bytes().fold(0u8, |acc, b| acc.wrapping_add(b));
@@ -838,7 +860,26 @@ mod tests {
         assert!(server
             .process_command("qSupported", &mut regs, &mut mem)
             .contains("PacketSize"));
+        assert!(server
+            .process_command("qSupported:multiprocess+;swbreak+", &mut regs, &mut mem)
+            .contains("PacketSize"));
         assert_eq!(server.process_command("qC", &mut regs, &mut mem), "QC1");
+        assert_eq!(
+            server.process_command("qfThreadInfo", &mut regs, &mut mem),
+            "m1"
+        );
+        assert_eq!(
+            server.process_command("qsThreadInfo", &mut regs, &mut mem),
+            "l"
+        );
+        assert_eq!(
+            server.process_command("qAttached", &mut regs, &mut mem),
+            "1"
+        );
+        assert_eq!(
+            server.process_command("qUnknown", &mut regs, &mut mem),
+            ""
+        );
         assert_eq!(
             server.process_command("QStartNoAckMode", &mut regs, &mut mem),
             "OK"
