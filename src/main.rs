@@ -1043,6 +1043,9 @@ mod tests {
         emulator.step_frame_internal();
         emulator.step_frame_internal();
 
+        // Request bus to read result (Z80 RAM is only accessible when Z80 is stopped)
+        emulator.bus.borrow_mut().write_word(0xA11100, 0x0100);
+
         // Check if 0xA01FFD is 0x80
         // We use read_byte on bus.
         // We must request the bus first to read Z80 RAM

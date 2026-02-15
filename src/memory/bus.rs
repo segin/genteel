@@ -117,7 +117,7 @@ impl Bus {
 
             // Z80 Address Space: 0xA00000-0xA0FFFF
             0xA00000..=0xA01FFF => {
-                // Z80 RAM (8KB)
+                // Z80 RAM (8KB) - Only accessible if Z80 bus is requested (Z80 stopped)
                 if self.z80_bus_request {
                     self.z80_ram[(addr & 0x1FFF) as usize]
                 } else {
@@ -193,6 +193,7 @@ impl Bus {
 
             // Z80 RAM
             0xA00000..=0xA01FFF => {
+                // Only accessible if Z80 bus is requested (Z80 stopped)
                 if self.z80_bus_request {
                     self.z80_ram[(addr & 0x1FFF) as usize] = value;
                 }
@@ -622,7 +623,7 @@ mod tests {
         let mut bus = Bus::new();
 
         // Request Z80 bus
-        bus.z80_bus_request = true;
+        bus.write_byte(0xA11100, 0x01);
 
         bus.write_byte(0xA00000, 0x55);
         assert_eq!(bus.read_byte(0xA00000), 0x55);
