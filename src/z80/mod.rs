@@ -1120,6 +1120,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 let val = self.read_word(self.sp);
                 self.write_word(self.sp, self.hl());
                 self.set_hl(val);
+                self.memptr = val;
                 19
             }
             5 => {
@@ -2106,6 +2107,9 @@ mod tests_gaps;
 
 #[cfg(test)]
 mod tests_memptr;
+
+#[cfg(test)]
+pub mod test_utils;
 
 #[cfg(test)]
 mod tests_ddcb;

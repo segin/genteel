@@ -504,3 +504,30 @@ fn regression_halt_continues() {
     c.step();
     assert_eq!(c.pc, old_pc);
 }
+
+// Bug: EX (SP), HL not updating MEMPTR
+#[test]
+fn regression_ex_sp_hl_memptr() {
+    let mut c = z80(&[
+        0xE3,       // EX (SP), HL
+        0xCB, 0x46  // BIT 0, (HL) - uses MEMPTR high byte for X/Y flags
+    ]);
+    c.sp = 0x1000;
+    c.set_hl(0x1234);
+    // Stack at 0x1000 contains 0xABCD (Little Endian: CD at 1000, AB at 1001)
+    c.memory.write_byte(0x1000, 0xCD);
+    c.memory.write_byte(0x1001, 0xAB);
+
+    c.step(); // EX (SP), HL
+    // HL should be 0xABCD
+    assert_eq!(c.hl(), 0xABCD);
+    // MEMPTR should be 0xABCD (value read from stack)
+    // High byte 0xAB = 1010 1011. Bit 3 (X) = 1, Bit 5 (Y) = 1.
+
+    c.step(); // BIT 0, (HL)
+    // BIT checks bit 0 of (HL) = (0xABCD)
+    // Also sets X/Y from MEMPTR high byte (0xAB)
+
+    assert!(c.get_flag(flags::X_FLAG), "X Flag (bit 3) should be set from MEMPTR high byte (0xAB)");
+    assert!(c.get_flag(flags::Y_FLAG), "Y Flag (bit 5) should be set from MEMPTR high byte (0xAB)");
+}
