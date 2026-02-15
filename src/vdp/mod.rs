@@ -65,7 +65,6 @@ struct SpriteAttributes {
     h_pos: u16,
     h_size: u8, // tiles
     v_size: u8, // tiles
-    link: u8,
     priority: bool,
     palette: u8,
     v_flip: bool,
@@ -74,7 +73,7 @@ struct SpriteAttributes {
 }
 
 struct SpriteIterator<'a> {
-    vdp: &'a Vdp,
+    vram: &'a [u8; 0x10000],
     next_idx: u8,
     count: usize,
     max_sprites: usize,
@@ -94,10 +93,40 @@ impl<'a> Iterator for SpriteIterator<'a> {
             return None;
         }
 
-        let attr = self.vdp.fetch_sprite_attributes(self.sat_base, self.next_idx);
+        let addr = self.sat_base + (self.next_idx as usize * 8);
+
+        let cur_v = (((self.vram[addr] as u16) << 8) | (self.vram[addr + 1] as u16)) & 0x03FF;
+        let v_pos = cur_v.wrapping_sub(128);
+
+        let size = self.vram[addr + 2];
+        let h_size = ((size >> 2) & 0x03) + 1;
+        let v_size = (size & 0x03) + 1;
+
+        let link = self.vram[addr + 3] & 0x7F;
+
+        let attr_word = ((self.vram[addr + 4] as u16) << 8) | (self.vram[addr + 5] as u16);
+        let priority = (attr_word & 0x8000) != 0;
+        let palette = ((attr_word >> 13) & 0x03) as u8;
+        let v_flip = (attr_word & 0x1000) != 0;
+        let h_flip = (attr_word & 0x0800) != 0;
+        let base_tile = attr_word & 0x07FF;
+
+        let cur_h = (((self.vram[addr + 6] as u16) << 8) | (self.vram[addr + 7] as u16)) & 0x03FF;
+        let h_pos = cur_h.wrapping_sub(128);
+
+        let attr = SpriteAttributes {
+            v_pos,
+            h_pos,
+            h_size,
+            v_size,
+            priority,
+            palette,
+            v_flip,
+            h_flip,
+            base_tile,
+        };
 
         self.count += 1;
-        let link = attr.link;
         self.next_idx = link;
 
         if link == 0 {
@@ -652,77 +681,18 @@ impl Vdp {
             return;
         }
 
-        // Collect sprites once per scanline on the stack
-        let mut sprites = [SpriteAttributes::default(); 80];
-        let mut count = 0;
-        for attr in self.sprite_iter() {
-            sprites[count] = attr;
-            count += 1;
-            if count >= 80 {
-                break;
-            }
-        }
-        let active_sprites = &sprites[0..count];
-
         self.render_plane(false, fetch_line, draw_line, false);
         self.render_plane(true, fetch_line, draw_line, false);
-        self.render_sprites(fetch_line, draw_line, false, active_sprites);
+        self.render_sprites(fetch_line, draw_line, false);
         self.render_plane(false, fetch_line, draw_line, true);
         self.render_plane(true, fetch_line, draw_line, true);
-        self.render_sprites(fetch_line, draw_line, true, active_sprites);
-    }
-
-    fn sprite_iter(&self) -> SpriteIterator<'_> {
-        let sat_base = self.sprite_table_address() as usize;
-        let max_sprites = if self.h40_mode() { 80 } else { 64 };
-
-        SpriteIterator {
-            vdp: self,
-            next_idx: 0,
-            count: 0,
-            max_sprites,
-            sat_base,
-        }
-    }
-
-    fn fetch_sprite_attributes(&self, sat_base: usize, index: u8) -> SpriteAttributes {
-        let addr = sat_base + (index as usize * 8);
-
-        let cur_v = (((self.vram[addr] as u16) << 8) | (self.vram[addr + 1] as u16)) & 0x03FF;
-        let v_pos = cur_v.wrapping_sub(128);
-
-        let size = self.vram[addr + 2];
-        let h_size = ((size >> 2) & 0x03) + 1;
-        let v_size = (size & 0x03) + 1;
-
-        let link = self.vram[addr + 3] & 0x7F;
-
-        let attr = ((self.vram[addr + 4] as u16) << 8) | (self.vram[addr + 5] as u16);
-        let priority = (attr & 0x8000) != 0;
-        let palette = ((attr >> 13) & 0x03) as u8;
-        let v_flip = (attr & 0x1000) != 0;
-        let h_flip = (attr & 0x0800) != 0;
-        let base_tile = attr & 0x07FF;
-
-        let cur_h = (((self.vram[addr + 6] as u16) << 8) | (self.vram[addr + 7] as u16)) & 0x03FF;
-        let h_pos = cur_h.wrapping_sub(128);
-
-        SpriteAttributes {
-            v_pos,
-            h_pos,
-            h_size,
-            v_size,
-            link,
-            priority,
-            palette,
-            v_flip,
-            h_flip,
-            base_tile,
-        }
+        self.render_sprites(fetch_line, draw_line, true);
     }
 
     fn render_sprite_scanline(
-        &mut self,
+        vram: &[u8; 0x10000],
+        framebuffer: &mut [u16],
+        cram_cache: &[u16; 64],
         line: u16,
         attr: &SpriteAttributes,
         line_offset: usize,
@@ -766,10 +736,10 @@ impl Vdp {
 
             // Prefetch the 4 bytes (8 pixels) for this row
             // We use wrapping arithmetic for safety although checks above should prevent OOB
-            let p0 = self.vram[row_addr];
-            let p1 = self.vram[(row_addr + 1) & 0xFFFF];
-            let p2 = self.vram[(row_addr + 2) & 0xFFFF];
-            let p3 = self.vram[(row_addr + 3) & 0xFFFF];
+            let p0 = vram[row_addr];
+            let p1 = vram[(row_addr + 1) & 0xFFFF];
+            let p2 = vram[(row_addr + 2) & 0xFFFF];
+            let p3 = vram[(row_addr + 3) & 0xFFFF];
             let patterns = [p0, p1, p2, p3];
 
             let base_screen_x = attr.h_pos.wrapping_add(tile_h_offset * 8);
@@ -790,13 +760,48 @@ impl Vdp {
                 };
 
                 if color_idx != 0 {
-                    let color = self.get_cram_color(attr.palette, color_idx);
-                    self.framebuffer[line_offset + screen_x as usize] = color;
+                    let addr = ((attr.palette as usize) * 16) + (color_idx as usize);
+                    let color = cram_cache[addr];
+                    framebuffer[line_offset + screen_x as usize] = color;
                 }
             }
         }
     }
 
+    fn render_sprites(&mut self, fetch_line: u16, draw_line: u16, priority_filter: bool) {
+        let screen_width = self.screen_width();
+        let line_offset = (draw_line as usize) * 320;
+
+        let sat_base = self.sprite_table_address() as usize;
+        let max_sprites = if self.h40_mode() { 80 } else { 64 };
+
+        let iter = SpriteIterator {
+            vram: &self.vram,
+            next_idx: 0,
+            count: 0,
+            max_sprites,
+            sat_base,
+        };
+
+        for attr in iter {
+            // Check if sprite is visible on this line
+            let sprite_v_px = (attr.v_size as u16) * 8;
+            if attr.priority == priority_filter
+                && fetch_line >= attr.v_pos
+                && fetch_line < attr.v_pos + sprite_v_px
+            {
+                Self::render_sprite_scanline(
+                    &self.vram,
+                    &mut self.framebuffer,
+                    &self.cram_cache,
+                    fetch_line,
+                    &attr,
+                    line_offset,
+                    screen_width,
+                );
+            }
+        }
+    }
     fn get_scroll_values(&self, is_plane_a: bool) -> (u16, u16) {
         let vs_addr = if is_plane_a { 0 } else { 2 };
         let v_scroll =
@@ -884,28 +889,6 @@ impl Vdp {
             if col != 0 { self.framebuffer[dest_idx + 6] = self.cram_cache[palette_base + col as usize]; }
             col = p3 & 0x0F;
             if col != 0 { self.framebuffer[dest_idx + 7] = self.cram_cache[palette_base + col as usize]; }
-        }
-    }
-
-    fn render_sprites(
-        &mut self,
-        fetch_line: u16,
-        draw_line: u16,
-        priority_filter: bool,
-        sprites: &[SpriteAttributes],
-    ) {
-        let screen_width = self.screen_width();
-        let line_offset = (draw_line as usize) * 320;
-
-        for attr in sprites {
-            // Check if sprite is visible on this line
-            let sprite_v_px = (attr.v_size as u16) * 8;
-            if attr.priority == priority_filter
-                && fetch_line >= attr.v_pos
-                && fetch_line < attr.v_pos + sprite_v_px
-            {
-                self.render_sprite_scanline(fetch_line, attr, line_offset, screen_width);
-            }
         }
     }
 
