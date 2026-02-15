@@ -6,6 +6,9 @@
 
 use crate::memory::{IoInterface, MemoryInterface};
 
+#[cfg(test)]
+pub mod test_utils;
+
 /// Z80 Flag bits in the F register
 pub mod flags {
     pub const CARRY: u8 = 0b0000_0001; // C - Carry flag
@@ -1140,6 +1143,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 let val = self.read_word(self.sp);
                 self.write_word(self.sp, self.hl());
                 self.set_hl(val);
+                self.memptr = val;
                 19
             }
             5 => {
