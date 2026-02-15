@@ -1120,6 +1120,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 let val = self.read_word(self.sp);
                 self.write_word(self.sp, self.hl());
                 self.set_hl(val);
+                self.memptr = val;
                 19
             }
             5 => {
@@ -1934,6 +1935,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 let idx = self.get_index_val(is_ix);
                 self.write_word(self.sp, idx);
                 self.set_index_val(val, is_ix);
+                self.memptr = val;
                 23
             }
             0xE5 => {
@@ -2055,6 +2057,9 @@ impl<M: MemoryInterface, I: IoInterface> Debuggable for Z80<M, I> {
         if let Some(cycles) = state["cycles"].as_u64() { self.cycles = cycles; }
     }
 }
+
+#[cfg(test)]
+pub mod test_utils;
 
 #[cfg(test)]
 mod tests;
