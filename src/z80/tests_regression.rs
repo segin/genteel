@@ -504,3 +504,25 @@ fn regression_halt_continues() {
     c.step();
     assert_eq!(c.pc, old_pc);
 }
+
+#[test]
+fn regression_daa_after_sub_carry() {
+    let mut c = z80(&[0x90, 0x27]); // SUB B; DAA
+    c.a = 0x10;
+    c.b = 0x20;
+    c.step(); // SUB
+    c.step(); // DAA
+    assert_eq!(c.a, 0x90);
+    assert!(c.get_flag(flags::CARRY));
+}
+
+#[test]
+fn regression_daa_after_sub_carry_half() {
+    let mut c = z80(&[0x90, 0x27]); // SUB B; DAA
+    c.a = 0x13;
+    c.b = 0x19;
+    c.step(); // SUB
+    c.step(); // DAA
+    assert_eq!(c.a, 0x94);
+    assert!(c.get_flag(flags::CARRY));
+}
