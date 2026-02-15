@@ -24,6 +24,7 @@ const VSRAM_READ: u8 = 0x04;
 const VSRAM_WRITE: u8 = 0x05;
 const CRAM_READ: u8 = 0x08;
 
+#[derive(Clone, Copy, Debug)]
 struct SpriteAttributes {
     v_pos: u16,
     h_pos: u16,
@@ -179,6 +180,9 @@ pub struct Vdp {
 
     /// Framebuffer (320x240 RGB565)
     pub framebuffer: Vec<u16>,
+
+    /// Reused buffer for sprite rendering to avoid allocation
+    sprite_buffer: Vec<SpriteAttributes>,
 }
 
 impl Default for Vdp {
@@ -207,6 +211,7 @@ impl Vdp {
             v30_offset: 0,
             is_pal: false,
             framebuffer: vec![0; 320 * 240],
+            sprite_buffer: Vec::with_capacity(80),
         }
     }
 
@@ -489,11 +494,6 @@ impl Vdp {
 
     pub fn is_dma_fill(&self) -> bool {
         (self.registers[REG_DMA_SRC_HI] & DMA_MODE_MASK) == DMA_MODE_FILL
-    }
-
-    pub fn is_dma_fill(&self) -> bool {
-        // Bit 7=1, Bit 6=0
-        (self.registers[23] & 0xC0) == 0x80
     }
 
     pub fn execute_dma(&mut self) -> u32 {
@@ -842,18 +842,23 @@ impl Vdp {
         let screen_width = self.screen_width();
         let line_offset = (draw_line as usize) * 320;
 
-        let sprites: Vec<_> = self.sprite_iter().collect();
+        // reuse sprite_buffer to avoid allocation
+        let mut sprites = std::mem::take(&mut self.sprite_buffer);
+        sprites.clear();
+        sprites.extend(self.sprite_iter());
 
-        for attr in sprites {
+        for attr in &sprites {
             // Check if sprite is visible on this line
             let sprite_v_px = (attr.v_size as u16) * 8;
             if attr.priority == priority_filter
                 && fetch_line >= attr.v_pos
                 && fetch_line < attr.v_pos + sprite_v_px
             {
-                self.render_sprite_scanline(fetch_line, &attr, line_offset, screen_width);
+                self.render_sprite_scanline(fetch_line, attr, line_offset, screen_width);
             }
         }
+
+        self.sprite_buffer = sprites;
     }
 
     fn get_scroll_values(&self, is_plane_a: bool) -> (u16, u16) {
