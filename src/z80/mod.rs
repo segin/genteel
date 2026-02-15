@@ -2056,6 +2056,8 @@ impl<M: MemoryInterface, I: IoInterface> Debuggable for Z80<M, I> {
     }
 }
 
+pub mod test_utils;
+
 #[cfg(test)]
 mod tests;
 
@@ -2109,6 +2111,3 @@ mod tests_memptr;
 
 #[cfg(test)]
 mod tests_ddcb;
-
-#[cfg(test)]
-pub mod test_utils;
