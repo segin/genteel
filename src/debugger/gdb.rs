@@ -526,10 +526,17 @@ impl GdbServer {
         };
 
         let data = parts[1];
+        if data.len() % 2 != 0 {
+            return "E01".to_string();
+        }
+
         let mut i = 0;
         while i + 2 <= data.len() {
-            if let Ok(byte) = u8::from_str_radix(&data[i..i + 2], 16) {
-                memory.write_byte(addr.wrapping_add((i / 2) as u32), byte);
+            match u8::from_str_radix(&data[i..i + 2], 16) {
+                Ok(byte) => {
+                    memory.write_byte(addr.wrapping_add((i / 2) as u32), byte);
+                }
+                Err(_) => return "E01".to_string(),
             }
             i += 2;
         }
@@ -602,11 +609,16 @@ impl GdbServer {
     }
 
     fn handle_monitor_command(&mut self, cmd_hex: &str) -> String {
-        let mut bytes = Vec::new();
+        if cmd_hex.len() % 2 != 0 {
+            return "E01".to_string();
+        }
+
+        let mut bytes = Vec::with_capacity(cmd_hex.len() / 2);
         let mut i = 0;
         while i + 2 <= cmd_hex.len() {
-            if let Ok(byte) = u8::from_str_radix(&cmd_hex[i..i + 2], 16) {
-                bytes.push(byte);
+            match u8::from_str_radix(&cmd_hex[i..i + 2], 16) {
+                Ok(byte) => bytes.push(byte),
+                Err(_) => return "E01".to_string(),
             }
             i += 2;
         }
@@ -1008,5 +1020,33 @@ mod tests {
 
         assert_eq!(server.process_command(&cmd, &mut regs, &mut mem), "OK");
         assert!(server.authenticated);
+    }
+
+    #[test]
+    fn test_write_memory_malformed() {
+        let mut server = GdbServer::new(0, None).unwrap();
+        server.authenticated = true;
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+
+        // Odd length
+        assert_eq!(server.process_command("M100,2:123", &mut regs, &mut mem), "E01");
+
+        // Non-hex
+        assert_eq!(server.process_command("M100,2:1g", &mut regs, &mut mem), "E01");
+    }
+
+    #[test]
+    fn test_monitor_malformed() {
+        let mut server = GdbServer::new(0, None).unwrap();
+        server.authenticated = true;
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+
+        // Odd length in qRcmd
+        assert_eq!(server.process_command("qRcmd,123", &mut regs, &mut mem), "E01");
+
+        // Non-hex in qRcmd
+        assert_eq!(server.process_command("qRcmd,1g", &mut regs, &mut mem), "E01");
     }
 }
