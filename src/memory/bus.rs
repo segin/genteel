@@ -384,9 +384,9 @@ impl Bus {
             }
         }
 
-        let high = self.read_word(address) as u32;
-        let low = self.read_word(address.wrapping_add(2)) as u32;
-        (high << 16) | low
+        let high = self.read_word(address);
+        let low = self.read_word(address.wrapping_add(2));
+        byte_utils::join_u32_words(high, low)
     }
 
     /// Write a long word (32-bit, big-endian) to the memory map
@@ -406,8 +406,9 @@ impl Bus {
             }
         }
 
-        self.write_word(address, (value >> 16) as u16);
-        self.write_word(address.wrapping_add(2), value as u16);
+        let (high, low) = byte_utils::split_u32_to_words(value);
+        self.write_word(address, high);
+        self.write_word(address.wrapping_add(2), low);
     }
     // === DMA ===
 
