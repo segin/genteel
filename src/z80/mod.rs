@@ -6,6 +6,9 @@
 
 use crate::memory::{IoInterface, MemoryInterface};
 
+#[cfg(test)]
+pub mod test_utils;
+
 /// Z80 Flag bits in the F register
 pub mod flags {
     pub const CARRY: u8 = 0b0000_0001; // C - Carry flag
@@ -72,10 +75,10 @@ pub struct Z80<M: MemoryInterface, I: IoInterface> {
     // Interrupt logic
     pub pending_ei: bool,
 
-    // Memory interface
+    // Memory interface (Generic for static dispatch performance)
     pub memory: M,
 
-    // I/O interface
+    // I/O interface (Generic for static dispatch performance)
     pub io: I,
 
     // Cycle counter for timing
@@ -282,9 +285,15 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         self.a = result as u8;
 
         let mut f = 0;
-        if result > 0xFF { f |= flags::CARRY; }
-        if half_carry { f |= flags::HALF_CARRY; }
-        if overflow { f |= flags::PARITY; }
+        if result > 0xFF {
+            f |= flags::CARRY;
+        }
+        if half_carry {
+            f |= flags::HALF_CARRY;
+        }
+        if overflow {
+            f |= flags::PARITY;
+        }
         // ADD_SUB is false (0)
 
         // Inline set_sz_flags logic
@@ -313,9 +322,15 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
 
         let mut f = flags::ADD_SUB;
-        if result > 0xFF { f |= flags::CARRY; }
-        if half_carry { f |= flags::HALF_CARRY; }
-        if overflow { f |= flags::PARITY; }
+        if result > 0xFF {
+            f |= flags::CARRY;
+        }
+        if half_carry {
+            f |= flags::HALF_CARRY;
+        }
+        if overflow {
+            f |= flags::PARITY;
+        }
 
         let res_u8 = result as u8;
         f |= res_u8 & (flags::SIGN | flags::Y_FLAG | flags::X_FLAG);
@@ -389,8 +404,12 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         let result = value.wrapping_add(1);
 
         let mut f = self.f & flags::CARRY; // Preserve Carry
-        if (value & 0x0F) == 0x0F { f |= flags::HALF_CARRY; }
-        if value == 0x7F { f |= flags::PARITY; }
+        if (value & 0x0F) == 0x0F {
+            f |= flags::HALF_CARRY;
+        }
+        if value == 0x7F {
+            f |= flags::PARITY;
+        }
         // ADD_SUB is false (0)
 
         f |= result & (flags::SIGN | flags::Y_FLAG | flags::X_FLAG);
@@ -406,8 +425,12 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         let result = value.wrapping_sub(1);
 
         let mut f = (self.f & flags::CARRY) | flags::ADD_SUB; // Preserve Carry, set N
-        if (value & 0x0F) == 0x00 { f |= flags::HALF_CARRY; }
-        if value == 0x80 { f |= flags::PARITY; }
+        if (value & 0x0F) == 0x00 {
+            f |= flags::HALF_CARRY;
+        }
+        if value == 0x80 {
+            f |= flags::PARITY;
+        }
 
         f |= result & (flags::SIGN | flags::Y_FLAG | flags::X_FLAG);
         if result == 0 {
@@ -1120,6 +1143,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 let val = self.read_word(self.sp);
                 self.write_word(self.sp, self.hl());
                 self.set_hl(val);
+                self.memptr = val;
                 19
             }
             5 => {
@@ -1861,9 +1885,8 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 23
             }
             0x36 => {
-                let d = self.fetch_byte() as i8;
+                let addr = self.calc_index_addr(is_ix);
                 let n = self.fetch_byte();
-                let addr = self.calc_index_addr(d, is_ix);
                 self.write_byte(addr, n);
                 19
             }
@@ -1934,6 +1957,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 let idx = self.get_index_val(is_ix);
                 self.write_word(self.sp, idx);
                 self.set_index_val(val, is_ix);
+                self.memptr = val;
                 23
             }
             0xE5 => {
@@ -1951,8 +1975,8 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
             }
             0xCB => {
                 let d = self.fetch_byte() as i8;
-                let opcode = self.fetch_byte();
                 let addr = self.calc_index_addr(d, is_ix);
+                let opcode = self.fetch_byte();
                 self.execute_indexed_cb(opcode, addr)
             }
             _ => 8, // Treat as NOP
@@ -2056,59 +2080,94 @@ impl<M: MemoryInterface, I: IoInterface> Debuggable for Z80<M, I> {
     }
 }
 
+<<<<<<< HEAD
+pub mod test_utils;
+
+#[cfg(test)]
+=======
+<<<<<<< HEAD
+// #[cfg(test)]
+>>>>>>> main
+mod tests;
+=======
+pub mod test_utils;
+
+#[cfg(test)]
+pub mod test_utils {
+    use crate::memory::IoInterface;
+
+    #[derive(Debug, Default)]
+    pub struct TestIo;
+
+    impl IoInterface for TestIo {
+        fn read_port(&mut self, _port: u16) -> u8 {
+            0
+        }
+
+        fn write_port(&mut self, _port: u16, _value: u8) {}
+    }
+}
+
 #[cfg(test)]
 pub mod test_utils;
 
 #[cfg(test)]
-mod tests;
+>>>>>>> main
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_alu;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_cb;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_control;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_load;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_regression;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_undoc;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_exhaustive;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_block;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_halfcarry;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_interrupt;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_reset;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_rrd_rld;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_timing;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_torture;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_gaps;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_memptr;
 
-#[cfg(test)]
+<<<<<<< HEAD
+// #[cfg(test)]
 mod tests_ddcb;
+=======
+#[cfg(test)]
+
+#[cfg(test)]
+mod tests_ex_sp_hl_expanded;
+>>>>>>> main
