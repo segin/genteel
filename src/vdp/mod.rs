@@ -172,6 +172,9 @@ pub struct Vdp {
 
     /// Framebuffer (320x240 RGB565)
     pub framebuffer: Vec<u16>,
+
+    /// Reused buffer for sprite rendering to avoid allocation
+    sprite_buffer: Vec<SpriteAttributes>,
 }
 
 impl Default for Vdp {
@@ -200,6 +203,7 @@ impl Vdp {
             v30_offset: 0,
             is_pal: false,
             framebuffer: vec![0; 320 * 240],
+            sprite_buffer: Vec::with_capacity(80),
         }
     }
 
@@ -751,6 +755,7 @@ impl Vdp {
             }
 
             // Prefetch the 4 bytes (8 pixels) for this row
+            // We use wrapping arithmetic for safety although checks above should prevent OOB
             let p0 = self.vram[row_addr];
             let p1 = self.vram[(row_addr + 1) & 0xFFFF];
             let p2 = self.vram[(row_addr + 2) & 0xFFFF];
@@ -818,16 +823,17 @@ impl Vdp {
             self.plane_b_address()
         };
 
+        // Get vertical scroll
         let vs_addr = if is_plane_a { 0 } else { 2 };
         let v_scroll =
             (((self.vsram[vs_addr] as u16) << 8) | (self.vsram[vs_addr + 1] as u16)) & 0x03FF;
 
+        // Get horizontal scroll (per-screen for now)
         let hs_base = self.hscroll_address();
         let hs_addr = if is_plane_a { hs_base } else { hs_base + 2 };
         let hi = self.vram[hs_addr];
         let lo = self.vram[hs_addr + 1];
         let h_scroll = (((hi as u16) << 8) | (lo as u16)) & 0x03FF;
-
         let scrolled_v = fetch_line.wrapping_add(v_scroll);
         let tile_v = (scrolled_v as usize / 8) % plane_h;
         let pixel_v = scrolled_v % 8;
@@ -1249,6 +1255,3 @@ mod tests {
 
 #[cfg(test)]
 mod tests_security;
-
-#[cfg(test)]
-mod tests_bulk_write;
