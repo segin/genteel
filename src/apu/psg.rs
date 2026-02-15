@@ -47,8 +47,8 @@ impl Default for NoiseChannel {
         Self {
             white_noise: false,
             shift_rate: 0,
-            volume: 0x0F,  // Off
-            lfsr: 0x8000,  // Initial seed
+            volume: 0x0F, // Off
+            lfsr: 0x8000, // Initial seed
             counter: 0,
         }
     }
@@ -89,12 +89,12 @@ impl Psg {
         psg.noise.volume = 0x0F;
         psg
     }
-    
+
     /// Reset the chip
     pub fn reset(&mut self) {
         *self = Self::new();
     }
-    
+
     /// Write a command byte to the PSG
     pub fn write(&mut self, value: u8) {
         if (value & 0x80) != 0 {
@@ -102,7 +102,7 @@ impl Psg {
             self.latch_channel = (value >> 5) & 0x03;
             self.latch_volume = (value & 0x10) != 0;
             let data = value & 0x0F;
-            
+
             if self.latch_volume {
                 // Volume write
                 self.write_volume(self.latch_channel, data);
@@ -117,7 +117,7 @@ impl Psg {
             }
         }
     }
-    
+
     /// Write volume to a channel
     fn write_volume(&mut self, channel: u8, volume: u8) {
         match channel {
@@ -128,7 +128,7 @@ impl Psg {
             _ => {}
         }
     }
-    
+
     /// Write low 4 bits of frequency
     fn write_frequency_low(&mut self, channel: u8, data: u8) {
         match channel {
@@ -146,7 +146,7 @@ impl Psg {
             _ => {}
         }
     }
-    
+
     /// Write high 6 bits of frequency
     fn write_frequency_high(&mut self, channel: u8, data: u8) {
         if channel < 3 {
@@ -154,11 +154,11 @@ impl Psg {
             tone.frequency = (tone.frequency & 0x00F) | ((data as u16) << 4);
         }
     }
-    
+
     /// Step the PSG and generate a sample
     pub fn step(&mut self) -> i16 {
         let mut output: i32 = 0;
-        
+
         // Process tone channels
         for tone in &mut self.tones {
             if tone.frequency > 0 {
@@ -169,27 +169,27 @@ impl Psg {
                     tone.counter -= 1;
                 }
             }
-            
+
             if tone.output && tone.volume < 15 {
                 // Volume table: 2dB per step, 0 = max, 15 = off
                 let vol = VOLUME_TABLE[tone.volume as usize];
                 output += vol as i32;
             }
         }
-        
+
         // Process noise channel
         let noise_freq = match self.noise.shift_rate {
-            0 => 0x10,   // N/512
-            1 => 0x20,   // N/1024
-            2 => 0x40,   // N/2048
-            3 => self.tones[2].frequency,  // Tone 2 frequency
+            0 => 0x10,                    // N/512
+            1 => 0x20,                    // N/1024
+            2 => 0x40,                    // N/2048
+            3 => self.tones[2].frequency, // Tone 2 frequency
             _ => 0x10,
         };
-        
+
         if noise_freq > 0 {
             if self.noise.counter == 0 {
                 self.noise.counter = noise_freq;
-                
+
                 // Shift LFSR
                 let feedback = if self.noise.white_noise {
                     // White noise: XOR bits 0 and 3
@@ -198,18 +198,18 @@ impl Psg {
                     // Periodic noise: just bit 0
                     self.noise.lfsr & 1
                 };
-                
+
                 self.noise.lfsr = (self.noise.lfsr >> 1) | (feedback << 14);
             } else {
                 self.noise.counter -= 1;
             }
         }
-        
+
         if (self.noise.lfsr & 1) != 0 && self.noise.volume < 15 {
             let vol = VOLUME_TABLE[self.noise.volume as usize];
             output += vol as i32;
         }
-        
+
         // Clamp to i16 range
         output.clamp(i16::MIN as i32, i16::MAX as i32) as i16
     }
@@ -217,53 +217,52 @@ impl Psg {
 
 /// Volume lookup table (2dB per step, approximate)
 const VOLUME_TABLE: [i16; 16] = [
-    8191, 6507, 5168, 4105, 3261, 2590, 2057, 1634,
-    1298, 1031, 819, 650, 516, 410, 326, 0,
+    8191, 6507, 5168, 4105, 3261, 2590, 2057, 1634, 1298, 1031, 819, 650, 516, 410, 326, 0,
 ];
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_psg_new() {
         let psg = Psg::new();
         assert_eq!(psg.tones[0].frequency, 0);
         assert_eq!(psg.tones[0].volume, 15);
     }
-    
+
     #[test]
     fn test_psg_volume_write() {
         let mut psg = Psg::new();
-        
+
         // Write volume to channel 0: 1001 xxxx (90 = channel 0, volume, data 0)
-        psg.write(0x90);  // Channel 0 volume = 0 (max)
+        psg.write(0x90); // Channel 0 volume = 0 (max)
         assert_eq!(psg.tones[0].volume, 0);
-        
+
         // Write volume to channel 1: 1011 1111 (BF = channel 1, volume, data F)
-        psg.write(0xBF);  // Channel 1 volume = 15 (off)
+        psg.write(0xBF); // Channel 1 volume = 15 (off)
         assert_eq!(psg.tones[1].volume, 15);
     }
-    
+
     #[test]
     fn test_psg_frequency_write() {
         let mut psg = Psg::new();
-        
+
         // Write frequency to channel 0 (two-byte sequence)
-        psg.write(0x85);  // Latch: channel 0, freq, low nibble = 5
-        psg.write(0x3F);  // Data: high 6 bits = 0x3F
-        
+        psg.write(0x85); // Latch: channel 0, freq, low nibble = 5
+        psg.write(0x3F); // Data: high 6 bits = 0x3F
+
         // Frequency should be (0x3F << 4) | 0x05 = 0x3F5
         assert_eq!(psg.tones[0].frequency, 0x3F5);
     }
-    
+
     #[test]
     fn test_psg_noise_mode() {
         let mut psg = Psg::new();
-        
+
         // Write to noise channel: 1110 0111 (E7 = channel 3, freq, white noise, rate 3)
         psg.write(0xE7);
-        
+
         assert!(psg.noise.white_noise);
         assert_eq!(psg.noise.shift_rate, 3);
     }
@@ -287,8 +286,8 @@ mod tests {
         // Steps 2, 3, 4, 5: counter decrements 4->3, 3->2, 2->1, 1->0
         // Output remains high.
         for _ in 0..4 {
-             let s = psg.step();
-             assert_eq!(s, VOLUME_TABLE[0]);
+            let s = psg.step();
+            assert_eq!(s, VOLUME_TABLE[0]);
         }
 
         // Step 6: counter is 0. Reset to 4, flip output (false).
@@ -298,8 +297,8 @@ mod tests {
 
         // Steps 7, 8, 9, 10: counter decrements 4->3, 3->2, 2->1, 1->0
         for _ in 0..4 {
-             let s = psg.step();
-             assert_eq!(s, 0);
+            let s = psg.step();
+            assert_eq!(s, 0);
         }
 
         // Step 11: counter is 0. Reset to 4, flip output (true).
@@ -379,8 +378,12 @@ mod tests {
         // Run enough cycles.
         for _ in 0..1000 {
             let s = psg.step();
-            if s > 0 { saw_high = true; }
-            if s == 0 { saw_low = true; }
+            if s > 0 {
+                saw_high = true;
+            }
+            if s == 0 {
+                saw_low = true;
+            }
         }
 
         assert!(saw_high, "Noise should produce high output");
