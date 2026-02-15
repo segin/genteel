@@ -299,14 +299,6 @@ impl Bus {
             return self.vdp.read_hv_counter();
         }
 
-        // Optimize ROM access (0x000000-0x3FFFFF)
-        if addr <= 0x3FFFFE {
-            let rom_addr = addr as usize;
-            if rom_addr + 1 < self.rom.len() {
-                return byte_utils::join_u16(self.rom[rom_addr], self.rom[rom_addr + 1]);
-            }
-        }
-
         // Optimize Work RAM access (0xE00000-0xFFFFFF, 64KB mirrored)
         if addr >= 0xE00000 {
             let r_addr = (addr & 0xFFFF) as usize;
@@ -794,4 +786,33 @@ mod tests {
         assert_eq!(bus.read_word(0xFFFFFF), 0xBBEE);
     }
 
-}
+    #[test]
+    fn test_z80_bank_register_logic() {
+        let mut bus = Bus::new();
+
+        // Initial state
+        assert_eq!(bus.z80_bank_addr, 0);
+        assert_eq!(bus.z80_bank_bit, 0);
+
+        let bits = [1, 0, 1, 1, 0, 0, 1, 1, 1];
+
+        for (i, &bit) in bits.iter().enumerate() {
+            // Write to 0xA06000 (Z80 Bank Register)
+            bus.write_byte(0xA06000 + (i as u32 % 0x100), bit);
+            assert_eq!(bus.z80_bank_bit, ((i + 1) % 9) as u8);
+        }
+
+        assert_eq!(bus.z80_bank_addr, 0xE68000);
+
+        // Verify wrap-around behavior
+        bus.write_byte(0xA06000, 0);
+        assert_eq!(bus.z80_bank_addr, 0xE60000);
+        assert_eq!(bus.z80_bank_bit, 1);
+
+        // Verify Reset clears bank bit index
+        bus.write_byte(0xA11200, 0x00);
+        assert!(bus.z80_reset);
+        assert_eq!(bus.z80_bank_bit, 0);
+    }
+
+    }

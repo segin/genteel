@@ -286,8 +286,8 @@ mod tests {
         // Steps 2, 3, 4, 5: counter decrements 4->3, 3->2, 2->1, 1->0
         // Output remains high.
         for _ in 0..4 {
-             let s = psg.step();
-             assert_eq!(s, VOLUME_TABLE[0]);
+            let s = psg.step();
+            assert_eq!(s, VOLUME_TABLE[0]);
         }
 
         // Step 6: counter is 0. Reset to 4, flip output (false).
@@ -297,8 +297,8 @@ mod tests {
 
         // Steps 7, 8, 9, 10: counter decrements 4->3, 3->2, 2->1, 1->0
         for _ in 0..4 {
-             let s = psg.step();
-             assert_eq!(s, 0);
+            let s = psg.step();
+            assert_eq!(s, 0);
         }
 
         // Step 11: counter is 0. Reset to 4, flip output (true).
@@ -378,8 +378,12 @@ mod tests {
         // Run enough cycles.
         for _ in 0..1000 {
             let s = psg.step();
-            if s > 0 { saw_high = true; }
-            if s == 0 { saw_low = true; }
+            if s > 0 {
+                saw_high = true;
+            }
+            if s == 0 {
+                saw_low = true;
+            }
         }
 
         assert!(saw_high, "Noise should produce high output");

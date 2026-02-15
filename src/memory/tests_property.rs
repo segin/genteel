@@ -1,6 +1,4 @@
 use super::bus::Bus;
-use crate::cpu::Cpu;
-use crate::memory::MemoryInterface;
 use proptest::prelude::*;
 
 proptest! {

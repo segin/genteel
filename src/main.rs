@@ -30,6 +30,21 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use z80::Z80;
 
+#[derive(Debug, Clone, Copy)]
+struct Z80Change {
+    instruction_cycles: u32,
+    old_req: bool,
+    old_rst: bool,
+    new_req: bool,
+    new_rst: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CpuBatchResult {
+    cycles: u32,
+    z80_change: Option<Z80Change>,
+}
+
 pub struct Emulator {
     pub cpu: Cpu,
     pub z80: Z80<Z80Bus, Z80Bus>,
@@ -226,7 +241,7 @@ impl Emulator {
     }
 
     fn debug_log_frame(&self) {
-        if self.internal_frame_count.is_multiple_of(60) || self.internal_frame_count < 5 {
+        if self.internal_frame_count % 60 == 0 || self.internal_frame_count < 5 {
             let bus = self.bus.borrow();
             let disp_en = bus.vdp.display_enabled();
             let dma_en = bus.vdp.dma_enabled();
@@ -272,88 +287,77 @@ impl Emulator {
         }
     }
 
+    fn run_cpu_batch(&mut self, max_cycles: u32) -> CpuBatchResult {
+        let mut bus = self.bus.borrow_mut();
+        let initial_req = bus.z80_bus_request;
+        let initial_rst = bus.z80_reset;
+        let mut pending_cycles = 0;
+
+        loop {
+            if pending_cycles >= max_cycles {
+                return CpuBatchResult {
+                    cycles: pending_cycles,
+                    z80_change: None,
+                };
+            }
+
+            let m68k_cycles = self.cpu.step_instruction(&mut *bus);
+            bus.apu.fm.step(m68k_cycles);
+
+            // Check for Z80 state change
+            if bus.z80_bus_request != initial_req || bus.z80_reset != initial_rst {
+                return CpuBatchResult {
+                    cycles: pending_cycles, // cycles accumulated *before* this instruction
+                    z80_change: Some(Z80Change {
+                        instruction_cycles: m68k_cycles,
+                        old_req: initial_req,
+                        old_rst: initial_rst,
+                        new_req: bus.z80_bus_request,
+                        new_rst: bus.z80_reset,
+                    }),
+                };
+            }
+
+            pending_cycles += m68k_cycles;
+        }
+    }
+
     fn run_cpu_loop(&mut self, line: u16, active_lines: u16, z80_cycle_debt: &mut f32) {
         const CYCLES_PER_LINE: u32 = 488;
         const BATCH_SIZE: u32 = 128;
         let mut cycles_scanline: u32 = 0;
 
         while cycles_scanline < CYCLES_PER_LINE {
-            // Borrow bus for CPU execution
-            let mut bus = self.bus.borrow_mut();
+            let remaining = CYCLES_PER_LINE - cycles_scanline;
+            let limit = std::cmp::min(remaining, BATCH_SIZE);
 
-            let initial_req = bus.z80_bus_request;
-            let initial_rst = bus.z80_reset;
+            let result = self.run_cpu_batch(limit);
 
-            let mut pending_cycles = 0;
+            // If state changed, revert to old state temporarily so we can sync the batch cycles
+            // with the state that was active during those cycles.
+            if let Some(change) = result.z80_change {
+                let mut bus = self.bus.borrow_mut();
+                bus.z80_bus_request = change.old_req;
+                bus.z80_reset = change.old_rst;
+            }
 
-            loop {
-                // Check termination conditions
-                if cycles_scanline + pending_cycles >= CYCLES_PER_LINE
-                    || pending_cycles >= BATCH_SIZE
+            if result.cycles > 0 {
+                let trigger_vint = line == active_lines && cycles_scanline < 10;
+                self.sync_z80(result.cycles, trigger_vint, z80_cycle_debt);
+                cycles_scanline += result.cycles;
+            }
+
+            if let Some(change) = result.z80_change {
+                // Now apply the new state for the instruction that caused the change
                 {
-                    drop(bus);
-
-                    if pending_cycles > 0 {
-                        self.sync_z80(
-                            pending_cycles,
-                            line,
-                            active_lines,
-                            cycles_scanline + pending_cycles,
-                            z80_cycle_debt,
-                        );
-                        cycles_scanline += pending_cycles;
-                    }
-                    break;
+                    let mut bus = self.bus.borrow_mut();
+                    bus.z80_bus_request = change.new_req;
+                    bus.z80_reset = change.new_rst;
                 }
 
-                let m68k_cycles = self.cpu.step_instruction(&mut *bus);
-                bus.apu.fm.step(m68k_cycles);
-
-                pending_cycles += m68k_cycles;
-
-                if bus.z80_bus_request != initial_req || bus.z80_reset != initial_rst {
-                    let new_req = bus.z80_bus_request;
-                    let new_rst = bus.z80_reset;
-
-                    let cycles_before = pending_cycles - m68k_cycles;
-
-                    if cycles_before > 0 {
-                        // Revert to old state for previous cycles
-                        bus.z80_bus_request = initial_req;
-                        bus.z80_reset = initial_rst;
-                        drop(bus);
-
-                        self.sync_z80(
-                            cycles_before,
-                            line,
-                            active_lines,
-                            cycles_scanline + cycles_before,
-                            z80_cycle_debt,
-                        );
-                        cycles_scanline += cycles_before;
-
-                        // Restore new state
-                        bus = self.bus.borrow_mut();
-                        bus.z80_bus_request = new_req;
-                        bus.z80_reset = new_rst;
-                        drop(bus);
-                    } else {
-                        drop(bus);
-                    }
-
-                    // Sync current instruction with new state
-                    self.sync_z80(
-                        m68k_cycles,
-                        line,
-                        active_lines,
-                        cycles_scanline + m68k_cycles,
-                        z80_cycle_debt,
-                    );
-                    cycles_scanline += m68k_cycles;
-
-                    // Break inner loop (pending_cycles handled)
-                    break;
-                }
+                let trigger_vint = line == active_lines && cycles_scanline < 10;
+                self.sync_z80(change.instruction_cycles, trigger_vint, z80_cycle_debt);
+                cycles_scanline += change.instruction_cycles;
             }
         }
     }
@@ -361,9 +365,7 @@ impl Emulator {
     fn sync_z80(
         &mut self,
         m68k_cycles: u32,
-        line: u16,
-        active_lines: u16,
-        cycles_scanline: u32,
+        trigger_vint: bool,
         z80_cycle_debt: &mut f32,
     ) {
         const Z80_CYCLES_PER_M68K_CYCLE: f32 = 3.58 / 7.67;
@@ -402,7 +404,7 @@ impl Emulator {
         }
 
         // Trigger Z80 VInt at start of VBlank
-        if line == active_lines && cycles_scanline < m68k_cycles + 5 && !z80_is_reset {
+        if trigger_vint && !z80_is_reset {
             self.z80.trigger_interrupt(0xFF);
         }
 
@@ -424,9 +426,13 @@ impl Emulator {
             let mut bus = self.bus.borrow_mut();
             for _ in 0..samples_to_run {
                 let sample = bus.apu.step();
-                // Stereo output (duplicate for now)
-                self.audio_buffer.push(sample);
-                self.audio_buffer.push(sample);
+                // Security Fix: Prevent unbounded buffer growth if not consumed
+                // Cap at ~20 frames of audio (32768 samples)
+                if self.audio_buffer.len() < 32768 {
+                    // Stereo output (duplicate for now)
+                    self.audio_buffer.push(sample);
+                    self.audio_buffer.push(sample);
+                }
             }
         }
     }
@@ -467,6 +473,8 @@ impl Emulator {
         println!("Running {} frames headless...", frames);
         for _ in 0..frames {
             self.step_frame(None);
+            // Clear audio buffer in headless mode to prevent memory leak
+            self.audio_buffer.clear();
         }
         println!("Done.");
     }
