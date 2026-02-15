@@ -3,18 +3,16 @@
 //!
 //! Known edge cases and common emulator bugs.
 
-use super::*; use crate::memory::{MemoryInterface, IoInterface};
+use super::*;
 use crate::memory::Memory;
+use crate::memory::{IoInterface, MemoryInterface};
 
-fn z80(program: &[u8]) -> Z80<Box<crate::memory::Memory>, Box<crate::z80::test_utils::TestIo>> {
+fn z80(program: &[u8]) -> Z80<crate::memory::Memory, crate::z80::test_utils::TestIo> {
     let mut m = Memory::new(0x10000);
     for (i, &b) in program.iter().enumerate() {
         m.data[i] = b;
     }
-    Z80::new(
-        Box::new(m),
-        Box::new(crate::z80::test_utils::TestIo::default()),
-    )
+    Z80::new(m, crate::z80::test_utils::TestIo::default())
 }
 
 // ============ Common emulator bugs ============
@@ -40,6 +38,16 @@ fn regression_djnz_decrements_first() {
     assert_eq!(c.pc, 2); // Not taken
 }
 
+// Bug: DJNZ wrapping behavior (decrement then test)
+#[test]
+fn regression_djnz_wrap() {
+    let mut c = z80(&[0x10, 0x05]);
+    c.b = 0;
+    c.step();
+    assert_eq!(c.b, 0xFF);
+    assert_eq!(c.pc, 7); // Taken (2 + 5)
+}
+
 // Bug: JR displacement is signed
 #[test]
 fn regression_jr_negative() {
@@ -47,6 +55,14 @@ fn regression_jr_negative() {
     c.pc = 2;
     c.step();
     assert_eq!(c.pc, 0); // 2 + 2 (instruction) + (-4) = 0
+}
+
+#[test]
+fn regression_jr_negative_extended() {
+    // JR -2 (0xFE)
+    let mut c = z80(&[0x18, 0xFE]);
+    c.step();
+    assert_eq!(c.pc, 0); // 0 + 2 (instruction) + (-2) = 0
 }
 
 #[test]
@@ -120,6 +136,7 @@ fn regression_ex_sp_hl() {
 }
 
 // Bug: INC/DEC not affecting V flag correctly
+// Confirmed fixed: implementation correctly sets P/V flag on overflow.
 #[test]
 fn regression_inc_overflow() {
     let mut c = z80(&[0x3C]); // INC A
@@ -201,17 +218,22 @@ fn regression_neg_80() {
     c.a = 0x80;
     c.step();
     assert_eq!(c.a, 0x80);
-    assert!(c.get_flag(flags::PARITY)); // Overflow
-    assert!(c.get_flag(flags::CARRY)); // Carry should be set (A!=0)
+    assert!(c.get_flag(flags::PARITY), "Parity/Overflow flag should be set (Overflow)");
+    assert!(c.get_flag(flags::CARRY), "Carry flag should be set (A != 0)");
+    assert!(!c.get_flag(flags::ZERO), "Zero flag should not be set");
+    assert!(c.get_flag(flags::SIGN), "Sign flag should be set (Result is 0x80)");
+    assert!(!c.get_flag(flags::HALF_CARRY), "Half Carry flag should not be set (No borrow from bit 4)");
+    assert!(c.get_flag(flags::ADD_SUB), "Add/Subtract flag should be set");
 }
 
-// Regression: NEG with A=0 should clear carry
+// Regression: NEG with A=0 should clear carry (verified against reference model)
 #[test]
 fn regression_neg_00() {
     let mut c = z80(&[0xED, 0x44]);
     c.a = 0x00;
     c.step();
     assert_eq!(c.a, 0x00);
+    // Carry should be cleared when A=0
     assert!(!c.get_flag(flags::CARRY));
 }
 
@@ -312,17 +334,77 @@ fn regression_lddr_bc_zero() {
 // Bug: ADD HL, SP affects only C and H flags
 #[test]
 fn regression_add_hl_sp_flags() {
+    // Case 1: Flags set, should remain set
     let mut c = z80(&[0x39]);
     c.set_hl(0x1234);
     c.sp = 0x4321;
     c.set_flag(flags::ZERO, true);
     c.set_flag(flags::SIGN, true);
     c.set_flag(flags::PARITY, true);
+    c.set_flag(flags::ADD_SUB, true); // Should be reset
     c.step();
     // S, Z, P/V should be preserved
     assert!(c.get_flag(flags::ZERO));
     assert!(c.get_flag(flags::SIGN));
     assert!(c.get_flag(flags::PARITY));
+    // N should be reset
+    assert!(!c.get_flag(flags::ADD_SUB));
+
+    // Case 2: Flags clear, should remain clear
+    let mut c = z80(&[0x39]);
+    c.set_hl(0x1000);
+    c.sp = 0x0500;
+    c.set_flag(flags::ZERO, false);
+    c.set_flag(flags::SIGN, false);
+    c.set_flag(flags::PARITY, false);
+    c.set_flag(flags::ADD_SUB, true); // Should be reset
+    c.step();
+    // S, Z, P/V should be preserved
+    assert!(!c.get_flag(flags::ZERO));
+    assert!(!c.get_flag(flags::SIGN));
+    assert!(!c.get_flag(flags::PARITY));
+    // N should be reset
+    assert!(!c.get_flag(flags::ADD_SUB));
+
+    // Case 3: Carry generation
+    // HL = 0xFFFF, SP = 0x0001 -> Result = 0x0000, Carry = 1
+    let mut c = z80(&[0x39]);
+    c.set_hl(0xFFFF);
+    c.sp = 0x0001;
+    c.step();
+    assert_eq!(c.hl(), 0x0000);
+    assert!(c.get_flag(flags::CARRY));
+    assert!(c.get_flag(flags::HALF_CARRY)); // 0xFFF + 1 = 0x1000 -> Half Carry
+
+    // Check X and Y flags (from high byte of result 0x00)
+    assert!(!c.get_flag(flags::X_FLAG));
+    assert!(!c.get_flag(flags::Y_FLAG));
+
+    // Case 4: No Carry, No Half Carry
+    // HL = 0x1000, SP = 0x0100 -> Result = 0x1100
+    let mut c = z80(&[0x39]);
+    c.set_hl(0x1000);
+    c.sp = 0x0100;
+    c.step();
+    assert_eq!(c.hl(), 0x1100);
+    assert!(!c.get_flag(flags::CARRY));
+    assert!(!c.get_flag(flags::HALF_CARRY));
+
+    // Check X and Y flags (from high byte of result 0x11 = 0001 0001)
+    // Bit 3 (X) = 0, Bit 5 (Y) = 0
+    assert!(!c.get_flag(flags::X_FLAG));
+    assert!(!c.get_flag(flags::Y_FLAG));
+
+    // Case 5: X/Y flags set
+    // HL = 0x2800, SP = 0x0000 -> Result = 0x2800
+    // High byte 0x28 = 0010 1000. Bit 3 is 1 (X), Bit 5 is 1 (Y).
+    let mut c = z80(&[0x39]);
+    c.set_hl(0x2800);
+    c.sp = 0x0000;
+    c.step();
+    assert_eq!(c.hl(), 0x2800);
+    assert!(c.get_flag(flags::X_FLAG));
+    assert!(c.get_flag(flags::Y_FLAG));
 }
 
 // Bug: BIT instruction H flag should always be set
@@ -357,85 +439,109 @@ fn regression_bit_sets_h_flag() {
 
 // Bug: RLC/RRC/RL/RR should affect all flags correctly
 #[test]
-fn regression_rlc_parity() {
+fn regression_rlc_flags() {
     let mut c = z80(&[0xCB, 0x07]); // RLC A
-    c.a = 0x00;
+    c.a = 0x80; // 1000 0000 -> 0000 0001 (Carry=1)
     c.step();
-    assert!(c.get_flag(flags::ZERO));
-    assert!(c.get_flag(flags::PARITY)); // Even parity (0x00 -> 0x00)
+    assert_eq!(c.a, 0x01);
+    assert!(!c.get_flag(flags::ZERO));      // Z=0
+    assert!(!c.get_flag(flags::SIGN));      // S=0
+    assert!(!c.get_flag(flags::PARITY));    // P/V=0 (Odd parity: 1 bit set)
+    assert!(c.get_flag(flags::CARRY));      // C=1
+    assert!(!c.get_flag(flags::HALF_CARRY));// H=0
+    assert!(!c.get_flag(flags::ADD_SUB));   // N=0
 }
 
 #[test]
-fn regression_rrc_parity() {
+fn regression_rrc_flags() {
     let mut c = z80(&[0xCB, 0x0F]); // RRC A
-    c.a = 0x01;
+    c.a = 0x01; // 0000 0001 -> 1000 0000 (Carry=1)
     c.step();
-    // 0x01 -> 0x80 (Carry=1)
-    // 0x80 has odd parity? Wait, parity flag is set if EVEN number of bits set?
-    // Z80 "Parity/Overflow" flag acts as Parity for logical ops.
-    // Parity is set (1) if the number of set bits is even.
-    // 0x80 (10000000) has 1 bit set -> Odd parity -> Flag cleared (0).
-    assert!(!c.get_flag(flags::ZERO));
-    assert!(!c.get_flag(flags::PARITY));
+    assert_eq!(c.a, 0x80);
+    assert!(!c.get_flag(flags::ZERO));      // Z=0
+    assert!(c.get_flag(flags::SIGN));       // S=1
+    assert!(!c.get_flag(flags::PARITY));    // P/V=0 (Odd parity: 1 bit set)
+    assert!(c.get_flag(flags::CARRY));      // C=1
+    assert!(!c.get_flag(flags::HALF_CARRY));// H=0
+    assert!(!c.get_flag(flags::ADD_SUB));   // N=0
 }
 
 #[test]
-fn regression_rl_parity() {
+fn regression_rl_flags() {
     let mut c = z80(&[0xCB, 0x17]); // RL A
-    c.a = 0x80;
+    c.a = 0x80; // 1000 0000
     c.set_flag(flags::CARRY, false);
     c.step();
-    // 0x80 << 1 | 0 = 0x00, Carry = 1
-    // 0x00 has 0 bits set (even) -> Parity flag set (1)
-    assert!(c.get_flag(flags::ZERO));
-    assert!(c.get_flag(flags::PARITY));
+    // 1000 0000 << 1 | 0 = 0000 0000, C=1
+    assert_eq!(c.a, 0x00);
+    assert!(c.get_flag(flags::ZERO));       // Z=1
+    assert!(!c.get_flag(flags::SIGN));      // S=0
+    assert!(c.get_flag(flags::PARITY));     // P/V=1 (Even parity: 0 bits set)
+    assert!(c.get_flag(flags::CARRY));      // C=1
+    assert!(!c.get_flag(flags::HALF_CARRY));// H=0
+    assert!(!c.get_flag(flags::ADD_SUB));   // N=0
 }
 
 #[test]
-fn regression_rr_parity() {
+fn regression_rr_flags() {
     let mut c = z80(&[0xCB, 0x1F]); // RR A
-    c.a = 0x01;
+    c.a = 0x01; // 0000 0001
     c.set_flag(flags::CARRY, true);
     c.step();
-    // 0x01 >> 1 | 0x80 = 0x80, Carry = 1
-    // 0x80 has 1 bit set (odd) -> Parity flag cleared (0)
-    assert!(!c.get_flag(flags::ZERO));
-    assert!(!c.get_flag(flags::PARITY));
+    // 0000 0001 >> 1 | 0x80 = 1000 0000, C=1
+    assert_eq!(c.a, 0x80);
+    assert!(!c.get_flag(flags::ZERO));      // Z=0
+    assert!(c.get_flag(flags::SIGN));       // S=1
+    assert!(!c.get_flag(flags::PARITY));    // P/V=0 (Odd parity: 1 bit set)
+    assert!(c.get_flag(flags::CARRY));      // C=1
+    assert!(!c.get_flag(flags::HALF_CARRY));// H=0
+    assert!(!c.get_flag(flags::ADD_SUB));   // N=0
 }
 
 #[test]
-fn regression_sla_parity() {
+fn regression_sla_flags() {
     let mut c = z80(&[0xCB, 0x27]); // SLA A
-    c.a = 0xFF;
+    c.a = 0xFF; // 1111 1111
     c.step();
-    // 0xFF << 1 = 0xFE, Carry = 1
-    // 0xFE (11111110) has 7 bits set (odd) -> Parity flag cleared (0)
-    assert!(!c.get_flag(flags::ZERO));
-    assert!(!c.get_flag(flags::PARITY));
+    // 1111 1111 << 1 = 1111 1110 (0xFE), C=1
+    assert_eq!(c.a, 0xFE);
+    assert!(!c.get_flag(flags::ZERO));      // Z=0
+    assert!(c.get_flag(flags::SIGN));       // S=1
+    assert!(!c.get_flag(flags::PARITY));    // P/V=0 (Odd parity: 7 bits set)
+    assert!(c.get_flag(flags::CARRY));      // C=1
+    assert!(!c.get_flag(flags::HALF_CARRY));// H=0
+    assert!(!c.get_flag(flags::ADD_SUB));   // N=0
 }
 
 #[test]
-fn regression_sra_parity() {
+fn regression_sra_flags() {
     let mut c = z80(&[0xCB, 0x2F]); // SRA A
-    c.a = 0x80;
+    c.a = 0x80; // 1000 0000
     c.step();
-    // 0x80 (10000000) >> 1 | 0x80 = 0xC0 (11000000)
-    // 0xC0 has 2 bits set (even) -> Parity flag set (1)
-    assert!(!c.get_flag(flags::ZERO));
-    assert!(c.get_flag(flags::PARITY));
+    // 1000 0000 >> 1 | 1000 0000 = 1100 0000 (0xC0), C=0
+    assert_eq!(c.a, 0xC0);
+    assert!(!c.get_flag(flags::ZERO));      // Z=0
+    assert!(c.get_flag(flags::SIGN));       // S=1
+    assert!(c.get_flag(flags::PARITY));     // P/V=1 (Even parity: 2 bits set)
+    assert!(!c.get_flag(flags::CARRY));     // C=0
+    assert!(!c.get_flag(flags::HALF_CARRY));// H=0
+    assert!(!c.get_flag(flags::ADD_SUB));   // N=0
 }
 
 #[test]
-fn regression_srl_parity() {
+fn regression_srl_flags() {
     let mut c = z80(&[0xCB, 0x3F]); // SRL A
-    c.a = 0x01;
+    c.a = 0x01; // 0000 0001
     c.step();
-    // 0x01 >> 1 = 0x00, Carry = 1
-    // 0x00 has 0 bits set (even) -> Parity flag set (1)
-    assert!(c.get_flag(flags::ZERO));
-    assert!(c.get_flag(flags::PARITY));
+    // 0000 0001 >> 1 = 0000 0000, C=1
+    assert_eq!(c.a, 0x00);
+    assert!(c.get_flag(flags::ZERO));       // Z=1
+    assert!(!c.get_flag(flags::SIGN));      // S=0
+    assert!(c.get_flag(flags::PARITY));     // P/V=1 (Even parity: 0 bits set)
+    assert!(c.get_flag(flags::CARRY));      // C=1
+    assert!(!c.get_flag(flags::HALF_CARRY));// H=0
+    assert!(!c.get_flag(flags::ADD_SUB));   // N=0
 }
-
 
 // Bug: SBC HL, BC with no carry shouldn't borrow
 #[test]
@@ -504,4 +610,26 @@ fn regression_halt_continues() {
     let old_pc = c.pc;
     c.step();
     assert_eq!(c.pc, old_pc);
+}
+
+#[test]
+fn regression_daa_after_sub_carry() {
+    let mut c = z80(&[0x90, 0x27]); // SUB B; DAA
+    c.a = 0x10;
+    c.b = 0x20;
+    c.step(); // SUB
+    c.step(); // DAA
+    assert_eq!(c.a, 0x90);
+    assert!(c.get_flag(flags::CARRY));
+}
+
+#[test]
+fn regression_daa_after_sub_carry_half() {
+    let mut c = z80(&[0x90, 0x27]); // SUB B; DAA
+    c.a = 0x13;
+    c.b = 0x19;
+    c.step(); // SUB
+    c.step(); // DAA
+    assert_eq!(c.a, 0x94);
+    assert!(c.get_flag(flags::CARRY));
 }

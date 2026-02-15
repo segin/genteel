@@ -414,7 +414,11 @@ fn exec_bit_instruction<M: MemoryInterface>(
     let is_memory = !matches!(dst, AddressingMode::DataRegister(_));
     let size = if is_memory { Size::Byte } else { Size::Long };
 
-    let mut cycles = if matches!(op, BitOp::Test) { 4u32 } else { 8u32 };
+    let mut cycles = if matches!(op, BitOp::Test) {
+        4u32
+    } else {
+        8u32
+    };
     let (dst_ea, dst_cycles) = calculate_ea(dst, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     cycles += dst_cycles;
 

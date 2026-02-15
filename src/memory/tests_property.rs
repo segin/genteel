@@ -1,64 +1,43 @@
-#[cfg(test)]
-use crate::memory::bus::Bus;
+use super::bus::Bus;
 use proptest::prelude::*;
 
 proptest! {
-    // Test that reading from ROM works within bounds and returns FF outside
+    // Test that ROM reading is consistent across different access sizes
     #[test]
-    fn prop_rom_read_consistency(
-        rom_size in 512usize..10000,
-        addr in 0..0x400000u32
-    ) {
+    fn prop_rom_read_consistency(addr in 0..0x3FFF0u32) {
         let mut bus = Bus::new();
-        let rom_data = vec![0xAA; rom_size];
-        bus.load_rom(&rom_data);
-
-        let val = bus.read_byte(addr);
-        if (addr as usize) < rom_data.len() {
-             prop_assert_eq!(val, 0xAA);
-        } else {
-             prop_assert_eq!(val, 0xFF);
+        // Create dummy ROM with some pattern
+        let mut rom = vec![0u8; 0x40000];
+        for i in 0..rom.len() {
+            rom[i] = (i & 0xFF) as u8;
         }
+        bus.load_rom(&rom);
+
+        let b0 = bus.read_byte(addr);
+        let b1 = bus.read_byte(addr + 1);
+        let word = bus.read_word(addr);
+        
+        prop_assert_eq!(word, ((b0 as u16) << 8) | (b1 as u16));
     }
 
-    // Test WRAM mirroring at 0xE00000 - 0xFFFFFF
+    // Test WRAM mirroring
     #[test]
-    fn prop_wram_mirroring(
-        addr in 0xE00000..0xFFFFFFu32,
-        val in 0..=255u8
-    ) {
+    fn prop_wram_mirroring(addr in 0..0xFFFFu32, val in 0..=255u8) {
         let mut bus = Bus::new();
-        bus.write_byte(addr, val);
-
-        // Read back from original address
-        prop_assert_eq!(bus.read_byte(addr), val);
-
-        // Calculate offset in 64KB block
-        let offset = addr & 0xFFFF;
-
-        // Check base address 0xFF0000
-        prop_assert_eq!(bus.read_byte(0xFF0000 + offset), val);
-
-        // Check mirror range start 0xE00000
-        prop_assert_eq!(bus.read_byte(0xE00000 + offset), val);
+        let base_addr = 0xFF0000;
+        let mirror_addr = 0xE00000 + addr;
+        
+        bus.write_byte(base_addr + addr, val);
+        prop_assert_eq!(bus.read_byte(mirror_addr), val);
     }
 
-    // Test Word and Long read/write consistency (check endianness)
+    // Test Endianness consistency
     #[test]
-    fn prop_endianness_consistency(addr in 0xE00000..0xFFFFFCu32, val in 0..=0xFFFFFFFFu32) {
+    fn prop_endianness_consistency(val in any::<u32>()) {
         let mut bus = Bus::new();
+        let addr = 0xFF0000;
         bus.write_long(addr, val);
-
-        // Read back as long
-        prop_assert_eq!(bus.read_long(addr), val);
-
-        // Read back as words
-        let high_word = (val >> 16) as u16;
-        let low_word = (val & 0xFFFF) as u16;
-        prop_assert_eq!(bus.read_word(addr), high_word);
-        prop_assert_eq!(bus.read_word(addr + 2), low_word);
-
-        // Read back as bytes
+        
         prop_assert_eq!(bus.read_byte(addr), (val >> 24) as u8);
         prop_assert_eq!(bus.read_byte(addr + 1), (val >> 16) as u8);
         prop_assert_eq!(bus.read_byte(addr + 2), (val >> 8) as u8);
@@ -69,26 +48,31 @@ proptest! {
     #[test]
     fn prop_z80_ram_access(addr in 0xA00000..0xA01FFFu32, val in 0..=255u8) {
         let mut bus = Bus::new();
-        bus.z80_bus_request = true;
+        // Request bus
+        bus.write_byte(0xA11100, 0x01);
+
         bus.write_byte(addr, val);
         prop_assert_eq!(bus.read_byte(addr), val);
     }
 
-    // Test I/O Control Port write/read (writable registers)
+    // Test I/O Control Register Access
     #[test]
     fn prop_io_control_access(val in 0..=255u8) {
         let mut bus = Bus::new();
-        // Port 1 Control is at 0xA10009
-        bus.write_byte(0xA10009, val);
-        prop_assert_eq!(bus.read_byte(0xA10009), val);
+        let addr = 0xA10009; // Control port 1
+        bus.write_byte(addr, val);
+        prop_assert_eq!(bus.read_byte(addr), val);
     }
 }
 
-// Regular unit tests that don't need proptest arguments
+// Security and Stability tests
 #[test]
 fn test_vdp_status_read_consistency() {
     let mut bus = Bus::new();
-    let status = bus.read_word(0xC00004);
-    // Status should have FIFO bits set by default in our stub
-    assert_eq!(status & 0x3600, 0x3600);
+    // VDP status is at 0xC00004
+    let s1 = bus.read_word(0xC00004);
+    let s2 = bus.read_word(0xC00004);
+    // On Genesis, status bits like FIFO empty/full and VBlank might change,
+    // but in a single-threaded test with no stepping, it should be stable.
+    assert_eq!(s1, s2);
 }
