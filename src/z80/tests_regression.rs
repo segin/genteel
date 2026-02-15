@@ -447,6 +447,36 @@ fn regression_bit_sets_h_flag() {
     assert!(c.get_flag(flags::HALF_CARRY));
 }
 
+#[test]
+fn regression_bit_h_flag() {
+    // Test that BIT instruction sets H flag (Half Carry)
+    // Reference: Z80 User Manual, BIT b, r: "H is set to 1"
+
+    // Case 1: BIT 0, A
+    let mut c = z80(&[0xCB, 0x47]);
+    c.a = 0xFF; // Set all bits
+    c.set_flag(flags::HALF_CARRY, false); // Ensure it starts clear
+    c.step();
+    assert!(c.get_flag(flags::HALF_CARRY), "H flag should be set after BIT 0, A");
+
+    // Case 2: BIT 7, (HL)
+    let mut c = z80(&[0xCB, 0x7E]);
+    c.set_hl(0x1234);
+    c.memory.write_byte(0x1234, 0x00);
+    c.set_flag(flags::HALF_CARRY, false);
+    c.step();
+    assert!(c.get_flag(flags::HALF_CARRY), "H flag should be set after BIT 7, (HL)");
+
+    // Case 3: BIT 3, (IX+d)
+    // DD CB d 5E -> BIT 3, (IX+d)
+    let mut c = z80(&[0xDD, 0xCB, 0x02, 0x5E]);
+    c.ix = 0x1000;
+    c.memory.write_byte(0x1002, 0x55);
+    c.set_flag(flags::HALF_CARRY, false);
+    c.step();
+    assert!(c.get_flag(flags::HALF_CARRY), "H flag should be set after BIT 3, (IX+d)");
+}
+
 // Bug: RLC/RRC/RL/RR should affect all flags correctly
 #[test]
 fn regression_rlc_flags() {

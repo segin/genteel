@@ -1143,6 +1143,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 let val = self.read_word(self.sp);
                 self.memptr = val;
                 self.write_word(self.sp, self.hl());
+                self.memptr = val;
                 self.set_hl(val);
                 self.memptr = val;
                 19
@@ -1975,6 +1976,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 let idx = self.get_index_val(is_ix);
                 self.memptr = val;
                 self.write_word(self.sp, idx);
+                self.memptr = val;
                 self.set_index_val(val, is_ix);
                 self.memptr = val;
                 23
