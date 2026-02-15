@@ -4,8 +4,6 @@
 //! Connect with: `m68k-elf-gdb -ex "target remote :1234"`
 
 use std::collections::HashSet;
-use std::collections::hash_map::RandomState;
-use std::hash::{BuildHasher, Hasher};
 use std::io::{BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 
@@ -64,34 +62,27 @@ impl GdbServer {
         let listener = TcpListener::bind(format!("127.0.0.1:{}", port))?;
         listener.set_nonblocking(true)?;
 
-        let (final_password, authenticated) = if let Some(pwd) = password {
+        let final_password = if let Some(pwd) = password {
             eprintln!(
                 "🔒 GDB Server listening on 127.0.0.1:{}. Protected with password.",
                 port
             );
-            (Some(pwd), false)
+            Some(pwd)
         } else {
-            // Generate a random token for default security
-            let mut hasher = RandomState::new().build_hasher();
-            hasher.write_usize(
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_nanos() as usize,
-            );
-            let token = format!("{:016x}", hasher.finish());
-
+            let token = format!("{:016x}", rand::random::<u64>());
             eprintln!(
-                "🔒 GDB Server listening on 127.0.0.1:{}. Protected with generated token.",
+                "🔒 GDB Server listening on 127.0.0.1:{}. Protected with auto-generated token.",
                 port
             );
             eprintln!(
                 "👉 Run this command in GDB to authenticate: monitor auth {}",
                 token
             );
-
-            (Some(token), false)
+            Some(token)
         };
+
+        // Always start unauthenticated to enforce token check
+        let authenticated = false;
 
         Ok(Self {
             listener,
@@ -240,27 +231,7 @@ impl GdbServer {
         }
     }
 
-    /// Process a GDB command and return the response
-    pub fn process_command(
-        &mut self,
-        cmd: &str,
-        registers: &mut GdbRegisters,
-        memory: &mut dyn GdbMemory,
-    ) -> String {
-        // Always allow disconnect/kill/interrupt
-        if cmd == "INTERRUPT" {
-            return format!("S{:02x}", StopReason::Interrupt.signal());
-        }
-        if cmd == "D" {
-            self.client = None;
-            return "OK".to_string();
-        }
-        if cmd == "k" {
-            self.client = None;
-            return "".to_string();
-        }
-
-        // Authentication check
+    fn check_authentication(&self, cmd: &str) -> bool {
         if !self.authenticated {
             let allowed = cmd.starts_with("qSupported")
                 || cmd == "?"
@@ -269,28 +240,65 @@ impl GdbServer {
                 || cmd == "QStartNoAckMode";
 
             if !allowed {
-                return "E01".to_string();
+                return false;
             }
         }
+        true
+    }
 
-        let first_char = cmd.chars().next().unwrap_or('?');
-
+    fn handle_control_command(&mut self, cmd: &str, first_char: char) -> String {
         match first_char {
             '?' => {
                 // Stop reason
                 format!("S{:02x}", self.stop_reason.signal())
             }
+            'c' => {
+                // Continue
+                "CONTINUE".to_string()
+            }
+            's' => {
+                // Single step
+                "STEP".to_string()
+            }
+            'H' => {
+                // Set thread (we only have one, just acknowledge)
+                "OK".to_string()
+            }
+            'D' => {
+                // Detach
+                self.client = None;
+                "OK".to_string()
+            }
+            'k' => {
+                // Kill
+                self.client = None;
+                "".to_string()
+            }
+            _ => {
+                if cmd == "INTERRUPT" {
+                    format!("S{:02x}", StopReason::Interrupt.signal())
+                } else {
+                    "".to_string()
+                }
+            }
+        }
+    }
 
+    fn handle_register_command(
+        &self,
+        cmd: &str,
+        first_char: char,
+        registers: &mut GdbRegisters,
+    ) -> String {
+        match first_char {
             'g' => {
                 // Read all registers
                 self.read_registers(registers)
             }
-
             'G' => {
                 // Write all registers
                 self.write_registers(&cmd[1..], registers)
             }
-
             'p' => {
                 // Read single register
                 if let Ok(reg_num) = u32::from_str_radix(&cmd[1..], 16) {
@@ -299,79 +307,80 @@ impl GdbServer {
                     "E01".to_string()
                 }
             }
-
             'P' => {
                 // Write single register
                 self.write_register(&cmd[1..], registers)
             }
+            _ => "".to_string(),
+        }
+    }
 
+    fn handle_memory_command(
+        &self,
+        cmd: &str,
+        first_char: char,
+        memory: &mut dyn GdbMemory,
+    ) -> String {
+        match first_char {
             'm' => {
                 // Read memory
                 self.read_memory(&cmd[1..], memory)
             }
-
             'M' => {
                 // Write memory
                 self.write_memory(&cmd[1..], memory)
             }
+            _ => "".to_string(),
+        }
+    }
 
-            'c' => {
-                // Continue
-                "CONTINUE".to_string()
-            }
-
-            's' => {
-                // Single step
-                "STEP".to_string()
-            }
-
+    fn handle_breakpoint_command(&mut self, cmd: &str, first_char: char) -> String {
+        match first_char {
             'Z' => {
                 // Set breakpoint
                 self.set_breakpoint(&cmd[1..])
             }
-
             'z' => {
                 // Remove breakpoint
                 self.remove_breakpoint(&cmd[1..])
             }
+            _ => "".to_string(),
+        }
+    }
 
-            'q' => {
-                // Query
-                self.handle_query(cmd)
-            }
+    /// Process a GDB command and return the response
+    pub fn process_command(
+        &mut self,
+        cmd: &str,
+        registers: &mut GdbRegisters,
+        memory: &mut dyn GdbMemory,
+    ) -> String {
+        let first_char = cmd.chars().next().unwrap_or('?');
 
-            'Q' => {
-                // Set
-                self.handle_set(cmd)
-            }
+        // Always allow disconnect/kill/interrupt
+        if cmd == "INTERRUPT" || cmd == "D" || cmd == "k" {
+            return self.handle_control_command(cmd, first_char);
+        }
 
-            'H' => {
-                // Set thread (we only have one, just acknowledge)
-                "OK".to_string()
-            }
+        // Authentication check
+        if !self.check_authentication(cmd) {
+            return "E01".to_string();
+        }
 
-            'D' => {
-                // Detach
-                self.client = None;
-                "OK".to_string()
-            }
-
-            'k' => {
-                // Kill
-                self.client = None;
-                "".to_string()
-            }
-
-            _ => {
-                // Unknown command
-                "".to_string()
-            }
+        match first_char {
+            '?' | 'c' | 's' | 'H' | 'D' | 'k' => self.handle_control_command(cmd, first_char),
+            'g' | 'G' | 'p' | 'P' => self.handle_register_command(cmd, first_char, registers),
+            'm' | 'M' => self.handle_memory_command(cmd, first_char, memory),
+            'Z' | 'z' => self.handle_breakpoint_command(cmd, first_char),
+            'q' => self.handle_query(cmd),
+            'Q' => self.handle_set(cmd),
+            _ => "".to_string(),
         }
     }
 
     fn read_registers(&self, registers: &GdbRegisters) -> String {
         use std::fmt::Write;
-        let mut result = String::new();
+        let mut result = String::with_capacity(18 * 8);
 
         // D0-D7
         for &d in &registers.d {
@@ -486,7 +495,7 @@ impl GdbServer {
             Err(_) => return "E01".to_string(),
         };
 
-        let mut result = String::new();
+        let mut result = String::with_capacity(len * 2);
         for i in 0..len {
             let byte = memory.read_byte(addr.wrapping_add(i as u32));
             write!(result, "{:02x}", byte).unwrap();
@@ -512,10 +521,17 @@ impl GdbServer {
         };
 
         let data = parts[1];
+        if data.len() % 2 != 0 {
+            return "E01".to_string();
+        }
+
         let mut i = 0;
         while i + 2 <= data.len() {
-            if let Ok(byte) = u8::from_str_radix(&data[i..i + 2], 16) {
-                memory.write_byte(addr.wrapping_add((i / 2) as u32), byte);
+            match u8::from_str_radix(&data[i..i + 2], 16) {
+                Ok(byte) => {
+                    memory.write_byte(addr.wrapping_add((i / 2) as u32), byte);
+                }
+                Err(_) => return "E01".to_string(),
             }
             i += 2;
         }
@@ -588,11 +604,16 @@ impl GdbServer {
     }
 
     fn handle_monitor_command(&mut self, cmd_hex: &str) -> String {
-        let mut bytes = Vec::new();
+        if cmd_hex.len() % 2 != 0 {
+            return "E01".to_string();
+        }
+
+        let mut bytes = Vec::with_capacity(cmd_hex.len() / 2);
         let mut i = 0;
         while i + 2 <= cmd_hex.len() {
-            if let Ok(byte) = u8::from_str_radix(&cmd_hex[i..i + 2], 16) {
-                bytes.push(byte);
+            match u8::from_str_radix(&cmd_hex[i..i + 2], 16) {
+                Ok(byte) => bytes.push(byte),
+                Err(_) => return "E01".to_string(),
             }
             i += 2;
         }
@@ -609,6 +630,7 @@ impl GdbServer {
                 }
             } else {
                 // No password set, already authenticated
+                self.authenticated = true;
                 return "OK".to_string();
             }
         }
@@ -678,6 +700,76 @@ mod tests {
         }
     }
 
+    fn create_test_server() -> GdbServer {
+        GdbServer {
+            listener: TcpListener::bind("127.0.0.1:0").unwrap(),
+            client: None,
+            breakpoints: HashSet::new(),
+            stop_reason: StopReason::Halted,
+            no_ack_mode: false,
+            password: None,
+            authenticated: true,
+        }
+    }
+
+    #[test]
+    fn test_handle_monitor_command_unrecognized() {
+        let mut server = GdbServer {
+            listener: TcpListener::bind("127.0.0.1:0").unwrap(),
+            client: None,
+            breakpoints: HashSet::new(),
+            stop_reason: StopReason::Halted,
+            no_ack_mode: false,
+            password: None,
+            authenticated: true,
+        };
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+
+        // Unrecognized monitor command should return "OK" when authenticated
+        // "test" in hex: 74657374
+        assert_eq!(
+            server.process_command("qRcmd,74657374", &mut regs, &mut mem),
+            "OK"
+        );
+    }
+
+    #[test]
+    fn test_additional_queries() {
+        let mut server = GdbServer {
+            listener: TcpListener::bind("127.0.0.1:0").unwrap(),
+            client: None,
+            breakpoints: HashSet::new(),
+            stop_reason: StopReason::Halted,
+            no_ack_mode: false,
+            password: None,
+            authenticated: true,
+        };
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+
+        // qfThreadInfo - Thread list
+        assert_eq!(
+            server.process_command("qfThreadInfo", &mut regs, &mut mem),
+            "m1"
+        );
+
+        // qsThreadInfo - End of thread list
+        assert_eq!(
+            server.process_command("qsThreadInfo", &mut regs, &mut mem),
+            "l"
+        );
+
+        // qAttached - Attached to existing process
+        assert_eq!(
+            server.process_command("qAttached", &mut regs, &mut mem),
+            "1"
+        );
+
+        // Unknown query
+        assert_eq!(server.process_command("qUnknown", &mut regs, &mut mem), "");
+    }
+
     #[test]
     fn test_checksum() {
         let data = "OK";
@@ -701,15 +793,7 @@ mod tests {
 
     #[test]
     fn test_breakpoint_management() {
-        let mut server = GdbServer {
-            listener: TcpListener::bind("127.0.0.1:0").unwrap(),
-            client: None,
-            breakpoints: HashSet::new(),
-            stop_reason: StopReason::Halted,
-            no_ack_mode: false,
-            password: None,
-            authenticated: true,
-        };
+        let mut server = create_test_server();
 
         // Set breakpoint
         let result = server.set_breakpoint("0,1000,4");
@@ -745,15 +829,7 @@ mod tests {
 
     #[test]
     fn test_process_command_basic() {
-        let mut server = GdbServer {
-            listener: TcpListener::bind("127.0.0.1:0").unwrap(),
-            client: None,
-            breakpoints: HashSet::new(),
-            stop_reason: StopReason::Halted,
-            no_ack_mode: false,
-            password: None,
-            authenticated: true,
-        };
+        let mut server = create_test_server();
         let mut regs = GdbRegisters::default();
         let mut mem = MockMemory::new();
 
@@ -776,15 +852,7 @@ mod tests {
 
     #[test]
     fn test_process_command_memory() {
-        let mut server = GdbServer {
-            listener: TcpListener::bind("127.0.0.1:0").unwrap(),
-            client: None,
-            breakpoints: HashSet::new(),
-            stop_reason: StopReason::Halted,
-            no_ack_mode: false,
-            password: None,
-            authenticated: true,
-        };
+        let mut server = create_test_server();
         let mut regs = GdbRegisters::default();
         let mut mem = MockMemory::new();
 
@@ -810,15 +878,7 @@ mod tests {
 
     #[test]
     fn test_process_command_registers() {
-        let mut server = GdbServer {
-            listener: TcpListener::bind("127.0.0.1:0").unwrap(),
-            client: None,
-            breakpoints: HashSet::new(),
-            stop_reason: StopReason::Halted,
-            no_ack_mode: false,
-            password: None,
-            authenticated: true,
-        };
+        let mut server = create_test_server();
         let mut regs = GdbRegisters::default();
         let mut mem = MockMemory::new();
 
@@ -843,22 +903,33 @@ mod tests {
 
     #[test]
     fn test_process_command_queries() {
-        let mut server = GdbServer {
-            listener: TcpListener::bind("127.0.0.1:0").unwrap(),
-            client: None,
-            breakpoints: HashSet::new(),
-            stop_reason: StopReason::Halted,
-            no_ack_mode: false,
-            password: None,
-            authenticated: true,
-        };
+        let mut server = create_test_server();
         let mut regs = GdbRegisters::default();
         let mut mem = MockMemory::new();
 
         assert!(server
             .process_command("qSupported", &mut regs, &mut mem)
             .contains("PacketSize"));
+        assert!(server
+            .process_command("qSupported:multiprocess+;swbreak+", &mut regs, &mut mem)
+            .contains("PacketSize"));
         assert_eq!(server.process_command("qC", &mut regs, &mut mem), "QC1");
+        assert_eq!(
+            server.process_command("qfThreadInfo", &mut regs, &mut mem),
+            "m1"
+        );
+        assert_eq!(
+            server.process_command("qsThreadInfo", &mut regs, &mut mem),
+            "l"
+        );
+        assert_eq!(
+            server.process_command("qAttached", &mut regs, &mut mem),
+            "1"
+        );
+        assert_eq!(
+            server.process_command("qUnknown", &mut regs, &mut mem),
+            ""
+        );
         assert_eq!(
             server.process_command("QStartNoAckMode", &mut regs, &mut mem),
             "OK"
@@ -868,20 +939,15 @@ mod tests {
 
     #[test]
     fn test_process_command_connection() {
-        let mut server = GdbServer {
-            listener: TcpListener::bind("127.0.0.1:0").unwrap(),
-            client: None,
-            breakpoints: HashSet::new(),
-            stop_reason: StopReason::Halted,
-            no_ack_mode: false,
-            password: None,
-            authenticated: true,
-        };
+        let mut server = create_test_server();
         let mut regs = GdbRegisters::default();
         let mut mem = MockMemory::new();
 
         assert_eq!(server.process_command("H", &mut regs, &mut mem), "OK");
         assert_eq!(server.process_command("D", &mut regs, &mut mem), "OK");
+        // Test detach with PID (should be handled by match arm after authentication)
+        // Note: early check only catches "D", match catches "D..."
+        assert_eq!(server.process_command("D;1", &mut regs, &mut mem), "OK");
         assert_eq!(server.process_command("k", &mut regs, &mut mem), "");
     }
 
@@ -914,8 +980,6 @@ mod tests {
         client_stream.flush().expect("Failed to flush");
 
         // Try to receive the packet.
-        // Currently, it might return None because of WouldBlock, but 'data' will have grown.
-        // After the fix, it should return None AND close the connection.
         let result = server.receive_packet();
         assert!(
             result.is_none(),
@@ -941,21 +1005,32 @@ mod tests {
         assert_eq!(server.process_command("m100,4", &mut regs, &mut mem), "E01");
 
         // Allowed commands work
-        assert!(server.process_command("qSupported", &mut regs, &mut mem).contains("PacketSize"));
+        assert!(server
+            .process_command("qSupported", &mut regs, &mut mem)
+            .contains("PacketSize"));
         assert_eq!(server.process_command("?", &mut regs, &mut mem), "S05");
 
         // Authenticate failure
         // "auth wrong" in hex: 617574682077726f6e67
-        assert_eq!(server.process_command("qRcmd,617574682077726f6e67", &mut regs, &mut mem), "E01");
+        assert_eq!(
+            server.process_command("qRcmd,617574682077726f6e67", &mut regs, &mut mem),
+            "E01"
+        );
         assert!(!server.authenticated);
 
         // Authenticate success
         // "auth secret" in hex: 6175746820736563726574
-        assert_eq!(server.process_command("qRcmd,6175746820736563726574", &mut regs, &mut mem), "OK");
+        assert_eq!(
+            server.process_command("qRcmd,6175746820736563726574", &mut regs, &mut mem),
+            "OK"
+        );
         assert!(server.authenticated);
 
         // Now commands work
-        assert_eq!(server.process_command("g", &mut regs, &mut mem).len(), (8 + 8 + 1 + 1) * 8);
+        assert_eq!(
+            server.process_command("g", &mut regs, &mut mem).len(),
+            (8 + 8 + 1 + 1) * 8
+        );
     }
 
     #[test]
@@ -975,5 +1050,157 @@ mod tests {
         // Allowed commands work
         assert!(server.process_command("qSupported", &mut regs, &mut mem).contains("PacketSize"));
         assert_eq!(server.process_command("?", &mut regs, &mut mem), "S05");
+
+        // Authenticate with auto-generated password (password is some token)
+        let token = server.password.clone().unwrap();
+        let auth_cmd = format!("auth {}", token);
+        let auth_hex: String = auth_cmd.bytes().map(|b| format!("{:02x}", b)).collect();
+        let cmd = format!("qRcmd,{}", auth_hex);
+
+        assert_eq!(server.process_command(&cmd, &mut regs, &mut mem), "OK");
+        assert!(server.authenticated);
+    }
+
+    #[test]
+    fn test_write_memory_malformed() {
+        let mut server = GdbServer::new(0, None).unwrap();
+        server.authenticated = true;
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+
+        // Odd length
+        assert_eq!(server.process_command("M100,2:123", &mut regs, &mut mem), "E01");
+
+        // Non-hex
+        assert_eq!(server.process_command("M100,2:1g", &mut regs, &mut mem), "E01");
+    }
+
+    #[test]
+    fn test_monitor_malformed() {
+        let mut server = GdbServer::new(0, None).unwrap();
+        server.authenticated = true;
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+
+        // Odd length in qRcmd
+        assert_eq!(server.process_command("qRcmd,123", &mut regs, &mut mem), "E01");
+
+        // Non-hex in qRcmd
+        assert_eq!(server.process_command("qRcmd,1g", &mut regs, &mut mem), "E01");
+    }
+    #[test]
+    fn test_auto_generated_password() {
+        // Create server with NO password (should generate one)
+        let mut server = GdbServer::new(0, None).unwrap();
+
+        // Should be unauthenticated
+        assert!(
+            !server.authenticated,
+            "Server should be unauthenticated by default when no password provided"
+        );
+
+        // Should have a generated password
+        assert!(
+            server.password.is_some(),
+            "Server should have generated a password"
+        );
+        let generated_pwd = server.password.as_ref().unwrap().clone();
+
+        // Check password format (16 chars hex)
+        assert_eq!(generated_pwd.len(), 16, "Generated password should be 16 chars");
+        assert!(
+            generated_pwd.chars().all(|c| c.is_digit(16)),
+            "Generated password should be hex"
+        );
+
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+
+        // Commands should be rejected
+        assert_eq!(server.process_command("g", &mut regs, &mut mem), "E01");
+
+        // Helper to hex encode
+        fn to_hex(s: &str) -> String {
+            s.bytes().map(|b| format!("{:02x}", b)).collect()
+        }
+
+        // Authenticate with WRONG password
+        let wrong_cmd_str = "auth wrong";
+        let wrong_packet = format!("qRcmd,{}", to_hex(wrong_cmd_str));
+        assert_eq!(
+            server.process_command(&wrong_packet, &mut regs, &mut mem),
+            "E01"
+        );
+        assert!(!server.authenticated);
+
+        // Authenticate with CORRECT password
+        let right_cmd_str = format!("auth {}", generated_pwd);
+        let right_packet = format!("qRcmd,{}", to_hex(&right_cmd_str));
+        assert_eq!(
+            server.process_command(&right_packet, &mut regs, &mut mem),
+            "OK"
+        );
+        assert!(server.authenticated);
+
+        // Now commands work
+        assert_eq!(
+            server.process_command("g", &mut regs, &mut mem).len(),
+            (8 + 8 + 1 + 1) * 8
+        );
+    }
+
+    #[test]
+    fn test_process_command_breakpoints() {
+        let mut server = GdbServer {
+            listener: TcpListener::bind("127.0.0.1:0").unwrap(),
+            client: None,
+            breakpoints: HashSet::new(),
+            stop_reason: StopReason::Halted,
+            no_ack_mode: false,
+            password: None,
+            authenticated: true,
+        };
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+
+        // Test Z0 (Set breakpoint)
+        // Format: Z0,addr,kind
+        assert_eq!(server.process_command("Z0,1000,4", &mut regs, &mut mem), "OK");
+        assert!(server.is_breakpoint(0x1000));
+
+        // Test z0 (Remove breakpoint)
+        // Format: z0,addr,kind
+        assert_eq!(server.process_command("z0,1000,4", &mut regs, &mut mem), "OK");
+        assert!(!server.is_breakpoint(0x1000));
+
+        // Test unsupported breakpoint type (e.g. 1)
+        assert_eq!(server.process_command("Z1,1000,4", &mut regs, &mut mem), "");
+        assert!(!server.is_breakpoint(0x1000));
+
+        // Test malformed commands
+        assert_eq!(server.process_command("Z0", &mut regs, &mut mem), "E01");
+        assert_eq!(server.process_command("z0", &mut regs, &mut mem), "E01");
+    }
+
+    #[test]
+    fn test_write_registers_validation() {
+        let mut server = GdbServer {
+            listener: TcpListener::bind("127.0.0.1:0").unwrap(),
+            client: None,
+            breakpoints: HashSet::new(),
+            stop_reason: StopReason::Halted,
+            no_ack_mode: false,
+            password: None,
+            authenticated: true,
+        };
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+
+        // Test with very short data
+        assert_eq!(server.process_command("G00", &mut regs, &mut mem), "E01");
+
+        // Test with 71 chars (one less than the current check of 72)
+        let data = "0".repeat(71);
+        assert_eq!(server.process_command(&format!("G{}", data), &mut regs, &mut mem), "E01");
     }
 }
