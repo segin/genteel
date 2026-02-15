@@ -672,6 +672,30 @@ fn exhaustive_inc_dec() {
 }
 
 #[test]
+fn exhaustive_neg() {
+    let mut cpu = z80_setup();
+    // NEG A (0xED 0x44)
+    // Testing all 256 values of A
+    for a in 0..=255 {
+        cpu.a = a;
+        // NEG ignores input flags (it's 0 - A)
+        cpu.f = 0;
+
+        cpu.memory.write_byte(0 as u32, 0xED);
+        cpu.memory.write_byte(1 as u32, 0x44);
+        cpu.pc = 0;
+
+        cpu.step();
+
+        // Reference: 0 - A
+        let (exp_res, exp_f) = ref_sub(0, a);
+
+        assert_eq!(cpu.a, exp_res, "NEG A={} Result", a);
+        assert_eq!(cpu.f, exp_f, "NEG A={} Flags", a);
+    }
+}
+
+#[test]
 fn exhaustive_16bit_arithmetic() {
     let mut rng = XorShift64::new(0xDEADBEEFCAFEBABE);
     let mut cpu = z80_setup();

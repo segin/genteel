@@ -285,6 +285,18 @@ proptest! {
         prop_assert_eq!(z80.sp, 0x8000);
     }
 
+    #[test]
+    fn prop_push_pop_af_roundtrip(val in 0u16..=0xFFFF) {
+        let mut z80 = create_z80_with_program(&[0xF5, 0xF1]); // PUSH AF, POP AF
+        z80.sp = 0x8000;
+        z80.set_af(val);
+        z80.step(); // PUSH
+        z80.set_af(0x0000);
+        z80.step(); // POP
+        prop_assert_eq!(z80.af(), val);
+        prop_assert_eq!(z80.sp, 0x8000);
+    }
+
     // ==================== CB Prefix Properties ====================
 
     #[test]

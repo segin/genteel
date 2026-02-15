@@ -22,6 +22,8 @@ mod tests_m68k_extended;
 mod tests_m68k_shift;
 #[cfg(test)]
 mod tests_m68k_torture;
+#[cfg(test)]
+mod tests_performance;
 
 use self::addressing::{read_ea, write_ea, EffectiveAddress};
 use self::decoder::{decode, BitSource, Condition, Instruction, Size};
@@ -571,7 +573,6 @@ impl Cpu {
 
     pub(crate) fn add_with_flags(&self, a: u32, b: u32, size: Size) -> (u32, bool, bool) {
         let mask = size.mask();
-        let sign_bit = size.sign_bit();
 
         let a = a & mask;
         let b = b & mask;
@@ -579,17 +580,13 @@ impl Cpu {
         let result_masked = result & mask;
 
         let carry = result > mask;
-        let a_sign = (a & sign_bit) != 0;
-        let b_sign = (b & sign_bit) != 0;
-        let r_sign = (result_masked & sign_bit) != 0;
-        let overflow = (a_sign == b_sign) && (a_sign != r_sign);
+        let overflow = calc_add_overflow(size, a, b, result_masked);
 
         (result_masked, carry, overflow)
     }
 
     pub(crate) fn sub_with_flags(&self, a: u32, b: u32, size: Size) -> (u32, bool, bool) {
         let mask = size.mask();
-        let sign_bit = size.sign_bit();
 
         let a = a & mask;
         let b = b & mask;
@@ -597,10 +594,7 @@ impl Cpu {
         let result_masked = result & mask;
 
         let borrow = b > a;
-        let a_sign = (a & sign_bit) != 0;
-        let b_sign = (b & sign_bit) != 0;
-        let r_sign = (result_masked & sign_bit) != 0;
-        let overflow = (a_sign != b_sign) && (a_sign != r_sign);
+        let overflow = calc_sub_overflow(size, a, b, result_masked);
 
         (result_masked, borrow, overflow)
     }
@@ -613,7 +607,6 @@ impl Cpu {
         size: Size,
     ) -> (u32, bool, bool) {
         let mask = size.mask();
-        let sign_bit = size.sign_bit();
 
         let a = src & mask;
         let b = dst & mask;
@@ -626,10 +619,7 @@ impl Cpu {
             res > mask
         };
 
-        let a_sign = (a & sign_bit) != 0;
-        let b_sign = (b & sign_bit) != 0;
-        let r_sign = (res_masked & sign_bit) != 0;
-        let overflow = (a_sign == b_sign) && (a_sign != r_sign);
+        let overflow = calc_add_overflow(size, a, b, res_masked);
 
         (res_masked, carry, overflow)
     }
@@ -642,7 +632,6 @@ impl Cpu {
         size: Size,
     ) -> (u32, bool, bool) {
         let mask = size.mask();
-        let sign_bit = size.sign_bit();
 
         let a = dst & mask;
         let b = src & mask;
@@ -655,10 +644,7 @@ impl Cpu {
             a < (b + x)
         };
 
-        let a_sign = (a & sign_bit) != 0;
-        let b_sign = (b & sign_bit) != 0;
-        let r_sign = (res_masked & sign_bit) != 0;
-        let overflow = (a_sign != b_sign) && (a_sign != r_sign);
+        let overflow = calc_sub_overflow(size, a, b, res_masked);
 
         (res_masked, borrow, overflow)
     }
@@ -920,6 +906,21 @@ impl Cpu {
 
         self.sr = new_sr;
     }
+}
+
+// Helper functions for flag calculation
+fn calc_add_overflow(size: Size, a: u32, b: u32, result: u32) -> bool {
+    let a_sign = size.is_negative(a);
+    let b_sign = size.is_negative(b);
+    let r_sign = size.is_negative(result);
+    (a_sign == b_sign) && (a_sign != r_sign)
+}
+
+fn calc_sub_overflow(size: Size, a: u32, b: u32, result: u32) -> bool {
+    let a_sign = size.is_negative(a);
+    let b_sign = size.is_negative(b);
+    let r_sign = size.is_negative(result);
+    (a_sign != b_sign) && (a_sign != r_sign)
 }
 
 #[cfg(test)]
@@ -1455,5 +1456,43 @@ mod tests {
         cpu.step_instruction(&mut memory);
         assert_eq!(memory.read_byte(0x2004), 0x56);
         assert_eq!(memory.read_byte(0x2006), 0x78);
+    }
+
+    #[test]
+    fn benchmark_interrupt_handler() {
+        // This test benchmarks the interrupt handling code path to ensure it is efficient.
+        // It specifically targets potential regressions where debug prints might be left in the interrupt handler.
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        // Setup vector for Level 6 (Vector 30 = 24+6)
+        // Address = 30 * 4 = 120 (0x78)
+        memory.write_long(0x78, 0x1000); // Handler address
+
+        // Enable interrupts (Supervisor mode, mask 0)
+        cpu.sr = 0x2000;
+
+        let start = std::time::Instant::now();
+        let iterations = 100_000;
+
+        for _ in 0..iterations {
+            cpu.request_interrupt(6);
+            let cycles = cpu.check_interrupts(&mut memory);
+
+            // check_interrupts should return cycles > 0 if interrupt taken
+            assert!(cycles > 0);
+
+            // Interrupt handling sets mask to level 6. Reset it to 0 so next interrupt can be taken.
+            // Also it pushes PC/SR. We reset SP to avoid memory overflow.
+            cpu.a[7] = 0x1000;
+
+            // Reset SR to enable interrupts again
+            cpu.sr = 0x2000;
+        }
+
+        let duration = start.elapsed();
+        println!("Benchmark interrupt handler: {:?} for {} iterations", duration, iterations);
+
+        // Assert that it takes less than 500ms
+        assert!(duration.as_millis() < 500, "Interrupt handler too slow! Duration: {:?}", duration);
     }
 }
