@@ -72,10 +72,10 @@ pub struct Z80<M: MemoryInterface, I: IoInterface> {
     // Interrupt logic
     pub pending_ei: bool,
 
-    // Memory interface
+    // Memory (generic for performance)
     pub memory: M,
 
-    // I/O interface
+    // I/O (generic for performance)
     pub io: I,
 
     // Cycle counter for timing
