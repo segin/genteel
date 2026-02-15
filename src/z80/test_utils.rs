@@ -8,6 +8,5 @@ impl IoInterface for TestIo {
         0
     }
 
-    fn write_port(&mut self, _port: u16, _value: u8) {
-    }
+    fn write_port(&mut self, _port: u16, _value: u8) {}
 }
