@@ -2130,6 +2130,8 @@ impl<M: MemoryInterface, I: IoInterface> Debuggable for Z80<M, I> {
     }
 }
 
+pub mod test_utils;
+
 #[cfg(test)]
 pub mod test_utils {
     use crate::memory::IoInterface;
