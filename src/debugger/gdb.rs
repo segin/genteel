@@ -679,6 +679,42 @@ mod tests {
     }
 
     #[test]
+    fn test_additional_queries() {
+        let mut server = GdbServer {
+            listener: TcpListener::bind("127.0.0.1:0").unwrap(),
+            client: None,
+            breakpoints: HashSet::new(),
+            stop_reason: StopReason::Halted,
+            no_ack_mode: false,
+            password: None,
+            authenticated: true,
+        };
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+
+        // qfThreadInfo - Thread list
+        assert_eq!(
+            server.process_command("qfThreadInfo", &mut regs, &mut mem),
+            "m1"
+        );
+
+        // qsThreadInfo - End of thread list
+        assert_eq!(
+            server.process_command("qsThreadInfo", &mut regs, &mut mem),
+            "l"
+        );
+
+        // qAttached - Attached to existing process
+        assert_eq!(
+            server.process_command("qAttached", &mut regs, &mut mem),
+            "1"
+        );
+
+        // Unknown query
+        assert_eq!(server.process_command("qUnknown", &mut regs, &mut mem), "");
+    }
+
+    #[test]
     fn test_checksum() {
         let data = "OK";
         let checksum = data.bytes().fold(0u8, |acc, b| acc.wrapping_add(b));
