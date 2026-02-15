@@ -58,6 +58,14 @@ fn regression_jr_negative() {
 }
 
 #[test]
+fn regression_jr_negative_extended() {
+    // JR -2 (0xFE)
+    let mut c = z80(&[0x18, 0xFE]);
+    c.step();
+    assert_eq!(c.pc, 0); // 0 + 2 (instruction) + (-2) = 0
+}
+
+#[test]
 fn regression_jr_positive_overflow() {
     // Test JR at boundary where i16 addition might overflow
     // PC starts at 0x7FFD (32765)
