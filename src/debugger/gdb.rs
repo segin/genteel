@@ -976,4 +976,34 @@ mod tests {
         assert!(server.process_command("qSupported", &mut regs, &mut mem).contains("PacketSize"));
         assert_eq!(server.process_command("?", &mut regs, &mut mem), "S05");
     }
+
+    #[test]
+    fn test_process_command_breakpoints() {
+        let mut server = GdbServer {
+            listener: TcpListener::bind("127.0.0.1:0").unwrap(),
+            client: None,
+            breakpoints: HashSet::new(),
+            stop_reason: StopReason::Halted,
+            no_ack_mode: false,
+            password: None,
+            authenticated: true,
+        };
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+
+        // Test Z0,1000,4 (Set software breakpoint)
+        assert_eq!(server.process_command("Z0,1000,4", &mut regs, &mut mem), "OK");
+        assert!(server.is_breakpoint(0x1000));
+
+        // Test z0,1000,4 (Remove software breakpoint)
+        assert_eq!(server.process_command("z0,1000,4", &mut regs, &mut mem), "OK");
+        assert!(!server.is_breakpoint(0x1000));
+
+        // Test unsupported breakpoint type (Z1)
+        assert_eq!(server.process_command("Z1,1000,4", &mut regs, &mut mem), "");
+
+        // Test malformed commands
+        assert_eq!(server.process_command("Z0", &mut regs, &mut mem), "E01");
+        assert_eq!(server.process_command("z0", &mut regs, &mut mem), "E01");
+    }
 }
