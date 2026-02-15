@@ -11,8 +11,8 @@ pub mod psg;
 pub mod ym2612;
 
 use crate::debugger::Debuggable;
-use serde_json::{json, Value};
 use psg::Psg;
+use serde_json::{json, Value};
 use ym2612::Ym2612;
 
 #[derive(Debug)]
