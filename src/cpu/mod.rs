@@ -767,7 +767,6 @@ impl Cpu {
         }
     }
 
-
     pub(crate) fn cpu_read_ea<M: MemoryInterface>(
         &mut self,
         ea: EffectiveAddress,
@@ -1489,9 +1488,16 @@ mod tests {
         }
 
         let duration = start.elapsed();
-        println!("Benchmark interrupt handler: {:?} for {} iterations", duration, iterations);
+        println!(
+            "Benchmark interrupt handler: {:?} for {} iterations",
+            duration, iterations
+        );
 
         // Assert that it takes less than 500ms
-        assert!(duration.as_millis() < 500, "Interrupt handler too slow! Duration: {:?}", duration);
+        assert!(
+            duration.as_millis() < 500,
+            "Interrupt handler too slow! Duration: {:?}",
+            duration
+        );
     }
 }

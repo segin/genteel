@@ -464,7 +464,11 @@ mod tests {
 
         // Step for 31 68k cycles (31 * 7 = 217 Master Cycles)
         ym.step(31);
-        assert_eq!(ym.read_status() & 0x80, 0x80, "Should still be busy at 31 cycles");
+        assert_eq!(
+            ym.read_status() & 0x80,
+            0x80,
+            "Should still be busy at 31 cycles"
+        );
 
         // Step 1 more cycle (total 32 * 7 = 224)
         ym.step(1);
