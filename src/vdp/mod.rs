@@ -255,6 +255,27 @@ impl Vdp {
         self.last_data_write = value;
 
         // DMA Fill (Mode 2) check
+<<<<<<< HEAD
+        // Enabled (Reg 1 bit 4) AND Mode 2 (Reg 23 bits 7,6 = 1,0)
+        if (self.registers[REG_MODE2] & MODE2_DMA_ENABLE) != 0
+            && (self.registers[REG_DMA_SRC_HI] & DMA_MODE_MASK) == DMA_MODE_FILL
+        {
+            let length = self.dma_length();
+            let mut addr = self.control_address;
+            let inc = self.auto_increment() as u16;
+            let fill_byte = (value >> 8) as u8;
+
+            // DMA Fill writes bytes. Length register specifies number of bytes.
+            // If length is 0, it is treated as 0x10000 (64KB).
+            let len = if length == 0 { 0x10000 } else { length };
+
+            for _ in 0..len {
+                // VRAM is byte-addressable in this emulator
+                self.vram[addr as usize] = fill_byte;
+                addr = addr.wrapping_add(inc);
+            }
+            self.control_address = addr;
+=======
         // Enabled (Reg 1 bit 4) AND Mode 2 (Reg 23 bits 7,6 = 1,0) AND DMA Pending (CD5=1)
         if (self.registers[REG_MODE2] & MODE2_DMA_ENABLE) != 0 
             && self.is_dma_fill() 
@@ -262,6 +283,7 @@ impl Vdp {
         {
             self.execute_dma();
             self.dma_pending = false;
+>>>>>>> main
             return;
         }
 
@@ -475,10 +497,13 @@ impl Vdp {
         // Bit 6: Type (0=fill, 1=copy) - only if Bit 7 is 1
         // So for transfer, Bit 7 must be 0.
         (self.registers[REG_DMA_SRC_HI] & DMA_TYPE_BIT) == 0
+<<<<<<< HEAD
+=======
     }
 
     pub fn is_dma_fill(&self) -> bool {
         (self.registers[REG_DMA_SRC_HI] & DMA_MODE_MASK) == DMA_MODE_FILL
+>>>>>>> main
     }
 
     pub fn execute_dma(&mut self) -> u32 {
