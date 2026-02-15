@@ -1,0 +1,11 @@
+[*] Generating 50MB test file...
+[*] Generation complete.
+[*] Running slow scan (re.search inside loop)...
+[*] Slow scan took 4.0601 seconds. Matches: 105
+[*] Running fast scan (pre-compiled regex)...
+[*] Fast scan took 1.8507 seconds. Matches: 105
+
+Results:
+Slow: 4.0601s
+Fast: 1.8507s
+Improvement: 54.42%
