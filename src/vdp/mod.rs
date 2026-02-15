@@ -87,19 +87,13 @@ const CTRL_ADDR_HI_SHIFT: u16 = 14;
 const REG_MODE1: usize = 0;
 const REG_MODE2: usize = 1;
 const REG_PLANE_A: usize = 2;
-// const REG_WINDOW: usize = 3;
 const REG_PLANE_B: usize = 4;
 const REG_SPRITE_TABLE: usize = 5;
-// const REG_SPRITE_PATTERN: usize = 6;
 const REG_BG_COLOR: usize = 7;
-// const REG_H_INT: usize = 10;
-// const REG_MODE3: usize = 11;
 const REG_MODE4: usize = 12;
 const REG_HSCROLL: usize = 13;
 const REG_AUTO_INC: usize = 15;
 const REG_PLANE_SIZE: usize = 16;
-// const REG_WINDOW_H: usize = 17;
-// const REG_WINDOW_V: usize = 18;
 const REG_DMA_LEN_LO: usize = 19;
 const REG_DMA_LEN_HI: usize = 20;
 const REG_DMA_SRC_LO: usize = 21;
@@ -489,11 +483,6 @@ impl Vdp {
 
     pub fn is_dma_fill(&self) -> bool {
         (self.registers[REG_DMA_SRC_HI] & DMA_MODE_MASK) == DMA_MODE_FILL
-    }
-
-    pub fn is_dma_fill(&self) -> bool {
-        // Bit 7=1, Bit 6=0
-        (self.registers[23] & 0xC0) == 0x80
     }
 
     pub fn execute_dma(&mut self) -> u32 {
