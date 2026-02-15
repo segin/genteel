@@ -323,17 +323,77 @@ fn regression_lddr_bc_zero() {
 // Bug: ADD HL, SP affects only C and H flags
 #[test]
 fn regression_add_hl_sp_flags() {
+    // Case 1: Flags set, should remain set
     let mut c = z80(&[0x39]);
     c.set_hl(0x1234);
     c.sp = 0x4321;
     c.set_flag(flags::ZERO, true);
     c.set_flag(flags::SIGN, true);
     c.set_flag(flags::PARITY, true);
+    c.set_flag(flags::ADD_SUB, true); // Should be reset
     c.step();
     // S, Z, P/V should be preserved
     assert!(c.get_flag(flags::ZERO));
     assert!(c.get_flag(flags::SIGN));
     assert!(c.get_flag(flags::PARITY));
+    // N should be reset
+    assert!(!c.get_flag(flags::ADD_SUB));
+
+    // Case 2: Flags clear, should remain clear
+    let mut c = z80(&[0x39]);
+    c.set_hl(0x1000);
+    c.sp = 0x0500;
+    c.set_flag(flags::ZERO, false);
+    c.set_flag(flags::SIGN, false);
+    c.set_flag(flags::PARITY, false);
+    c.set_flag(flags::ADD_SUB, true); // Should be reset
+    c.step();
+    // S, Z, P/V should be preserved
+    assert!(!c.get_flag(flags::ZERO));
+    assert!(!c.get_flag(flags::SIGN));
+    assert!(!c.get_flag(flags::PARITY));
+    // N should be reset
+    assert!(!c.get_flag(flags::ADD_SUB));
+
+    // Case 3: Carry generation
+    // HL = 0xFFFF, SP = 0x0001 -> Result = 0x0000, Carry = 1
+    let mut c = z80(&[0x39]);
+    c.set_hl(0xFFFF);
+    c.sp = 0x0001;
+    c.step();
+    assert_eq!(c.hl(), 0x0000);
+    assert!(c.get_flag(flags::CARRY));
+    assert!(c.get_flag(flags::HALF_CARRY)); // 0xFFF + 1 = 0x1000 -> Half Carry
+
+    // Check X and Y flags (from high byte of result 0x00)
+    assert!(!c.get_flag(flags::X_FLAG));
+    assert!(!c.get_flag(flags::Y_FLAG));
+
+    // Case 4: No Carry, No Half Carry
+    // HL = 0x1000, SP = 0x0100 -> Result = 0x1100
+    let mut c = z80(&[0x39]);
+    c.set_hl(0x1000);
+    c.sp = 0x0100;
+    c.step();
+    assert_eq!(c.hl(), 0x1100);
+    assert!(!c.get_flag(flags::CARRY));
+    assert!(!c.get_flag(flags::HALF_CARRY));
+
+    // Check X and Y flags (from high byte of result 0x11 = 0001 0001)
+    // Bit 3 (X) = 0, Bit 5 (Y) = 0
+    assert!(!c.get_flag(flags::X_FLAG));
+    assert!(!c.get_flag(flags::Y_FLAG));
+
+    // Case 5: X/Y flags set
+    // HL = 0x2800, SP = 0x0000 -> Result = 0x2800
+    // High byte 0x28 = 0010 1000. Bit 3 is 1 (X), Bit 5 is 1 (Y).
+    let mut c = z80(&[0x39]);
+    c.set_hl(0x2800);
+    c.sp = 0x0000;
+    c.step();
+    assert_eq!(c.hl(), 0x2800);
+    assert!(c.get_flag(flags::X_FLAG));
+    assert!(c.get_flag(flags::Y_FLAG));
 }
 
 // Bug: BIT instruction H flag should always be set
