@@ -775,6 +775,7 @@ dependencies = [
  "cpal",
  "pixels",
  "proptest",
+ "rand",
  "serde",
  "serde_json",
  "winit",
