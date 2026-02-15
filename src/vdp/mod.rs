@@ -1128,7 +1128,14 @@ impl Debuggable for Vdp {
                 "pending": self.control_pending,
                 "code": self.control_code,
                 "address": self.control_address,
-            }
+            },
+            "vram": &self.vram[..],
+            "cram": &self.cram[..],
+            "vsram": &self.vsram[..],
+            "line_counter": self.line_counter,
+            "last_data_write": self.last_data_write,
+            "v30_offset": self.v30_offset,
+            "is_pal": self.is_pal
         })
     }
 
@@ -1166,6 +1173,64 @@ impl Debuggable for Vdp {
         if let Some(address) = control["address"].as_u64() {
             self.control_address = address as u16;
         }
+
+        if let Some(vram) = state["vram"].as_array() {
+            for (i, val) in vram.iter().enumerate() {
+                if i < self.vram.len() {
+                    if let Some(v) = val.as_u64() {
+                        self.vram[i] = v as u8;
+                    }
+                }
+            }
+        }
+
+        if let Some(cram) = state["cram"].as_array() {
+            for (i, val) in cram.iter().enumerate() {
+                if i < self.cram.len() {
+                    if let Some(v) = val.as_u64() {
+                        self.cram[i] = v as u8;
+                    }
+                }
+            }
+            // Reconstruct CRAM Cache
+            for i in 0..64 {
+                let addr = i * 2;
+                if addr + 1 < self.cram.len() {
+                    let val = ((self.cram[addr + 1] as u16) << 8) | (self.cram[addr] as u16);
+                    // Pack 9-bit color to RGB565
+                    let r = (val & 0xE) << 1;
+                    let g = (val & 0xE0) >> 3;
+                    let b = (val & 0xE00) >> 7;
+                    let r5 = (r << 1) | (r >> 3);
+                    let g6 = (g << 2) | (g >> 2);
+                    let b5 = (b << 1) | (b >> 3);
+                    self.cram_cache[i] = (r5 << 11) | (g6 << 5) | b5;
+                }
+            }
+        }
+
+        if let Some(vsram) = state["vsram"].as_array() {
+            for (i, val) in vsram.iter().enumerate() {
+                if i < self.vsram.len() {
+                    if let Some(v) = val.as_u64() {
+                        self.vsram[i] = v as u8;
+                    }
+                }
+            }
+        }
+
+        if let Some(line_counter) = state["line_counter"].as_u64() {
+            self.line_counter = line_counter as u8;
+        }
+        if let Some(last_data_write) = state["last_data_write"].as_u64() {
+            self.last_data_write = last_data_write as u16;
+        }
+        if let Some(v30_offset) = state["v30_offset"].as_u64() {
+            self.v30_offset = v30_offset as u16;
+        }
+        if let Some(is_pal) = state["is_pal"].as_bool() {
+            self.is_pal = is_pal;
+        }
     }
 }
 
@@ -1187,43 +1252,79 @@ mod tests_properties;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     #[test]
     fn test_vdp_debuggable() {
         let mut vdp = Vdp::new();
-        let state = json!({
-            "status": 0x1234,
-            "h_counter": 0x56,
-            "v_counter": 0x78,
-            "dma_pending": true,
-            "registers": [
-                1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24
-            ],
-            "control": {
-                "pending": true,
-                "code": 0x0F,
-                "address": 0x3FFF
-            }
-        });
+        // Set some non-default state
+        vdp.status = 0x1234;
+        vdp.h_counter = 0x56;
+        vdp.v_counter = 0x78;
+        vdp.dma_pending = true;
+        for i in 0..24 {
+            vdp.registers[i] = (i + 1) as u8;
+        }
+        vdp.control_pending = true;
+        vdp.control_code = 0x0F;
+        vdp.control_address = 0x3FFF;
 
-        vdp.write_state(&state);
+        // Memory state
+        vdp.vram[0] = 0xAA;
+        vdp.vram[0xFFFF] = 0xBB;
+        vdp.cram[0] = 0xCC;
+        vdp.cram[127] = 0xDD;
+        vdp.vsram[0] = 0xEE;
+        vdp.vsram[79] = 0xFF;
 
-        assert_eq!(vdp.status, 0x1234);
-        assert_eq!(vdp.h_counter, 0x56);
-        assert_eq!(vdp.v_counter, 0x78);
-        assert_eq!(vdp.dma_pending, true);
-        assert_eq!(vdp.registers[0], 1);
-        assert_eq!(vdp.registers[23], 24);
-        assert_eq!(vdp.control_pending, true);
-        assert_eq!(vdp.control_code, 0x0F);
-        assert_eq!(vdp.control_address, 0x3FFF);
+        vdp.line_counter = 42;
+        vdp.last_data_write = 0xCAFE;
+        vdp.v30_offset = 123;
+        vdp.is_pal = true;
 
-        // Verify read_state mirrors the written state
-        let new_state = vdp.read_state();
-        assert_eq!(new_state["status"], 0x1234);
-        assert_eq!(new_state["registers"][23], 24);
-        assert_eq!(new_state["control"]["address"], 0x3FFF);
+        // Set a color in CRAM to verify cache reconstruction
+        // Color 1: White (0x0EEE) -> stored as low: 0xEE, high: 0x0E
+        vdp.cram[2] = 0xEE;
+        vdp.cram[3] = 0x0E;
+
+        // Serialize
+        let state = vdp.read_state();
+
+        // Reset VDP
+        let mut vdp2 = Vdp::new();
+
+        // Deserialize
+        vdp2.write_state(&state);
+
+        // Verify basic registers
+        assert_eq!(vdp2.status, 0x1234);
+        assert_eq!(vdp2.h_counter, 0x56);
+        assert_eq!(vdp2.v_counter, 0x78);
+        assert_eq!(vdp2.dma_pending, true);
+        assert_eq!(vdp2.registers[0], 1);
+        assert_eq!(vdp2.registers[23], 24);
+        assert_eq!(vdp2.control_pending, true);
+        assert_eq!(vdp2.control_code, 0x0F);
+        assert_eq!(vdp2.control_address, 0x3FFF);
+
+        // Verify Memory
+        assert_eq!(vdp2.vram[0], 0xAA);
+        assert_eq!(vdp2.vram[0xFFFF], 0xBB);
+        assert_eq!(vdp2.cram[0], 0xCC);
+        assert_eq!(vdp2.cram[127], 0xDD);
+        assert_eq!(vdp2.vsram[0], 0xEE);
+        assert_eq!(vdp2.vsram[79], 0xFF);
+
+        // Verify internal state
+        assert_eq!(vdp2.line_counter, 42);
+        assert_eq!(vdp2.last_data_write, 0xCAFE);
+        assert_eq!(vdp2.v30_offset, 123);
+        assert_eq!(vdp2.is_pal, true);
+
+        // Verify CRAM Cache
+        // Color 1 should be White.
+        // The emulator's color conversion logic maps 0x0EEE (7,7,7) to 0xDEFB (27, 55, 27) in RGB565.
+        // This is determined by the logic in write_data and duplicated in write_state.
+        assert_eq!(vdp2.cram_cache[1], 0xDEFB);
     }
 }
 
