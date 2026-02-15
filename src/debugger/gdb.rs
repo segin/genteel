@@ -78,30 +78,6 @@ impl GdbServer {
         let listener = TcpListener::bind(format!("127.0.0.1:{}", port))?;
         listener.set_nonblocking(true)?;
 
-<<<<<<< HEAD
-        let (password, authenticated) = if let Some(pwd) = password {
-            eprintln!(
-                "🔒 GDB Server listening on 127.0.0.1:{}. Protected with provided password.",
-                port
-            );
-            (Some(pwd), false)
-        } else {
-            // Generate random 16-byte hex token (8 bytes -> 16 hex chars)
-            // Using a simple random generation
-            let token: String = (0..8)
-                .map(|_| format!("{:02x}", rand::random::<u8>()))
-                .collect();
-
-            eprintln!(
-                "🔒 GDB Server listening on 127.0.0.1:{}. Protected with GENERATED password.",
-                port
-            );
-            eprintln!("   Authentication required. Run this command in GDB:");
-            eprintln!("   monitor auth {}", token);
-
-            (Some(token), false)
-        };
-=======
         let final_password = if let Some(pwd) = password {
             eprintln!(
                 "🔒 GDB Server listening on 127.0.0.1:{}. Protected with password.",
@@ -123,7 +99,6 @@ impl GdbServer {
 
         // Always start unauthenticated to enforce token check
         let authenticated = false;
->>>>>>> main
 
         Ok(Self {
             listener,
@@ -403,7 +378,7 @@ impl GdbServer {
 
     fn read_registers(&self, registers: &GdbRegisters) -> String {
         use std::fmt::Write;
-        let mut result = String::new();
+        let mut result = String::with_capacity(18 * 8);
 
         // D0-D7
         for &d in &registers.d {
@@ -518,7 +493,7 @@ impl GdbServer {
             Err(_) => return "E01".to_string(),
         };
 
-        let mut result = String::new();
+        let mut result = String::with_capacity(len * 2);
         for i in 0..len {
             let byte = memory.read_byte(addr.wrapping_add(i as u32));
             write!(result, "{:02x}", byte).unwrap();
