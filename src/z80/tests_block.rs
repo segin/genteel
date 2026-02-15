@@ -30,15 +30,12 @@ impl Rng {
     }
 }
 
-fn z80(program: &[u8]) -> Z80<Box<crate::memory::Memory>, Box<crate::z80::test_utils::TestIo>> {
+fn z80(program: &[u8]) -> Z80<crate::memory::Memory, crate::z80::test_utils::TestIo> {
     let mut m = Memory::new(0x10000);
     for (i, &b) in program.iter().enumerate() {
         m.data[i] = b;
     }
-    Z80::new(
-        Box::new(m),
-        Box::new(crate::z80::test_utils::TestIo::default()),
-    )
+    Z80::new(m, crate::z80::test_utils::TestIo::default())
 }
 
 /// Snapshot memory contents into a Vec for reference comparison

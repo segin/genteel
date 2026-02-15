@@ -22,6 +22,8 @@ mod tests_m68k_extended;
 mod tests_m68k_shift;
 #[cfg(test)]
 mod tests_m68k_torture;
+#[cfg(test)]
+mod tests_performance;
 
 use self::addressing::{read_ea, write_ea, EffectiveAddress};
 use self::decoder::{decode, BitSource, Condition, Instruction, Size};

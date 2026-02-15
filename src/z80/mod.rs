@@ -6,6 +6,9 @@
 
 use crate::memory::{IoInterface, MemoryInterface};
 
+#[cfg(test)]
+pub mod test_utils;
+
 /// Z80 Flag bits in the F register
 pub mod flags {
     pub const CARRY: u8 = 0b0000_0001; // C - Carry flag
@@ -72,10 +75,10 @@ pub struct Z80<M: MemoryInterface, I: IoInterface> {
     // Interrupt logic
     pub pending_ei: bool,
 
-    // Memory interface
+    // Memory interface (Generic for static dispatch performance)
     pub memory: M,
 
-    // I/O interface
+    // I/O interface (Generic for static dispatch performance)
     pub io: I,
 
     // Cycle counter for timing
@@ -1140,6 +1143,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 let val = self.read_word(self.sp);
                 self.write_word(self.sp, self.hl());
                 self.set_hl(val);
+                self.memptr = val;
                 19
             }
             5 => {
@@ -1897,9 +1901,8 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 23
             }
             0x36 => {
-                let d = self.fetch_byte() as i8;
+                let addr = self.calc_index_addr(is_ix);
                 let n = self.fetch_byte();
-                let addr = self.calc_index_addr(d, is_ix);
                 self.write_byte(addr, n);
                 19
             }
@@ -1970,6 +1973,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 let idx = self.get_index_val(is_ix);
                 self.write_word(self.sp, idx);
                 self.set_index_val(val, is_ix);
+                self.memptr = val;
                 23
             }
             0xE5 => {
@@ -1987,8 +1991,8 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
             }
             0xCB => {
                 let d = self.fetch_byte() as i8;
-                let opcode = self.fetch_byte();
                 let addr = self.calc_index_addr(d, is_ix);
+                let opcode = self.fetch_byte();
                 self.execute_indexed_cb(opcode, addr)
             }
             _ => 8, // Treat as NOP
@@ -2142,56 +2146,94 @@ pub mod test_utils {
     }
 }
 
-#[cfg(test)]
-mod tests;
+<<<<<<< HEAD
+pub mod test_utils;
 
 #[cfg(test)]
+=======
+<<<<<<< HEAD
+// #[cfg(test)]
+>>>>>>> main
+mod tests;
+=======
+pub mod test_utils;
+
+#[cfg(test)]
+pub mod test_utils {
+    use crate::memory::IoInterface;
+
+    #[derive(Debug, Default)]
+    pub struct TestIo;
+
+    impl IoInterface for TestIo {
+        fn read_port(&mut self, _port: u16) -> u8 {
+            0
+        }
+
+        fn write_port(&mut self, _port: u16, _value: u8) {}
+    }
+}
+
+#[cfg(test)]
+pub mod test_utils;
+
+#[cfg(test)]
+>>>>>>> main
+
+// #[cfg(test)]
 mod tests_alu;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_cb;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_control;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_load;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_regression;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_undoc;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_exhaustive;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_block;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_halfcarry;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_interrupt;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_reset;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_rrd_rld;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_timing;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_torture;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_gaps;
 
-#[cfg(test)]
+// #[cfg(test)]
 mod tests_memptr;
 
-#[cfg(test)]
+<<<<<<< HEAD
+// #[cfg(test)]
 mod tests_ddcb;
+=======
+#[cfg(test)]
+
+#[cfg(test)]
+mod tests_ex_sp_hl_expanded;
+>>>>>>> main
