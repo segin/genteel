@@ -2106,7 +2106,6 @@ pub mod test_utils {
 pub mod test_utils;
 
 #[cfg(test)]
-mod tests;
 >>>>>>> main
 
 // #[cfg(test)]
@@ -2162,7 +2161,6 @@ mod tests_memptr;
 mod tests_ddcb;
 =======
 #[cfg(test)]
-mod tests_ddcb;
 
 #[cfg(test)]
 mod tests_ex_sp_hl_expanded;

@@ -59,7 +59,7 @@ const DMA_TYPE_BIT: u8 = 0x80; // 0=Transfer, 1=Fill/Copy
 const STATUS_VBLANK: u16 = 0x0008;
 const STATUS_VINT_PENDING: u16 = 0x0080;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 struct SpriteAttributes {
     v_pos: u16,
     h_pos: u16,
@@ -172,9 +172,6 @@ pub struct Vdp {
 
     /// Framebuffer (320x240 RGB565)
     pub framebuffer: Vec<u16>,
-
-    /// Reused buffer for sprite rendering to avoid allocation
-    sprite_buffer: Vec<SpriteAttributes>,
 }
 
 impl Default for Vdp {
@@ -203,7 +200,6 @@ impl Vdp {
             v30_offset: 0,
             is_pal: false,
             framebuffer: vec![0; 320 * 240],
-            sprite_buffer: Vec::with_capacity(80),
         }
     }
 
@@ -484,6 +480,7 @@ impl Vdp {
                 let fill_byte = (data >> 8) as u8;
 
                 for _ in 0..len {
+                    // VRAM is byte-addressable in this emulator
                     self.vram[addr as usize] = fill_byte;
                     addr = addr.wrapping_add(inc);
                 }
@@ -641,12 +638,24 @@ impl Vdp {
             return;
         }
 
+        // Collect sprites once per scanline
+        let mut sprites = [SpriteAttributes::default(); 80];
+        let mut count = 0;
+        for attr in self.sprite_iter() {
+            sprites[count] = attr;
+            count += 1;
+            if count >= 80 {
+                break;
+            }
+        }
+        let active_sprites = &sprites[0..count];
+
         self.render_plane(false, fetch_line, draw_line, false);
         self.render_plane(true, fetch_line, draw_line, false);
-        self.render_sprites(fetch_line, draw_line, false);
+        self.render_sprites(fetch_line, draw_line, false, active_sprites);
         self.render_plane(false, fetch_line, draw_line, true);
         self.render_plane(true, fetch_line, draw_line, true);
-        self.render_sprites(fetch_line, draw_line, true);
+        self.render_sprites(fetch_line, draw_line, true, active_sprites);
     }
 
     fn sprite_iter(&self) -> SpriteIterator<'_> {
@@ -773,16 +782,17 @@ impl Vdp {
         }
     }
 
-    fn render_sprites(&mut self, fetch_line: u16, draw_line: u16, priority_filter: bool) {
+    fn render_sprites(
+        &mut self,
+        fetch_line: u16,
+        draw_line: u16,
+        priority_filter: bool,
+        sprites: &[SpriteAttributes],
+    ) {
         let screen_width = self.screen_width();
         let line_offset = (draw_line as usize) * 320;
 
-        // reuse sprite_buffer to avoid allocation
-        let mut sprites = std::mem::take(&mut self.sprite_buffer);
-        sprites.clear();
-        sprites.extend(self.sprite_iter());
-
-        for attr in &sprites {
+        for attr in sprites {
             // Check if sprite is visible on this line
             let sprite_v_px = (attr.v_size as u16) * 8;
             if attr.priority == priority_filter
@@ -792,8 +802,6 @@ impl Vdp {
                 self.render_sprite_scanline(fetch_line, attr, line_offset, screen_width);
             }
         }
-
-        self.sprite_buffer = sprites;
     }
 
     fn render_plane(
@@ -810,10 +818,15 @@ impl Vdp {
             self.plane_b_address()
         };
 
-        let (v_scroll, h_scroll) = (
-            (((self.vsram[if is_plane_a { 0 } else { 2 }] as u16) << 8) | (self.vsram[if is_plane_a { 1 } else { 3 }] as u16)) & 0x03FF,
-            (((self.vram[self.hscroll_address() + if is_plane_a { 0 } else { 2 }] as u16) << 8) | (self.vram[self.hscroll_address() + if is_plane_a { 1 } else { 3 }] as u16)) & 0x03FF
-        );
+        let vs_addr = if is_plane_a { 0 } else { 2 };
+        let v_scroll =
+            (((self.vsram[vs_addr] as u16) << 8) | (self.vsram[vs_addr + 1] as u16)) & 0x03FF;
+
+        let hs_base = self.hscroll_address();
+        let hs_addr = if is_plane_a { hs_base } else { hs_base + 2 };
+        let hi = self.vram[hs_addr];
+        let lo = self.vram[hs_addr + 1];
+        let h_scroll = (((hi as u16) << 8) | (lo as u16)) & 0x03FF;
 
         let scrolled_v = fetch_line.wrapping_add(v_scroll);
         let tile_v = (scrolled_v as usize / 8) % plane_h;
@@ -1230,9 +1243,6 @@ mod tests {
         assert_eq!(vdp2.is_pal, true);
 
         // Verify CRAM Cache
-        // Color 1 should be White.
-        // The emulator's color conversion logic maps 0x0EEE (7,7,7) to 0xDEFB (27, 55, 27) in RGB565.
-        // This is determined by the logic in write_data and duplicated in write_state.
         assert_eq!(vdp2.cram_cache[1], 0xDEFB);
     }
 }
