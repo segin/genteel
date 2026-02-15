@@ -1154,6 +1154,9 @@ mod tests_render;
 mod tests_dma;
 
 #[cfg(test)]
+mod tests_dma_helpers;
+
+#[cfg(test)]
 mod test_command;
 
 #[cfg(test)]
