@@ -638,7 +638,7 @@ impl Vdp {
             return;
         }
 
-        // Collect sprites once per scanline
+        // Collect sprites once per scanline on the stack
         let mut sprites = [SpriteAttributes::default(); 80];
         let mut count = 0;
         for attr in self.sprite_iter() {
