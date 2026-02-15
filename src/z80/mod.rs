@@ -1140,7 +1140,6 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 let val = self.read_word(self.sp);
                 self.write_word(self.sp, self.hl());
                 self.set_hl(val);
-                self.memptr = val;
                 19
             }
             5 => {
@@ -1318,7 +1317,11 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 // Rotate/shift
                 let result = self.cb_rotate_shift(val, y);
                 self.set_reg(z, result);
-                if z == 6 { 15 } else { 8 }
+                if z == 6 {
+                    15
+                } else {
+                    8
+                }
             }
             1 => {
                 // BIT y, r
@@ -1334,19 +1337,31 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                     self.set_flag(flags::Y_FLAG, (h_memptr & 0x20) != 0);
                 }
 
-                if z == 6 { 12 } else { 8 }
+                if z == 6 {
+                    12
+                } else {
+                    8
+                }
             }
             2 => {
                 // RES y, r
                 let result = self.cb_res(val, y);
                 self.set_reg(z, result);
-                if z == 6 { 15 } else { 8 }
+                if z == 6 {
+                    15
+                } else {
+                    8
+                }
             }
             3 => {
                 // SET y, r
                 let result = self.cb_set(val, y);
                 self.set_reg(z, result);
-                if z == 6 { 15 } else { 8 }
+                if z == 6 {
+                    15
+                } else {
+                    8
+                }
             }
             _ => 8,
         }
