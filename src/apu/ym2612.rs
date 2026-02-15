@@ -166,9 +166,9 @@ impl Ym2612 {
 
     /// Write to Data Port 0 (Part I)
     pub fn write_data0(&mut self, val: u8) {
-        // Set busy flag duration (32 internal YM2612 cycles * 6 * 7 = 1344 Master Cycles)
-        // This corresponds to ~192 M68k cycles
-        self.busy_cycles = 1344;
+        // Set busy flag duration (32 internal YM2612 cycles * 7 = 224 Master Cycles)
+        // This corresponds to 32 M68k cycles.
+        self.busy_cycles = 224;
 
         if self.addr0 == 0x27 {
             let old_val = self.registers[0][0x27];
@@ -212,7 +212,7 @@ impl Ym2612 {
 
     /// Write to Data Port 1 (Part II)
     pub fn write_data1(&mut self, val: u8) {
-        self.busy_cycles = 1344;
+        self.busy_cycles = 224;
         self.registers[1][self.addr1 as usize] = val;
     }
 
@@ -276,6 +276,31 @@ mod tests {
 
         assert_eq!(ym.registers[1][0x30], 0x42);
         assert_eq!(ym.registers[0][0x30], 0x71);
+    }
+
+    #[test]
+    fn test_frequency_setting_bank1() {
+        let mut ym = Ym2612::new();
+
+        // Set Ch4 Frequency (Bank 1, Channel 0)
+        // This corresponds to channel index 3 in get_frequency.
+        // Bank 1 registers are accessed via port 1 (write_addr1/write_data1).
+        // F-Num low = 0x55 (Reg 0xA0)
+        // Block/F-Num high = 0x22 (Reg 0xA4) -> Block 4, F-Num high 2
+        ym.write_addr1(0xA0);
+        ym.write_data1(0x55);
+        ym.write_addr1(0xA4);
+        ym.write_data1(0x22); // 001 00010 (Block 4, Hi 2)
+
+        let (block, f_num) = ym.get_frequency(3); // Channel 3 is first channel of Bank 1
+        // Reg 0xA4 = 0x22 = 0010 0010. Bits 5-3 are Block (100 = 4). Bits 2-0 are F-High (010 = 2).
+        assert_eq!(block, 4);
+        assert_eq!(f_num, 0x255); // 0x200 | 0x55
+
+        // Verify isolation: Bank 0 Channel 0 (index 0) should be 0
+        let (block0, f_num0) = ym.get_frequency(0);
+        assert_eq!(block0, 0);
+        assert_eq!(f_num0, 0);
     }
 
     #[test]
@@ -419,6 +444,37 @@ mod tests {
     }
 
     #[test]
+    fn test_frequency_setting_bank1() {
+        let mut ym = Ym2612::new();
+
+        // Set Ch4 Frequency (Bank 1, offset 1)
+        // This corresponds to channel index 4 in get_frequency.
+        // Registers are in Bank 1.
+        // Base for Bank 1 (offset 1) is:
+        // Low: 0xA0 + 1 = 0xA1
+        // High: 0xA4 + 1 = 0xA5
+
+        // Write Low byte 0x55 to 0xA1 (Bank 1)
+        ym.write_addr1(0xA1);
+        ym.write_data1(0x55);
+
+        // Write High byte 0x22 to 0xA5 (Bank 1) -> Block 4, F-Num High 2
+        ym.write_addr1(0xA5);
+        ym.write_data1(0x22);
+
+        let (block, f_num) = ym.get_frequency(4);
+        assert_eq!(block, 4);
+        assert_eq!(f_num, 0x255);
+
+        // Ensure Bank 0 (Channel 1, offset 1) is unaffected.
+        // Channel 1 corresponds to index 1.
+        // Registers 0xA1, 0xA5 in Bank 0.
+        let (block0, f_num0) = ym.get_frequency(1);
+        assert_eq!(block0, 0);
+        assert_eq!(f_num0, 0);
+    }
+
+    #[test]
     fn test_busy_flag() {
         let mut ym = Ym2612::new();
 
@@ -431,14 +487,13 @@ mod tests {
         // Should be busy immediately
         assert_eq!(ym.read_status() & 0x80, 0x80);
 
-        // Step for 191 68k cycles (191 * 7 = 1337 < 1344)
-        ym.step(191);
-        assert_eq!(ym.read_status() & 0x80, 0x80, "Should still be busy");
+        // Step for 31 68k cycles (31 * 7 = 217 Master Cycles)
+        ym.step(31);
+        assert_eq!(ym.read_status() & 0x80, 0x80, "Should still be busy at 31 cycles");
 
-        // Step 1 more cycle (total 192 * 7 = 1344)
+        // Step 1 more cycle (total 32 * 7 = 224)
         ym.step(1);
-        // Depending on implementation, if exactly 0 remains, busy clears.
-        // busy_cycles -= 7 -> 0. Condition > 0 becomes false next check.
-        assert_eq!(ym.read_status() & 0x80, 0, "Should be free now");
+        // busy_cycles -= 7 -> 0.
+        assert_eq!(ym.read_status() & 0x80, 0, "Should be free after 32 cycles");
     }
 }

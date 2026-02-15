@@ -94,7 +94,8 @@ impl Emulator {
             Self::load_rom_from_zip(path)?
         } else {
             let mut file = std::fs::File::open(path)?;
-            let size = file.metadata()?.len();
+            let metadata = file.metadata()?;
+            let size = metadata.len();
             Self::read_rom_with_limit(&mut file, size)?
         };
 
@@ -179,21 +180,17 @@ impl Emulator {
     }
 
     /// Step one frame with current input state
-    pub fn step_frame(&mut self) {
+    pub fn step_frame(&mut self, input: Option<input::FrameInput>) {
         // Apply inputs from script or live input
-        let frame_input = self.input.advance_frame();
-        self.step_frame_with_input(frame_input.p1, frame_input.p2);
-    }
+        let frame_input = input.unwrap_or_else(|| self.input.advance_frame());
 
-    /// Step one frame with provided input (for live play)
-    pub fn step_frame_with_input(&mut self, p1: io::ControllerState, p2: io::ControllerState) {
         {
             let mut bus = self.bus.borrow_mut();
             if let Some(ctrl) = bus.io.controller(1) {
-                *ctrl = p1;
+                *ctrl = frame_input.p1;
             }
             if let Some(ctrl) = bus.io.controller(2) {
-                *ctrl = p2;
+                *ctrl = frame_input.p2;
             }
         }
         self.step_frame_internal();
@@ -229,7 +226,7 @@ impl Emulator {
     }
 
     fn debug_log_frame(&self) {
-        if self.internal_frame_count.is_multiple_of(60) || self.internal_frame_count < 5 {
+        if self.internal_frame_count % 60 == 0 || self.internal_frame_count < 5 {
             let bus = self.bus.borrow();
             let disp_en = bus.vdp.display_enabled();
             let dma_en = bus.vdp.dma_enabled();
@@ -277,35 +274,79 @@ impl Emulator {
 
     fn run_cpu_loop(&mut self, line: u16, active_lines: u16, z80_cycle_debt: &mut f32) {
         const CYCLES_PER_LINE: u32 = 488;
+        const BATCH_SIZE: u32 = 128;
         let mut cycles_scanline: u32 = 0;
 
         while cycles_scanline < CYCLES_PER_LINE {
             // Borrow bus for CPU execution
             let mut bus = self.bus.borrow_mut();
-            let m68k_cycles = self.cpu.step_instruction(&mut *bus);
 
-            // Step APU with cycles to update timers
-            bus.apu.fm.step(m68k_cycles);
-            drop(bus); // Release bus for Z80/etc checks
+            let initial_req = bus.z80_bus_request;
+            let initial_rst = bus.z80_reset;
 
-            cycles_scanline += m68k_cycles;
+            let mut pending_cycles = 0;
 
-            self.sync_z80(
-                m68k_cycles,
-                line,
-                active_lines,
-                cycles_scanline,
-                z80_cycle_debt,
-            );
+            loop {
+                // Check termination conditions
+                if cycles_scanline + pending_cycles >= CYCLES_PER_LINE
+                    || pending_cycles >= BATCH_SIZE
+                {
+                    drop(bus);
+
+                    if pending_cycles > 0 {
+                        let trigger_vint = line == active_lines && cycles_scanline < 10;
+                        self.sync_z80(pending_cycles, trigger_vint, z80_cycle_debt);
+                        cycles_scanline += pending_cycles;
+                    }
+                    break;
+                }
+
+                let m68k_cycles = self.cpu.step_instruction(&mut *bus);
+                bus.apu.fm.step(m68k_cycles);
+
+                pending_cycles += m68k_cycles;
+
+                if bus.z80_bus_request != initial_req || bus.z80_reset != initial_rst {
+                    let new_req = bus.z80_bus_request;
+                    let new_rst = bus.z80_reset;
+
+                    let cycles_before = pending_cycles - m68k_cycles;
+
+                    if cycles_before > 0 {
+                        // Revert to old state for previous cycles
+                        bus.z80_bus_request = initial_req;
+                        bus.z80_reset = initial_rst;
+                        drop(bus);
+
+                        let trigger_vint = line == active_lines && cycles_scanline < 10;
+                        self.sync_z80(cycles_before, trigger_vint, z80_cycle_debt);
+                        cycles_scanline += cycles_before;
+
+                        // Restore new state
+                        bus = self.bus.borrow_mut();
+                        bus.z80_bus_request = new_req;
+                        bus.z80_reset = new_rst;
+                        drop(bus);
+                    } else {
+                        drop(bus);
+                    }
+
+                    // Sync current instruction with new state
+                    let trigger_vint = line == active_lines && cycles_scanline < 10;
+                    self.sync_z80(m68k_cycles, trigger_vint, z80_cycle_debt);
+                    cycles_scanline += m68k_cycles;
+
+                    // Break inner loop (pending_cycles handled)
+                    break;
+                }
+            }
         }
     }
 
     fn sync_z80(
         &mut self,
         m68k_cycles: u32,
-        line: u16,
-        active_lines: u16,
-        cycles_scanline: u32,
+        trigger_vint: bool,
         z80_cycle_debt: &mut f32,
     ) {
         const Z80_CYCLES_PER_M68K_CYCLE: f32 = 3.58 / 7.67;
@@ -344,7 +385,7 @@ impl Emulator {
         }
 
         // Trigger Z80 VInt at start of VBlank
-        if line == active_lines && cycles_scanline < m68k_cycles + 5 && !z80_is_reset {
+        if trigger_vint && !z80_is_reset {
             self.z80.trigger_interrupt(0xFF);
         }
 
@@ -408,7 +449,7 @@ impl Emulator {
     pub fn run(&mut self, frames: u32) {
         println!("Running {} frames headless...", frames);
         for _ in 0..frames {
-            self.step_frame();
+            self.step_frame(None);
         }
         println!("Done.");
     }
@@ -677,7 +718,7 @@ impl Emulator {
                             }
 
                             // Run one frame of emulation
-                            self.step_frame_with_input(input.p1, input.p2);
+                            self.step_frame(Some(input.clone()));
 
                             // Process audio
                             self.process_audio(&audio_buffer);
@@ -987,8 +1028,13 @@ mod tests {
         emulator.step_frame_internal();
         emulator.step_frame_internal();
 
+        // Request bus to read result (Z80 RAM is only accessible when Z80 is stopped)
+        emulator.bus.borrow_mut().write_word(0xA11100, 0x0100);
+
         // Check if 0xA01FFD is 0x80
         // We use read_byte on bus.
+        // We must request the bus first to read Z80 RAM
+        emulator.bus.borrow_mut().write_word(0xA11100, 0x0100);
         let val = emulator.bus.borrow_mut().read_byte(0xA01FFD);
         assert_eq!(val, 0x80, "Z80 should have written 0x80 to 0xA01FFD");
     }
@@ -1055,16 +1101,17 @@ mod tests {
     #[test]
     fn test_step_frame_basic() {
         let mut emulator = Emulator::new();
-        emulator.step_frame();
-        emulator.step_frame();
+        emulator.step_frame(None);
+        emulator.step_frame(None);
         assert_eq!(emulator.internal_frame_count, 2);
     }
 
     #[test]
-    fn test_raw_file_limit_enforcement() {
-        let path = "test_large.bin";
-        // Create 33MB file
-        let data = vec![0u8; 33 * 1024 * 1024];
+    fn test_large_raw_rom_prevention() {
+        let path = "large_rom.bin";
+        // Create 33MB of dummy data
+        let size = 33 * 1024 * 1024;
+        let data = vec![0u8; size];
         std::fs::write(path, &data).unwrap();
 
         let mut emulator = Emulator::new();
@@ -1073,6 +1120,7 @@ mod tests {
         // Cleanup
         let _ = std::fs::remove_file(path);
 
+        // Verify rejection
         assert!(result.is_err(), "Should reject large ROM file (>32MB)");
     }
 }

@@ -227,8 +227,11 @@ impl Vdp {
         self.last_data_write = value;
 
         // DMA Fill (Mode 2) check
-        // Enabled (Reg 1 bit 4) AND Mode 2 (Reg 23 bits 7,6 = 1,0)
-        if (self.registers[1] & 0x10) != 0 && (self.registers[23] & 0xC0) == 0x80 {
+        // Enabled (Reg 1 bit 4) AND Mode 2 (Reg 23 bits 7,6 = 1,0) AND DMA pending
+        if (self.registers[1] & 0x10) != 0
+            && (self.registers[23] & 0xC0) == 0x80
+            && self.dma_pending
+        {
             let length = self.dma_length();
             let mut addr = self.control_address;
             let inc = self.auto_increment() as u16;
@@ -244,6 +247,7 @@ impl Vdp {
                 addr = addr.wrapping_add(inc);
             }
             self.control_address = addr;
+            self.dma_pending = false;
             return;
         }
 
@@ -340,6 +344,8 @@ impl Vdp {
             if (self.control_code & CTRL_DMA_BIT) != 0 {
                 // DMA requested
                 self.dma_pending = true;
+            } else {
+                self.dma_pending = false;
             }
         } else if (value & REG_WRITE_MASK) == REG_WRITE_TAG {
             // Register write
@@ -726,7 +732,7 @@ impl Vdp {
         line_offset: usize,
         screen_width: u16,
     ) {
-        let sprite_h_px = (attr.h_size as u16) * 8;
+        let _sprite_h_px = (attr.h_size as u16) * 8;
         let sprite_v_px = (attr.v_size as u16) * 8;
 
         let py = line - attr.v_pos;
@@ -739,38 +745,121 @@ impl Vdp {
         let tile_v_offset = fetch_py / 8;
         let pixel_v = fetch_py % 8;
 
-        for px in 0..sprite_h_px {
-            let screen_x = attr.h_pos.wrapping_add(px);
-            if screen_x >= screen_width {
-                continue;
-            }
-
-            let fetch_px = if attr.h_flip {
-                (sprite_h_px - 1) - px
+        // Iterate by tiles instead of pixels for efficiency
+        for t_h in 0..attr.h_size {
+            let tile_h_offset = t_h as u16;
+            let fetch_tile_h_offset = if attr.h_flip {
+                (attr.h_size as u16 - 1) - tile_h_offset
             } else {
-                px
+                tile_h_offset
             };
-            let tile_h_offset = fetch_px / 8;
-            let pixel_h = fetch_px % 8;
 
             // In a multi-tile sprite, tiles are arranged vertically first
-            let tile_idx = attr.base_tile + (tile_h_offset * attr.v_size as u16) + tile_v_offset;
+            let tile_idx = attr
+                .base_tile
+                .wrapping_add(fetch_tile_h_offset * attr.v_size as u16)
+                .wrapping_add(tile_v_offset);
 
-            let pattern_addr = (tile_idx * 32) + (pixel_v * 4) + (pixel_h / 2);
-            if pattern_addr as usize + 4 > 0x10000 {
+            // Calculate pattern address for the row (pixel_v is 0..7)
+            // Each tile is 32 bytes (4 bytes per row)
+            let row_addr = (tile_idx as usize * 32) + (pixel_v as usize * 4);
+
+            // Check if row is within VRAM bounds
+            if row_addr + 4 > 0x10000 {
                 continue;
             }
 
-            let byte = self.vram[pattern_addr as usize];
-            let color_idx = if pixel_h % 2 == 0 {
-                byte >> 4
+            // Prefetch the 4 bytes (8 pixels) for this row
+            // We use wrapping arithmetic for safety although checks above should prevent OOB
+            let p0 = self.vram[row_addr];
+            let p1 = self.vram[(row_addr + 1) & 0xFFFF];
+            let p2 = self.vram[(row_addr + 2) & 0xFFFF];
+            let p3 = self.vram[(row_addr + 3) & 0xFFFF];
+            let patterns = [p0, p1, p2, p3];
+
+            let base_screen_x = attr.h_pos.wrapping_add(tile_h_offset * 8);
+
+            for i in 0..8 {
+                let screen_x = base_screen_x.wrapping_add(i);
+                if screen_x >= screen_width {
+                    continue;
+                }
+
+                let eff_col = if attr.h_flip { 7 - i } else { i };
+
+                let byte = patterns[(eff_col as usize) / 2];
+                let color_idx = if eff_col % 2 == 0 {
+                    byte >> 4
+                } else {
+                    byte & 0x0F
+                };
+
+                if color_idx != 0 {
+                    let color = self.get_cram_color(attr.palette, color_idx);
+                    self.framebuffer[line_offset + screen_x as usize] = color;
+                }
+            }
+        }
+    } else {
+            py
+        };
+
+        let tile_v_offset = fetch_py / 8;
+        let pixel_v = fetch_py % 8;
+
+        // Iterate by tiles instead of pixels for efficiency
+        for t_h in 0..attr.h_size {
+            let tile_h_offset = t_h as u16;
+            let fetch_tile_h_offset = if attr.h_flip {
+                (attr.h_size as u16 - 1) - tile_h_offset
             } else {
-                byte & 0x0F
+                tile_h_offset
             };
 
-            if color_idx != 0 {
-                let color = self.get_cram_color(attr.palette, color_idx);
-                self.framebuffer[line_offset + screen_x as usize] = color;
+            // In a multi-tile sprite, tiles are arranged vertically first
+            let tile_idx = attr
+                .base_tile
+                .wrapping_add(fetch_tile_h_offset * attr.v_size as u16)
+                .wrapping_add(tile_v_offset);
+
+            // Calculate pattern address for the row (pixel_v is 0..7)
+            // Each tile is 32 bytes (4 bytes per row)
+            let row_addr = (tile_idx as usize * 32) + (pixel_v as usize * 4);
+
+            // Check if row is within VRAM bounds
+            if row_addr + 4 > 0x10000 {
+                continue;
+            }
+
+            // Prefetch the 4 bytes (8 pixels) for this row
+            // We use wrapping arithmetic for safety although checks above should prevent OOB
+            let p0 = self.vram[row_addr];
+            let p1 = self.vram[(row_addr + 1) & 0xFFFF];
+            let p2 = self.vram[(row_addr + 2) & 0xFFFF];
+            let p3 = self.vram[(row_addr + 3) & 0xFFFF];
+            let patterns = [p0, p1, p2, p3];
+
+            let base_screen_x = attr.h_pos.wrapping_add(tile_h_offset * 8);
+
+            for i in 0..8 {
+                let screen_x = base_screen_x.wrapping_add(i);
+                if screen_x >= screen_width {
+                    continue;
+                }
+
+                let eff_col = if attr.h_flip { 7 - i } else { i };
+
+                let byte = patterns[(eff_col as usize) / 2];
+                let color_idx = if eff_col % 2 == 0 {
+                    byte >> 4
+                } else {
+                    byte & 0x0F
+                };
+
+                if color_idx != 0 {
+                    let color = self.get_cram_color(attr.palette, color_idx);
+                    self.framebuffer[line_offset + screen_x as usize] = color;
+                }
             }
         }
     }
@@ -828,27 +917,82 @@ impl Vdp {
         let mut screen_x: u16 = 0;
         let mut scrolled_h = (0u16).wrapping_sub(h_scroll);
 
-        while screen_x < screen_width {
-            let pixel_h = scrolled_h % 8;
+        // Pre-calculate constants
+        let row_base = name_table_base + (tile_v * plane_w) * 2;
+        let plane_w_mask = plane_w - 1;
+
+        // Prologue: Handle unaligned start
+        let pixel_h = scrolled_h % 8;
+        if pixel_h != 0 {
             let pixels_left_in_tile = 8 - pixel_h;
             let pixels_to_process = std::cmp::min(pixels_left_in_tile, screen_width - screen_x);
 
-            let tile_h = (scrolled_h as usize / 8) % plane_w;
+            let tile_h = (scrolled_h as usize >> 3) & plane_w_mask;
+            let nt_entry_addr = row_base + tile_h * 2;
+            let hi = self.vram[nt_entry_addr & 0xFFFF];
+            let lo = self.vram[(nt_entry_addr + 1) & 0xFFFF];
+            let entry = ((hi as u16) << 8) | (lo as u16);
 
-            // Fetch nametable entry (2 bytes)
-            let nt_entry_addr = name_table_base + (tile_v * plane_w + tile_h) * 2;
+            let priority = (entry & 0x8000) != 0;
+            if priority == priority_filter {
+                let palette = ((entry >> 13) & 0x03) as u8;
+                let v_flip = (entry & 0x1000) != 0;
+                let h_flip = (entry & 0x0800) != 0;
+                let tile_index = entry & 0x07FF;
+
+                let row = if v_flip { 7 - pixel_v } else { pixel_v };
+                let row_addr = (tile_index as usize * 32) + (row as usize * 4);
+
+                let p0 = self.vram[row_addr & 0xFFFF];
+                let p1 = self.vram[(row_addr + 1) & 0xFFFF];
+                let p2 = self.vram[(row_addr + 2) & 0xFFFF];
+                let p3 = self.vram[(row_addr + 3) & 0xFFFF];
+                let patterns = [p0, p1, p2, p3];
+
+                for i in 0..pixels_to_process {
+                    let current_pixel_h = pixel_h + i;
+                    let eff_col = if h_flip {
+                        7 - current_pixel_h
+                    } else {
+                        current_pixel_h
+                    };
+
+                    let byte = patterns[(eff_col as usize) / 2];
+                    let col = if eff_col % 2 == 0 {
+                        byte >> 4
+                    } else {
+                        byte & 0x0F
+                    };
+
+                    if col != 0 {
+                        let color = self.get_cram_color(palette, col);
+                        self.framebuffer[line_offset + (screen_x + i) as usize] = color;
+                    }
+                }
+            }
+            screen_x += pixels_to_process;
+            scrolled_h = scrolled_h.wrapping_add(pixels_to_process);
+        }
+
+        // Main Loop: Process full 8-pixel tiles
+        while screen_x + 8 <= screen_width {
+            let tile_h = (scrolled_h as usize >> 3) & plane_w_mask;
+            let nt_entry_addr = row_base + tile_h * 2;
+
             let hi = self.vram[nt_entry_addr & 0xFFFF];
             let lo = self.vram[(nt_entry_addr + 1) & 0xFFFF];
             let entry = ((hi as u16) << 8) | (lo as u16);
 
             let priority = (entry & 0x8000) != 0;
             if priority != priority_filter {
-                screen_x += pixels_to_process;
-                scrolled_h = scrolled_h.wrapping_add(pixels_to_process);
+                screen_x += 8;
+                scrolled_h = scrolled_h.wrapping_add(8);
                 continue;
             }
 
             let palette = ((entry >> 13) & 0x03) as u8;
+            let palette_base = (palette as usize) * 16;
+
             let v_flip = (entry & 0x1000) != 0;
             let h_flip = (entry & 0x0800) != 0;
             let tile_index = entry & 0x07FF;
@@ -856,32 +1000,114 @@ impl Vdp {
             let row = if v_flip { 7 - pixel_v } else { pixel_v };
             let row_addr = (tile_index as usize * 32) + (row as usize * 4);
 
-            // Prefetch the 4 bytes of pattern data for this row
             let p0 = self.vram[row_addr & 0xFFFF];
             let p1 = self.vram[(row_addr + 1) & 0xFFFF];
             let p2 = self.vram[(row_addr + 2) & 0xFFFF];
             let p3 = self.vram[(row_addr + 3) & 0xFFFF];
-            let patterns = [p0, p1, p2, p3];
 
-            for i in 0..pixels_to_process {
-                let current_pixel_h = pixel_h + i;
-                let eff_col = if h_flip {
-                    7 - current_pixel_h
-                } else {
-                    current_pixel_h
-                };
+            let dest_idx = line_offset + (screen_x as usize);
 
-                let byte = patterns[(eff_col as usize) / 2];
+            if h_flip {
+                let mut col = p3 & 0x0F;
+                if col != 0 { self.framebuffer[dest_idx] = self.cram_cache[palette_base + col as usize]; }
 
-                let col = if eff_col % 2 == 0 {
-                    byte >> 4
-                } else {
-                    byte & 0x0F
-                };
+                col = p3 >> 4;
+                if col != 0 { self.framebuffer[dest_idx + 1] = self.cram_cache[palette_base + col as usize]; }
 
-                if col != 0 {
-                    let color = self.get_cram_color(palette, col);
-                    self.framebuffer[line_offset + (screen_x + i) as usize] = color;
+                col = p2 & 0x0F;
+                if col != 0 { self.framebuffer[dest_idx + 2] = self.cram_cache[palette_base + col as usize]; }
+
+                col = p2 >> 4;
+                if col != 0 { self.framebuffer[dest_idx + 3] = self.cram_cache[palette_base + col as usize]; }
+
+                col = p1 & 0x0F;
+                if col != 0 { self.framebuffer[dest_idx + 4] = self.cram_cache[palette_base + col as usize]; }
+
+                col = p1 >> 4;
+                if col != 0 { self.framebuffer[dest_idx + 5] = self.cram_cache[palette_base + col as usize]; }
+
+                col = p0 & 0x0F;
+                if col != 0 { self.framebuffer[dest_idx + 6] = self.cram_cache[palette_base + col as usize]; }
+
+                col = p0 >> 4;
+                if col != 0 { self.framebuffer[dest_idx + 7] = self.cram_cache[palette_base + col as usize]; }
+            } else {
+                let mut col = p0 >> 4;
+                if col != 0 { self.framebuffer[dest_idx] = self.cram_cache[palette_base + col as usize]; }
+
+                col = p0 & 0x0F;
+                if col != 0 { self.framebuffer[dest_idx + 1] = self.cram_cache[palette_base + col as usize]; }
+
+                col = p1 >> 4;
+                if col != 0 { self.framebuffer[dest_idx + 2] = self.cram_cache[palette_base + col as usize]; }
+
+                col = p1 & 0x0F;
+                if col != 0 { self.framebuffer[dest_idx + 3] = self.cram_cache[palette_base + col as usize]; }
+
+                col = p2 >> 4;
+                if col != 0 { self.framebuffer[dest_idx + 4] = self.cram_cache[palette_base + col as usize]; }
+
+                col = p2 & 0x0F;
+                if col != 0 { self.framebuffer[dest_idx + 5] = self.cram_cache[palette_base + col as usize]; }
+
+                col = p3 >> 4;
+                if col != 0 { self.framebuffer[dest_idx + 6] = self.cram_cache[palette_base + col as usize]; }
+
+                col = p3 & 0x0F;
+                if col != 0 { self.framebuffer[dest_idx + 7] = self.cram_cache[palette_base + col as usize]; }
+            }
+
+            screen_x += 8;
+            scrolled_h = scrolled_h.wrapping_add(8);
+        }
+
+        // Epilogue: Handle remaining pixels
+        while screen_x < screen_width {
+            let pixel_h = scrolled_h % 8;
+            let pixels_left_in_tile = 8 - pixel_h;
+            let pixels_to_process = std::cmp::min(pixels_left_in_tile, screen_width - screen_x);
+
+            let tile_h = (scrolled_h as usize >> 3) & plane_w_mask;
+            let nt_entry_addr = row_base + tile_h * 2;
+            let hi = self.vram[nt_entry_addr & 0xFFFF];
+            let lo = self.vram[(nt_entry_addr + 1) & 0xFFFF];
+            let entry = ((hi as u16) << 8) | (lo as u16);
+
+            let priority = (entry & 0x8000) != 0;
+            if priority == priority_filter {
+                let palette = ((entry >> 13) & 0x03) as u8;
+                let v_flip = (entry & 0x1000) != 0;
+                let h_flip = (entry & 0x0800) != 0;
+                let tile_index = entry & 0x07FF;
+
+                let row = if v_flip { 7 - pixel_v } else { pixel_v };
+                let row_addr = (tile_index as usize * 32) + (row as usize * 4);
+
+                let p0 = self.vram[row_addr & 0xFFFF];
+                let p1 = self.vram[(row_addr + 1) & 0xFFFF];
+                let p2 = self.vram[(row_addr + 2) & 0xFFFF];
+                let p3 = self.vram[(row_addr + 3) & 0xFFFF];
+                let patterns = [p0, p1, p2, p3];
+
+                for i in 0..pixels_to_process {
+                    let current_pixel_h = pixel_h + i;
+                    let eff_col = if h_flip {
+                        7 - current_pixel_h
+                    } else {
+                        current_pixel_h
+                    };
+
+                    let byte = patterns[(eff_col as usize) / 2];
+                    let col = if eff_col % 2 == 0 {
+                        byte >> 4
+                    } else {
+                        byte & 0x0F
+                    };
+
+                    if col != 0 {
+                        let color = self.get_cram_color(palette, col);
+                        self.framebuffer[line_offset + (screen_x + i) as usize] = color;
+                    }
                 }
             }
             screen_x += pixels_to_process;
