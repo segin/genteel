@@ -57,11 +57,12 @@ fn main() {
     mem.write_byte(2, 0x00);
     mem.write_byte(3, 0x00);
 
-    // Baseline: Using Box<dyn Trait> to force dynamic dispatch
-    let mem: Box<dyn MemoryInterface> = Box::new(mem);
-    let io: Box<dyn IoInterface> = Box::new(SimpleIo);
+    // Baseline: Using dynamic dispatch
+    // We explicitly cast to Box<dyn ...> to force dynamic dispatch through the trait object
+    let mem_boxed: Box<dyn MemoryInterface> = Box::new(mem);
+    let io_boxed: Box<dyn IoInterface> = Box::new(SimpleIo);
 
-    let mut z80 = Z80::new(mem, io);
+    let mut z80 = Z80::new(mem_boxed, io_boxed);
     z80.a = 0xFF;
 
     // Warmup
