@@ -1,20 +1,18 @@
 {
   "loc": {
-    "Unknown": 720959,
+    "Unknown": 77043,
     "Markdown": 1151,
-    "TOML": 86,
-    "Python": 490,
-    "Rust": 29549,
-    "JSON": 41
+    "TOML": 87,
+    "Python": 348,
+    "Rust": 30883
   },
-  "file_count": 409,
+  "file_count": 102,
   "languages": [
-    "Rust",
     "TOML",
     "Python",
-    "JSON",
-    "Markdown",
-    "Unknown"
+    "Rust",
+    "Unknown",
+    "Markdown"
   ],
   "dependency_count": 322,
   "vulnerabilities": 0,

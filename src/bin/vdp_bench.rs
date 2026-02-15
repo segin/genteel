@@ -9,31 +9,27 @@ fn main() {
 
     // Set Plane A to 0xC000 (Reg 2 = 0x30)
     vdp.registers[2] = 0x30;
-    // Set Plane B to 0xE000 (Reg 4 = 0x07)
-    vdp.registers[4] = 0x07;
-    // Set Sprite Table to 0xF800 (Reg 5 = 0x7C) - (0x7C << 9) & 0xFE00 = 0xF800
-    vdp.registers[5] = 0x7C;
 
-    // Set Plane Size to 64x64 (Reg 16 = 0x11)
-    vdp.registers[16] = 0x11;
+    // Palette 0, Color 1: Red
+    vdp.write_control(0xC0000000); // Access CRAM addr 0
+    vdp.write_data(0xF800);
 
-    // Fill VRAM with pattern data
-    for i in 0..0x10000 {
-        vdp.vram[i] = (i as u8).wrapping_mul(17);
+    // Set Tile 1 to solid Color 1
+    for i in 0..16 {
+        vdp.vram[32 + i] = 0x11;
     }
 
-    // Initialize CRAM to avoid black screen logic (though render_line doesn't optimize black)
-    for i in 0..64 {
-        vdp.cram_cache[i] = 0xFFFF;
-    }
+    // Set Nametable Entry (0,0) to Tile 1
+    vdp.vram[0xC000] = 0x00;
+    vdp.vram[0xC001] = 0x01;
 
-    println!("Starting VDP render benchmark...");
-    let start = Instant::now();
     let iterations = 1000;
-    let height = 224;
+    println!("Benchmarking VDP rendering for {} frames...", iterations);
+
+    let start = Instant::now();
 
     for _ in 0..iterations {
-        for line in 0..height {
+        for line in 0..224 {
             vdp.render_line(line);
         }
     }
@@ -42,5 +38,8 @@ fn main() {
     println!("Time for {} frames: {:?}", iterations, duration);
     let fps = (iterations as f64) / duration.as_secs_f64();
     println!("FPS: {:.2}", fps);
-    println!("Time per frame: {:.2} ms", duration.as_millis() as f64 / iterations as f64);
+    println!(
+        "Time per frame: {:.2} ms",
+        duration.as_millis() as f64 / iterations as f64
+    );
 }
