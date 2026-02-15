@@ -31,11 +31,21 @@ fn regression_daa_after_sub() {
 // Bug: DJNZ not decrementing B before the test
 #[test]
 fn regression_djnz_decrements_first() {
+    // Case 1: B=1 -> B=0, Jump NOT taken
     let mut c = z80(&[0x10, 0x05]);
     c.b = 1;
-    c.step();
+    let cycles = c.step();
     assert_eq!(c.b, 0);
-    assert_eq!(c.pc, 2); // Not taken
+    assert_eq!(c.pc, 2); // Not taken (PC points to next instruction)
+    assert_eq!(cycles, 8);
+
+    // Case 2: B=2 -> B=1, Jump TAKEN
+    let mut c = z80(&[0x10, 0x05]);
+    c.b = 2;
+    let cycles = c.step();
+    assert_eq!(c.b, 1);
+    assert_eq!(c.pc, 7); // 2 (instruction) + 5 (displacement) = 7
+    assert_eq!(cycles, 13);
 }
 
 // Bug: DJNZ wrapping behavior (decrement then test)
