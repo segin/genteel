@@ -4,6 +4,7 @@
 //! that can be executed by the CPU.
 
 use std::fmt;
+use std::sync::OnceLock;
 
 /// Size specifier for M68k instructions
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -259,7 +260,7 @@ impl Condition {
 }
 
 /// Decoded M68k instruction
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Instruction {
     // Data Movement
     Move {
@@ -623,8 +624,22 @@ pub enum BitSource {
 }
 
 
+static DECODE_CACHE: OnceLock<Box<[Instruction]>> = OnceLock::new();
+
 /// Decode a single M68k instruction from an opcode
 pub fn decode(opcode: u16) -> Instruction {
+    let cache = DECODE_CACHE.get_or_init(|| {
+        let mut instructions = Vec::with_capacity(65536);
+        for op in 0..=65535 {
+            instructions.push(decode_uncached(op as u16));
+        }
+        instructions.into_boxed_slice()
+    });
+    cache[opcode as usize]
+}
+
+/// Decode a single M68k instruction from an opcode (uncached)
+pub fn decode_uncached(opcode: u16) -> Instruction {
     let group = ((opcode >> 12) & 0x0F) as usize;
     GROUP_DECODERS[group](opcode)
 }

@@ -263,7 +263,6 @@ impl InputManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proptest::prelude::*;
 
     #[test]
     fn test_parse_buttons_basic() {
