@@ -2056,6 +2056,8 @@ impl<M: MemoryInterface, I: IoInterface> Debuggable for Z80<M, I> {
     }
 }
 
+pub mod test_utils;
+
 #[cfg(test)]
 mod tests;
 
