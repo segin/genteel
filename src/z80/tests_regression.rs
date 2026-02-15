@@ -217,7 +217,7 @@ fn regression_neg_80() {
     assert!(c.get_flag(flags::ADD_SUB), "Add/Subtract flag should be set");
 }
 
-// Regression: NEG with A=0 should clear carry
+// Regression: NEG with A=0 should clear carry (verified against reference model)
 #[test]
 fn regression_neg_00() {
     let mut c = z80(&[0xED, 0x44]);
