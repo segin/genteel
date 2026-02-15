@@ -99,7 +99,7 @@ fn test_render_plane_scroll() {
     vdp.set_region(false);
     vdp.registers[1] = 0x40; // Display
     vdp.registers[2] = 0x30; // Plane A 0xC000
-    // HScroll Table Base 0x0000 (Reg 13 = 0x00)
+                             // HScroll Table Base 0x0000 (Reg 13 = 0x00)
     vdp.registers[13] = 0x00;
 
     vdp.cram_cache[1] = 0xF800; // Red
@@ -118,8 +118,10 @@ fn test_render_plane_scroll() {
     // Nametable at 0xC000.
     // Tile 0 (Empty) at 0xC000.
     // Tile 1 (Red) at 0xC002.
-    vdp.vram[0xC000] = 0x00; vdp.vram[0xC001] = 0x00;
-    vdp.vram[0xC002] = 0x00; vdp.vram[0xC003] = 0x01;
+    vdp.vram[0xC000] = 0x00;
+    vdp.vram[0xC001] = 0x00;
+    vdp.vram[0xC002] = 0x00;
+    vdp.vram[0xC003] = 0x01;
 
     vdp.render_line(0);
 
@@ -132,6 +134,126 @@ fn test_render_plane_scroll() {
 }
 
 #[test]
+fn test_render_line_performance() {
+    let mut vdp = Vdp::new();
+    vdp.set_region(false);
+    vdp.registers[1] |= 0x40; // Display enabled
+
+    let start = std::time::Instant::now();
+    // Render 100 frames. On the test runner (~4ms/frame), this should take ~400ms.
+    for _ in 0..100 {
+        for line in 0..224 {
+            vdp.render_line(line);
+        }
+    }
+    let duration = start.elapsed();
+    println!("Render 100 frames took: {:?}", duration);
+
+    // Simple sanity check to ensure no massive regression (e.g. if it took 2s, something is wrong)
+    assert!(
+        duration.as_millis() < 2000,
+        "Rendering 100 frames took too long: {:?}",
+        duration
+    );
+}
+
+#[test]
+fn test_sprite_rendering_correctness() {
+    let mut vdp = Vdp::new();
+    vdp.set_region(false);
+    vdp.registers[1] = 0x40; // Display Enable
+    vdp.registers[12] = 0x81; // H40 Mode
+    vdp.registers[5] = 0x6A; // SAT at 0xD400
+
+    // Palette 1, Color 1: Red
+    vdp.cram_cache[17] = 0xF00;
+    vdp.cram_cache[18] = 0x0F0; // 2: Green
+    vdp.cram_cache[19] = 0x00F; // 3: Blue
+    vdp.cram_cache[20] = 0xFFF; // 4: White
+
+    // Tile 1: Pattern
+    // Row 0: 0x12, 0x34, 0x00, 0x00 -> Pixels: 1, 2, 3, 4, 0, 0, 0, 0
+    let tile1_addr = 32;
+    vdp.vram[tile1_addr] = 0x12;
+    vdp.vram[tile1_addr + 1] = 0x34;
+
+    // Sprite 0: 1x1 tile, at (0,0) on screen
+    let sat_base = 0xD400;
+
+    // V Pos: 0 (screen y) + 128 = 128 (0x80)
+    vdp.vram[sat_base] = 0x00;
+    vdp.vram[sat_base + 1] = 0x80;
+
+    // Size: 1x1 (0x00), Link: 0
+    vdp.vram[sat_base + 2] = 0x00;
+    vdp.vram[sat_base + 3] = 0x00;
+
+    // Attr: Palette 1, Priority 1, Tile 1
+    // Pal 1 = bit 13 (0x2000). Tile 1 = 1. -> 0x2001.
+    vdp.vram[sat_base + 4] = 0x20;
+    vdp.vram[sat_base + 5] = 0x01;
+
+    // H Pos: 0 (screen x) + 128 = 128 (0x80)
+    vdp.vram[sat_base + 6] = 0x00;
+    vdp.vram[sat_base + 7] = 0x80;
+
+    // Render line 0
+    vdp.render_line(0);
+
+    // Check pixels at 0, 1, 2, 3
+    assert_eq!(vdp.framebuffer[0], 0xF00, "Pixel 0 (Red)");
+    assert_eq!(vdp.framebuffer[1], 0x0F0, "Pixel 1 (Green)");
+    assert_eq!(vdp.framebuffer[2], 0x00F, "Pixel 2 (Blue)");
+    assert_eq!(vdp.framebuffer[3], 0xFFF, "Pixel 3 (White)");
+    assert_eq!(vdp.framebuffer[4], 0x000, "Pixel 4 (Transparent)");
+}
+
+#[test]
+fn test_sprite_hflip() {
+    let mut vdp = Vdp::new();
+    vdp.set_region(false);
+    vdp.registers[1] = 0x40;
+    vdp.registers[12] = 0x81;
+    vdp.registers[5] = 0x6A;
+
+    vdp.cram_cache[17] = 0xF00; // 1: Red
+    vdp.cram_cache[18] = 0x0F0; // 2: Green
+
+    // Tile 1: 0x12... -> Pixels: 1, 2...
+    let tile1_addr = 32;
+    vdp.vram[tile1_addr] = 0x12;
+
+    let sat_base = 0xD400;
+    // V Pos 128 -> y=0
+    vdp.vram[sat_base] = 0x00;
+    vdp.vram[sat_base + 1] = 0x80;
+    // Size 1x1
+    vdp.vram[sat_base + 2] = 0x00;
+    vdp.vram[sat_base + 3] = 0x00;
+
+    // Attr: Pal 1, H-Flip (0x800), Tile 1 -> 0x2801
+    vdp.vram[sat_base + 4] = 0x28;
+    vdp.vram[sat_base + 5] = 0x01;
+
+    // H Pos 128 -> x=0
+    vdp.vram[sat_base + 6] = 0x00;
+    vdp.vram[sat_base + 7] = 0x80;
+
+    vdp.render_line(0);
+
+    // H-Flip:
+    // Tile 1 row 0: 1, 2, 0, 0, 0, 0, 0, 0
+    // Flipped:      0, 0, 0, 0, 0, 0, 2, 1
+    // Pixel 0-5: Transparent
+    // Pixel 6: 2 (Green)
+    // Pixel 7: 1 (Red)
+
+    assert_eq!(vdp.framebuffer[0], 0, "Pixel 0");
+    assert_eq!(vdp.framebuffer[6], 0x0F0, "Pixel 6");
+    assert_eq!(vdp.framebuffer[7], 0xF00, "Pixel 7");
+}
+
+#[test]
 fn test_render_sprite_basic() {
     let mut vdp = Vdp::new();
     vdp.set_region(false);
@@ -141,11 +263,14 @@ fn test_render_sprite_basic() {
     // Setup Sprite 0 at 0xD000
     // y=128+10, size=1x1 (0), link=0, attr=0 (pal 0), x=128+10
     let sat_base = 0xD000;
-    vdp.vram[sat_base] = 0x00; vdp.vram[sat_base+1] = 128+10;
-    vdp.vram[sat_base+2] = 0x00; // 1x1 tile
-    vdp.vram[sat_base+3] = 0x00; // link 0
-    vdp.vram[sat_base+4] = 0x00; vdp.vram[sat_base+5] = 0x00; // attr: tile 0
-    vdp.vram[sat_base+6] = 0x00; vdp.vram[sat_base+7] = 128+10;
+    vdp.vram[sat_base] = 0x00;
+    vdp.vram[sat_base + 1] = 128+10;
+    vdp.vram[sat_base + 2] = 0x00; // 1x1 tile
+    vdp.vram[sat_base + 3] = 0x00; // link 0
+    vdp.vram[sat_base + 4] = 0x00;
+    vdp.vram[sat_base + 5] = 0x00; // attr: tile 0
+    vdp.vram[sat_base + 6] = 0x00;
+    vdp.vram[sat_base + 7] = 128+10;
 
     // Tile 0 Pattern:
     // Row 0: 0x12, 0x34, 0x56, 0x78 (Pixels: 1,2, 3,4, 5,6, 7,8)
@@ -178,7 +303,7 @@ fn test_render_sprite_basic() {
 }
 
 #[test]
-fn test_render_sprite_hflip() {
+fn test_render_sprite_hflip_v3() {
     let mut vdp = Vdp::new();
     vdp.set_region(false);
     vdp.registers[1] = 0x40; // Display
@@ -189,11 +314,14 @@ fn test_render_sprite_hflip() {
     // Attr word is bytes 4,5.
     // Bit 11 is 0x0800. So byte 4 |= 0x08.
     let sat_base = 0xD000;
-    vdp.vram[sat_base] = 0x00; vdp.vram[sat_base+1] = 128+10;
-    vdp.vram[sat_base+2] = 0x00; // 1x1
-    vdp.vram[sat_base+3] = 0x00;
-    vdp.vram[sat_base+4] = 0x08; vdp.vram[sat_base+5] = 0x00; // H-Flip
-    vdp.vram[sat_base+6] = 0x00; vdp.vram[sat_base+7] = 128+10;
+    vdp.vram[sat_base] = 0x00;
+    vdp.vram[sat_base + 1] = 128+10;
+    vdp.vram[sat_base + 2] = 0x00; // 1x1
+    vdp.vram[sat_base + 3] = 0x00;
+    vdp.vram[sat_base + 4] = 0x08;
+    vdp.vram[sat_base + 5] = 0x00; // H-Flip
+    vdp.vram[sat_base + 6] = 0x00;
+    vdp.vram[sat_base + 7] = 128+10;
 
     // Tile 0 Pattern: 0x12, 0x34...
     // Pixels: 1,2, 3,4...
@@ -238,11 +366,14 @@ fn test_sprite_rendering_correctness_v2() {
     // Sprite 0 at 0xD800
     // Y=128+10, Size=1x1, Link=0, Attr=(Pri=1, Pal=0, Flip=0, Tile=1), X=128+10
     let base = 0xD800;
-    vdp.vram[base+0] = 0x00; vdp.vram[base+1] = 128+10;
-    vdp.vram[base+2] = 0x00; // 1x1
-    vdp.vram[base+3] = 0x00;
-    vdp.vram[base+4] = 0x80; vdp.vram[base+5] = 0x01;
-    vdp.vram[base+6] = 0x00; vdp.vram[base+7] = 128+10;
+    vdp.vram[base + 0] = 0x00;
+    vdp.vram[base + 1] = 128+10;
+    vdp.vram[base + 2] = 0x00; // 1x1
+    vdp.vram[base + 3] = 0x00;
+    vdp.vram[base + 4] = 0x80;
+    vdp.vram[base + 5] = 0x01;
+    vdp.vram[base + 6] = 0x00;
+    vdp.vram[base + 7] = 128+10;
 
     vdp.render_line(10);
 
@@ -266,16 +397,22 @@ fn test_sprite_hflip_v2() {
     // Tile 1: Row 0 -> [0x12, 0x12, 0x12, 0x12]
     // Pixels: 1,2, 1,2, 1,2, 1,2
     // Colors: R,G, R,G, R,G, R,G
-    vdp.vram[32] = 0x12; vdp.vram[33] = 0x12; vdp.vram[34] = 0x12; vdp.vram[35] = 0x12;
+    vdp.vram[32] = 0x12;
+    vdp.vram[33] = 0x12;
+    vdp.vram[34] = 0x12;
+    vdp.vram[35] = 0x12;
 
     // Sprite 0: Y=10, H-Flip
     let base = 0xD800;
-    vdp.vram[base+0] = 0x00; vdp.vram[base+1] = 128+10;
-    vdp.vram[base+2] = 0x00;
-    vdp.vram[base+3] = 0x00;
+    vdp.vram[base + 0] = 0x00;
+    vdp.vram[base + 1] = 128+10;
+    vdp.vram[base + 2] = 0x00;
+    vdp.vram[base + 3] = 0x00;
     // Attr: H-Flip (0x0800), Tile 1
-    vdp.vram[base+4] = 0x88; vdp.vram[base+5] = 0x01;
-    vdp.vram[base+6] = 0x00; vdp.vram[base+7] = 128+10;
+    vdp.vram[base + 4] = 0x88;
+    vdp.vram[base + 5] = 0x01;
+    vdp.vram[base + 6] = 0x00;
+    vdp.vram[base + 7] = 128+10;
 
     vdp.render_line(10);
 
