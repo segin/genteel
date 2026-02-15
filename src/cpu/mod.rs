@@ -769,7 +769,6 @@ impl Cpu {
         }
     }
 
-
     pub(crate) fn cpu_read_ea<M: MemoryInterface>(
         &mut self,
         ea: EffectiveAddress,

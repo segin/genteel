@@ -622,7 +622,6 @@ pub enum BitSource {
     Register(u8), // Bit number in Dn
 }
 
-
 /// Decode a single M68k instruction from an opcode
 pub fn decode(opcode: u16) -> Instruction {
     let group = ((opcode >> 12) & 0x0F) as usize;

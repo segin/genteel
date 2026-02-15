@@ -282,9 +282,15 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         self.a = result as u8;
 
         let mut f = 0;
-        if result > 0xFF { f |= flags::CARRY; }
-        if half_carry { f |= flags::HALF_CARRY; }
-        if overflow { f |= flags::PARITY; }
+        if result > 0xFF {
+            f |= flags::CARRY;
+        }
+        if half_carry {
+            f |= flags::HALF_CARRY;
+        }
+        if overflow {
+            f |= flags::PARITY;
+        }
         // ADD_SUB is false (0)
 
         // Inline set_sz_flags logic
@@ -313,9 +319,15 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
 
         let mut f = flags::ADD_SUB;
-        if result > 0xFF { f |= flags::CARRY; }
-        if half_carry { f |= flags::HALF_CARRY; }
-        if overflow { f |= flags::PARITY; }
+        if result > 0xFF {
+            f |= flags::CARRY;
+        }
+        if half_carry {
+            f |= flags::HALF_CARRY;
+        }
+        if overflow {
+            f |= flags::PARITY;
+        }
 
         let res_u8 = result as u8;
         f |= res_u8 & (flags::SIGN | flags::Y_FLAG | flags::X_FLAG);
@@ -389,8 +401,12 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         let result = value.wrapping_add(1);
 
         let mut f = self.f & flags::CARRY; // Preserve Carry
-        if (value & 0x0F) == 0x0F { f |= flags::HALF_CARRY; }
-        if value == 0x7F { f |= flags::PARITY; }
+        if (value & 0x0F) == 0x0F {
+            f |= flags::HALF_CARRY;
+        }
+        if value == 0x7F {
+            f |= flags::PARITY;
+        }
         // ADD_SUB is false (0)
 
         f |= result & (flags::SIGN | flags::Y_FLAG | flags::X_FLAG);
@@ -406,8 +422,12 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         let result = value.wrapping_sub(1);
 
         let mut f = (self.f & flags::CARRY) | flags::ADD_SUB; // Preserve Carry, set N
-        if (value & 0x0F) == 0x00 { f |= flags::HALF_CARRY; }
-        if value == 0x80 { f |= flags::PARITY; }
+        if (value & 0x0F) == 0x00 {
+            f |= flags::HALF_CARRY;
+        }
+        if value == 0x80 {
+            f |= flags::PARITY;
+        }
 
         f |= result & (flags::SIGN | flags::Y_FLAG | flags::X_FLAG);
         if result == 0 {

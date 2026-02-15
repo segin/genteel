@@ -78,12 +78,19 @@ impl GdbServer {
         let listener = TcpListener::bind(format!("127.0.0.1:{}", port))?;
         listener.set_nonblocking(true)?;
 
+<<<<<<< HEAD
+        if password.is_some() {
+=======
         let final_password = if let Some(pwd) = password {
+>>>>>>> main
             eprintln!(
                 "🔒 GDB Server listening on 127.0.0.1:{}. Protected with password.",
                 port
             );
+<<<<<<< HEAD
+=======
             Some(pwd)
+>>>>>>> main
         } else {
             let token = generate_token();
             eprintln!(
@@ -947,21 +954,32 @@ mod tests {
         assert_eq!(server.process_command("m100,4", &mut regs, &mut mem), "E01");
 
         // Allowed commands work
-        assert!(server.process_command("qSupported", &mut regs, &mut mem).contains("PacketSize"));
+        assert!(server
+            .process_command("qSupported", &mut regs, &mut mem)
+            .contains("PacketSize"));
         assert_eq!(server.process_command("?", &mut regs, &mut mem), "S05");
 
         // Authenticate failure
         // "auth wrong" in hex: 617574682077726f6e67
-        assert_eq!(server.process_command("qRcmd,617574682077726f6e67", &mut regs, &mut mem), "E01");
+        assert_eq!(
+            server.process_command("qRcmd,617574682077726f6e67", &mut regs, &mut mem),
+            "E01"
+        );
         assert!(!server.authenticated);
 
         // Authenticate success
         // "auth secret" in hex: 6175746820736563726574
-        assert_eq!(server.process_command("qRcmd,6175746820736563726574", &mut regs, &mut mem), "OK");
+        assert_eq!(
+            server.process_command("qRcmd,6175746820736563726574", &mut regs, &mut mem),
+            "OK"
+        );
         assert!(server.authenticated);
 
         // Now commands work
-        assert_eq!(server.process_command("g", &mut regs, &mut mem).len(), (8 + 8 + 1 + 1) * 8);
+        assert_eq!(
+            server.process_command("g", &mut regs, &mut mem).len(),
+            (8 + 8 + 1 + 1) * 8
+        );
     }
 
     #[test]
