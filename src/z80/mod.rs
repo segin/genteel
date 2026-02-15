@@ -1321,7 +1321,11 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 // Rotate/shift
                 let result = self.cb_rotate_shift(val, y);
                 self.set_reg(z, result);
-                if z == 6 { 15 } else { 8 }
+                if z == 6 {
+                    15
+                } else {
+                    8
+                }
             }
             1 => {
                 // BIT y, r
@@ -1337,19 +1341,31 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                     self.set_flag(flags::Y_FLAG, (h_memptr & 0x20) != 0);
                 }
 
-                if z == 6 { 12 } else { 8 }
+                if z == 6 {
+                    12
+                } else {
+                    8
+                }
             }
             2 => {
                 // RES y, r
                 let result = self.cb_res(val, y);
                 self.set_reg(z, result);
-                if z == 6 { 15 } else { 8 }
+                if z == 6 {
+                    15
+                } else {
+                    8
+                }
             }
             3 => {
                 // SET y, r
                 let result = self.cb_set(val, y);
                 self.set_reg(z, result);
-                if z == 6 { 15 } else { 8 }
+                if z == 6 {
+                    15
+                } else {
+                    8
+                }
             }
             _ => 8,
         }
@@ -2060,23 +2076,73 @@ impl<M: MemoryInterface, I: IoInterface> Debuggable for Z80<M, I> {
     }
 
     fn write_state(&mut self, state: &Value) {
-        if let Some(a) = state["a"].as_u64() { self.a = a as u8; }
-        if let Some(f) = state["f"].as_u64() { self.f = f as u8; }
-        if let Some(b) = state["b"].as_u64() { self.b = b as u8; }
-        if let Some(c) = state["c"].as_u64() { self.c = c as u8; }
-        if let Some(d) = state["d"].as_u64() { self.d = d as u8; }
-        if let Some(e) = state["e"].as_u64() { self.e = e as u8; }
-        if let Some(h) = state["h"].as_u64() { self.h = h as u8; }
-        if let Some(l) = state["l"].as_u64() { self.l = l as u8; }
-        if let Some(ix) = state["ix"].as_u64() { self.ix = ix as u16; }
-        if let Some(iy) = state["iy"].as_u64() { self.iy = iy as u16; }
-        if let Some(sp) = state["sp"].as_u64() { self.sp = sp as u16; }
-        if let Some(pc) = state["pc"].as_u64() { self.pc = pc as u16; }
-        if let Some(iff1) = state["iff1"].as_bool() { self.iff1 = iff1; }
-        if let Some(iff2) = state["iff2"].as_bool() { self.iff2 = iff2; }
-        if let Some(im) = state["im"].as_u64() { self.im = im as u8; }
-        if let Some(halted) = state["halted"].as_bool() { self.halted = halted; }
-        if let Some(cycles) = state["cycles"].as_u64() { self.cycles = cycles; }
+        if let Some(a) = state["a"].as_u64() {
+            self.a = a as u8;
+        }
+        if let Some(f) = state["f"].as_u64() {
+            self.f = f as u8;
+        }
+        if let Some(b) = state["b"].as_u64() {
+            self.b = b as u8;
+        }
+        if let Some(c) = state["c"].as_u64() {
+            self.c = c as u8;
+        }
+        if let Some(d) = state["d"].as_u64() {
+            self.d = d as u8;
+        }
+        if let Some(e) = state["e"].as_u64() {
+            self.e = e as u8;
+        }
+        if let Some(h) = state["h"].as_u64() {
+            self.h = h as u8;
+        }
+        if let Some(l) = state["l"].as_u64() {
+            self.l = l as u8;
+        }
+        if let Some(ix) = state["ix"].as_u64() {
+            self.ix = ix as u16;
+        }
+        if let Some(iy) = state["iy"].as_u64() {
+            self.iy = iy as u16;
+        }
+        if let Some(sp) = state["sp"].as_u64() {
+            self.sp = sp as u16;
+        }
+        if let Some(pc) = state["pc"].as_u64() {
+            self.pc = pc as u16;
+        }
+        if let Some(iff1) = state["iff1"].as_bool() {
+            self.iff1 = iff1;
+        }
+        if let Some(iff2) = state["iff2"].as_bool() {
+            self.iff2 = iff2;
+        }
+        if let Some(im) = state["im"].as_u64() {
+            self.im = im as u8;
+        }
+        if let Some(halted) = state["halted"].as_bool() {
+            self.halted = halted;
+        }
+        if let Some(cycles) = state["cycles"].as_u64() {
+            self.cycles = cycles;
+        }
+    }
+}
+
+#[cfg(test)]
+pub mod test_utils {
+    use crate::memory::IoInterface;
+
+    #[derive(Debug, Default)]
+    pub struct TestIo;
+
+    impl IoInterface for TestIo {
+        fn read_port(&mut self, _port: u16) -> u8 {
+            0
+        }
+
+        fn write_port(&mut self, _port: u16, _value: u8) {}
     }
 }
 
