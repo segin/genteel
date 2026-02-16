@@ -7,13 +7,15 @@
 //! - 7F11h: SN76489 PSG
 //! - 8000h-FFFFh: Banked 68k Memory (32KB window)
 
+use super::bus::Bus;
 use super::{byte_utils, IoInterface, MemoryInterface, SharedBus};
-use crate::memory::bus::Bus;
 
 /// Z80 Bus adapter that routes memory accesses to Genesis components
 #[derive(Debug, Clone)]
 pub struct Z80Bus {
-    /// Reference to the main Genesis bus
+    /// Reference to the main Genesis bus.
+    /// Used to ensure the `Rc<RefCell<Bus>>` remains alive.
+    #[allow(dead_code)]
     bus: SharedBus,
     /// Raw pointer to the bus for optimized access (avoids RefCell overhead)
     raw_bus: *mut Bus,
