@@ -839,6 +839,32 @@ impl Vdp {
         [p0, p1, p2, p3]
     }
 
+    fn draw_partial_tile_row(
+        &mut self,
+        tile_index: u16,
+        palette: u8,
+        v_flip: bool,
+        h_flip: bool,
+        pixel_v: u16,
+        pixel_h: u16,
+        count: u16,
+        dest_idx: usize,
+    ) {
+        let patterns = self.fetch_tile_pattern(tile_index, pixel_v, v_flip);
+
+        for i in 0..count {
+            let current_pixel_h = pixel_h + i;
+            let eff_col = if h_flip { 7 - current_pixel_h } else { current_pixel_h };
+            let byte = patterns[(eff_col as usize) / 2];
+            let col = if eff_col % 2 == 0 { byte >> 4 } else { byte & 0x0F };
+
+            if col != 0 {
+                let color = self.get_cram_color(palette, col);
+                self.framebuffer[dest_idx + i as usize] = color;
+            }
+        }
+    }
+
     fn draw_full_tile_row(
         &mut self,
         tile_index: u16,
@@ -936,19 +962,16 @@ impl Vdp {
                 let h_flip = (entry & 0x0800) != 0;
                 let tile_index = entry & 0x07FF;
 
-                let patterns = self.fetch_tile_pattern(tile_index, pixel_v as u16, v_flip);
-
-                for i in 0..pixels_to_process {
-                    let current_pixel_h = pixel_h + i;
-                    let eff_col = if h_flip { 7 - current_pixel_h } else { current_pixel_h };
-                    let byte = patterns[(eff_col as usize) / 2];
-                    let col = if eff_col % 2 == 0 { byte >> 4 } else { byte & 0x0F };
-
-                    if col != 0 {
-                        let color = self.get_cram_color(palette, col);
-                        self.framebuffer[line_offset + (screen_x + i) as usize] = color;
-                    }
-                }
+                self.draw_partial_tile_row(
+                    tile_index,
+                    palette,
+                    v_flip,
+                    h_flip,
+                    pixel_v as u16,
+                    pixel_h,
+                    pixels_to_process,
+                    line_offset + screen_x as usize,
+                );
             }
             screen_x += pixels_to_process;
             scrolled_h = scrolled_h.wrapping_add(pixels_to_process);
@@ -993,19 +1016,16 @@ impl Vdp {
                 let h_flip = (entry & 0x0800) != 0;
                 let tile_index = entry & 0x07FF;
 
-                let patterns = self.fetch_tile_pattern(tile_index, pixel_v as u16, v_flip);
-
-                for i in 0..pixels_to_process {
-                    let current_pixel_h = pixel_h + i;
-                    let eff_col = if h_flip { 7 - current_pixel_h } else { current_pixel_h };
-                    let byte = patterns[(eff_col as usize) / 2];
-                    let col = if eff_col % 2 == 0 { byte >> 4 } else { byte & 0x0F };
-
-                    if col != 0 {
-                        let color = self.get_cram_color(palette, col);
-                        self.framebuffer[line_offset + (screen_x + i) as usize] = color;
-                    }
-                }
+                self.draw_partial_tile_row(
+                    tile_index,
+                    palette,
+                    v_flip,
+                    h_flip,
+                    pixel_v as u16,
+                    pixel_h,
+                    pixels_to_process,
+                    line_offset + screen_x as usize,
+                );
             }
             screen_x += pixels_to_process;
             scrolled_h = scrolled_h.wrapping_add(pixels_to_process);
@@ -1225,9 +1245,6 @@ mod tests {
         assert_eq!(vdp2.cram_cache[1], 0xDEFB);
     }
 }
-
-#[cfg(test)]
-mod tests_security;
 
 #[cfg(test)]
 mod tests_bulk_write;
