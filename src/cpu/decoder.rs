@@ -623,7 +623,6 @@ pub enum BitSource {
     Register(u8), // Bit number in Dn
 }
 
-
 static DECODE_CACHE: OnceLock<Box<[Instruction]>> = OnceLock::new();
 
 /// Decode a single M68k instruction from an opcode
@@ -1465,13 +1464,7 @@ fn decode_shifts(opcode: u16) -> Instruction {
         let ea_reg = (opcode & 0x07) as u8;
         if let Some(dst) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
             let count = ShiftCount::Immediate(1); // Memory shifts are always by 1
-            return make_shift_instruction(
-                op_type,
-                direction,
-                Size::Word,
-                dst,
-                count,
-            );
+            return make_shift_instruction(op_type, direction, Size::Word, dst, count);
         }
     }
 
@@ -1681,5 +1674,8 @@ mod tests {
 
 #[test]
 fn print_instruction_size() {
-    println!("Size of Instruction: {} bytes", std::mem::size_of::<Instruction>());
+    println!(
+        "Size of Instruction: {} bytes",
+        std::mem::size_of::<Instruction>()
+    );
 }

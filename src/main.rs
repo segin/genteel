@@ -362,12 +362,7 @@ impl Emulator {
         }
     }
 
-    fn sync_z80(
-        &mut self,
-        m68k_cycles: u32,
-        trigger_vint: bool,
-        z80_cycle_debt: &mut f32,
-    ) {
+    fn sync_z80(&mut self, m68k_cycles: u32, trigger_vint: bool, z80_cycle_debt: &mut f32) {
         const Z80_CYCLES_PER_M68K_CYCLE: f32 = 3.58 / 7.67;
 
         // Z80 execution

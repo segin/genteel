@@ -90,7 +90,7 @@ fn test_dma_source_transfer() {
     // Case 2: Reg 23 has mode bits (0x80)
     // dma_source_transfer should mask out 0xC0 from Reg 23.
     vdp.registers[REG_DMA_SRC_HI] = 0x8F; // 0x80 | 0x0F
-    // It should return same as if it was 0x0F
+                                          // It should return same as if it was 0x0F
     assert_eq!(vdp.dma_source_transfer(), expected_base);
 
     // Case 3: Reg 23 has copy mode bits (0xC0)

@@ -95,5 +95,8 @@ fn test_control_state_machine() {
     assert!(vdp.is_control_pending());
     // Existing behavior: read_status does NOT clear pending (bug?)
     vdp.read_status();
-    assert!(!vdp.is_control_pending(), "Read status should clear control pending");
+    assert!(
+        !vdp.is_control_pending(),
+        "Read status should clear control pending"
+    );
 }

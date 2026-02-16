@@ -926,10 +926,7 @@ mod tests {
             server.process_command("qAttached", &mut regs, &mut mem),
             "1"
         );
-        assert_eq!(
-            server.process_command("qUnknown", &mut regs, &mut mem),
-            ""
-        );
+        assert_eq!(server.process_command("qUnknown", &mut regs, &mut mem), "");
         assert_eq!(
             server.process_command("QStartNoAckMode", &mut regs, &mut mem),
             "OK"
@@ -1048,7 +1045,9 @@ mod tests {
         assert_eq!(server.process_command("m100,4", &mut regs, &mut mem), "E01");
 
         // Allowed commands work
-        assert!(server.process_command("qSupported", &mut regs, &mut mem).contains("PacketSize"));
+        assert!(server
+            .process_command("qSupported", &mut regs, &mut mem)
+            .contains("PacketSize"));
         assert_eq!(server.process_command("?", &mut regs, &mut mem), "S05");
 
         // Authenticate with auto-generated password (password is some token)
@@ -1069,10 +1068,16 @@ mod tests {
         let mut mem = MockMemory::new();
 
         // Odd length
-        assert_eq!(server.process_command("M100,2:123", &mut regs, &mut mem), "E01");
+        assert_eq!(
+            server.process_command("M100,2:123", &mut regs, &mut mem),
+            "E01"
+        );
 
         // Non-hex
-        assert_eq!(server.process_command("M100,2:1g", &mut regs, &mut mem), "E01");
+        assert_eq!(
+            server.process_command("M100,2:1g", &mut regs, &mut mem),
+            "E01"
+        );
     }
 
     #[test]
@@ -1083,10 +1088,16 @@ mod tests {
         let mut mem = MockMemory::new();
 
         // Odd length in qRcmd
-        assert_eq!(server.process_command("qRcmd,123", &mut regs, &mut mem), "E01");
+        assert_eq!(
+            server.process_command("qRcmd,123", &mut regs, &mut mem),
+            "E01"
+        );
 
         // Non-hex in qRcmd
-        assert_eq!(server.process_command("qRcmd,1g", &mut regs, &mut mem), "E01");
+        assert_eq!(
+            server.process_command("qRcmd,1g", &mut regs, &mut mem),
+            "E01"
+        );
     }
     #[test]
     fn test_auto_generated_password() {
@@ -1107,7 +1118,11 @@ mod tests {
         let generated_pwd = server.password.as_ref().unwrap().clone();
 
         // Check password format (16 chars hex)
-        assert_eq!(generated_pwd.len(), 16, "Generated password should be 16 chars");
+        assert_eq!(
+            generated_pwd.len(),
+            16,
+            "Generated password should be 16 chars"
+        );
         assert!(
             generated_pwd.chars().all(|c| c.is_digit(16)),
             "Generated password should be hex"
@@ -1165,12 +1180,18 @@ mod tests {
 
         // Test Z0 (Set breakpoint)
         // Format: Z0,addr,kind
-        assert_eq!(server.process_command("Z0,1000,4", &mut regs, &mut mem), "OK");
+        assert_eq!(
+            server.process_command("Z0,1000,4", &mut regs, &mut mem),
+            "OK"
+        );
         assert!(server.is_breakpoint(0x1000));
 
         // Test z0 (Remove breakpoint)
         // Format: z0,addr,kind
-        assert_eq!(server.process_command("z0,1000,4", &mut regs, &mut mem), "OK");
+        assert_eq!(
+            server.process_command("z0,1000,4", &mut regs, &mut mem),
+            "OK"
+        );
         assert!(!server.is_breakpoint(0x1000));
 
         // Test unsupported breakpoint type (e.g. 1)
@@ -1201,6 +1222,9 @@ mod tests {
 
         // Test with 71 chars (one less than the current check of 72)
         let data = "0".repeat(71);
-        assert_eq!(server.process_command(&format!("G{}", data), &mut regs, &mut mem), "E01");
+        assert_eq!(
+            server.process_command(&format!("G{}", data), &mut regs, &mut mem),
+            "E01"
+        );
     }
 }

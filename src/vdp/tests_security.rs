@@ -67,5 +67,8 @@ fn test_vram_access_out_of_bounds() {
     vdp.render_line(0);
 
     // Verify pixel at 0,0 is Red.
-    assert_eq!(vdp.framebuffer[0], 0xF800, "Pixel at 0,0 should be Red (0xF800), indicating correct wrapping");
+    assert_eq!(
+        vdp.framebuffer[0], 0xF800,
+        "Pixel at 0,0 should be Red (0xF800), indicating correct wrapping"
+    );
 }

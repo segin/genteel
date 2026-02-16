@@ -4,7 +4,7 @@ use std::time::Instant;
 
 fn create_test_cpu() -> (Cpu, Memory) {
     let mut memory = Memory::new(0x10000); // 64KB
-    // Initial SP and PC
+                                           // Initial SP and PC
     memory.write_long(0, 0x1000); // SP
     memory.write_long(4, 0x100); // PC
     let cpu = Cpu::new(&mut memory);
@@ -39,8 +39,14 @@ fn main() {
     }
 
     let duration = start.elapsed();
-    println!("Benchmark: {} instructions took {:?}", instructions_to_run, duration);
-    println!("Instructions per second: {:.2} MIPS", (instructions_to_run as f64 / duration.as_secs_f64()) / 1_000_000.0);
+    println!(
+        "Benchmark: {} instructions took {:?}",
+        instructions_to_run, duration
+    );
+    println!(
+        "Instructions per second: {:.2} MIPS",
+        (instructions_to_run as f64 / duration.as_secs_f64()) / 1_000_000.0
+    );
 
     assert_eq!(cpu.d[0], 1_000_000);
 }
