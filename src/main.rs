@@ -19,6 +19,7 @@ pub mod io;
 pub mod memory;
 pub mod vdp;
 pub mod z80;
+pub mod wav_writer;
 
 use apu::Apu;
 use cpu::Cpu;
@@ -52,6 +53,7 @@ pub struct Emulator {
     pub bus: Rc<RefCell<Bus>>,
     pub input: InputManager,
     pub audio_buffer: Vec<i16>,
+    pub wav_writer: Option<wav_writer::WavWriter>,
     pub apu_accumulator: f32,
     pub internal_frame_count: u64,
     pub z80_last_bus_req: bool,
@@ -87,6 +89,7 @@ impl Emulator {
             bus,
             input: InputManager::new(),
             audio_buffer: Vec::with_capacity(735 * 2), // Pre-allocate approx 1 frame
+            wav_writer: None,
             apu_accumulator: 0.0,
             internal_frame_count: 0,
             z80_last_bus_req: false,
@@ -426,6 +429,11 @@ impl Emulator {
             let mut bus = self.bus.borrow_mut();
             for _ in 0..samples_to_run {
                 let sample = bus.apu.step();
+
+                if let Some(writer) = &mut self.wav_writer {
+                    let _ = writer.write_samples(&[sample, sample]);
+                }
+
                 // Security Fix: Prevent unbounded buffer growth if not consumed
                 // Cap at ~20 frames of audio (32768 samples)
                 if self.audio_buffer.len() < 32768 {
@@ -781,6 +789,7 @@ fn print_usage() {
     println!("  --headless <n>   Run N frames without display");
     println!("  --gdb [port]     Start GDB server (default port: 1234)");
     println!("  --gdb-password <pwd> Set password for GDB server");
+    println!("  --dump-audio <file> Dump audio output to WAV file");
     println!("  --help           Show this help");
     println!();
     println!("Controls (play mode):");
@@ -826,6 +835,7 @@ struct Config {
     headless_frames: Option<u32>,
     gdb_port: Option<u16>,
     gdb_password: Option<String>,
+    dump_audio_path: Option<String>,
     show_help: bool,
 }
 
@@ -865,6 +875,9 @@ impl Config {
                 "--gdb-password" => {
                     config.gdb_password = iter.next();
                 }
+                "--dump-audio" => {
+                    config.dump_audio_path = iter.next();
+                }
                 arg if !arg.starts_with('-') => {
                     if let Some(ref mut path) = config.rom_path {
                         path.push(' ');
@@ -894,8 +907,17 @@ fn main() {
     let script_path = config.script_path;
     let headless_frames = config.headless_frames;
     let gdb_port = config.gdb_port;
+    let dump_audio_path = config.dump_audio_path;
 
     let mut emulator = Emulator::new();
+
+    if let Some(path) = dump_audio_path {
+        println!("Dumping audio to: {}", path);
+        match wav_writer::WavWriter::new(&path, audio::SAMPLE_RATE, 2) {
+            Ok(writer) => emulator.wav_writer = Some(writer),
+            Err(e) => eprintln!("Failed to create audio dump file: {}", e),
+        }
+    }
 
     // Load ROM if provided
     if let Some(ref path) = rom_path {
