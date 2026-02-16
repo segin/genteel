@@ -287,8 +287,7 @@ impl Emulator {
         }
     }
 
-    fn run_cpu_batch(&mut self, max_cycles: u32) -> CpuBatchResult {
-        let mut bus = self.bus.borrow_mut();
+    fn run_cpu_batch(cpu: &mut Cpu, bus: &mut Bus, max_cycles: u32) -> CpuBatchResult {
         let initial_req = bus.z80_bus_request;
         let initial_rst = bus.z80_reset;
         let mut pending_cycles = 0;
@@ -301,7 +300,7 @@ impl Emulator {
                 };
             }
 
-            let m68k_cycles = self.cpu.step_instruction(&mut *bus);
+            let m68k_cycles = cpu.step_instruction(bus);
             bus.apu.fm.step(m68k_cycles);
 
             // Check for Z80 state change
@@ -327,43 +326,82 @@ impl Emulator {
         const BATCH_SIZE: u32 = 128;
         let mut cycles_scanline: u32 = 0;
 
+        // Optimization: Borrow bus once and use raw pointer for Z80
+        let mut bus_ref = self.bus.borrow_mut();
+        let bus_ptr: *mut Bus = &mut *bus_ref;
+
+        // Set raw bus for Z80 memory interface to avoid RefCell overhead in tight loop
+        unsafe {
+            self.z80.memory.set_raw_bus(bus_ptr);
+        }
+
         while cycles_scanline < CYCLES_PER_LINE {
             let remaining = CYCLES_PER_LINE - cycles_scanline;
             let limit = std::cmp::min(remaining, BATCH_SIZE);
 
-            let result = self.run_cpu_batch(limit);
+            let result = Self::run_cpu_batch(&mut self.cpu, &mut *bus_ref, limit);
 
             // If state changed, revert to old state temporarily so we can sync the batch cycles
             // with the state that was active during those cycles.
             if let Some(change) = result.z80_change {
-                let mut bus = self.bus.borrow_mut();
-                bus.z80_bus_request = change.old_req;
-                bus.z80_reset = change.old_rst;
+                bus_ref.z80_bus_request = change.old_req;
+                bus_ref.z80_reset = change.old_rst;
             }
 
             if result.cycles > 0 {
                 let trigger_vint = line == active_lines && cycles_scanline < 10;
-                self.sync_z80(result.cycles, trigger_vint, z80_cycle_debt);
+                Self::sync_z80(
+                    &mut self.z80,
+                    &mut *bus_ref,
+                    &mut self.z80_last_bus_req,
+                    &mut self.z80_last_reset,
+                    self.internal_frame_count,
+                    &mut self.z80_trace_count,
+                    self.cpu.pc, // Pass PC for debug log
+                    result.cycles,
+                    trigger_vint,
+                    z80_cycle_debt,
+                );
                 cycles_scanline += result.cycles;
             }
 
             if let Some(change) = result.z80_change {
                 // Now apply the new state for the instruction that caused the change
-                {
-                    let mut bus = self.bus.borrow_mut();
-                    bus.z80_bus_request = change.new_req;
-                    bus.z80_reset = change.new_rst;
-                }
+                bus_ref.z80_bus_request = change.new_req;
+                bus_ref.z80_reset = change.new_rst;
 
                 let trigger_vint = line == active_lines && cycles_scanline < 10;
-                self.sync_z80(change.instruction_cycles, trigger_vint, z80_cycle_debt);
+                Self::sync_z80(
+                    &mut self.z80,
+                    &mut *bus_ref,
+                    &mut self.z80_last_bus_req,
+                    &mut self.z80_last_reset,
+                    self.internal_frame_count,
+                    &mut self.z80_trace_count,
+                    self.cpu.pc,
+                    change.instruction_cycles,
+                    trigger_vint,
+                    z80_cycle_debt,
+                );
                 cycles_scanline += change.instruction_cycles;
             }
         }
+
+        // Cleanup: Clear raw bus pointer before dropping the borrow
+        unsafe {
+            self.z80.memory.clear_raw_bus();
+        }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn sync_z80(
-        &mut self,
+        z80: &mut Z80<Z80Bus, Z80Bus>,
+        bus: &mut Bus,
+        z80_last_bus_req: &mut bool,
+        z80_last_reset: &mut bool,
+        internal_frame_count: u64,
+        z80_trace_count: &mut u32,
+        cpu_pc: u32,
         m68k_cycles: u32,
         trigger_vint: bool,
         z80_cycle_debt: &mut f32,
@@ -372,14 +410,13 @@ impl Emulator {
 
         // Z80 execution
         let (z80_can_run, z80_is_reset) = {
-            let bus = self.bus.borrow();
-            let prev = self.z80_last_bus_req;
+            let prev = *z80_last_bus_req;
             if bus.z80_bus_request != prev {
                 eprintln!(
                     "DEBUG: Bus Req Changed: {} -> {} at 68k PC={:06X}",
-                    prev, bus.z80_bus_request, self.cpu.pc
+                    prev, bus.z80_bus_request, cpu_pc
                 );
-                self.z80_last_bus_req = bus.z80_bus_request;
+                *z80_last_bus_req = bus.z80_bus_request;
             }
             (!bus.z80_reset && !bus.z80_bus_request, bus.z80_reset)
         };
@@ -387,31 +424,31 @@ impl Emulator {
         // Z80 reset logic:
         // Reset the Z80 on the leading edge of the reset signal.
         // The Z80 is held in reset (not stepped) as long as z80_reset is true.
-        if z80_is_reset && !self.z80_last_reset {
-            self.z80.reset();
+        if z80_is_reset && !*z80_last_reset {
+            z80.reset();
         }
-        self.z80_last_reset = z80_is_reset;
+        *z80_last_reset = z80_is_reset;
 
-        if z80_can_run && self.internal_frame_count > 0 {
-            if self.z80_trace_count < 5000 {
-                self.z80.debug = true;
-                self.z80_trace_count += 1;
+        if z80_can_run && internal_frame_count > 0 {
+            if *z80_trace_count < 5000 {
+                z80.debug = true;
+                *z80_trace_count += 1;
             } else {
-                self.z80.debug = false;
+                z80.debug = false;
             }
         } else {
-            self.z80.debug = false;
+            z80.debug = false;
         }
 
         // Trigger Z80 VInt at start of VBlank
         if trigger_vint && !z80_is_reset {
-            self.z80.trigger_interrupt(0xFF);
+            z80.trigger_interrupt(0xFF);
         }
 
         if z80_can_run {
             *z80_cycle_debt += (m68k_cycles as f32) * Z80_CYCLES_PER_M68K_CYCLE;
             while *z80_cycle_debt >= 1.0 {
-                let z80_cycles = self.z80.step();
+                let z80_cycles = z80.step();
                 *z80_cycle_debt -= z80_cycles as f32;
             }
         }
