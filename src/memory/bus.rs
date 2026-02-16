@@ -870,5 +870,4 @@ mod tests {
         assert!(bus.z80_reset);
         assert_eq!(bus.z80_bank_bit, 0);
     }
-
-    }
+}

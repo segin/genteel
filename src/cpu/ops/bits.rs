@@ -1,4 +1,4 @@
-use crate::cpu::addressing::{calculate_ea, read_ea, write_ea};
+use crate::cpu::addressing::{calculate_ea, read_ea};
 use crate::cpu::decoder::{AddressingMode, BitSource, ShiftCount, Size};
 use crate::cpu::flags;
 use crate::cpu::Cpu;
@@ -50,7 +50,7 @@ pub fn exec_andi<M: MemoryInterface>(
     let dst_val = cpu.cpu_read_ea(dst_ea, size, memory);
 
     let result = dst_val & imm;
-    write_ea(dst_ea, size, result, &mut cpu.d, &mut cpu.a, memory);
+    cpu.cpu_write_ea(dst_ea, size, result, memory);
 
     cpu.update_nz_flags(result, size);
     cpu.set_flag(flags::CARRY, false);
@@ -105,7 +105,7 @@ pub fn exec_ori<M: MemoryInterface>(
     let dst_val = cpu.cpu_read_ea(dst_ea, size, memory);
 
     let result = dst_val | imm;
-    write_ea(dst_ea, size, result, &mut cpu.d, &mut cpu.a, memory);
+    cpu.cpu_write_ea(dst_ea, size, result, memory);
 
     cpu.update_nz_flags(result, size);
     cpu.set_flag(flags::CARRY, false);
@@ -158,7 +158,7 @@ pub fn exec_eori<M: MemoryInterface>(
     let dst_val = cpu.cpu_read_ea(dst_ea, size, memory);
 
     let result = dst_val ^ imm;
-    write_ea(dst_ea, size, result, &mut cpu.d, &mut cpu.a, memory);
+    cpu.cpu_write_ea(dst_ea, size, result, memory);
 
     cpu.update_nz_flags(result, size);
     cpu.set_flag(flags::CARRY, false);
@@ -178,7 +178,7 @@ pub fn exec_not<M: MemoryInterface>(
 
     let result = !val;
 
-    write_ea(dst_ea, size, result, &mut cpu.d, &mut cpu.a, memory);
+    cpu.cpu_write_ea(dst_ea, size, result, memory);
 
     cpu.update_nz_flags(result, size);
     cpu.set_flag(flags::OVERFLOW, false);
@@ -234,7 +234,7 @@ pub fn exec_shift<M: MemoryInterface>(
         }
     }
 
-    write_ea(dst_ea, size, result, &mut cpu.d, &mut cpu.a, memory);
+    cpu.cpu_write_ea(dst_ea, size, result, memory);
 
     cpu.update_nz_flags(result, size);
     if count_val > 0 {
@@ -297,7 +297,7 @@ pub fn exec_rotate<M: MemoryInterface>(
         carry = ((val >> (effective_count - 1)) & 1) != 0;
     }
 
-    write_ea(dst_ea, size, result, &mut cpu.d, &mut cpu.a, memory);
+    cpu.cpu_write_ea(dst_ea, size, result, memory);
 
     cpu.update_nz_flags(result, size);
     cpu.set_flag(flags::CARRY, carry);
@@ -508,4 +508,101 @@ pub fn exec_tas<M: MemoryInterface>(cpu: &mut Cpu, dst: AddressingMode, memory: 
     cpu.cpu_write_ea(dst_ea, Size::Byte, new_val as u32, memory);
 
     cycles + 4
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cpu::Cpu;
+    use crate::memory::Memory;
+    use crate::cpu::decoder::{AddressingMode, Size};
+    use crate::cpu::flags;
+
+    fn create_test_setup() -> (Cpu, Memory) {
+        let mut memory = Memory::new(0x10000);
+        // Initialize memory with basic vector table
+        memory.write_long(0x0, 0x8000); // Stack pointer
+        memory.write_long(0x4, 0x1000); // PC
+        let cpu = Cpu::new(&mut memory);
+        (cpu, memory)
+    }
+
+    #[test]
+    fn test_exec_or_byte() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x123456AA;
+        cpu.d[1] = 0x77665555;
+
+        let cycles = exec_or(&mut cpu, Size::Byte, AddressingMode::DataRegister(0), AddressingMode::DataRegister(1), true, &mut memory);
+
+        assert_eq!(cpu.d[1], 0x776655FF); // 0xAA | 0x55 = 0xFF
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert_eq!(cycles, 4);
+    }
+
+    #[test]
+    fn test_exec_or_word() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x1234F0F0;
+        cpu.d[1] = 0x77660F0F;
+
+        let cycles = exec_or(&mut cpu, Size::Word, AddressingMode::DataRegister(0), AddressingMode::DataRegister(1), true, &mut memory);
+
+        assert_eq!(cpu.d[1], 0x7766FFFF); // 0xF0F0 | 0x0F0F = 0xFFFF
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert_eq!(cycles, 4);
+    }
+
+    #[test]
+    fn test_exec_or_long() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0xF0F0F0F0;
+        cpu.d[1] = 0x0F0F0F0F;
+
+        let cycles = exec_or(&mut cpu, Size::Long, AddressingMode::DataRegister(0), AddressingMode::DataRegister(1), true, &mut memory);
+
+        assert_eq!(cpu.d[1], 0xFFFFFFFF);
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert_eq!(cycles, 4);
+    }
+
+    #[test]
+    fn test_exec_or_zero() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0;
+        cpu.d[1] = 0;
+        cpu.set_flag(flags::CARRY, true);
+        cpu.set_flag(flags::OVERFLOW, true);
+        cpu.set_flag(flags::NEGATIVE, true);
+
+        let cycles = exec_or(&mut cpu, Size::Long, AddressingMode::DataRegister(0), AddressingMode::DataRegister(1), true, &mut memory);
+
+        assert_eq!(cpu.d[1], 0);
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert_eq!(cycles, 4);
+    }
+
+    #[test]
+    fn test_exec_or_memory() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x000000FF;
+        cpu.a[0] = 0x2000;
+        memory.write_byte(0x2000, 0x00);
+
+        // OR.B D0, (A0)
+        let cycles = exec_or(&mut cpu, Size::Byte, AddressingMode::DataRegister(0), AddressingMode::AddressIndirect(0), true, &mut memory);
+
+        assert_eq!(memory.read_byte(0x2000), 0xFF);
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert_eq!(cycles, 8); // 4 (base) + 0 (DataReg) + 4 (AddrIndirect)
+    }
 }
