@@ -245,10 +245,8 @@ impl Vdp {
             let mut addr = self.control_address as usize;
             for chunk in data.chunks_exact(2) {
                 if addr < 0x10000 {
-                    // Big-endian source: chunk[0] is high byte, chunk[1] is low byte.
-                    // Standard write_data logic writes high byte to addr, low byte to addr ^ 1.
-                    // Since auto-increment is 2, address parity is preserved, so we can
-                    // directly write chunk[0] to addr and chunk[1] to addr ^ 1.
+                    // Optimization: When auto-increment is 2, address parity is preserved.
+                    // This allows direct writing of big-endian chunks: chunk[0] -> even addr, chunk[1] -> odd addr.
                     self.vram[addr] = chunk[0];
                     self.vram[addr ^ 1] = chunk[1];
                 }
