@@ -7,19 +7,35 @@
 //! - 7F11h: SN76489 PSG
 //! - 8000h-FFFFh: Banked 68k Memory (32KB window)
 
+use super::bus::Bus;
 use super::{byte_utils, IoInterface, MemoryInterface, SharedBus};
 
 /// Z80 Bus adapter that routes memory accesses to Genesis components
 #[derive(Debug, Clone)]
 pub struct Z80Bus {
-    /// Reference to the main Genesis bus
+    /// Reference to the main Genesis bus.
+    /// Used to ensure the `Rc<RefCell<Bus>>` remains alive.
+    #[allow(dead_code)]
     bus: SharedBus,
+    /// Unsafe pointer to the bus inner value to avoid RefCell overhead.
+    ///
+    /// # Safety
+    /// This pointer is valid as long as `bus` is alive (which holds the Rc).
+    /// Since `Z80Bus` owns `bus`, the pointer is valid as long as `Z80Bus` is alive.
+    /// We assume `Bus` is pinned in memory (heap allocated via Rc).
+    /// Access via this pointer must ensure no mutable aliasing violations.
+    /// Since `Z80Bus` methods take `&mut self`, we have exclusive access to `Z80Bus`.
+    /// As long as no other code borrows `Bus` from the `RefCell` while `Z80Bus` is active, this is safe.
+    raw_bus: *mut Bus,
 }
 
 impl Z80Bus {
     /// Create a new Z80 bus adapter
     pub fn new(bus: SharedBus) -> Self {
-        Self { bus }
+        // SAFETY: We get the raw pointer from the Rc<RefCell<Bus>>.
+        // The pointer is valid as long as the Rc is alive, which is stored in `bus`.
+        let raw_bus = bus.bus.as_ptr();
+        Self { bus, raw_bus }
     }
 
     /// Set the bank register (called on write to $6000)
@@ -27,14 +43,15 @@ impl Z80Bus {
     /// Set the bank register (called on write to $6000)
     pub fn set_bank(&mut self, value: u8) {
         // Delegate to shared bus so 68k and Z80 see the same state
-        self.bus.bus.borrow_mut().write_byte(0xA06000, value);
+        unsafe { (*self.raw_bus).write_byte(0xA06000, value) };
     }
 
     /// Reset bank register to 0
     pub fn reset_bank(&mut self) {
-        let mut bus = self.bus.bus.borrow_mut();
-        bus.z80_bank_addr = 0;
-        bus.z80_bank_bit = 0;
+        unsafe {
+            (*self.raw_bus).z80_bank_addr = 0;
+            (*self.raw_bus).z80_bank_bit = 0;
+        }
     }
 }
 
@@ -44,13 +61,13 @@ impl MemoryInterface for Z80Bus {
 
         match addr {
             // Z80 Sound RAM: 0000h-1FFFh
-            0x0000..=0x1FFF => self.bus.bus.borrow().z80_ram[addr as usize],
+            0x0000..=0x1FFF => unsafe { (*self.raw_bus).z80_ram[addr as usize] },
 
             // Mirror of Z80 RAM: 2000h-3FFFh
-            0x2000..=0x3FFF => self.bus.bus.borrow().z80_ram[(addr & 0x1FFF) as usize],
+            0x2000..=0x3FFF => unsafe { (*self.raw_bus).z80_ram[(addr & 0x1FFF) as usize] },
 
             // YM2612: 4000h-4003h
-            0x4000..=0x4003 => self.bus.bus.borrow().apu.fm.read((addr & 3) as u8),
+            0x4000..=0x4003 => unsafe { (*self.raw_bus).apu.fm.read((addr & 3) as u8) },
 
             // FM Mirror or PSG/Bank area
             0x4004..=0x5FFF => 0xFF,
@@ -60,11 +77,9 @@ impl MemoryInterface for Z80Bus {
 
             // Banked 68k memory: 8000h-FFFFh
             0x8000..=0xFFFF => {
-                let bank_addr = self.bus.bus.borrow().z80_bank_addr;
+                let bank_addr = unsafe { (*self.raw_bus).z80_bank_addr };
                 let effective_addr = bank_addr | ((addr as u32) & 0x7FFF);
-                let value = self.bus.bus.borrow_mut().read_byte(effective_addr);
-                // eprintln!("DEBUG: Z80 BANK READ: z80_addr=0x{:04X} bank=0x{:06X} effective=0x{:06X} val=0x{:02X}", addr, bank_addr, effective_addr, value);
-                value
+                unsafe { (*self.raw_bus).read_byte(effective_addr) }
             }
         }
     }
@@ -75,32 +90,24 @@ impl MemoryInterface for Z80Bus {
         match addr {
             // Z80 Sound RAM: 0000h-1FFFh
             0x0000..=0x1FFF => {
-                self.bus.bus.borrow_mut().z80_ram[addr as usize] = value;
+                unsafe { (*self.raw_bus).z80_ram[addr as usize] = value };
             }
 
             // Mirror of Z80 RAM: 2000h-3FFFh
             0x2000..=0x3FFF => {
-                self.bus.bus.borrow_mut().z80_ram[(addr & 0x1FFF) as usize] = value;
+                unsafe { (*self.raw_bus).z80_ram[(addr & 0x1FFF) as usize] = value };
             }
 
             // YM2612: 4000h-4003h
             0x4000..=0x4003 => {
                 let port = (addr & 2) >> 1;
                 let is_data = (addr & 1) != 0;
-                if is_data {
-                    self.bus
-                        .bus
-                        .borrow_mut()
-                        .apu
-                        .fm
-                        .write_data(port as u8, value);
-                } else {
-                    self.bus
-                        .bus
-                        .borrow_mut()
-                        .apu
-                        .fm
-                        .write_address(port as u8, value);
+                unsafe {
+                    if is_data {
+                        (*self.raw_bus).apu.fm.write_data(port as u8, value);
+                    } else {
+                        (*self.raw_bus).apu.fm.write_address(port as u8, value);
+                    }
                 }
             }
 
@@ -115,15 +122,15 @@ impl MemoryInterface for Z80Bus {
             // Reserved / PSG area
             0x6100..=0x7F10 => {}
             0x7F11 => {
-                self.bus.bus.borrow_mut().apu.psg.write(value);
+                unsafe { (*self.raw_bus).apu.psg.write(value) };
             }
             0x7F12..=0x7FFF => {}
 
             // Banked 68k memory: 8000h-FFFFh
             0x8000..=0xFFFF => {
-                let bank_addr = self.bus.bus.borrow().z80_bank_addr;
+                let bank_addr = unsafe { (*self.raw_bus).z80_bank_addr };
                 let effective_addr = bank_addr | ((addr as u32) & 0x7FFF);
-                self.bus.bus.borrow_mut().write_byte(effective_addr, value);
+                unsafe { (*self.raw_bus).write_byte(effective_addr, value) };
             }
         }
     }
