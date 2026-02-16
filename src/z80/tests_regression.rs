@@ -228,12 +228,27 @@ fn regression_neg_80() {
     c.a = 0x80;
     c.step();
     assert_eq!(c.a, 0x80);
-    assert!(c.get_flag(flags::PARITY), "Parity/Overflow flag should be set (Overflow)");
-    assert!(c.get_flag(flags::CARRY), "Carry flag should be set (A != 0)");
+    assert!(
+        c.get_flag(flags::PARITY),
+        "Parity/Overflow flag should be set (Overflow)"
+    );
+    assert!(
+        c.get_flag(flags::CARRY),
+        "Carry flag should be set (A != 0)"
+    );
     assert!(!c.get_flag(flags::ZERO), "Zero flag should not be set");
-    assert!(c.get_flag(flags::SIGN), "Sign flag should be set (Result is 0x80)");
-    assert!(!c.get_flag(flags::HALF_CARRY), "Half Carry flag should not be set (No borrow from bit 4)");
-    assert!(c.get_flag(flags::ADD_SUB), "Add/Subtract flag should be set");
+    assert!(
+        c.get_flag(flags::SIGN),
+        "Sign flag should be set (Result is 0x80)"
+    );
+    assert!(
+        !c.get_flag(flags::HALF_CARRY),
+        "Half Carry flag should not be set (No borrow from bit 4)"
+    );
+    assert!(
+        c.get_flag(flags::ADD_SUB),
+        "Add/Subtract flag should be set"
+    );
 }
 
 // Regression: NEG with A=0 should clear carry (verified against reference model)
@@ -457,7 +472,10 @@ fn regression_bit_h_flag() {
     c.a = 0xFF; // Set all bits
     c.set_flag(flags::HALF_CARRY, false); // Ensure it starts clear
     c.step();
-    assert!(c.get_flag(flags::HALF_CARRY), "H flag should be set after BIT 0, A");
+    assert!(
+        c.get_flag(flags::HALF_CARRY),
+        "H flag should be set after BIT 0, A"
+    );
 
     // Case 2: BIT 7, (HL)
     let mut c = z80(&[0xCB, 0x7E]);
@@ -465,7 +483,10 @@ fn regression_bit_h_flag() {
     c.memory.write_byte(0x1234, 0x00);
     c.set_flag(flags::HALF_CARRY, false);
     c.step();
-    assert!(c.get_flag(flags::HALF_CARRY), "H flag should be set after BIT 7, (HL)");
+    assert!(
+        c.get_flag(flags::HALF_CARRY),
+        "H flag should be set after BIT 7, (HL)"
+    );
 
     // Case 3: BIT 3, (IX+d)
     // DD CB d 5E -> BIT 3, (IX+d)
@@ -474,7 +495,10 @@ fn regression_bit_h_flag() {
     c.memory.write_byte(0x1002, 0x55);
     c.set_flag(flags::HALF_CARRY, false);
     c.step();
-    assert!(c.get_flag(flags::HALF_CARRY), "H flag should be set after BIT 3, (IX+d)");
+    assert!(
+        c.get_flag(flags::HALF_CARRY),
+        "H flag should be set after BIT 3, (IX+d)"
+    );
 }
 
 // Bug: RLC/RRC/RL/RR should affect all flags correctly
@@ -484,12 +508,12 @@ fn regression_rlc_flags() {
     c.a = 0x80; // 1000 0000 -> 0000 0001 (Carry=1)
     c.step();
     assert_eq!(c.a, 0x01);
-    assert!(!c.get_flag(flags::ZERO));      // Z=0
-    assert!(!c.get_flag(flags::SIGN));      // S=0
-    assert!(!c.get_flag(flags::PARITY));    // P/V=0 (Odd parity: 1 bit set)
-    assert!(c.get_flag(flags::CARRY));      // C=1
-    assert!(!c.get_flag(flags::HALF_CARRY));// H=0
-    assert!(!c.get_flag(flags::ADD_SUB));   // N=0
+    assert!(!c.get_flag(flags::ZERO)); // Z=0
+    assert!(!c.get_flag(flags::SIGN)); // S=0
+    assert!(!c.get_flag(flags::PARITY)); // P/V=0 (Odd parity: 1 bit set)
+    assert!(c.get_flag(flags::CARRY)); // C=1
+    assert!(!c.get_flag(flags::HALF_CARRY)); // H=0
+    assert!(!c.get_flag(flags::ADD_SUB)); // N=0
 }
 
 #[test]
@@ -498,12 +522,12 @@ fn regression_rrc_flags() {
     c.a = 0x01; // 0000 0001 -> 1000 0000 (Carry=1)
     c.step();
     assert_eq!(c.a, 0x80);
-    assert!(!c.get_flag(flags::ZERO));      // Z=0
-    assert!(c.get_flag(flags::SIGN));       // S=1
-    assert!(!c.get_flag(flags::PARITY));    // P/V=0 (Odd parity: 1 bit set)
-    assert!(c.get_flag(flags::CARRY));      // C=1
-    assert!(!c.get_flag(flags::HALF_CARRY));// H=0
-    assert!(!c.get_flag(flags::ADD_SUB));   // N=0
+    assert!(!c.get_flag(flags::ZERO)); // Z=0
+    assert!(c.get_flag(flags::SIGN)); // S=1
+    assert!(!c.get_flag(flags::PARITY)); // P/V=0 (Odd parity: 1 bit set)
+    assert!(c.get_flag(flags::CARRY)); // C=1
+    assert!(!c.get_flag(flags::HALF_CARRY)); // H=0
+    assert!(!c.get_flag(flags::ADD_SUB)); // N=0
 }
 
 #[test]
@@ -514,12 +538,12 @@ fn regression_rl_flags() {
     c.step();
     // 1000 0000 << 1 | 0 = 0000 0000, C=1
     assert_eq!(c.a, 0x00);
-    assert!(c.get_flag(flags::ZERO));       // Z=1
-    assert!(!c.get_flag(flags::SIGN));      // S=0
-    assert!(c.get_flag(flags::PARITY));     // P/V=1 (Even parity: 0 bits set)
-    assert!(c.get_flag(flags::CARRY));      // C=1
-    assert!(!c.get_flag(flags::HALF_CARRY));// H=0
-    assert!(!c.get_flag(flags::ADD_SUB));   // N=0
+    assert!(c.get_flag(flags::ZERO)); // Z=1
+    assert!(!c.get_flag(flags::SIGN)); // S=0
+    assert!(c.get_flag(flags::PARITY)); // P/V=1 (Even parity: 0 bits set)
+    assert!(c.get_flag(flags::CARRY)); // C=1
+    assert!(!c.get_flag(flags::HALF_CARRY)); // H=0
+    assert!(!c.get_flag(flags::ADD_SUB)); // N=0
 }
 
 #[test]
@@ -530,12 +554,12 @@ fn regression_rr_flags() {
     c.step();
     // 0000 0001 >> 1 | 0x80 = 1000 0000, C=1
     assert_eq!(c.a, 0x80);
-    assert!(!c.get_flag(flags::ZERO));      // Z=0
-    assert!(c.get_flag(flags::SIGN));       // S=1
-    assert!(!c.get_flag(flags::PARITY));    // P/V=0 (Odd parity: 1 bit set)
-    assert!(c.get_flag(flags::CARRY));      // C=1
-    assert!(!c.get_flag(flags::HALF_CARRY));// H=0
-    assert!(!c.get_flag(flags::ADD_SUB));   // N=0
+    assert!(!c.get_flag(flags::ZERO)); // Z=0
+    assert!(c.get_flag(flags::SIGN)); // S=1
+    assert!(!c.get_flag(flags::PARITY)); // P/V=0 (Odd parity: 1 bit set)
+    assert!(c.get_flag(flags::CARRY)); // C=1
+    assert!(!c.get_flag(flags::HALF_CARRY)); // H=0
+    assert!(!c.get_flag(flags::ADD_SUB)); // N=0
 }
 
 #[test]
@@ -545,12 +569,12 @@ fn regression_sla_flags() {
     c.step();
     // 1111 1111 << 1 = 1111 1110 (0xFE), C=1
     assert_eq!(c.a, 0xFE);
-    assert!(!c.get_flag(flags::ZERO));      // Z=0
-    assert!(c.get_flag(flags::SIGN));       // S=1
-    assert!(!c.get_flag(flags::PARITY));    // P/V=0 (Odd parity: 7 bits set)
-    assert!(c.get_flag(flags::CARRY));      // C=1
-    assert!(!c.get_flag(flags::HALF_CARRY));// H=0
-    assert!(!c.get_flag(flags::ADD_SUB));   // N=0
+    assert!(!c.get_flag(flags::ZERO)); // Z=0
+    assert!(c.get_flag(flags::SIGN)); // S=1
+    assert!(!c.get_flag(flags::PARITY)); // P/V=0 (Odd parity: 7 bits set)
+    assert!(c.get_flag(flags::CARRY)); // C=1
+    assert!(!c.get_flag(flags::HALF_CARRY)); // H=0
+    assert!(!c.get_flag(flags::ADD_SUB)); // N=0
 }
 
 #[test]
@@ -560,12 +584,12 @@ fn regression_sra_flags() {
     c.step();
     // 1000 0000 >> 1 | 1000 0000 = 1100 0000 (0xC0), C=0
     assert_eq!(c.a, 0xC0);
-    assert!(!c.get_flag(flags::ZERO));      // Z=0
-    assert!(c.get_flag(flags::SIGN));       // S=1
-    assert!(c.get_flag(flags::PARITY));     // P/V=1 (Even parity: 2 bits set)
-    assert!(!c.get_flag(flags::CARRY));     // C=0
-    assert!(!c.get_flag(flags::HALF_CARRY));// H=0
-    assert!(!c.get_flag(flags::ADD_SUB));   // N=0
+    assert!(!c.get_flag(flags::ZERO)); // Z=0
+    assert!(c.get_flag(flags::SIGN)); // S=1
+    assert!(c.get_flag(flags::PARITY)); // P/V=1 (Even parity: 2 bits set)
+    assert!(!c.get_flag(flags::CARRY)); // C=0
+    assert!(!c.get_flag(flags::HALF_CARRY)); // H=0
+    assert!(!c.get_flag(flags::ADD_SUB)); // N=0
 }
 
 #[test]
@@ -575,12 +599,12 @@ fn regression_srl_flags() {
     c.step();
     // 0000 0001 >> 1 = 0000 0000, C=1
     assert_eq!(c.a, 0x00);
-    assert!(c.get_flag(flags::ZERO));       // Z=1
-    assert!(!c.get_flag(flags::SIGN));      // S=0
-    assert!(c.get_flag(flags::PARITY));     // P/V=1 (Even parity: 0 bits set)
-    assert!(c.get_flag(flags::CARRY));      // C=1
-    assert!(!c.get_flag(flags::HALF_CARRY));// H=0
-    assert!(!c.get_flag(flags::ADD_SUB));   // N=0
+    assert!(c.get_flag(flags::ZERO)); // Z=1
+    assert!(!c.get_flag(flags::SIGN)); // S=0
+    assert!(c.get_flag(flags::PARITY)); // P/V=1 (Even parity: 0 bits set)
+    assert!(c.get_flag(flags::CARRY)); // C=1
+    assert!(!c.get_flag(flags::HALF_CARRY)); // H=0
+    assert!(!c.get_flag(flags::ADD_SUB)); // N=0
 }
 
 // Bug: SBC HL, BC with no carry shouldn't borrow

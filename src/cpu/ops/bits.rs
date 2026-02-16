@@ -1,4 +1,4 @@
-use crate::cpu::addressing::{calculate_ea, read_ea, write_ea};
+use crate::cpu::addressing::{calculate_ea, read_ea};
 use crate::cpu::decoder::{AddressingMode, BitSource, ShiftCount, Size};
 use crate::cpu::flags;
 use crate::cpu::Cpu;
@@ -50,7 +50,7 @@ pub fn exec_andi<M: MemoryInterface>(
     let dst_val = cpu.cpu_read_ea(dst_ea, size, memory);
 
     let result = dst_val & imm;
-    write_ea(dst_ea, size, result, &mut cpu.d, &mut cpu.a, memory);
+    cpu.cpu_write_ea(dst_ea, size, result, memory);
 
     cpu.update_nz_flags(result, size);
     cpu.set_flag(flags::CARRY, false);
@@ -105,7 +105,7 @@ pub fn exec_ori<M: MemoryInterface>(
     let dst_val = cpu.cpu_read_ea(dst_ea, size, memory);
 
     let result = dst_val | imm;
-    write_ea(dst_ea, size, result, &mut cpu.d, &mut cpu.a, memory);
+    cpu.cpu_write_ea(dst_ea, size, result, memory);
 
     cpu.update_nz_flags(result, size);
     cpu.set_flag(flags::CARRY, false);
@@ -158,7 +158,7 @@ pub fn exec_eori<M: MemoryInterface>(
     let dst_val = cpu.cpu_read_ea(dst_ea, size, memory);
 
     let result = dst_val ^ imm;
-    write_ea(dst_ea, size, result, &mut cpu.d, &mut cpu.a, memory);
+    cpu.cpu_write_ea(dst_ea, size, result, memory);
 
     cpu.update_nz_flags(result, size);
     cpu.set_flag(flags::CARRY, false);
@@ -178,7 +178,7 @@ pub fn exec_not<M: MemoryInterface>(
 
     let result = !val;
 
-    write_ea(dst_ea, size, result, &mut cpu.d, &mut cpu.a, memory);
+    cpu.cpu_write_ea(dst_ea, size, result, memory);
 
     cpu.update_nz_flags(result, size);
     cpu.set_flag(flags::OVERFLOW, false);
@@ -234,7 +234,7 @@ pub fn exec_shift<M: MemoryInterface>(
         }
     }
 
-    write_ea(dst_ea, size, result, &mut cpu.d, &mut cpu.a, memory);
+    cpu.cpu_write_ea(dst_ea, size, result, memory);
 
     cpu.update_nz_flags(result, size);
     if count_val > 0 {
@@ -297,7 +297,7 @@ pub fn exec_rotate<M: MemoryInterface>(
         carry = ((val >> (effective_count - 1)) & 1) != 0;
     }
 
-    write_ea(dst_ea, size, result, &mut cpu.d, &mut cpu.a, memory);
+    cpu.cpu_write_ea(dst_ea, size, result, memory);
 
     cpu.update_nz_flags(result, size);
     cpu.set_flag(flags::CARRY, carry);
