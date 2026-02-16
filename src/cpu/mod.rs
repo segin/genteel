@@ -25,9 +25,24 @@ mod tests_m68k_torture;
 #[cfg(test)]
 mod tests_performance;
 
-use self::addressing::{read_ea, write_ea, EffectiveAddress};
+use self::addressing::{read_ea, EffectiveAddress};
 use self::decoder::{decode, BitSource, Condition, Instruction, Size};
 use crate::memory::MemoryInterface;
+
+#[derive(Clone, Copy, Debug)]
+struct DecodeCacheEntry {
+    pc: u32,
+    instruction: Instruction,
+}
+
+impl Default for DecodeCacheEntry {
+    fn default() -> Self {
+        Self {
+            pc: u32::MAX,
+            instruction: Instruction::Nop,
+        }
+    }
+}
 
 /// Status Register flags
 pub mod flags {
@@ -66,10 +81,18 @@ pub struct Cpu {
 
     // Interrupt pending bitmask (bit N = level N is pending)
     pub interrupt_pending_mask: u8,
+
+    // Instruction Cache (Direct mapped, 64K entries)
+    decode_cache: Box<[DecodeCacheEntry; 65536]>,
 }
 
 impl Cpu {
     pub fn new<M: MemoryInterface>(memory: &mut M) -> Self {
+        let decode_cache = vec![DecodeCacheEntry::default(); 65536]
+            .into_boxed_slice()
+            .try_into()
+            .unwrap();
+
         let mut cpu = Self {
             d: [0; 8],
             a: [0; 8],
@@ -82,6 +105,7 @@ impl Cpu {
             pending_interrupt: 0,
             pending_exception: false,
             interrupt_pending_mask: 0,
+            decode_cache,
         };
 
         // At startup, the supervisor stack pointer is read from address 0x00000000
@@ -105,6 +129,19 @@ impl Cpu {
         self.halted = false;
         self.pending_interrupt = 0;
         self.interrupt_pending_mask = 0;
+        self.invalidate_cache();
+    }
+
+    /// Invalidates the entire instruction cache
+    pub fn invalidate_cache(&mut self) {
+        for entry in self.decode_cache.iter_mut() {
+            entry.pc = u32::MAX;
+        }
+    }
+
+    fn invalidate_cache_line(&mut self, addr: u32) {
+        let index = ((addr >> 1) & 0xFFFF) as usize;
+        self.decode_cache[index].pc = u32::MAX;
     }
 
     /// Request an interrupt at the specified level
@@ -158,16 +195,35 @@ impl Cpu {
         }
 
         let pc = self.pc;
-        let opcode = self.read_instruction_word(pc, memory);
-        if self.pending_exception {
-            // Address Error during fetch
-            self.cycles += 34;
-            return 34;
-        }
+
+        // Try to fetch from cache
+        let cache_index = ((pc >> 1) & 0xFFFF) as usize;
+        let entry = self.decode_cache[cache_index];
+
+        let instruction = if entry.pc == pc {
+            entry.instruction
+        } else {
+            // Cache miss: read from memory and decode
+            let opcode = self.read_instruction_word(pc, memory);
+            if self.pending_exception {
+                // Address Error during fetch
+                self.cycles += 34;
+                return 34;
+            }
+
+            let instr = decode(opcode);
+
+            // Update cache
+            self.decode_cache[cache_index] = DecodeCacheEntry {
+                pc,
+                instruction: instr,
+            };
+
+            instr
+        };
 
         self.pc = self.pc.wrapping_add(2);
 
-        let instruction = decode(opcode);
         let mut cycles = self.execute(instruction, memory);
 
         if self.pending_exception {
@@ -724,12 +780,18 @@ impl Cpu {
         memory.read_long(addr)
     }
 
+    pub(crate) fn write_byte<M: MemoryInterface>(&mut self, addr: u32, val: u8, memory: &mut M) {
+        memory.write_byte(addr, val);
+        self.invalidate_cache_line(addr);
+    }
+
     pub(crate) fn write_word<M: MemoryInterface>(&mut self, addr: u32, val: u16, memory: &mut M) {
         if !addr.is_multiple_of(2) {
             self.process_exception(3, memory); // Address Error
             return;
         }
         memory.write_word(addr, val);
+        self.invalidate_cache_line(addr);
     }
 
     pub(crate) fn write_long<M: MemoryInterface>(&mut self, addr: u32, val: u32, memory: &mut M) {
@@ -738,6 +800,8 @@ impl Cpu {
             return;
         }
         memory.write_long(addr, val);
+        self.invalidate_cache_line(addr);
+        self.invalidate_cache_line(addr.wrapping_add(2));
     }
 
     // === Centralized Memory and Register Access Helpers ===
@@ -763,7 +827,7 @@ impl Cpu {
         memory: &mut M,
     ) {
         match size {
-            Size::Byte => memory.write_byte(addr, val as u8),
+            Size::Byte => self.write_byte(addr, val as u8, memory),
             Size::Word => self.write_word(addr, val as u16, memory),
             Size::Long => self.write_long(addr, val, memory),
         }
@@ -791,13 +855,32 @@ impl Cpu {
         val: u32,
         memory: &mut M,
     ) {
-        if let EffectiveAddress::Memory(addr) = ea {
-            if size != Size::Byte && !addr.is_multiple_of(2) {
-                self.process_exception(3, memory);
-                return;
+        match ea {
+            EffectiveAddress::DataRegister(reg) => {
+                let reg = reg as usize;
+                match size {
+                    Size::Byte => self.d[reg] = (self.d[reg] & 0xFFFFFF00) | (val & 0xFF),
+                    Size::Word => self.d[reg] = (self.d[reg] & 0xFFFF0000) | (val & 0xFFFF),
+                    Size::Long => self.d[reg] = val,
+                }
+            }
+            EffectiveAddress::AddressRegister(reg) => {
+                let reg = reg as usize;
+                // Address register writes are always 32-bit (sign-extended for word)
+                match size {
+                    Size::Byte => self.a[reg] = (val as i8) as i32 as u32,
+                    Size::Word => self.a[reg] = (val as i16) as i32 as u32,
+                    Size::Long => self.a[reg] = val,
+                }
+            }
+            EffectiveAddress::Memory(addr) => {
+                if size != Size::Byte && !addr.is_multiple_of(2) {
+                    self.process_exception(3, memory);
+                    return;
+                }
+                self.cpu_write_memory(addr, size, val, memory);
             }
         }
-        write_ea(ea, size, val, &mut self.d, &mut self.a, memory);
     }
 
     // === System / Program Control ===

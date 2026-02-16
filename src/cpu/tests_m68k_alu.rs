@@ -147,6 +147,7 @@ fn test_addq_1_to_8() {
     for data in 1..=8u8 {
         let opcode = 0x5040 | ((data as u16 % 8) << 9); // ADDQ.W #data, D0
         write_op(&mut memory, &[opcode]);
+        cpu.invalidate_cache();
         cpu.d[0] = 100;
         cpu.pc = 0x1000;
         cpu.step_instruction(&mut memory);
@@ -295,6 +296,7 @@ fn test_subq_1_to_8() {
     for data in 1..=8u8 {
         let opcode = 0x5140 | ((data as u16 % 8) << 9); // SUBQ.W #data, D0
         write_op(&mut memory, &[opcode]);
+        cpu.invalidate_cache();
         cpu.d[0] = 100;
         cpu.pc = 0x1000;
         cpu.step_instruction(&mut memory);
