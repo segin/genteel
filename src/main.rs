@@ -19,6 +19,7 @@ pub mod io;
 pub mod memory;
 pub mod vdp;
 pub mod z80;
+pub mod wav_writer;
 
 use apu::Apu;
 use cpu::Cpu;
@@ -52,6 +53,7 @@ pub struct Emulator {
     pub bus: Rc<RefCell<Bus>>,
     pub input: InputManager,
     pub audio_buffer: Vec<i16>,
+    pub wav_writer: Option<wav_writer::WavWriter>,
     pub apu_accumulator: f32,
     pub internal_frame_count: u64,
     pub z80_last_bus_req: bool,
@@ -87,6 +89,7 @@ impl Emulator {
             bus,
             input: InputManager::new(),
             audio_buffer: Vec::with_capacity(735 * 2), // Pre-allocate approx 1 frame
+            wav_writer: None,
             apu_accumulator: 0.0,
             internal_frame_count: 0,
             z80_last_bus_req: false,
@@ -296,8 +299,7 @@ impl Emulator {
         }
     }
 
-    fn run_cpu_batch(&mut self, max_cycles: u32) -> CpuBatchResult {
-        let mut bus = self.bus.borrow_mut();
+    fn run_cpu_batch_static(cpu: &mut Cpu, bus: &mut Bus, max_cycles: u32) -> CpuBatchResult {
         let initial_req = bus.z80_bus_request;
         let initial_rst = bus.z80_reset;
         let mut pending_cycles = 0;
@@ -310,7 +312,7 @@ impl Emulator {
                 };
             }
 
-            let m68k_cycles = self.cpu.step_instruction(&mut *bus);
+            let m68k_cycles = cpu.step_instruction(bus);
             bus.apu.fm.step(m68k_cycles);
 
             // Check for Z80 state change
@@ -336,59 +338,96 @@ impl Emulator {
         const BATCH_SIZE: u32 = 128;
         let mut cycles_scanline: u32 = 0;
 
+        // Hoist borrow out of the loop
+        let mut bus_guard = self.bus.borrow_mut();
+        let bus = &mut *bus_guard;
+
+        // Set raw bus pointer for Z80 optimization
+        unsafe {
+            self.z80.memory.set_raw_bus(bus);
+        }
+
         while cycles_scanline < CYCLES_PER_LINE {
             let remaining = CYCLES_PER_LINE - cycles_scanline;
             let limit = std::cmp::min(remaining, BATCH_SIZE);
 
-            let result = self.run_cpu_batch(limit);
+            let result = Self::run_cpu_batch_static(&mut self.cpu, bus, limit);
 
             // If state changed, revert to old state temporarily so we can sync the batch cycles
             // with the state that was active during those cycles.
             if let Some(change) = result.z80_change {
-                let mut bus = self.bus.borrow_mut();
                 bus.z80_bus_request = change.old_req;
                 bus.z80_reset = change.old_rst;
             }
 
             if result.cycles > 0 {
                 let trigger_vint = line == active_lines && cycles_scanline < 10;
-                self.sync_z80(result.cycles, trigger_vint, z80_cycle_debt);
+                Self::sync_z80_static(
+                    &mut self.z80,
+                    bus,
+                    result.cycles,
+                    trigger_vint,
+                    z80_cycle_debt,
+                    self.internal_frame_count,
+                    &mut self.z80_last_bus_req,
+                    &mut self.z80_last_reset,
+                    &mut self.z80_trace_count,
+                    self.cpu.pc,
+                );
                 cycles_scanline += result.cycles;
             }
 
             if let Some(change) = result.z80_change {
                 // Now apply the new state for the instruction that caused the change
                 {
-                    let mut bus = self.bus.borrow_mut();
                     bus.z80_bus_request = change.new_req;
                     bus.z80_reset = change.new_rst;
                 }
 
                 let trigger_vint = line == active_lines && cycles_scanline < 10;
-                self.sync_z80(change.instruction_cycles, trigger_vint, z80_cycle_debt);
+                Self::sync_z80_static(
+                    &mut self.z80,
+                    bus,
+                    change.instruction_cycles,
+                    trigger_vint,
+                    z80_cycle_debt,
+                    self.internal_frame_count,
+                    &mut self.z80_last_bus_req,
+                    &mut self.z80_last_reset,
+                    &mut self.z80_trace_count,
+                    self.cpu.pc,
+                );
                 cycles_scanline += change.instruction_cycles;
             }
         }
+
+        // Clear raw bus pointer
+        self.z80.memory.clear_raw_bus();
     }
 
-    fn sync_z80(
-        &mut self,
+    fn sync_z80_static(
+        z80: &mut Z80<Z80Bus, Z80Bus>,
+        bus: &mut Bus,
         m68k_cycles: u32,
         trigger_vint: bool,
         z80_cycle_debt: &mut f32,
+        internal_frame_count: u64,
+        z80_last_bus_req: &mut bool,
+        z80_last_reset: &mut bool,
+        z80_trace_count: &mut u32,
+        cpu_pc: u32,
     ) {
         const Z80_CYCLES_PER_M68K_CYCLE: f32 = 3.58 / 7.67;
 
         // Z80 execution
         let (z80_can_run, z80_is_reset) = {
-            let bus = self.bus.borrow();
-            let prev = self.z80_last_bus_req;
+            let prev = *z80_last_bus_req;
             if bus.z80_bus_request != prev {
                 eprintln!(
                     "DEBUG: Bus Req Changed: {} -> {} at 68k PC={:06X}",
-                    prev, bus.z80_bus_request, self.cpu.pc
+                    prev, bus.z80_bus_request, cpu_pc
                 );
-                self.z80_last_bus_req = bus.z80_bus_request;
+                *z80_last_bus_req = bus.z80_bus_request;
             }
             (!bus.z80_reset && !bus.z80_bus_request, bus.z80_reset)
         };
@@ -396,31 +435,31 @@ impl Emulator {
         // Z80 reset logic:
         // Reset the Z80 on the leading edge of the reset signal.
         // The Z80 is held in reset (not stepped) as long as z80_reset is true.
-        if z80_is_reset && !self.z80_last_reset {
-            self.z80.reset();
+        if z80_is_reset && !*z80_last_reset {
+            z80.reset();
         }
-        self.z80_last_reset = z80_is_reset;
+        *z80_last_reset = z80_is_reset;
 
-        if z80_can_run && self.internal_frame_count > 0 {
-            if self.z80_trace_count < 5000 {
-                self.z80.debug = true;
-                self.z80_trace_count += 1;
+        if z80_can_run && internal_frame_count > 0 {
+            if *z80_trace_count < 5000 {
+                z80.debug = true;
+                *z80_trace_count += 1;
             } else {
-                self.z80.debug = false;
+                z80.debug = false;
             }
         } else {
-            self.z80.debug = false;
+            z80.debug = false;
         }
 
         // Trigger Z80 VInt at start of VBlank
         if trigger_vint && !z80_is_reset {
-            self.z80.trigger_interrupt(0xFF);
+            z80.trigger_interrupt(0xFF);
         }
 
         if z80_can_run {
             *z80_cycle_debt += (m68k_cycles as f32) * Z80_CYCLES_PER_M68K_CYCLE;
             while *z80_cycle_debt >= 1.0 {
-                let z80_cycles = self.z80.step();
+                let z80_cycles = z80.step();
                 *z80_cycle_debt -= z80_cycles as f32;
             }
         }
@@ -435,6 +474,11 @@ impl Emulator {
             let mut bus = self.bus.borrow_mut();
             for _ in 0..samples_to_run {
                 let sample = bus.apu.step();
+
+                if let Some(writer) = &mut self.wav_writer {
+                    let _ = writer.write_samples(&[sample, sample]);
+                }
+
                 // Security Fix: Prevent unbounded buffer growth if not consumed
                 // Cap at ~20 frames of audio (32768 samples)
                 if self.audio_buffer.len() < 32768 {
@@ -790,6 +834,7 @@ fn print_usage() {
     println!("  --headless <n>   Run N frames without display");
     println!("  --gdb [port]     Start GDB server (default port: 1234)");
     println!("  --gdb-password <pwd> Set password for GDB server");
+    println!("  --dump-audio <file> Dump audio output to WAV file");
     println!("  --help           Show this help");
     println!();
     println!("Controls (play mode):");
@@ -835,6 +880,7 @@ struct Config {
     headless_frames: Option<u32>,
     gdb_port: Option<u16>,
     gdb_password: Option<String>,
+    dump_audio_path: Option<String>,
     show_help: bool,
 }
 
@@ -874,6 +920,9 @@ impl Config {
                 "--gdb-password" => {
                     config.gdb_password = iter.next();
                 }
+                "--dump-audio" => {
+                    config.dump_audio_path = iter.next();
+                }
                 arg if !arg.starts_with('-') => {
                     if let Some(ref mut path) = config.rom_path {
                         path.push(' ');
@@ -903,8 +952,17 @@ fn main() {
     let script_path = config.script_path;
     let headless_frames = config.headless_frames;
     let gdb_port = config.gdb_port;
+    let dump_audio_path = config.dump_audio_path;
 
     let mut emulator = Emulator::new();
+
+    if let Some(path) = dump_audio_path {
+        println!("Dumping audio to: {}", path);
+        match wav_writer::WavWriter::new(&path, audio::SAMPLE_RATE, 2) {
+            Ok(writer) => emulator.wav_writer = Some(writer),
+            Err(e) => eprintln!("Failed to create audio dump file: {}", e),
+        }
+    }
 
     // Load ROM if provided
     if let Some(ref path) = rom_path {

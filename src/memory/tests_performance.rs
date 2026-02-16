@@ -1,7 +1,8 @@
 #[cfg(test)]
 mod performance_tests {
     use crate::memory::bus::Bus;
-    use crate::memory::{MemoryInterface, SharedBus, Z80Bus};
+    use crate::memory::z80_bus::Z80Bus;
+    use crate::memory::{MemoryInterface, SharedBus};
     use std::cell::RefCell;
     use std::rc::Rc;
     use std::time::Instant;
@@ -11,18 +12,30 @@ mod performance_tests {
         let bus = Rc::new(RefCell::new(Bus::new()));
         let mut z80_bus = Z80Bus::new(SharedBus::new(bus.clone()));
 
-        // Setup some Z80 RAM
-        bus.borrow_mut().z80_ram[0] = 0xAA;
+        // Ensure Z80 bus request is active so we can access RAM
+        bus.borrow_mut().z80_bus_request = true;
 
-        let iterations = 30_000_000;
+        let iterations = 10_000_000;
         let start = Instant::now();
-        let mut sum: u64 = 0;
+
+        // Perform mix of reads and writes
+        // Z80 RAM (0x0000-0x1FFF)
+        // Banked Memory (0x8000-0xFFFF) - accessing 0x8000 maps to 68k address 0 (ROM)
+
+        // Pre-load some data in ROM for banked access check
+        bus.borrow_mut().load_rom(&vec![0xAA; 1024]);
+
+        let mut sum: u32 = 0;
 
         for i in 0..iterations {
-            // Read from Z80 RAM (address varies to prevent optimization)
-            sum += z80_bus.read_byte((i % 1024) as u32) as u64;
             // Write to Z80 RAM
-            z80_bus.write_byte(((i + 1) % 1024) as u32, (i % 256) as u8);
+            z80_bus.write_byte((i as u32) & 0x1FFF, (i & 0xFF) as u8);
+
+            // Read from Z80 RAM
+            sum = sum.wrapping_add(z80_bus.read_byte((i as u32) & 0x1FFF) as u32);
+
+            // Read from Banked Memory (ROM)
+            sum = sum.wrapping_add(z80_bus.read_byte(0x8000 + ((i as u32) & 0xFF)) as u32);
         }
 
         let duration = start.elapsed();
@@ -37,23 +50,31 @@ mod performance_tests {
         let bus = Rc::new(RefCell::new(Bus::new()));
         let mut z80_bus = Z80Bus::new(SharedBus::new(bus.clone()));
 
-        // Setup some Z80 RAM
-        bus.borrow_mut().z80_ram[0] = 0xAA;
+        // Ensure Z80 bus request is active so we can access RAM
+        bus.borrow_mut().z80_bus_request = true;
 
         // Unsafe setup
         unsafe {
             z80_bus.set_raw_bus(bus.as_ptr());
         }
 
-        let iterations = 30_000_000;
+        let iterations = 10_000_000;
         let start = Instant::now();
-        let mut sum: u64 = 0;
+
+        // Pre-load some data in ROM
+        bus.borrow_mut().load_rom(&vec![0xAA; 1024]);
+
+        let mut sum: u32 = 0;
 
         for i in 0..iterations {
-            // Read from Z80 RAM
-            sum += z80_bus.read_byte((i % 1024) as u32) as u64;
             // Write to Z80 RAM
-            z80_bus.write_byte(((i + 1) % 1024) as u32, (i % 256) as u8);
+            z80_bus.write_byte((i as u32) & 0x1FFF, (i & 0xFF) as u8);
+
+            // Read from Z80 RAM
+            sum = sum.wrapping_add(z80_bus.read_byte((i as u32) & 0x1FFF) as u32);
+
+            // Read from Banked Memory (ROM)
+            sum = sum.wrapping_add(z80_bus.read_byte(0x8000 + ((i as u32) & 0xFF)) as u32);
         }
 
         let duration = start.elapsed();
@@ -61,6 +82,9 @@ mod performance_tests {
             "Z80 Bus Benchmark (Raw): {:?} for {} iterations. Sum: {}",
             duration, iterations, sum
         );
+
+        // Clear raw pointer
+        z80_bus.clear_raw_bus();
     }
 
     #[test]
@@ -75,35 +99,22 @@ mod performance_tests {
         bus.load_rom(&rom);
 
         // Setup DMA
-        // Length: 0x7FFF words (64KB - 2 bytes)
         let len_words = 0x7FFF;
         bus.vdp.registers[19] = (len_words & 0xFF) as u8;
         bus.vdp.registers[20] = (len_words >> 8) as u8;
-
-        // Source: 0 (ROM)
         bus.vdp.registers[21] = 0;
         bus.vdp.registers[22] = 0;
-        bus.vdp.registers[23] = 0; // Mode 0 (Transfer)
-
-        // Set Auto-Increment to 2 (standard VRAM write)
+        bus.vdp.registers[23] = 0;
         bus.vdp.registers[15] = 2;
-
-        // Enable DMA
         bus.vdp.registers[1] |= 0x10;
-
-        // Trigger via Control Port (VRAM Write 0x0000)
-        bus.write_word(0xC00004, 0x4000);
-        bus.write_word(0xC00004, 0x0080); // DMA trigger
-
-        // The DMA actually runs inside write_word -> run_dma
 
         let iterations = 1000;
         let start = Instant::now();
 
         for _ in 0..iterations {
             bus.vdp.dma_pending = true;
-            bus.write_word(0xC00004, 0x4000); // First word
-            bus.write_word(0xC00004, 0x0080); // Second word, triggers DMA
+            bus.write_word(0xC00004, 0x4000);
+            bus.write_word(0xC00004, 0x0080);
         }
 
         let duration = start.elapsed();
