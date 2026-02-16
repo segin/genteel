@@ -402,8 +402,8 @@ impl GdbServer {
     }
 
     fn write_registers(&self, data: &str, registers: &mut GdbRegisters) -> String {
-        if data.len() < 72 {
-            // 18 registers * 8 hex chars minimum
+        if data.len() < 144 {
+            // 18 registers * 8 hex chars = 144
             return "E01".to_string();
         }
 
@@ -1202,5 +1202,35 @@ mod tests {
         // Test with 71 chars (one less than the current check of 72)
         let data = "0".repeat(71);
         assert_eq!(server.process_command(&format!("G{}", data), &mut regs, &mut mem), "E01");
+    }
+
+    #[test]
+    fn test_write_registers_length_validation() {
+        let mut server = GdbServer {
+            listener: TcpListener::bind("127.0.0.1:0").unwrap(),
+            client: None,
+            breakpoints: HashSet::new(),
+            stop_reason: StopReason::Halted,
+            no_ack_mode: false,
+            password: None,
+            authenticated: true,
+        };
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+
+        // 18 registers * 8 chars = 144
+        // Test with 143 chars (insufficient)
+        let data_short = "0".repeat(143);
+        assert_eq!(
+            server.process_command(&format!("G{}", data_short), &mut regs, &mut mem),
+            "E01"
+        );
+
+        // Test with 144 chars (exact)
+        let data_exact = "0".repeat(144);
+        assert_eq!(
+            server.process_command(&format!("G{}", data_exact), &mut regs, &mut mem),
+            "OK"
+        );
     }
 }
