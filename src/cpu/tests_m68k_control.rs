@@ -350,6 +350,7 @@ fn test_link_unlk() {
     // UNLK A6
     write_op(&mut memory, &[0x4E5E]);
     cpu.pc = 0x1000;
+    cpu.invalidate_cache();
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.a[6], 0x11111111);
     assert_eq!(cpu.a[7], 0x8000);
