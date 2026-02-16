@@ -1696,4 +1696,3 @@ fn print_instruction_size() {
         std::mem::size_of::<Instruction>()
     );
 }
-

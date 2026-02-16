@@ -9,6 +9,8 @@ pub mod ops;
 #[cfg(test)]
 mod tests_bug_fixes;
 #[cfg(test)]
+mod tests_cache;
+#[cfg(test)]
 mod tests_m68k_alu;
 #[cfg(test)]
 mod tests_m68k_bits;
@@ -24,8 +26,6 @@ mod tests_m68k_shift;
 mod tests_m68k_torture;
 #[cfg(test)]
 mod tests_performance;
-#[cfg(test)]
-mod tests_cache;
 
 use self::addressing::{read_ea, EffectiveAddress};
 use self::decoder::{decode, BitSource, Condition, DecodeCacheEntry, Instruction, Size};
@@ -207,10 +207,8 @@ impl Cpu {
 
                 // Update Cache
                 unsafe {
-                    *self.decode_cache.get_unchecked_mut(cache_index) = DecodeCacheEntry {
-                        pc,
-                        instruction,
-                    };
+                    *self.decode_cache.get_unchecked_mut(cache_index) =
+                        DecodeCacheEntry { pc, instruction };
                 }
             }
         } else {

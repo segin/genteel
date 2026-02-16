@@ -864,7 +864,8 @@ mod tests {
         let mut mem = MockMemory::new();
 
         // Strict check for qSupported
-        let expected_supported = format!("PacketSize={};swbreak+;QStartNoAckMode+", MAX_PACKET_SIZE);
+        let expected_supported =
+            format!("PacketSize={};swbreak+;QStartNoAckMode+", MAX_PACKET_SIZE);
         assert_eq!(
             server.process_command("qSupported", &mut regs, &mut mem),
             expected_supported
@@ -892,10 +893,7 @@ mod tests {
         );
 
         // Unknown/Unsupported queries should return empty string
-        assert_eq!(
-            server.process_command("qUnknown", &mut regs, &mut mem),
-            ""
-        );
+        assert_eq!(server.process_command("qUnknown", &mut regs, &mut mem), "");
 
         // QStartNoAckMode
         assert_eq!(
@@ -1007,10 +1005,16 @@ mod tests {
         let mut mem = MockMemory::new();
 
         // Odd length
-        assert_eq!(server.process_command("M100,2:123", &mut regs, &mut mem), "E01");
+        assert_eq!(
+            server.process_command("M100,2:123", &mut regs, &mut mem),
+            "E01"
+        );
 
         // Non-hex
-        assert_eq!(server.process_command("M100,2:1g", &mut regs, &mut mem), "E01");
+        assert_eq!(
+            server.process_command("M100,2:1g", &mut regs, &mut mem),
+            "E01"
+        );
     }
 
     #[test]
@@ -1020,10 +1024,16 @@ mod tests {
         let mut mem = MockMemory::new();
 
         // Odd length in qRcmd
-        assert_eq!(server.process_command("qRcmd,123", &mut regs, &mut mem), "E01");
+        assert_eq!(
+            server.process_command("qRcmd,123", &mut regs, &mut mem),
+            "E01"
+        );
 
         // Non-hex in qRcmd
-        assert_eq!(server.process_command("qRcmd,1g", &mut regs, &mut mem), "E01");
+        assert_eq!(
+            server.process_command("qRcmd,1g", &mut regs, &mut mem),
+            "E01"
+        );
     }
 
     #[test]
@@ -1034,7 +1044,11 @@ mod tests {
         let generated_pwd = server.password.as_ref().unwrap().clone();
 
         // Check password format (32 chars hex)
-        assert_eq!(generated_pwd.len(), 32, "Generated password should be 32 chars");
+        assert_eq!(
+            generated_pwd.len(),
+            32,
+            "Generated password should be 32 chars"
+        );
         assert!(
             generated_pwd.chars().all(|c| c.is_digit(16)),
             "Generated password should be hex"
@@ -1062,9 +1076,15 @@ mod tests {
         let mut regs = GdbRegisters::default();
         let mut mem = MockMemory::new();
 
-        assert_eq!(server.process_command("Z0,1000,4", &mut regs, &mut mem), "OK");
+        assert_eq!(
+            server.process_command("Z0,1000,4", &mut regs, &mut mem),
+            "OK"
+        );
         assert!(server.is_breakpoint(0x1000));
-        assert_eq!(server.process_command("z0,1000,4", &mut regs, &mut mem), "OK");
+        assert_eq!(
+            server.process_command("z0,1000,4", &mut regs, &mut mem),
+            "OK"
+        );
         assert!(!server.is_breakpoint(0x1000));
     }
 
@@ -1121,10 +1141,19 @@ mod tests {
         let mut regs = GdbRegisters::default();
         let mut mem = MockMemory::new();
 
-        assert_eq!(server.process_command("Z0,GG,4", &mut regs, &mut mem), "E01");
-        assert_eq!(server.process_command("Z0,2000,4", &mut regs, &mut mem), "OK");
+        assert_eq!(
+            server.process_command("Z0,GG,4", &mut regs, &mut mem),
+            "E01"
+        );
+        assert_eq!(
+            server.process_command("Z0,2000,4", &mut regs, &mut mem),
+            "OK"
+        );
         assert!(server.is_breakpoint(0x2000));
-        assert_eq!(server.process_command("z0,3000,4", &mut regs, &mut mem), "OK");
+        assert_eq!(
+            server.process_command("z0,3000,4", &mut regs, &mut mem),
+            "OK"
+        );
         assert_eq!(server.process_command("Z1,1000,4", &mut regs, &mut mem), "");
     }
 }

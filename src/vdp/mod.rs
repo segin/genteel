@@ -316,16 +316,19 @@ impl Vdp {
                 let addr = (self.control_address & 0x7E) as usize;
 
                 // Extract 3-bit components (bits 1-3, 5-7, 9-11)
-                let r3 = (val >> 1) & 0x07;
-                let g3 = (val >> 5) & 0x07;
-                let b3 = (val >> 9) & 0x07;
+                let r3 = ((val >> 1) & 0x07) as usize;
+                let g3 = ((val >> 5) & 0x07) as usize;
+                let b3 = ((val >> 9) & 0x07) as usize;
 
-                // Scale to RGB565 using bit repetition
-                let r5 = (r3 << 2) | (r3 >> 1);
-                let g6 = (g3 << 3) | g3;
-                let b5 = (b3 << 2) | (b3 >> 1);
+                // Accurate MD color levels scaled to 5/6 bits
+                const L5: [u16; 8] = [0, 6, 10, 14, 17, 21, 25, 31];
+                const L6: [u16; 8] = [0, 13, 21, 28, 35, 42, 50, 63];
 
-                self.cram_cache[addr >> 1] = ((r5 as u16) << 11) | ((g6 as u16) << 5) | (b5 as u16);
+                let r5 = L5[r3];
+                let g6 = L6[g3];
+                let b5 = L5[b3];
+
+                self.cram_cache[addr >> 1] = (r5 << 11) | (g6 << 5) | b5;
 
                 self.cram[addr] = (val & 0xFF) as u8;
                 self.cram[addr + 1] = (val >> 8) as u8;
@@ -667,7 +670,6 @@ impl Vdp {
             return;
         }
 
-        let width = self.screen_width();
         let draw_line = line;
         let fetch_line = if !self.is_pal && self.v30_mode() {
             (line + self.v30_offset) % 240
@@ -680,7 +682,7 @@ impl Vdp {
         let (pal_line, color_idx) = self.bg_color();
         let bg_color = self.get_cram_color(pal_line, color_idx);
 
-        self.framebuffer[line_offset..line_offset + width as usize].fill(bg_color);
+        self.framebuffer[line_offset..line_offset + 320].fill(bg_color);
 
         if !self.display_enabled() {
             return;
@@ -690,11 +692,12 @@ impl Vdp {
         let (sprite_count, active_sprites) = self.get_active_sprites(fetch_line);
         let active_sprites = &active_sprites[..sprite_count];
 
-        self.render_plane(false, fetch_line, draw_line, false);
-        self.render_plane(true, fetch_line, draw_line, false);
+        // Layer order: B Low -> A Low -> Sprites Low -> B High -> A High -> Sprites High
+        self.render_plane(false, fetch_line, draw_line, false); // Plane B Low
+        self.render_plane(true, fetch_line, draw_line, false);  // Plane A Low
         self.render_sprites(active_sprites, fetch_line, draw_line, false);
-        self.render_plane(false, fetch_line, draw_line, true);
-        self.render_plane(true, fetch_line, draw_line, true);
+        self.render_plane(false, fetch_line, draw_line, true);  // Plane B High
+        self.render_plane(true, fetch_line, draw_line, true);   // Plane A High
         self.render_sprites(active_sprites, fetch_line, draw_line, true);
     }
 
@@ -1061,8 +1064,9 @@ impl Vdp {
         let mut screen_x: u16 = 0;
 
         while screen_x < screen_width {
-            // Horizontal position in plane
-            let scrolled_h = screen_x.wrapping_sub(h_scroll);
+            // Horizontal position in plane (Note: Genesis uses 128-pixel offset for H-scroll internally)
+            // The scroll value is subtracted from the horizontal position
+            let scrolled_h = screen_x.wrapping_add(128).wrapping_sub(h_scroll);
             let pixel_h = (scrolled_h & 0x07) as u16;
             let tile_h = ((scrolled_h >> 3) as usize) & plane_w_mask;
 
@@ -1075,12 +1079,13 @@ impl Vdp {
             let pixel_v = scrolled_v % 8;
 
             let entry = self.fetch_nametable_entry(name_table_base, tile_v, tile_h, plane_w);
+            let tile_index = entry & 0x07FF;
             let priority = (entry & 0x8000) != 0;
 
             let pixels_left_in_tile = 8 - pixel_h;
             let pixels_to_process = std::cmp::min(pixels_left_in_tile, screen_width - screen_x);
 
-            if priority == priority_filter {
+            if priority == priority_filter && tile_index != 0 {
                 if pixels_to_process == 8 && pixel_h == 0 {
                     // Fast path for full aligned tile
                     unsafe {

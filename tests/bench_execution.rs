@@ -32,7 +32,8 @@ fn bench_execution_loop() {
     while cpu.pc != 0x10C {
         cpu.step_instruction(&mut memory);
         instructions += 1;
-        if instructions > 4_000_000 { // 1,000,000 * 3 + 1
+        if instructions > 4_000_000 {
+            // 1,000,000 * 3 + 1
             break;
         }
     }
@@ -42,6 +43,6 @@ fn bench_execution_loop() {
     println!("Instructions: {}", instructions);
     let seconds = duration.as_secs_f64();
     if seconds > 0.0 {
-         println!("MIPS: {:.2}", (instructions as f64 / seconds) / 1_000_000.0);
+        println!("MIPS: {:.2}", (instructions as f64 / seconds) / 1_000_000.0);
     }
 }

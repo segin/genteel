@@ -7,7 +7,7 @@ edition = "2021"
 
 [features]
 default = ["gui"]
-gui = ["dep:cpal", "dep:winit", "dep:pixels"]
+gui = ["dep:cpal", "dep:winit", "dep:pixels", "dep:egui", "dep:egui-winit", "dep:egui-wgpu"]
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
@@ -16,9 +16,14 @@ zip = "2.1"
 
 # Pure Rust windowing, rendering, and audio
 winit = { version = "0.29", features = ["rwh_05"], optional = true }
-pixels = { version = "0.14", optional = true }
+pixels = { version = "0.15", optional = true }
 cpal = { version = "0.15", optional = true }
 rand = "0.10.0"
+
+# GUI
+egui = { version = "0.26", optional = true }
+egui-winit = { version = "0.26", optional = true, default-features = false, features = ["links"] }
+egui-wgpu = { version = "0.26", optional = true }
 
 [dev-dependencies]
 proptest = "1.0"

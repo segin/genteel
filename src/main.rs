@@ -33,6 +33,164 @@ use z80::Z80;
 
 use frontend::InputMapping;
 
+#[cfg(feature = "gui")]
+use pixels::wgpu;
+
+#[cfg(feature = "gui")]
+struct GuiState {
+    show_settings: bool,
+    input_mapping: InputMapping,
+}
+
+#[cfg(feature = "gui")]
+struct Framework {
+    egui_ctx: egui::Context,
+    egui_state: egui_winit::State,
+    screen_descriptor: egui_wgpu::ScreenDescriptor,
+    renderer: egui_wgpu::Renderer,
+    gui_state: GuiState,
+}
+
+impl Framework {
+    fn new(
+        event_loop: &winit::event_loop::EventLoopWindowTarget<()>,
+        width: u32,
+        height: u32,
+        scale_factor: f32,
+        pixels: &pixels::Pixels,
+        input_mapping: InputMapping,
+    ) -> Self {
+        let egui_ctx = egui::Context::default();
+        let egui_state = egui_winit::State::new(
+            egui_ctx.clone(),
+            egui::viewport::ViewportId::ROOT,
+            &event_loop,
+            Some(scale_factor),
+            None,
+        );
+        let screen_descriptor = egui_wgpu::ScreenDescriptor {
+            size_in_pixels: [width, height],
+            pixels_per_point: scale_factor,
+        };
+        let renderer = egui_wgpu::Renderer::new(
+            pixels.device(),
+            pixels.render_texture_format(),
+            None,
+            1,
+        );
+        let gui_state = GuiState {
+            show_settings: false,
+            input_mapping,
+        };
+
+        Self {
+            egui_ctx,
+            egui_state,
+            screen_descriptor,
+            renderer,
+            gui_state,
+        }
+    }
+
+    fn handle_event(&mut self, window: &winit::window::Window, event: &winit::event::WindowEvent) {
+        let _ = self.egui_state.on_window_event(window, event);
+    }
+
+    fn resize(&mut self, width: u32, height: u32) {
+        if width > 0 && height > 0 {
+            self.screen_descriptor.size_in_pixels = [width, height];
+        }
+    }
+
+    fn scale_factor(&mut self, scale_factor: f32) {
+        self.screen_descriptor.pixels_per_point = scale_factor;
+    }
+
+    fn prepare(&mut self, window: &winit::window::Window) {
+        let raw_input = self.egui_state.take_egui_input(window);
+        self.egui_ctx.begin_frame(raw_input);
+
+        // Draw the GUI
+        egui::TopBottomPanel::top("menubar_container").show(&self.egui_ctx, |ui| {
+            egui::menu::bar(ui, |ui| {
+                ui.menu_button("File", |ui| {
+                    if ui.button("Quit").clicked() {
+                        std::process::exit(0);
+                    }
+                });
+                ui.menu_button("Settings", |ui| {
+                    if ui.button("Input Mapping").clicked() {
+                        self.gui_state.show_settings = true;
+                        ui.close_menu();
+                    }
+                });
+            });
+        });
+
+        if self.gui_state.show_settings {
+            egui::Window::new("Settings").show(&self.egui_ctx, |ui| {
+                ui.label("Input Mapping:");
+                ui.radio_value(&mut self.gui_state.input_mapping, InputMapping::Original, "Original");
+                ui.radio_value(&mut self.gui_state.input_mapping, InputMapping::Ergonomic, "Ergonomic");
+
+                if ui.button("Close").clicked() {
+                    self.gui_state.show_settings = false;
+                }
+            });
+        }
+    }
+
+    fn render(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        render_target: &wgpu::TextureView,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) {
+        let full_output = self.egui_ctx.end_frame();
+        let paint_jobs = self.egui_ctx.tessellate(full_output.shapes, full_output.pixels_per_point);
+
+        // Update textures
+        for (id, image_delta) in full_output.textures_delta.set {
+            self.renderer.update_texture(device, queue, id, &image_delta);
+        }
+
+        // Prepare renderer
+        self.renderer.update_buffers(
+            device,
+            queue,
+            encoder,
+            &paint_jobs,
+            &self.screen_descriptor,
+        );
+
+        // Render GUI
+        {
+            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("egui"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: render_target,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+
+            self.renderer.render(&mut rpass, &paint_jobs, &self.screen_descriptor);
+        }
+
+        // Clean up textures
+        for id in full_output.textures_delta.free {
+            self.renderer.free_texture(&id);
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct Z80Change {
     instruction_cycles: u32,
@@ -281,7 +439,13 @@ impl Emulator {
         }
     }
 
-    fn run_cpu_batch_static(cpu: &mut Cpu, bus: &mut Bus, max_cycles: u32) -> CpuBatchResult {
+    fn run_cpu_batch_static(
+        cpu: &mut Cpu,
+        bus: &mut Bus,
+        max_cycles: u32,
+        z80: &mut Z80<Z80Bus, Z80Bus>,
+        z80_cycle_debt: &mut f32,
+    ) -> CpuBatchResult {
         let initial_req = bus.z80_bus_request;
         let initial_rst = bus.z80_reset;
         let mut pending_cycles = 0;
@@ -295,7 +459,7 @@ impl Emulator {
             }
 
             let m68k_cycles = cpu.step_instruction(bus);
-            bus.sync_audio(m68k_cycles);
+            bus.sync_audio(m68k_cycles, z80, z80_cycle_debt);
 
             // Check for Z80 state change
             if bus.z80_bus_request != initial_req || bus.z80_reset != initial_rst {
@@ -333,7 +497,7 @@ impl Emulator {
             let remaining = CYCLES_PER_LINE - cycles_scanline;
             let limit = std::cmp::min(remaining, BATCH_SIZE);
 
-            let result = Self::run_cpu_batch_static(&mut self.cpu, bus, limit);
+            let result = Self::run_cpu_batch_static(&mut self.cpu, bus, limit, &mut self.z80, z80_cycle_debt);
 
             // If state changed, revert to old state temporarily so we can sync the batch cycles
             // with the state that was active during those cycles.
@@ -368,10 +532,14 @@ impl Emulator {
                 }
 
                 let trigger_vint = line == active_lines && cycles_scanline < 10;
+                // Step one instruction with NEW state, and sync audio for it
+                let m68k_cycles = change.instruction_cycles;
+                bus.sync_audio(m68k_cycles, &mut self.z80, z80_cycle_debt);
+
                 Self::sync_z80_static(
                     &mut self.z80,
                     bus,
-                    change.instruction_cycles,
+                    m68k_cycles,
                     trigger_vint,
                     z80_cycle_debt,
                     self.internal_frame_count,
@@ -381,7 +549,7 @@ impl Emulator {
                     self.cpu.pc,
                     self.debug,
                 );
-                cycles_scanline += change.instruction_cycles;
+                cycles_scanline += m68k_cycles;
             }
         }
 
@@ -392,9 +560,9 @@ impl Emulator {
     fn sync_z80_static(
         z80: &mut Z80<Z80Bus, Z80Bus>,
         bus: &mut Bus,
-        m68k_cycles: u32,
+        _m68k_cycles: u32,
         trigger_vint: bool,
-        z80_cycle_debt: &mut f32,
+        _z80_cycle_debt: &mut f32,
         internal_frame_count: u64,
         z80_last_bus_req: &mut bool,
         z80_last_reset: &mut bool,
@@ -402,9 +570,7 @@ impl Emulator {
         cpu_pc: u32,
         debug: bool,
     ) {
-        const Z80_CYCLES_PER_M68K_CYCLE: f32 = 3.58 / 7.67;
-
-        // Z80 execution
+        // Z80 execution state
         let (z80_can_run, z80_is_reset) = {
             let prev = *z80_last_bus_req;
             if debug && bus.z80_bus_request != prev {
@@ -417,9 +583,7 @@ impl Emulator {
             (!bus.z80_reset && !bus.z80_bus_request, bus.z80_reset)
         };
 
-        // Z80 reset logic:
-        // Reset the Z80 on the leading edge of the reset signal.
-        // The Z80 is held in reset (not stepped) as long as z80_reset is true.
+        // Z80 reset logic
         if z80_is_reset && !*z80_last_reset {
             z80.reset();
         }
@@ -439,14 +603,6 @@ impl Emulator {
         // Trigger Z80 VInt at start of VBlank
         if trigger_vint && !z80_is_reset {
             z80.trigger_interrupt(0xFF);
-        }
-
-        if z80_can_run {
-            *z80_cycle_debt += (m68k_cycles as f32) * Z80_CYCLES_PER_M68K_CYCLE;
-            while *z80_cycle_debt >= 1.0 {
-                let z80_cycles = z80.step();
-                *z80_cycle_debt -= z80_cycles as f32;
-            }
         }
     }
 
@@ -646,16 +802,6 @@ impl Emulator {
     }
 
     #[cfg(feature = "gui")]
-    fn render_frame(&self, pixels: &mut pixels::Pixels) -> Result<(), String> {
-        let frame = pixels.frame_mut();
-        let bus = self.bus.borrow();
-        frontend::rgb565_to_rgba8(&bus.vdp.framebuffer, frame);
-        drop(bus);
-
-        pixels.render().map_err(|e| e.to_string())
-    }
-
-    #[cfg(feature = "gui")]
     fn process_audio(&mut self, audio_buffer: &audio::SharedAudioBuffer) {
         if let Ok(mut buf) = audio_buffer.lock() {
             buf.push(&self.audio_buffer);
@@ -678,158 +824,391 @@ impl Emulator {
             println!("Controls: WASD/Arrows=D-pad, J/Z=A, K/X=B, L/C=C, U=X, I=Y, O=Z, Enter=Start, Space=Mode");
         }
 
-        println!("Press Escape to quit.");
+                println!("Press Escape to quit.");
 
-        let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
+        
 
-        let window = {
-            let size = winit::dpi::LogicalSize::new(
-                frontend::GENESIS_WIDTH as f64 * 3.0,
-                frontend::GENESIS_HEIGHT as f64 * 3.0,
-            );
-            WindowBuilder::new()
-                .with_title("Genteel - Sega Genesis Emulator")
-                .with_inner_size(size)
-                .with_min_inner_size(winit::dpi::LogicalSize::new(
-                    frontend::GENESIS_WIDTH as f64,
-                    frontend::GENESIS_HEIGHT as f64,
-                ))
-                .build(&event_loop)
-                .map_err(|e| e.to_string())?
-        };
+                let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
 
-        let mut pixels = {
-            let window_size = window.inner_size();
-            let surface_texture =
-                SurfaceTexture::new(window_size.width, window_size.height, &window);
-            Pixels::new(
-                frontend::GENESIS_WIDTH,
-                frontend::GENESIS_HEIGHT,
-                surface_texture,
-            )
-            .map_err(|e| e.to_string())?
-        };
+        
 
-        // Audio setup
-        let audio_buffer = audio::create_audio_buffer();
-        let audio_output = match audio::AudioOutput::new(audio_buffer.clone()) {
-            Ok(output) => {
-                self.bus.borrow_mut().sample_rate = output.sample_rate;
-                Some(output)
-            }
-            Err(e) => {
-                eprintln!("Warning: Failed to initialize audio: {}", e);
-                None
-            }
-        };
+                let size = winit::dpi::LogicalSize::new(
 
-        let _audio_output = audio_output;
+                    frontend::GENESIS_WIDTH as f64 * 3.0,
 
-        // Input and Timing state
-        let mut input = input::FrameInput::default();
-        let mut frame_count: u64 = 0;
+                    frontend::GENESIS_HEIGHT as f64 * 3.0,
 
-        let mut last_frame_inst = std::time::Instant::now();
-        let mut fps_timer = std::time::Instant::now();
-        let mut fps_count = 0;
-        let frame_duration = std::time::Duration::from_nanos(16_666_667); // 60.0 fps
+                );
 
-        println!("Starting event loop...");
-        event_loop
-            .run(move |event, target| {
-                match event {
-                    Event::Resumed => {
-                        println!("Event::Resumed");
+        
+
+                let window = WindowBuilder::new()
+
+                    .with_title("Genteel - Sega Genesis Emulator")
+
+                    .with_inner_size(size)
+
+                    .with_min_inner_size(winit::dpi::LogicalSize::new(
+
+                        frontend::GENESIS_WIDTH as f64,
+
+                        frontend::GENESIS_HEIGHT as f64,
+
+                    ))
+
+                    .build(&event_loop)
+
+                    .map_err(|e| e.to_string())?;
+
+        
+
+                // Leak the window to get a &'static Window, simplifying lifetime management
+
+                let window: &'static winit::window::Window = Box::leak(Box::new(window));
+
+        
+
+                let mut pixels = {
+
+                    let window_size = window.inner_size();
+
+                    let surface_texture =
+
+                        SurfaceTexture::new(window_size.width, window_size.height, window);
+
+                    Pixels::new(
+
+                        frontend::GENESIS_WIDTH,
+
+                        frontend::GENESIS_HEIGHT,
+
+                        surface_texture,
+
+                    )
+
+                    .map_err(|e| e.to_string())?
+
+                };
+
+        
+
+                // Initialize egui framework
+
+                let mut framework = Framework::new(
+
+                    &event_loop,
+
+                    window.inner_size().width,
+
+                    window.inner_size().height,
+
+                    window.scale_factor() as f32,
+
+                    &pixels,
+
+                    self.input_mapping,
+
+                );
+
+        
+
+                // Audio setup
+
+                let audio_buffer = audio::create_audio_buffer();
+
+                let audio_output = match audio::AudioOutput::new(audio_buffer.clone()) {
+
+                    Ok(output) => {
+
+                        self.bus.borrow_mut().sample_rate = output.sample_rate;
+
+                        Some(output)
+
                     }
 
-                    Event::WindowEvent { event, .. } => match event {
-                        WindowEvent::CloseRequested => {
-                            println!("Using CloseRequested to exit");
-                            target.exit();
-                        }
+                    Err(e) => {
 
-                        WindowEvent::KeyboardInput {
-                            event: key_event, ..
-                        } => {
-                            let pressed = key_event.state == ElementState::Pressed;
+                        eprintln!("Warning: Failed to initialize audio: {}", e);
 
-                            // 1. Try physical key first (preferred for location-based mapping)
-                            let mut handled = false;
-                            if let PhysicalKey::Code(keycode) = key_event.physical_key {
-                                if keycode == KeyCode::Escape && pressed {
-                                    println!("Escape pressed, exiting");
-                                    target.exit();
-                                    return;
-                                }
+                        None
 
-                                if let Some((button, _)) =
-                                    frontend::keycode_to_button(keycode, self.input_mapping)
-                                {
-                                    input.p1.set_button(button, pressed);
-                                    handled = true;
-                                }
-                            }
+                    }
 
-                            // 2. Fallback to logical key (ensures Arrows/Enter/Space always work)
-                            if !handled {
-                                use winit::keyboard::Key;
-                                if let Key::Named(named) = key_event.logical_key {
-                                    let button = match named {
-                                        winit::keyboard::NamedKey::ArrowUp => Some("up"),
-                                        winit::keyboard::NamedKey::ArrowDown => Some("down"),
-                                        winit::keyboard::NamedKey::ArrowLeft => Some("left"),
-                                        winit::keyboard::NamedKey::ArrowRight => Some("right"),
-                                        winit::keyboard::NamedKey::Enter => Some("start"),
-                                        winit::keyboard::NamedKey::Space => Some("mode"),
-                                        _ => None,
-                                    };
-                                    if let Some(btn) = button {
-                                        input.p1.set_button(btn, pressed);
+                };
+
+        
+
+                let _audio_output = audio_output;
+
+        
+
+                // Input and Timing state
+
+                let mut input = input::FrameInput::default();
+
+                let mut frame_count: u64 = 0;
+
+        
+
+                let mut last_frame_inst = std::time::Instant::now();
+
+                let mut fps_timer = std::time::Instant::now();
+
+                let mut fps_count = 0;
+
+                let frame_duration = std::time::Duration::from_nanos(16_666_667); // 60.0 fps
+
+        
+
+                println!("Starting event loop...");
+
+                event_loop
+
+                    .run(move |event, target| {
+
+                        match event {
+
+                            Event::WindowEvent { event, .. } => {
+
+                                // Handle GUI events
+
+                                framework.handle_event(window, &event);
+
+        
+
+                                match event {
+
+                                    WindowEvent::CloseRequested => {
+
+                                        println!("Using CloseRequested to exit");
+
+                                        target.exit();
+
                                     }
+
+        
+
+                                    WindowEvent::KeyboardInput {
+
+                                        event: key_event, ..
+
+                                    } => {
+
+                                        // If egui wants focus, don't process game input
+
+                                        if framework.egui_ctx.wants_keyboard_input() {
+
+                                            return;
+
+                                        }
+
+        
+
+                                        let pressed = key_event.state == ElementState::Pressed;
+
+        
+
+                                        // 1. Try physical key first
+
+                                        let mut handled = false;
+
+                                        if let PhysicalKey::Code(keycode) = key_event.physical_key {
+
+                                            if keycode == KeyCode::Escape && pressed {
+
+                                                println!("Escape pressed, exiting");
+
+                                                target.exit();
+
+                                                return;
+
+                                            }
+
+        
+
+                                            if let Some((button, _)) =
+
+                                                frontend::keycode_to_button(keycode, self.input_mapping)
+
+                                            {
+
+                                                input.p1.set_button(button, pressed);
+
+                                                handled = true;
+
+                                            }
+
+                                        }
+
+        
+
+                                        // 2. Fallback to logical key
+
+                                        if !handled {
+
+                                            use winit::keyboard::Key;
+
+                                            if let Key::Named(named) = key_event.logical_key {
+
+                                                let button = match named {
+
+                                                    winit::keyboard::NamedKey::ArrowUp => Some("up"),
+
+                                                    winit::keyboard::NamedKey::ArrowDown => Some("down"),
+
+                                                    winit::keyboard::NamedKey::ArrowLeft => Some("left"),
+
+                                                    winit::keyboard::NamedKey::ArrowRight => Some("right"),
+
+                                                    winit::keyboard::NamedKey::Enter => Some("start"),
+
+                                                    winit::keyboard::NamedKey::Space => Some("mode"),
+
+                                                    _ => None,
+
+                                                };
+
+                                                if let Some(btn) = button {
+
+                                                    input.p1.set_button(btn, pressed);
+
+                                                }
+
+                                            }
+
+                                        }
+
+                                    }
+
+        
+
+                                    WindowEvent::Resized(size) => {
+
+                                        if size.width > 0 && size.height > 0 {
+
+                                            pixels.resize_surface(size.width, size.height).ok();
+
+                                            framework.resize(size.width, size.height);
+
+                                        }
+
+                                    }
+
+        
+
+                                    WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+
+                                        framework.scale_factor(scale_factor as f32);
+
+                                    }
+
+        
+
+                                    WindowEvent::RedrawRequested => {
+
+                                        // Sync input mapping from GUI
+
+                                        self.input_mapping = framework.gui_state.input_mapping;
+
+        
+
+                                        frame_count += 1;
+
+                                        fps_count += 1;
+
+        
+
+                                        // Update FPS in title bar every second
+
+                                        if fps_timer.elapsed() >= std::time::Duration::from_secs(1) {
+
+                                            window.set_title(&format!(
+
+                                                "Genteel - Sega Genesis Emulator | FPS: {}",
+
+                                                fps_count
+
+                                            ));
+
+                                            fps_count = 0;
+
+                                            fps_timer = std::time::Instant::now();
+
+                                        }
+
+        
+
+                                        // Debug: Print every 60 frames
+
+                                        if self.debug && frame_count % 60 == 1 {
+
+                                            self.log_debug(frame_count);
+
+                                        }
+
+        
+
+                                        // Run one frame of emulation
+
+                                        self.step_frame(Some(input.clone()));
+
+        
+
+                                        // Process audio
+
+                                        self.process_audio(&audio_buffer);
+
+        
+
+                                        // Update egui
+
+                                        framework.prepare(window);
+
+        
+
+                                        // Render
+
+                                        let bus = self.bus.borrow();
+
+                                        frontend::rgb565_to_rgba8(&bus.vdp.framebuffer, pixels.frame_mut());
+
+                                        drop(bus);
+
+        
+
+                                        if let Err(e) = pixels.render_with(|encoder, render_target, context| {
+
+                                            // Render the board
+
+                                            context.scaling_renderer.render(encoder, render_target);
+
+        
+
+                                            // Render GUI
+
+                                            framework.render(encoder, render_target, &context.device, &context.queue);
+
+        
+
+                                            Ok(())
+
+                                        }) {
+
+                                            eprintln!("Render error: {}", e);
+
+                                            target.exit();
+
+                                        }
+
+                                    }
+
+        
+
+                                    _ => {}
+
                                 }
-                            }
-                        }
 
-                        WindowEvent::Resized(size) => {
-                            if size.width > 0 && size.height > 0 {
-                                pixels.resize_surface(size.width, size.height).ok();
-                            }
-                        }
-
-                        WindowEvent::RedrawRequested => {
-                            frame_count += 1;
-                            fps_count += 1;
-
-                            // Update FPS in title bar every second
-                            if fps_timer.elapsed() >= std::time::Duration::from_secs(1) {
-                                window.set_title(&format!(
-                                    "Genteel - Sega Genesis Emulator | FPS: {}",
-                                    fps_count
-                                ));
-                                fps_count = 0;
-                                fps_timer = std::time::Instant::now();
-                            }
-
-                            // Debug: Print every 60 frames (about once per second)
-                            if self.debug && frame_count % 60 == 1 {
-                                self.log_debug(frame_count);
-                            }
-
-                            // Run one frame of emulation
-                            self.step_frame(Some(input.clone()));
-
-                            // Process audio
-                            self.process_audio(&audio_buffer);
-
-                            // Render
-                            if let Err(e) = self.render_frame(&mut pixels) {
-                                eprintln!("Render error: {}", e);
-                                target.exit();
-                            }
-                        }
-
-                        _ => {}
-                    },
+                            },
 
                     Event::AboutToWait => {
                         let now = std::time::Instant::now();

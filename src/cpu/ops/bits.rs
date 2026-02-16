@@ -513,10 +513,10 @@ pub fn exec_tas<M: MemoryInterface>(cpu: &mut Cpu, dst: AddressingMode, memory: 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cpu::Cpu;
-    use crate::memory::Memory;
     use crate::cpu::decoder::{AddressingMode, Size};
     use crate::cpu::flags;
+    use crate::cpu::Cpu;
+    use crate::memory::Memory;
 
     fn create_test_setup() -> (Cpu, Memory) {
         let mut memory = Memory::new(0x10000);
@@ -533,7 +533,14 @@ mod tests {
         cpu.d[0] = 0x123456AA;
         cpu.d[1] = 0x77665555;
 
-        let cycles = exec_or(&mut cpu, Size::Byte, AddressingMode::DataRegister(0), AddressingMode::DataRegister(1), true, &mut memory);
+        let cycles = exec_or(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            true,
+            &mut memory,
+        );
 
         assert_eq!(cpu.d[1], 0x776655FF); // 0xAA | 0x55 = 0xFF
         assert!(cpu.get_flag(flags::NEGATIVE));
@@ -549,7 +556,14 @@ mod tests {
         cpu.d[0] = 0x1234F0F0;
         cpu.d[1] = 0x77660F0F;
 
-        let cycles = exec_or(&mut cpu, Size::Word, AddressingMode::DataRegister(0), AddressingMode::DataRegister(1), true, &mut memory);
+        let cycles = exec_or(
+            &mut cpu,
+            Size::Word,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            true,
+            &mut memory,
+        );
 
         assert_eq!(cpu.d[1], 0x7766FFFF); // 0xF0F0 | 0x0F0F = 0xFFFF
         assert!(cpu.get_flag(flags::NEGATIVE));
@@ -563,7 +577,14 @@ mod tests {
         cpu.d[0] = 0xF0F0F0F0;
         cpu.d[1] = 0x0F0F0F0F;
 
-        let cycles = exec_or(&mut cpu, Size::Long, AddressingMode::DataRegister(0), AddressingMode::DataRegister(1), true, &mut memory);
+        let cycles = exec_or(
+            &mut cpu,
+            Size::Long,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            true,
+            &mut memory,
+        );
 
         assert_eq!(cpu.d[1], 0xFFFFFFFF);
         assert!(cpu.get_flag(flags::NEGATIVE));
@@ -580,7 +601,14 @@ mod tests {
         cpu.set_flag(flags::OVERFLOW, true);
         cpu.set_flag(flags::NEGATIVE, true);
 
-        let cycles = exec_or(&mut cpu, Size::Long, AddressingMode::DataRegister(0), AddressingMode::DataRegister(1), true, &mut memory);
+        let cycles = exec_or(
+            &mut cpu,
+            Size::Long,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            true,
+            &mut memory,
+        );
 
         assert_eq!(cpu.d[1], 0);
         assert!(!cpu.get_flag(flags::NEGATIVE));
@@ -598,7 +626,14 @@ mod tests {
         memory.write_byte(0x2000, 0x00);
 
         // OR.B D0, (A0)
-        let cycles = exec_or(&mut cpu, Size::Byte, AddressingMode::DataRegister(0), AddressingMode::AddressIndirect(0), true, &mut memory);
+        let cycles = exec_or(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            AddressingMode::AddressIndirect(0),
+            true,
+            &mut memory,
+        );
 
         assert_eq!(memory.read_byte(0x2000), 0xFF);
         assert!(cpu.get_flag(flags::NEGATIVE));

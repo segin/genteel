@@ -56,7 +56,10 @@ fn test_smc_overwrite_instruction() {
     cpu.step_instruction(&mut memory);
 
     // If it was NOP, PC should be 0x10A.
-    assert_eq!(cpu.pc, 0x10A, "SMC failed: Executed stale instruction (RTS) instead of new (NOP)");
+    assert_eq!(
+        cpu.pc, 0x10A,
+        "SMC failed: Executed stale instruction (RTS) instead of new (NOP)"
+    );
 
     // Step 3: Execute MOVEQ #1, D0
     cpu.step_instruction(&mut memory);

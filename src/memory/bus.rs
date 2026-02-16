@@ -271,7 +271,15 @@ impl Bus {
     }
 
     /// Sync audio generation with CPU cycles
-    pub fn sync_audio(&mut self, m68k_cycles: u32) {
+    pub fn sync_audio(
+        &mut self,
+        m68k_cycles: u32,
+        z80: &mut crate::z80::Z80<crate::memory::Z80Bus, crate::memory::Z80Bus>,
+        z80_cycle_debt: &mut f32,
+    ) {
+        const Z80_CYCLES_PER_M68K_CYCLE: f32 = 3.58 / 7.67;
+        let z80_can_run = !self.z80_reset && !self.z80_bus_request;
+
         // M68k Clock = 7,670,453 Hz
         let cycles_per_sample = 7670453.0 / (self.sample_rate as f32);
 
@@ -279,6 +287,15 @@ impl Bus {
 
         while self.audio_accumulator >= cycles_per_sample {
             self.audio_accumulator -= cycles_per_sample;
+
+            // Catch up Z80 before generating sample
+            if z80_can_run {
+                *z80_cycle_debt += cycles_per_sample * Z80_CYCLES_PER_M68K_CYCLE;
+                while *z80_cycle_debt >= 1.0 {
+                    let z80_cycles = z80.step();
+                    *z80_cycle_debt -= z80_cycles as f32;
+                }
+            }
 
             let (l, r) = self.apu.step();
 
@@ -436,18 +453,14 @@ impl Bus {
     fn run_dma(&mut self) {
         let length = self.vdp.dma_length() as usize;
         let source = self.vdp.dma_source_transfer();
-        let mut dest = self.vdp.control_address;
-        let step = self.vdp.registers[15] as u16;
 
         for i in 0..length {
             let src_addr = source + (i * 2) as u32;
             let val = self.read_word(src_addr);
-            self.vdp.write_vram_word(dest, val);
-            dest = dest.wrapping_add(step);
+            self.vdp.write_data(val);
         }
 
         self.vdp.dma_pending = false;
-        self.vdp.control_address = dest;
     }
 }
 
