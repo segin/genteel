@@ -93,7 +93,7 @@ fn test_control_state_machine() {
     vdp.reset();
     vdp.write_control(0x4000);
     assert!(vdp.is_control_pending());
-    // Existing behavior: read_status does NOT clear pending (bug?)
+    // Read status should clear control pending
     vdp.read_status();
     assert!(
         !vdp.is_control_pending(),

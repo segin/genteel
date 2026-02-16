@@ -623,6 +623,23 @@ pub enum BitSource {
     Register(u8), // Bit number in Dn
 }
 
+/// Cache entry for decoded instructions
+#[derive(Debug, Clone, Copy)]
+#[repr(align(16))]
+pub struct DecodeCacheEntry {
+    pub pc: u32,
+    pub instruction: Instruction,
+}
+
+impl Default for DecodeCacheEntry {
+    fn default() -> Self {
+        Self {
+            pc: u32::MAX, // Invalid PC
+            instruction: Instruction::Nop,
+        }
+    }
+}
+
 static DECODE_CACHE: OnceLock<Box<[Instruction]>> = OnceLock::new();
 
 /// Decode a single M68k instruction from an opcode
