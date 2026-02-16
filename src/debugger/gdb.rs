@@ -1203,4 +1203,34 @@ mod tests {
         let data = "0".repeat(71);
         assert_eq!(server.process_command(&format!("G{}", data), &mut regs, &mut mem), "E01");
     }
+
+    #[test]
+    fn test_breakpoint_edge_cases() {
+        let mut server = create_test_server();
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+
+        // 1. Invalid address format
+        assert_eq!(server.process_command("Z0,GG,4", &mut regs, &mut mem), "E01");
+        assert_eq!(server.process_command("z0,GG,4", &mut regs, &mut mem), "E01");
+
+        // 2. Duplicate breakpoint
+        assert_eq!(server.process_command("Z0,2000,4", &mut regs, &mut mem), "OK");
+        assert_eq!(server.process_command("Z0,2000,4", &mut regs, &mut mem), "OK");
+        assert!(server.is_breakpoint(0x2000));
+
+        // 3. Remove non-existent breakpoint
+        assert_eq!(server.process_command("z0,3000,4", &mut regs, &mut mem), "OK");
+        assert!(!server.is_breakpoint(0x3000));
+
+        // 4. Unsupported breakpoint types
+        assert_eq!(server.process_command("Z1,1000,4", &mut regs, &mut mem), "");
+        assert_eq!(server.process_command("Z2,1000,4", &mut regs, &mut mem), "");
+        assert_eq!(server.process_command("Z3,1000,4", &mut regs, &mut mem), "");
+        assert_eq!(server.process_command("Z4,1000,4", &mut regs, &mut mem), "");
+
+        // 5. Check omitting kind (implementation allows it)
+        assert_eq!(server.process_command("Z0,4000", &mut regs, &mut mem), "OK");
+        assert!(server.is_breakpoint(0x4000));
+    }
 }
