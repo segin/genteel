@@ -138,22 +138,6 @@ impl<'a> Iterator for SpriteIterator<'a> {
     }
 }
 
-// Control Port Constants
-const CTRL_CODE_LOW_MASK: u8 = 0x03; // CD1-CD0
-const CTRL_CODE_HIGH_MASK: u16 = 0x3C; // CD5-CD2 (after shift)
-const CTRL_ADDR_LO_MASK: u16 = 0x3FFF; // A13-A0
-const CTRL_ADDR_HI_MASK: u16 = 0x03; // A15-A14 (in value)
-const CTRL_DMA_BIT: u8 = 0x20; // DMA enable bit in control code
-
-const CTRL_CODE_LOW_SHIFT: u16 = 14;
-const CTRL_CODE_HIGH_SHIFT: u16 = 2;
-const CTRL_ADDR_HI_SHIFT: u16 = 14;
-
-const REG_WRITE_TAG: u16 = 0x8000; // Value indicating register write
-const REG_WRITE_MASK: u16 = 0xC000; // Mask to check register write tag
-const REG_IDX_MASK: u16 = 0x1F; // Register index mask (5 bits)
-const REG_DATA_MASK: u16 = 0xFF; // Register data mask (8 bits)
-const REG_IDX_SHIFT: u16 = 8;
 const NUM_REGISTERS: usize = 24;
 
 /// Video Display Processor (VDP)
@@ -316,19 +300,16 @@ impl Vdp {
                 let addr = (self.control_address & 0x7E) as usize;
 
                 // Extract 3-bit components (bits 1-3, 5-7, 9-11)
-                let r3 = ((val >> 1) & 0x07) as usize;
-                let g3 = ((val >> 5) & 0x07) as usize;
-                let b3 = ((val >> 9) & 0x07) as usize;
+                let r3 = (val >> 1) & 0x07;
+                let g3 = (val >> 5) & 0x07;
+                let b3 = (val >> 9) & 0x07;
 
-                // Accurate MD color levels scaled to 5/6 bits
-                const L5: [u16; 8] = [0, 6, 10, 14, 17, 21, 25, 31];
-                const L6: [u16; 8] = [0, 13, 21, 28, 35, 42, 50, 63];
+                // Scale to RGB565 using bit repetition
+                let r5 = (r3 << 2) | (r3 >> 1);
+                let g6 = (g3 << 3) | g3;
+                let b5 = (b3 << 2) | (b3 >> 1);
 
-                let r5 = L5[r3];
-                let g6 = L6[g3];
-                let b5 = L5[b3];
-
-                self.cram_cache[addr >> 1] = (r5 << 11) | (g6 << 5) | b5;
+                self.cram_cache[addr >> 1] = ((r5 as u16) << 11) | ((g6 as u16) << 5) | (b5 as u16);
 
                 self.cram[addr] = (val & 0xFF) as u8;
                 self.cram[addr + 1] = (val >> 8) as u8;
@@ -386,38 +367,40 @@ impl Vdp {
     pub fn write_control(&mut self, value: u16) {
         if self.control_pending {
             // Second word of command
-            let high = ((value >> CTRL_CODE_HIGH_SHIFT) & CTRL_CODE_HIGH_MASK) as u8;
-            self.control_code = (self.control_code & CTRL_CODE_LOW_MASK) | high;
-            self.control_address = (self.control_address & CTRL_ADDR_LO_MASK)
-                | ((value & CTRL_ADDR_HI_MASK) << CTRL_ADDR_HI_SHIFT);
+            // CD5-CD2 are bits 7-4 of the second word.
+            // When combined with CD1-CD0 from the first word, we get the 6-bit code.
+            let high = ((value >> 4) & 0x0F) << 2;
+            self.control_code = (self.control_code & 0x03) | high as u8;
+            self.control_address = (self.control_address & 0x3FFF)
+                | ((value & 0x03) << 14);
             self.control_pending = false;
 
             // DMA initiation check
-            if (self.control_code & CTRL_DMA_BIT) != 0 {
-                // DMA requested
-                self.dma_pending = true;
-            } else {
-                self.dma_pending = false;
-            }
-        } else if (value & REG_WRITE_MASK) == REG_WRITE_TAG {
+            self.dma_pending = (self.control_code & 0x20) != 0
+                && (self.registers[REG_MODE2] & MODE2_DMA_ENABLE) != 0;
+        } else if (value & 0xC000) == 0x8000 {
             // Register write
-            let reg = ((value >> REG_IDX_SHIFT) & REG_IDX_MASK) as usize;
-            let val = (value & REG_DATA_MASK) as u8;
+            let reg = ((value >> 8) & 0x1F) as usize;
+            let val = (value & 0xFF) as u8;
             if reg < NUM_REGISTERS {
                 self.registers[reg] = val;
             }
         } else {
             // First word of command
-            self.control_code =
-                ((value >> CTRL_CODE_LOW_SHIFT) & (CTRL_CODE_LOW_MASK as u16)) as u8;
-            self.control_address = value & CTRL_ADDR_LO_MASK;
+            // CD1-CD0 are bits 15-14 of the first word.
+            self.control_code = (value >> 14) as u8 & 0x03;
+            self.control_address = value & 0x3FFF;
             self.control_pending = true;
         }
     }
 
+    #[inline(always)]
     pub fn read_status(&mut self) -> u16 {
         self.control_pending = false;
-        self.status
+        let res = self.status;
+        // Reading status clears the VInt pending bit
+        self.status &= !STATUS_VINT_PENDING;
+        res
     }
 
     /// Reset VDP state
@@ -610,11 +593,7 @@ impl Vdp {
         (self.registers[REG_MODE1] & MODE1_HINT_ENABLE) != 0
     }
 
-    pub fn update_v30_offset(&mut self) {
-        if !self.is_pal && self.v30_mode() {
-            self.v30_offset = (self.v30_offset + 22) % 240;
-        }
-    }
+    pub fn update_v30_offset(&mut self) {}
 
     // Debugging helpers
     pub fn dump_vram(&self) -> Vec<u8> {
@@ -671,11 +650,7 @@ impl Vdp {
         }
 
         let draw_line = line;
-        let fetch_line = if !self.is_pal && self.v30_mode() {
-            (line + self.v30_offset) % 240
-        } else {
-            line
-        };
+        let fetch_line = line;
 
         let line_offset = (draw_line as usize) * 320;
 
@@ -694,10 +669,10 @@ impl Vdp {
 
         // Layer order: B Low -> A Low -> Sprites Low -> B High -> A High -> Sprites High
         self.render_plane(false, fetch_line, draw_line, false); // Plane B Low
-        self.render_plane(true, fetch_line, draw_line, false);  // Plane A Low
+        self.render_plane(true, fetch_line, draw_line, false); // Plane A Low
         self.render_sprites(active_sprites, fetch_line, draw_line, false);
-        self.render_plane(false, fetch_line, draw_line, true);  // Plane B High
-        self.render_plane(true, fetch_line, draw_line, true);   // Plane A High
+        self.render_plane(false, fetch_line, draw_line, true); // Plane B High
+        self.render_plane(true, fetch_line, draw_line, true); // Plane A High
         self.render_sprites(active_sprites, fetch_line, draw_line, true);
     }
 
@@ -834,43 +809,42 @@ impl Vdp {
             }
         }
     }
-        fn get_scroll_values(&self, is_plane_a: bool, fetch_line: u16, tile_h: usize) -> (u16, u16) {
-            let mode3 = self.registers[REG_MODE3];
-            
-            // Vertical Scroll (Bits 2 of Mode 3: 0=Full Screen, 1=2-Cell Strips)
-            let v_scroll = if (mode3 & 0x04) != 0 {
-                // 2-Cell (16-pixel) strips. Each entry in VSRAM is 2 bytes and handles 2 cells.
-                let strip_idx = (tile_h >> 1) as usize;
-                let vs_addr = (strip_idx * 4) + (if is_plane_a { 0 } else { 2 });
-                if vs_addr + 1 < self.vsram.len() {
-                    (((self.vsram[vs_addr] as u16) << 8) | (self.vsram[vs_addr + 1] as u16)) & 0x03FF
-                } else {
-                    0
-                }
-            } else {
-                // Full Screen
-                let vs_addr = if is_plane_a { 0 } else { 2 };
+    fn get_scroll_values(&self, is_plane_a: bool, fetch_line: u16, tile_h: usize) -> (u16, u16) {
+        let mode3 = self.registers[REG_MODE3];
+
+        // Vertical Scroll (Bits 2 of Mode 3: 0=Full Screen, 1=2-Cell Strips)
+        let v_scroll = if (mode3 & 0x04) != 0 {
+            // 2-Cell (16-pixel) strips. Each entry in VSRAM is 2 bytes and handles 2 cells.
+            let strip_idx = (tile_h >> 1) as usize;
+            let vs_addr = (strip_idx * 4) + (if is_plane_a { 0 } else { 2 });
+            if vs_addr + 1 < self.vsram.len() {
                 (((self.vsram[vs_addr] as u16) << 8) | (self.vsram[vs_addr + 1] as u16)) & 0x03FF
-            };
-    
-            // Horizontal Scroll (Bits 1-0 of Mode 3: 00=Full, 01=Invalid/Cell, 10=Cell, 11=Line)
-            let hs_mode = mode3 & 0x03;
-            let hs_base = self.hscroll_address();
-            
-            let hs_addr = match hs_mode {
-                0x00 => hs_base, // Full screen
-                0x02 => hs_base + ((fetch_line as usize >> 3) * 32), // 8-pixel strips (Cell)
-                0x03 => hs_base + (fetch_line as usize * 4), // Per-line
-                _ => hs_base, // Default/Fallback
-            } + (if is_plane_a { 0 } else { 2 });
-    
-            let hi = self.vram[hs_addr & 0xFFFF];
-            let lo = self.vram[(hs_addr + 1) & 0xFFFF];
-            let h_scroll = (((hi as u16) << 8) | (lo as u16)) & 0x03FF;
-            
-            (v_scroll, h_scroll)
-        }
-    
+            } else {
+                0
+            }
+        } else {
+            // Full Screen
+            let vs_addr = if is_plane_a { 0 } else { 2 };
+            (((self.vsram[vs_addr] as u16) << 8) | (self.vsram[vs_addr + 1] as u16)) & 0x03FF
+        };
+
+        // Horizontal Scroll (Bits 1-0 of Mode 3: 00=Full, 01=Invalid/Cell, 10=Cell, 11=Line)
+        let hs_mode = mode3 & 0x03;
+        let hs_base = self.hscroll_address();
+
+        let hs_addr = match hs_mode {
+            0x00 => hs_base,                                     // Full screen
+            0x02 => hs_base + ((fetch_line as usize >> 3) * 32), // 8-pixel strips (Cell)
+            0x03 => hs_base + (fetch_line as usize * 4),         // Per-line
+            _ => hs_base,                                        // Default/Fallback
+        } + (if is_plane_a { 0 } else { 2 });
+
+        let hi = self.vram[hs_addr & 0xFFFF];
+        let lo = self.vram[(hs_addr + 1) & 0xFFFF];
+        let h_scroll = (((hi as u16) << 8) | (lo as u16)) & 0x03FF;
+
+        (v_scroll, h_scroll)
+    }
 
     #[inline(always)]
     fn fetch_nametable_entry(
@@ -1064,14 +1038,15 @@ impl Vdp {
         let mut screen_x: u16 = 0;
 
         while screen_x < screen_width {
-            // Horizontal position in plane (Note: Genesis uses 128-pixel offset for H-scroll internally)
+            // Horizontal position in plane
             // The scroll value is subtracted from the horizontal position
-            let scrolled_h = screen_x.wrapping_add(128).wrapping_sub(h_scroll);
+            let scrolled_h = screen_x.wrapping_sub(h_scroll);
             let pixel_h = (scrolled_h & 0x07) as u16;
             let tile_h = ((scrolled_h >> 3) as usize) & plane_w_mask;
 
             // Fetch V-scroll for this specific column (per-column VS support)
-            let (v_scroll, _) = self.get_scroll_values(is_plane_a, fetch_line, (screen_x >> 3) as usize);
+            let (v_scroll, _) =
+                self.get_scroll_values(is_plane_a, fetch_line, (screen_x >> 3) as usize);
 
             // Vertical position in plane
             let scrolled_v = fetch_line.wrapping_add(v_scroll);

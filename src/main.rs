@@ -21,15 +21,15 @@ pub mod z80;
 use apu::Apu;
 use cpu::Cpu;
 use debugger::{GdbMemory, GdbRegisters, GdbServer, StopReason};
+use frontend::InputMapping;
 use input::InputManager;
 use memory::bus::Bus;
 use memory::{SharedBus, Z80Bus};
+#[cfg(feature = "gui")]
+use pixels::wgpu;
 use std::cell::RefCell;
 use std::rc::Rc;
 use z80::Z80;
-use frontend::InputMapping;
-#[cfg(feature = "gui")]
-use pixels::wgpu;
 #[cfg(feature = "gui")]
 struct GuiState {
     show_settings: bool,
@@ -65,12 +65,8 @@ impl Framework {
             size_in_pixels: [width, height],
             pixels_per_point: scale_factor,
         };
-        let renderer = egui_wgpu::Renderer::new(
-            pixels.device(),
-            pixels.render_texture_format(),
-            None,
-            1,
-        );
+        let renderer =
+            egui_wgpu::Renderer::new(pixels.device(), pixels.render_texture_format(), None, 1);
         let gui_state = GuiState {
             show_settings: false,
             input_mapping,
@@ -122,12 +118,19 @@ impl Framework {
             egui::Window::new("Settings").show(&self.egui_ctx, |ui| {
                 ui.heading("Video");
                 ui.checkbox(&mut self.gui_state.integer_scaling, "Integer Pixel Scaling");
-                
                 ui.separator();
                 ui.heading("Input");
                 ui.label("Input Mapping:");
-                ui.radio_value(&mut self.gui_state.input_mapping, InputMapping::Original, "Original");
-                ui.radio_value(&mut self.gui_state.input_mapping, InputMapping::Ergonomic, "Ergonomic");
+                ui.radio_value(
+                    &mut self.gui_state.input_mapping,
+                    InputMapping::Original,
+                    "Original",
+                );
+                ui.radio_value(
+                    &mut self.gui_state.input_mapping,
+                    InputMapping::Ergonomic,
+                    "Ergonomic",
+                );
                 ui.separator();
                 if ui.button("Close").clicked() {
                     self.gui_state.show_settings = false;
@@ -143,19 +146,17 @@ impl Framework {
         queue: &wgpu::Queue,
     ) {
         let full_output = self.egui_ctx.end_frame();
-        let paint_jobs = self.egui_ctx.tessellate(full_output.shapes, full_output.pixels_per_point);
+        let paint_jobs = self
+            .egui_ctx
+            .tessellate(full_output.shapes, full_output.pixels_per_point);
         // Update textures
         for (id, image_delta) in full_output.textures_delta.set {
-            self.renderer.update_texture(device, queue, id, &image_delta);
+            self.renderer
+                .update_texture(device, queue, id, &image_delta);
         }
         // Prepare renderer
-        self.renderer.update_buffers(
-            device,
-            queue,
-            encoder,
-            &paint_jobs,
-            &self.screen_descriptor,
-        );
+        self.renderer
+            .update_buffers(device, queue, encoder, &paint_jobs, &self.screen_descriptor);
         // Render GUI
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -172,7 +173,8 @@ impl Framework {
                 occlusion_query_set: None,
                 timestamp_writes: None,
             });
-            self.renderer.render(&mut rpass, &paint_jobs, &self.screen_descriptor);
+            self.renderer
+                .render(&mut rpass, &paint_jobs, &self.screen_descriptor);
         }
         // Clean up textures
         for id in full_output.textures_delta.free {
@@ -439,7 +441,13 @@ impl Emulator {
         while cycles_scanline < CYCLES_PER_LINE {
             let remaining = CYCLES_PER_LINE - cycles_scanline;
             let limit = std::cmp::min(remaining, BATCH_SIZE);
-            let result = Self::run_cpu_batch_static(&mut self.cpu, bus, limit, &mut self.z80, z80_cycle_debt);
+            let result = Self::run_cpu_batch_static(
+                &mut self.cpu,
+                bus,
+                limit,
+                &mut self.z80,
+                z80_cycle_debt,
+            );
             // If state changed, revert to old state temporarily so we can sync the batch cycles
             // with the state that was active during those cycles.
             if let Some(change) = result.z80_change {
@@ -730,619 +738,170 @@ impl Emulator {
         } else {
             println!("Controls: WASD/Arrows=D-pad, J/Z=A, K/X=B, L/C=C, U=X, I=Y, O=Z, Enter=Start, Space=Mode");
         }
-                println!("Press Escape to quit.");
-        
-                let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
-        
-                let size = winit::dpi::LogicalSize::new(
-                    frontend::GENESIS_WIDTH as f64 * 3.0,
-                    frontend::GENESIS_HEIGHT as f64 * 3.0,
-                );
-        
-                let window = WindowBuilder::new()
-                    .with_title("Genteel - Sega Genesis Emulator")
-                    .with_inner_size(size)
-                    .with_min_inner_size(winit::dpi::LogicalSize::new(
-                        frontend::GENESIS_WIDTH as f64,
-                        frontend::GENESIS_HEIGHT as f64,
-                    ))
-                    .build(&event_loop)
-                    .map_err(|e| e.to_string())?;
-        
-                // Leak the window to get a &'static Window, simplifying lifetime management
-                let window: &'static winit::window::Window = Box::leak(Box::new(window));
-        
-                let mut pixels = {
-                    let window_size = window.inner_size();
-                    let surface_texture =
-                        SurfaceTexture::new(window_size.width, window_size.height, window);
-                    Pixels::new(
-                        frontend::GENESIS_WIDTH,
-                        frontend::GENESIS_HEIGHT,
-                        surface_texture,
-                    )
-                    .map_err(|e| e.to_string())?
-                };
-        
-                // Initialize egui framework
-                let mut framework = Framework::new(
-                    &event_loop,
-                    window.inner_size().width,
-                    window.inner_size().height,
-                    window.scale_factor() as f32,
-                    &pixels,
-                    self.input_mapping,
-                );
-        
-                // Audio setup
-                let audio_buffer = audio::create_audio_buffer();
-                let audio_output = match audio::AudioOutput::new(audio_buffer.clone()) {
-                    Ok(output) => {
-                        self.bus.borrow_mut().sample_rate = output.sample_rate;
-                        Some(output)
-                    }
-                    Err(e) => {
-                        eprintln!("Warning: Failed to initialize audio: {}", e);
-                        None
-                    }
-                };
-        
-                let _audio_output = audio_output;
-        
-                // Input and Timing state
-                let mut input = input::FrameInput::default();
-                let mut frame_count: u64 = 0;
-        
-                let mut last_frame_inst = std::time::Instant::now();
-                let mut fps_timer = std::time::Instant::now();
-                let mut fps_count = 0;
-                let frame_duration = std::time::Duration::from_nanos(16_666_667); // 60.0 fps
-        
-                println!("Starting event loop...");
-                event_loop
-                    .run(move |event, target| {
+        println!("Press Escape to quit.");
+        let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
+        let size = winit::dpi::LogicalSize::new(
+            frontend::GENESIS_WIDTH as f64 * 3.0,
+            frontend::GENESIS_HEIGHT as f64 * 3.0,
+        );
+        let window = WindowBuilder::new()
+            .with_title("Genteel - Sega Genesis Emulator")
+            .with_inner_size(size)
+            .with_min_inner_size(winit::dpi::LogicalSize::new(
+                frontend::GENESIS_WIDTH as f64,
+                frontend::GENESIS_HEIGHT as f64,
+            ))
+            .build(&event_loop)
+            .map_err(|e| e.to_string())?;
+        // Leak the window to get a &'static Window, simplifying lifetime management
+        let window: &'static winit::window::Window = Box::leak(Box::new(window));
+        let mut pixels = {
+            let window_size = window.inner_size();
+            let surface_texture =
+                SurfaceTexture::new(window_size.width, window_size.height, window);
+            Pixels::new(320, 240, surface_texture).map_err(|e| e.to_string())?
+        };
+        // Initialize egui framework
+        let mut framework = Framework::new(
+            &event_loop,
+            window.inner_size().width,
+            window.inner_size().height,
+            window.scale_factor() as f32,
+            &pixels,
+            self.input_mapping,
+        );
+        // Audio setup
+        let audio_buffer = audio::create_audio_buffer();
+        let audio_output = match audio::AudioOutput::new(audio_buffer.clone()) {
+            Ok(output) => {
+                self.bus.borrow_mut().sample_rate = output.sample_rate;
+                Some(output)
+            }
+            Err(e) => {
+                eprintln!("Warning: Failed to initialize audio: {}", e);
+                None
+            }
+        };
+        let _audio_output = audio_output;
+        // Input and Timing state
+        let mut input = input::FrameInput::default();
+        let mut frame_count: u64 = 0;
+        let mut last_frame_inst = std::time::Instant::now();
+        let mut fps_timer = std::time::Instant::now();
+        let mut fps_count = 0;
+        let frame_duration = std::time::Duration::from_nanos(16_666_667); // 60.0 fps
+        println!("Starting event loop...");
+        event_loop
+            .run(move |event, target| {
+                match event {
+                    Event::WindowEvent { event, .. } => {
+                        // Handle GUI events
+                        framework.handle_event(window, &event);
                         match event {
-                            Event::WindowEvent { event, .. } => {
-                                // Handle GUI events
-                                framework.handle_event(window, &event);
-        
-                                match event {
-                                    WindowEvent::CloseRequested => {
-                                        println!("Using CloseRequested to exit");
-                                        target.exit();
-                                    }
-        
-                                    WindowEvent::KeyboardInput {
-                                        event: key_event, ..
-                                    } => {
-                                        // If egui wants focus, don't process game input
-                                        if framework.egui_ctx.wants_keyboard_input() {
-                                            return;
-                                        }
-        
-                                        let pressed = key_event.state == ElementState::Pressed;
-        
-                                        // 1. Try physical key first
-                                        let mut handled = false;
-                                        if let PhysicalKey::Code(keycode) = key_event.physical_key {
-                                            if keycode == KeyCode::Escape && pressed {
-                                                println!("Escape pressed, exiting");
-                                                target.exit();
-                                                return;
-                                            }
-        
-                                            if let Some((button, _)) =
-                                                frontend::keycode_to_button(keycode, self.input_mapping)
-                                            {
-                                                input.p1.set_button(button, pressed);
-                                                handled = true;
-                                            }
-                                        }
-        
-                                        // 2. Fallback to logical key
-                                        if !handled {
-                                            use winit::keyboard::Key;
-                                            if let Key::Named(named) = key_event.logical_key {
-                                                let button = match named {
-                                                    winit::keyboard::NamedKey::ArrowUp => Some("up"),
-                                                    winit::keyboard::NamedKey::ArrowDown => Some("down"),
-                                                    winit::keyboard::NamedKey::ArrowLeft => Some("left"),
-                                                    winit::keyboard::NamedKey::ArrowRight => Some("right"),
-                                                    winit::keyboard::NamedKey::Enter => Some("start"),
-                                                    winit::keyboard::NamedKey::Space => Some("mode"),
-                                                    _ => None,
-                                                };
-                                                if let Some(btn) = button {
-                                                    input.p1.set_button(btn, pressed);
-                                                }
-                                            }
-                                        }
-                                    }
-        
-                                    WindowEvent::Resized(size) => {
-                                        if size.width > 0 && size.height > 0 {
-                                            pixels.resize_surface(size.width, size.height).ok();
-                                            framework.resize(size.width, size.height);
-                                        }
-                                    }
-        
-                                    WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                                        framework.scale_factor(scale_factor as f32);
-                                    }
-        
-                                                                                            WindowEvent::RedrawRequested => {
-        
-                                                                                                // Sync settings from GUI
-        
-                                                                                                self.input_mapping = framework.gui_state.input_mapping;
-        
-                                                                
-        
-                                                                                                // Calculate optimal scaling
-        
-                                                                                                let window_size = window.inner_size();
-        
-                                                                                                let (v_width, v_height) = {
-        
-                                                                                                    let bus = self.bus.borrow();
-        
-                                                                                                    (bus.vdp.screen_width() as u32, bus.vdp.screen_height() as u32)
-        
-                                                                                                };
-        
-                                                                
-        
-                                                                                                // Base aspect ratio is 4:3 for NTSC Genesis
-        
-                                                                                                let target_aspect = 4.0 / 3.0;
-        
-                                                                                                
-        
-                                                                                                let (_vx, _vy, vw, vh) = if framework.gui_state.integer_scaling {
-        
-                                                                                                    // Find max integer scale that fits
-        
-                                                                                                    let scale_x = window_size.width / v_width;
-        
-                                                                                                    let scale_y = window_size.height / v_height;
-        
-                                                                                                    let scale = std::cmp::max(1, std::cmp::min(scale_x, scale_y));
-        
-                                                                                                    
-        
-                                                                                                    let width = v_width * scale;
-        
-                                                                                                    let height = v_height * scale;
-        
-                                                                                                    let x = (window_size.width - width) / 2;
-        
-                                                                                                    let y = (window_size.height - height) / 2;
-        
-                                                                                                    
-        
-                                                                                                    (x, y, width, height)
-        
-                                                                                                } else {
-        
-                                                                                                    // Fill window while maintaining 4:3 aspect ratio
-        
-                                                                                                    let win_aspect = window_size.width as f32 / window_size.height as f32;
-        
-                                                                                                    let (width, height) = if win_aspect > target_aspect {
-        
-                                                                                                        let h = window_size.height as f32;
-        
-                                                                                                        (h * target_aspect, h)
-        
-                                                                                                    } else {
-        
-                                                                                                        let w = window_size.width as f32;
-        
-                                                                                                        (w, w / target_aspect)
-        
-                                                                                                    };
-        
-                                                                                                    
-        
-                                                                                                    let x = (window_size.width as f32 - width) / 2.0;
-        
-                                                                                                    let y = (window_size.height as f32 - height) / 2.0;
-        
-                                                                                                    
-        
-                                                                                                                                        (x as u32, y as u32, width as u32, height as u32)
-        
-                                                                                                    
-        
-                                                                                                                                                                    };
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                                                    pixels.resize_buffer(v_width, v_height).ok();
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                                                    pixels.resize_surface(vw, vh).ok();
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                                                    frame_count += 1;
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                                                    fps_count += 1;
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                                                    // Update FPS in title bar every second
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                                                    if fps_timer.elapsed() >= std::time::Duration::from_secs(1) {
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                                                        window.set_title(&format!(
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                                                            "Genteel - Sega Genesis Emulator | FPS: {}",
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                                                            fps_count
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                                                        ));
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                                                        fps_count = 0;
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                                                        fps_timer = std::time::Instant::now();
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                                                    }
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                                                    // Debug: Print every 60 frames
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                                                    if self.debug && frame_count % 60 == 1 {
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                                                        self.log_debug(frame_count);
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                                                    }
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                                                    // Run one frame of emulation
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                                                    self.step_frame(Some(input.clone()));
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                                                    // Process audio
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                                                    self.process_audio(&audio_buffer);
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                                                    // Update egui
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                                                    framework.prepare(window);
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                                                    // Render
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                                                    let bus = self.bus.borrow();
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                                                    frontend::rgb565_to_rgba8(&bus.vdp.framebuffer, pixels.frame_mut());
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                                                    drop(bus);
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                                                    if let Err(e) = pixels.render_with(|encoder, render_target, context| {
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                                                        // Render the board
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                                                        context.scaling_renderer.render(encoder, render_target);
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                                                        // Render GUI
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                                                        framework.render(encoder, render_target, &context.device, &context.queue);
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                                                        Ok(())
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                                                    }) {
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                                                        eprintln!("Render error: {}", e);
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                                                        target.exit();
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                                                    }
-        
-                                                                                                    
-        
-                                                                                                                                    
-        
-                                                                                                    
-        
-                                                                                                                                                                                                }
-        
-                                    _ => {}
+                            WindowEvent::CloseRequested => {
+                                println!("Using CloseRequested to exit");
+                                target.exit();
+                            }
+                            WindowEvent::KeyboardInput {
+                                event: key_event, ..
+                            } => {
+                                // If egui wants focus, don't process game input
+                                if framework.egui_ctx.wants_keyboard_input() {
+                                    return;
                                 }
-                            },
+                                let pressed = key_event.state == ElementState::Pressed;
+                                // 1. Try physical key first
+                                let mut handled = false;
+                                if let PhysicalKey::Code(keycode) = key_event.physical_key {
+                                    if keycode == KeyCode::Escape && pressed {
+                                        println!("Escape pressed, exiting");
+                                        target.exit();
+                                        return;
+                                    }
+                                    if let Some((button, _)) =
+                                        frontend::keycode_to_button(keycode, self.input_mapping)
+                                    {
+                                        input.p1.set_button(button, pressed);
+                                        handled = true;
+                                    }
+                                }
+                                // 2. Fallback to logical key
+                                if !handled {
+                                    use winit::keyboard::Key;
+                                    if let Key::Named(named) = key_event.logical_key {
+                                        let button = match named {
+                                            winit::keyboard::NamedKey::ArrowUp => Some("up"),
+                                            winit::keyboard::NamedKey::ArrowDown => Some("down"),
+                                            winit::keyboard::NamedKey::ArrowLeft => Some("left"),
+                                            winit::keyboard::NamedKey::ArrowRight => Some("right"),
+                                            winit::keyboard::NamedKey::Enter => Some("start"),
+                                            winit::keyboard::NamedKey::Space => Some("mode"),
+                                            _ => None,
+                                        };
+                                        if let Some(btn) = button {
+                                            input.p1.set_button(btn, pressed);
+                                        }
+                                    }
+                                }
+                            }
+                            WindowEvent::Resized(size) => {
+                                if size.width > 0 && size.height > 0 {
+                                    pixels.resize_surface(size.width, size.height).ok();
+                                    framework.resize(size.width, size.height);
+                                }
+                            }
+                            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                                framework.scale_factor(scale_factor as f32);
+                            }
+                            WindowEvent::RedrawRequested => {
+                                // Sync settings from GUI
+                                self.input_mapping = framework.gui_state.input_mapping;
+                                frame_count += 1;
+                                fps_count += 1;
+                                // Update FPS in title bar every second
+                                if fps_timer.elapsed() >= std::time::Duration::from_secs(1) {
+                                    window.set_title(&format!(
+                                        "Genteel - Sega Genesis Emulator | FPS: {}",
+                                        fps_count
+                                    ));
+                                    fps_count = 0;
+                                    fps_timer = std::time::Instant::now();
+                                }
+                                // Debug: Print every 60 frames
+                                if self.debug && frame_count % 60 == 1 {
+                                    self.log_debug(frame_count);
+                                }
+                                // Run one frame of emulation
+                                self.step_frame(Some(input.clone()));
+                                // Process audio
+                                self.process_audio(&audio_buffer);
+                                // Update egui
+                                framework.prepare(window);
+                                // Render
+                                let bus = self.bus.borrow();
+                                frontend::rgb565_to_rgba8(&bus.vdp.framebuffer, pixels.frame_mut());
+                                drop(bus);
+                                if let Err(e) =
+                                    pixels.render_with(|encoder, render_target, context| {
+                                        // Render the board
+                                        context.scaling_renderer.render(encoder, render_target);
+                                        // Render GUI
+                                        framework.render(
+                                            encoder,
+                                            render_target,
+                                            &context.device,
+                                            &context.queue,
+                                        );
+                                        Ok(())
+                                    })
+                                {
+                                    eprintln!("Render error: {}", e);
+                                    target.exit();
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
                     Event::AboutToWait => {
                         let now = std::time::Instant::now();
                         let next_frame = last_frame_inst + frame_duration;

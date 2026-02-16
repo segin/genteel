@@ -156,12 +156,12 @@ impl AudioOutput {
     pub fn new(buffer: SharedAudioBuffer) -> Result<Self, String> {
         let (stream, handle) = rodio::OutputStream::try_default()
             .map_err(|e| format!("Failed to open audio output: {}", e))?;
-        
+
         let sink = rodio::Sink::try_new(&handle)
             .map_err(|e| format!("Failed to create audio sink: {}", e))?;
 
         let source = EmulatorSource { buffer };
-        
+
         // Use rodio's automatic resampling and channel mixing
         sink.append(source);
         sink.play();

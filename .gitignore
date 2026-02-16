@@ -2,3 +2,5 @@
 __pycache__/
 *.pyc
 audit_reports/
+output.wav
+reproduce_inc_dec

@@ -368,7 +368,11 @@ impl Bus {
         if (0xC00004..=0xC00007).contains(&addr) {
             self.vdp.write_control(value);
             if self.vdp.dma_pending {
-                self.run_dma();
+                if self.vdp.is_dma_transfer() {
+                    self.run_dma();
+                } else {
+                    self.vdp.execute_dma();
+                }
             }
             return;
         }
@@ -451,40 +455,43 @@ impl Bus {
     }
 
     fn run_dma(&mut self) {
+        if !self.vdp.is_dma_transfer() {
+            return;
+        }
         let length = self.vdp.dma_length() as usize;
         let source = self.vdp.dma_source_transfer();
-
+        let _step = self.vdp.registers[15] as u16;
         for i in 0..length {
             let src_addr = source + (i * 2) as u32;
             let val = self.read_word(src_addr);
             self.vdp.write_data(val);
         }
-
         self.vdp.dma_pending = false;
     }
 }
 
 impl MemoryInterface for Bus {
+    #[inline(always)]
     fn read_byte(&mut self, address: u32) -> u8 {
         self.read_byte(address)
     }
-
+    #[inline(always)]
     fn write_byte(&mut self, address: u32, value: u8) {
         self.write_byte(address, value)
     }
-
+    #[inline(always)]
     fn read_word(&mut self, address: u32) -> u16 {
         self.read_word(address)
     }
-
+    #[inline(always)]
     fn write_word(&mut self, address: u32, value: u16) {
         self.write_word(address, value)
     }
-
+    #[inline(always)]
     fn read_long(&mut self, address: u32) -> u32 {
         self.read_long(address)
     }
-
+    #[inline(always)]
     fn write_long(&mut self, address: u32, value: u32) {
         self.write_long(address, value)
     }

@@ -24,8 +24,7 @@ fn test_render_plane_basic() {
     }
 
     // Nametable Entry at 0xC000 (0,0) -> Tile 1, Pal 0, Priority 0, Flip 0
-    // Account for 128px offset: x=0 maps to tile_h=16
-    let nt_addr = 0xC000 + (0 * 32 + 16) * 2;
+    let nt_addr = 0xC000 + (0 * 32 + 0) * 2;
     vdp.vram[nt_addr] = 0x00;
     vdp.vram[nt_addr + 1] = 0x01;
 
@@ -62,8 +61,7 @@ fn test_render_plane_hflip_quirk() {
     vdp.vram[tile1_addr + 3] = 0x34;
 
     // Nametable Entry at 0xC000 -> Tile 1, H-Flip
-    // Account for 128px offset: x=0 maps to tile_h=16
-    let nt_addr = 0xC000 + (0 * 32 + 16) * 2;
+    let nt_addr = 0xC000 + (0 * 32 + 0) * 2;
     vdp.vram[nt_addr] = 0x08; // Bit 11 set for H-Flip
     vdp.vram[nt_addr + 1] = 0x01;
 
@@ -101,7 +99,7 @@ fn test_render_plane_scroll() {
     vdp.set_region(false);
     vdp.registers[1] = 0x40; // Display
     vdp.registers[2] = 0x30; // Plane A 0xC000
-    vdp.registers[4] = 0x38; // Plane B 0xE000
+    vdp.registers[4] = 0x07; // Plane B 0xE000
     vdp.registers[13] = 0x00; // HScroll Table Base 0x0000
 
     vdp.cram_cache[1] = 0xF800; // Red (Plane A)
@@ -118,7 +116,7 @@ fn test_render_plane_scroll() {
     // tile_h = (65535/8)%32 = 31.
     // So pixel 0 will come from tile 31.
     vdp.vram[0] = 0x00;
-    vdp.vram[1] = 0x01; 
+    vdp.vram[1] = 0x01;
 
     // Nametable A at 0xC000.
     // Put Tile 1 (Red) at tile_h=31, tile_v=0
@@ -136,30 +134,30 @@ fn test_render_plane_scroll() {
 fn test_render_plane_b_isolation() {
     let mut vdp = Vdp::new();
     vdp.set_region(false);
-    vdp.registers[1] = 0x40; 
+    vdp.registers[1] = 0x40;
     vdp.registers[2] = 0x30; // Plane A 0xC000
-    vdp.registers[4] = 0x38; // Plane B 0xE000
-        vdp.registers[13] = 0x00;
-        
-        // Set background color to Black (Palette 0, Index 0)
-        vdp.registers[7] = 0x00;
-        vdp.cram_cache[0] = 0x0000; // Background
-    
-        // Clear VRAM to ensure Tile 0 is empty (color index 0 everywhere)
-    
+    vdp.registers[4] = 0x07; // Plane B 0xE000
+    vdp.registers[13] = 0x00;
+
+    // Set background color to Black (Palette 0, Index 0)
+    vdp.registers[7] = 0x00;
+    vdp.cram_cache[0] = 0x0000; // Background
+
+    // Clear VRAM to ensure Tile 0 is empty (color index 0 everywhere)
+
     vdp.vram.fill(0);
 
     vdp.cram_cache[1] = 0xF800; // Red (Pal 0)
     vdp.cram_cache[17] = 0x07E0; // Green (Pal 1)
 
     // Tile 1: All 1s.
-    for i in 0..32 { vdp.vram[32 + i] = 0x11; }
+    for i in 0..32 {
+        vdp.vram[32 + i] = 0x11;
+    }
 
     // Plane A: All Tile 0 (Transparent)
     // Plane B: Tile 1 (Green) at screen (0,0)
-    // Remember horizontal offset 128. x=0 maps to plane x=128.
-    // 128/8 = 16. So tile_h=16.
-    let nt_addr_b = 0xE000 + (0 * 32 + 16) * 2;
+    let nt_addr_b = 0xE000 + (0 * 32 + 0) * 2;
     vdp.vram[nt_addr_b] = 0x20; // Pal 1, Tile 1
     vdp.vram[nt_addr_b + 1] = 0x01;
 
@@ -229,7 +227,7 @@ fn test_sprite_rendering_correctness() {
     vdp.vram[sat_base + 4] = 0x20;
     vdp.vram[sat_base + 5] = 0x01;
 
-    // H Pos: 0 (screen x) + 128 = 128 (0x80)
+    // H Pos: 0 (screen x)
     vdp.vram[sat_base + 6] = 0x00;
     vdp.vram[sat_base + 7] = 0x80;
 
