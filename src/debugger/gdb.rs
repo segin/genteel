@@ -402,8 +402,8 @@ impl GdbServer {
     }
 
     fn write_registers(&self, data: &str, registers: &mut GdbRegisters) -> String {
-        if data.len() < 72 {
-            // 18 registers * 8 hex chars minimum
+        if data.len() < 144 {
+            // 18 registers * 8 hex chars
             return "E01".to_string();
         }
 
@@ -1183,7 +1183,7 @@ mod tests {
     }
 
     #[test]
-    fn test_write_registers_validation() {
+    fn test_write_registers_length_validation() {
         let mut server = GdbServer {
             listener: TcpListener::bind("127.0.0.1:0").unwrap(),
             client: None,
@@ -1199,8 +1199,21 @@ mod tests {
         // Test with very short data
         assert_eq!(server.process_command("G00", &mut regs, &mut mem), "E01");
 
-        // Test with 71 chars (one less than the current check of 72)
+        // Test with 71 chars (original check boundary)
         let data = "0".repeat(71);
         assert_eq!(server.process_command(&format!("G{}", data), &mut regs, &mut mem), "E01");
+
+        // Test with 72 chars (previous panic boundary)
+        // This used to panic because the code tried to read beyond 72 chars
+        let data = "0".repeat(72);
+        assert_eq!(server.process_command(&format!("G{}", data), &mut regs, &mut mem), "E01");
+
+        // Test with 143 chars (new boundary, one less than required 144)
+        let data = "0".repeat(143);
+        assert_eq!(server.process_command(&format!("G{}", data), &mut regs, &mut mem), "E01");
+
+        // Test with 144 chars (valid length)
+        let data = "0".repeat(144);
+        assert_eq!(server.process_command(&format!("G{}", data), &mut regs, &mut mem), "OK");
     }
 }
