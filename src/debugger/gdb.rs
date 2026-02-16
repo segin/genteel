@@ -69,7 +69,8 @@ impl GdbServer {
             );
             Some(pwd)
         } else {
-            let token = format!("{:016x}", rand::random::<u64>());
+            use rand::RngExt;
+            let token = format!("{:016x}", rand::rng().random::<u64>());
             eprintln!(
                 "🔒 GDB Server listening on 127.0.0.1:{}. Protected with auto-generated token.",
                 port
@@ -402,8 +403,8 @@ impl GdbServer {
     }
 
     fn write_registers(&self, data: &str, registers: &mut GdbRegisters) -> String {
-        if data.len() < 72 {
-            // 18 registers * 8 hex chars minimum
+        if data.len() < 144 {
+            // 18 registers * 8 hex chars
             return "E01".to_string();
         }
 
@@ -1183,7 +1184,7 @@ mod tests {
     }
 
     #[test]
-    fn test_write_registers_validation() {
+    fn test_write_registers_length_validation() {
         let mut server = GdbServer {
             listener: TcpListener::bind("127.0.0.1:0").unwrap(),
             client: None,
@@ -1199,8 +1200,111 @@ mod tests {
         // Test with very short data
         assert_eq!(server.process_command("G00", &mut regs, &mut mem), "E01");
 
-        // Test with 71 chars (one less than the current check of 72)
+        // Test with 71 chars (original check boundary)
         let data = "0".repeat(71);
         assert_eq!(server.process_command(&format!("G{}", data), &mut regs, &mut mem), "E01");
+
+        // Test with 72 chars (previous panic boundary)
+        // This used to panic because the code tried to read beyond 72 chars
+        let data = "0".repeat(72);
+        assert_eq!(server.process_command(&format!("G{}", data), &mut regs, &mut mem), "E01");
+
+        // Test with 143 chars (new boundary, one less than required 144)
+        let data = "0".repeat(143);
+        assert_eq!(server.process_command(&format!("G{}", data), &mut regs, &mut mem), "E01");
+
+        // Test with 144 chars (valid length)
+        let data = "0".repeat(144);
+        assert_eq!(server.process_command(&format!("G{}", data), &mut regs, &mut mem), "OK");
+    }
+
+    #[test]
+    fn test_query_commands_strict_conformance() {
+        let mut server = create_test_server();
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+
+        // qSupported: Check full response
+        let expected_supported =
+            format!("PacketSize={};swbreak+;QStartNoAckMode+", MAX_PACKET_SIZE);
+        assert_eq!(
+            server.process_command("qSupported", &mut regs, &mut mem),
+            expected_supported
+        );
+
+        // qSupported with features (should be ignored and return same list)
+        assert_eq!(
+            server.process_command("qSupported:multiprocess+;swbreak+", &mut regs, &mut mem),
+            expected_supported
+        );
+
+        // qC: Current thread
+        assert_eq!(server.process_command("qC", &mut regs, &mut mem), "QC1");
+
+        // qfThreadInfo: Start thread list
+        assert_eq!(
+            server.process_command("qfThreadInfo", &mut regs, &mut mem),
+            "m1"
+        );
+
+        // qsThreadInfo: Continue thread list (end)
+        assert_eq!(
+            server.process_command("qsThreadInfo", &mut regs, &mut mem),
+            "l"
+        );
+
+        // qAttached: Process attached status
+        assert_eq!(
+            server.process_command("qAttached", &mut regs, &mut mem),
+            "1"
+        );
+
+        // qAttached with PID (not supported currently, should return empty string because of exact match check)
+        assert_eq!(
+            server.process_command("qAttached:1", &mut regs, &mut mem),
+            ""
+        );
+
+        // qOffsets (not supported)
+        assert_eq!(
+            server.process_command("qOffsets", &mut regs, &mut mem),
+            ""
+        );
+
+        // qSymbol (not supported)
+        assert_eq!(
+            server.process_command("qSymbol::", &mut regs, &mut mem),
+            ""
+        );
+    }
+
+    #[test]
+    fn test_breakpoint_edge_cases() {
+        let mut server = create_test_server();
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+
+        // 1. Invalid address format
+        assert_eq!(server.process_command("Z0,GG,4", &mut regs, &mut mem), "E01");
+        assert_eq!(server.process_command("z0,GG,4", &mut regs, &mut mem), "E01");
+
+        // 2. Duplicate breakpoint
+        assert_eq!(server.process_command("Z0,2000,4", &mut regs, &mut mem), "OK");
+        assert_eq!(server.process_command("Z0,2000,4", &mut regs, &mut mem), "OK");
+        assert!(server.is_breakpoint(0x2000));
+
+        // 3. Remove non-existent breakpoint
+        assert_eq!(server.process_command("z0,3000,4", &mut regs, &mut mem), "OK");
+        assert!(!server.is_breakpoint(0x3000));
+
+        // 4. Unsupported breakpoint types
+        assert_eq!(server.process_command("Z1,1000,4", &mut regs, &mut mem), "");
+        assert_eq!(server.process_command("Z2,1000,4", &mut regs, &mut mem), "");
+        assert_eq!(server.process_command("Z3,1000,4", &mut regs, &mut mem), "");
+        assert_eq!(server.process_command("Z4,1000,4", &mut regs, &mut mem), "");
+
+        // 5. Check omitting kind (implementation allows it)
+        assert_eq!(server.process_command("Z0,4000", &mut regs, &mut mem), "OK");
+        assert!(server.is_breakpoint(0x4000));
     }
 }

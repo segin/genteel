@@ -151,41 +151,46 @@ fn test_dma_type_checks() {
 
 proptest! {
     #[test]
-    fn test_dma_mode_prop(reg_hi in 0u8..=255u8) {
+    fn test_dma_mode_prop(val in 0u8..=255) {
         let mut vdp = Vdp::new();
-        vdp.registers[REG_DMA_SRC_HI] = reg_hi;
-        prop_assert_eq!(vdp.dma_mode(), reg_hi);
+        vdp.registers[REG_DMA_SRC_HI] = val;
+        prop_assert_eq!(vdp.dma_mode(), val);
     }
 
     #[test]
-    fn test_dma_source_prop(lo in 0u8..=255u8, mid in 0u8..=255u8, hi in 0u8..=255u8) {
+    fn test_dma_source_prop(hi in 0u8..=255, mid in 0u8..=255, lo in 0u8..=255) {
         let mut vdp = Vdp::new();
-        vdp.registers[REG_DMA_SRC_LO] = lo;
-        vdp.registers[REG_DMA_SRC_MID] = mid;
         vdp.registers[REG_DMA_SRC_HI] = hi;
+        vdp.registers[REG_DMA_SRC_MID] = mid;
+        vdp.registers[REG_DMA_SRC_LO] = lo;
 
-        let expected = ((hi as u32) << 17) | ((mid as u32) << 9) | ((lo as u32) << 1);
+        let expected = ((hi as u32) << 17) |
+                       ((mid as u32) << 9) |
+                       ((lo as u32) << 1);
+
         prop_assert_eq!(vdp.dma_source(), expected);
     }
 
     #[test]
-    fn test_dma_source_transfer_prop(lo in 0u8..=255u8, mid in 0u8..=255u8, hi in 0u8..=255u8) {
+    fn test_dma_source_transfer_prop(hi in 0u8..=255, mid in 0u8..=255, lo in 0u8..=255) {
         let mut vdp = Vdp::new();
-        vdp.registers[REG_DMA_SRC_LO] = lo;
-        vdp.registers[REG_DMA_SRC_MID] = mid;
         vdp.registers[REG_DMA_SRC_HI] = hi;
+        vdp.registers[REG_DMA_SRC_MID] = mid;
+        vdp.registers[REG_DMA_SRC_LO] = lo;
 
-        // Mask off top 2 bits of hi
-        let expected = (((hi & 0x3F) as u32) << 17) | ((mid as u32) << 9) | ((lo as u32) << 1);
+        // Mask hi with 0x3F (drop top 2 bits)
+        let expected = (((hi & 0x3F) as u32) << 17) |
+                       ((mid as u32) << 9) |
+                       ((lo as u32) << 1);
+
         prop_assert_eq!(vdp.dma_source_transfer(), expected);
     }
 
     #[test]
-    fn test_dma_length_prop(lo in 0u8..=255u8, hi in 0u8..=255u8) {
+    fn test_dma_length_prop(hi in 0u8..=255, lo in 0u8..=255) {
         let mut vdp = Vdp::new();
-        vdp.registers[REG_DMA_LEN_LO] = lo;
         vdp.registers[REG_DMA_LEN_HI] = hi;
-
+        vdp.registers[REG_DMA_LEN_LO] = lo;
         let expected = ((hi as u32) << 8) | (lo as u32);
         prop_assert_eq!(vdp.dma_length(), expected);
     }
