@@ -10,25 +10,61 @@ use winit::keyboard::KeyCode;
 pub const GENESIS_WIDTH: u32 = 320;
 pub const GENESIS_HEIGHT: u32 = 240;
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum InputMapping {
+    #[default]
+    Original,
+    Ergonomic,
+}
+
 /// Key mapping for player 1
 #[cfg(feature = "gui")]
-pub fn keycode_to_button(keycode: KeyCode) -> Option<(&'static str, bool)> {
-    match keycode {
-        // Player 1 - Arrow keys + ZXC/Enter
-        KeyCode::ArrowUp => Some(("up", true)),
-        KeyCode::ArrowDown => Some(("down", true)),
-        KeyCode::ArrowLeft => Some(("left", true)),
-        KeyCode::ArrowRight => Some(("right", true)),
-        KeyCode::KeyZ => Some(("a", true)),
-        KeyCode::KeyX => Some(("b", true)),
-        KeyCode::KeyC => Some(("c", true)),
-        KeyCode::Enter => Some(("start", true)),
-        // 6-button extension
-        KeyCode::KeyA => Some(("x", true)),
-        KeyCode::KeyS => Some(("y", true)),
-        KeyCode::KeyD => Some(("z", true)),
-        KeyCode::KeyQ => Some(("mode", true)),
-        _ => None,
+pub fn keycode_to_button(keycode: KeyCode, mapping: InputMapping) -> Option<(&'static str, bool)> {
+    match mapping {
+        InputMapping::Original => match keycode {
+            // Player 1 - Arrow keys + ZXC/Enter
+            KeyCode::ArrowUp => Some(("up", true)),
+            KeyCode::ArrowDown => Some(("down", true)),
+            KeyCode::ArrowLeft => Some(("left", true)),
+            KeyCode::ArrowRight => Some(("right", true)),
+            KeyCode::KeyZ => Some(("a", true)),
+            KeyCode::KeyX => Some(("b", true)),
+            KeyCode::KeyC => Some(("c", true)),
+            KeyCode::Enter => Some(("start", true)),
+            // 6-button extension
+            KeyCode::KeyA => Some(("x", true)),
+            KeyCode::KeyS => Some(("y", true)),
+            KeyCode::KeyD => Some(("z", true)),
+            KeyCode::KeyQ => Some(("mode", true)),
+            _ => None,
+        },
+        InputMapping::Ergonomic => match keycode {
+            // Player 1 - D-pad (WASD physical or Arrow keys)
+            KeyCode::KeyW | KeyCode::ArrowUp => Some(("up", true)),
+            KeyCode::KeyS | KeyCode::ArrowDown => Some(("down", true)),
+            KeyCode::KeyA | KeyCode::ArrowLeft => Some(("left", true)),
+            KeyCode::KeyD | KeyCode::ArrowRight => Some(("right", true)),
+
+            // Face Buttons (Bottom Row: J, K, L -> A, B, C)
+            KeyCode::KeyJ => Some(("a", true)),
+            KeyCode::KeyK => Some(("b", true)),
+            KeyCode::KeyL => Some(("c", true)),
+
+            // Face Buttons (Top Row: U, I, O -> X, Y, Z)
+            KeyCode::KeyU => Some(("x", true)),
+            KeyCode::KeyI => Some(("y", true)),
+            KeyCode::KeyO => Some(("z", true)),
+
+            // System Buttons
+            KeyCode::Enter => Some(("start", true)),
+            KeyCode::Space => Some(("mode", true)),
+
+            // Legacy/Alternative Mapping (ZX for A/B)
+            KeyCode::KeyZ => Some(("a", true)),
+            KeyCode::KeyX => Some(("b", true)),
+            KeyCode::KeyC => Some(("c", true)),
+            _ => None,
+        },
     }
 }
 
@@ -55,9 +91,18 @@ mod tests {
     #[cfg(feature = "gui")]
     #[test]
     fn test_keycode_mapping() {
-        assert_eq!(keycode_to_button(KeyCode::KeyZ), Some(("a", true)));
-        assert_eq!(keycode_to_button(KeyCode::KeyX), Some(("b", true)));
-        assert_eq!(keycode_to_button(KeyCode::ArrowUp), Some(("up", true)));
+        assert_eq!(
+            keycode_to_button(KeyCode::KeyZ, InputMapping::Original),
+            Some(("a", true))
+        );
+        assert_eq!(
+            keycode_to_button(KeyCode::KeyX, InputMapping::Original),
+            Some(("b", true))
+        );
+        assert_eq!(
+            keycode_to_button(KeyCode::ArrowUp, InputMapping::Original),
+            Some(("up", true))
+        );
     }
 
     #[test]

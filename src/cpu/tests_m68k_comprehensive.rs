@@ -646,6 +646,39 @@ proptest! {
     }
 
     #[test]
+    fn prop_not_not_identity(a in 0u32..0xFFFFFFFF) {
+        let (mut cpu, mut memory) = create_test_cpu();
+        memory.write_word(0x100, 0x4680); // NOT.L D0
+        memory.write_word(0x102, 0x4680); // NOT.L D0
+        cpu.d[0] = a;
+        cpu.step_instruction(&mut memory);
+        cpu.step_instruction(&mut memory);
+        prop_assert_eq!(cpu.d[0], a);
+    }
+
+    #[test]
+    fn prop_add_sub_inverse(a in 0u32..0x7FFFFFFF, b in 0u32..0x7FFFFFFF) {
+        let (mut cpu, mut memory) = create_test_cpu();
+        memory.write_word(0x100, 0xD081); // ADD.L D1, D0
+        memory.write_word(0x102, 0x9081); // SUB.L D1, D0
+        cpu.d[0] = a;
+        cpu.d[1] = b;
+        cpu.step_instruction(&mut memory);
+        cpu.step_instruction(&mut memory);
+        prop_assert_eq!(cpu.d[0], a);
+    }
+
+    #[test]
+    fn prop_mul_preserves_low_word_with_one(a in 0u16..0xFFFF) {
+        let (mut cpu, mut memory) = create_test_cpu();
+        memory.write_word(0x100, 0xC0C1); // MULU D1, D0
+        cpu.d[0] = a as u32;
+        cpu.d[1] = 1;
+        cpu.step_instruction(&mut memory);
+        prop_assert_eq!(cpu.d[0], a as u32);
+    }
+
+    #[test]
     fn prop_clr_always_zero(a in 0u32..0xFFFFFFFF) {
         let (mut cpu, mut memory) = create_test_cpu();
         memory.write_word(0x100, 0x4280); // CLR.L D0
@@ -780,4 +813,41 @@ fn test_dbcc_loop() {
                                        // d[0] high word is 0, so result is 0x0000FFFF
     assert_eq!(cpu.d[0], 0x0000FFFF);
     assert_eq!(cpu.pc, 0x104);
+}
+
+#[test]
+fn test_abcd_multi_precision() {
+    // Test that Z is only cleared, not set, allowing multi-precision BCD
+    let (mut cpu, mut memory) = create_test_cpu();
+
+    // ABCD D1, D0
+    memory.write_word(0x100, 0xC101);
+    memory.write_word(0x102, 0xC101);
+
+    // Part 1: 50 + 50 = 00 (Carry=1, Z remains 1)
+    cpu.d[0] = 0x50;
+    cpu.d[1] = 0x50;
+    cpu.set_flag(flags::ZERO, true);
+    cpu.set_flag(flags::EXTEND, false);
+    cpu.step_instruction(&mut memory);
+
+    assert_eq!(cpu.d[0] & 0xFF, 0x00);
+    assert!(cpu.get_flag(flags::EXTEND));
+    assert!(
+        cpu.get_flag(flags::ZERO),
+        "Z should remain set on zero result"
+    );
+
+    // Part 2: 00 + 00 + X(1) = 01 (Carry=0, Z cleared)
+    cpu.d[0] = 0x00;
+    cpu.d[1] = 0x00;
+    // X is already 1 from previous op
+    cpu.step_instruction(&mut memory);
+
+    assert_eq!(cpu.d[0] & 0xFF, 0x01);
+    assert!(!cpu.get_flag(flags::EXTEND));
+    assert!(
+        !cpu.get_flag(flags::ZERO),
+        "Z should be cleared on non-zero result"
+    );
 }

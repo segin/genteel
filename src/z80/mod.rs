@@ -724,7 +724,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         let opcode = self.fetch_byte();
 
         if self.debug {
-            eprintln!("DEBUG: Z80 STEP: PC=0x{:04X} Op=0x{:02X} A={:02X} F={:02X} BC={:04X} DE={:04X} HL={:04X} SP={:04X} CYC={}", 
+            eprintln!("Z80 | PC:{:04X} OP:{:02X} | A:{:02X} F:{:02X} | BC:{:04X} DE:{:04X} HL:{:04X} SP:{:04X} | CYC:{}", 
                 _pc_before, opcode, self.a, self.f, self.bc(), self.de(), self.hl(), self.sp, self.cycles);
         }
 

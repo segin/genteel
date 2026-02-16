@@ -77,12 +77,23 @@ impl Apu {
     }
 
     /// Run one sample cycle (at ~44100Hz or system clock)
-    /// Returns a mixed sample.
-    pub fn step(&mut self) -> i16 {
+    /// Returns a stereo mixed sample pair.
+    pub fn step(&mut self) -> (i16, i16) {
+        // Generate FM sample
+        let (fm_l, fm_r) = self.fm.generate_sample();
+
         // Step the components
         self.fm.step(1); // 1 "cycle" per sample step (simplified)
 
-        self.psg.step()
+        // Generate PSG sample (mono)
+        let psg_sample = self.psg.step();
+
+        // Mix: convert to i32 to prevent early overflow, then clamp
+        let left = (fm_l as i32 + psg_sample as i32).clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+        let right =
+            (fm_r as i32 + psg_sample as i32).clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+
+        (left, right)
     }
 }
 

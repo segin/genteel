@@ -18,8 +18,8 @@ pub mod input;
 pub mod io;
 pub mod memory;
 pub mod vdp;
-pub mod z80;
 pub mod wav_writer;
+pub mod z80;
 
 use apu::Apu;
 use cpu::Cpu;
@@ -30,6 +30,8 @@ use memory::{SharedBus, Z80Bus};
 use std::cell::RefCell;
 use std::rc::Rc;
 use z80::Z80;
+
+use frontend::InputMapping;
 
 #[derive(Debug, Clone, Copy)]
 struct Z80Change {
@@ -54,11 +56,12 @@ pub struct Emulator {
     pub input: InputManager,
     pub audio_buffer: Vec<i16>,
     pub wav_writer: Option<wav_writer::WavWriter>,
-    pub apu_accumulator: f32,
     pub internal_frame_count: u64,
     pub z80_last_bus_req: bool,
     pub z80_last_reset: bool,
     pub z80_trace_count: u32,
+    pub input_mapping: InputMapping,
+    pub debug: bool,
 }
 
 impl Default for Emulator {
@@ -90,11 +93,12 @@ impl Emulator {
             input: InputManager::new(),
             audio_buffer: Vec::with_capacity(735 * 2), // Pre-allocate approx 1 frame
             wav_writer: None,
-            apu_accumulator: 0.0,
             internal_frame_count: 0,
             z80_last_bus_req: false,
             z80_last_reset: true,
             z80_trace_count: 0,
+            input_mapping: InputMapping::default(),
+            debug: false,
         };
 
         // Optimization: Use raw pointer for Z80 bus access to bypass RefCell
@@ -225,7 +229,9 @@ impl Emulator {
 
     pub fn step_frame_internal(&mut self) {
         self.internal_frame_count += 1;
-        self.debug_log_frame();
+        if self.debug {
+            self.log_debug(self.internal_frame_count);
+        }
 
         // Genesis timing constants (NTSC):
         // M68k: 7.67 MHz, Z80: 3.58 MHz
@@ -250,30 +256,6 @@ impl Emulator {
 
         // Update V30 rolling offset
         self.bus.borrow_mut().vdp.update_v30_offset();
-    }
-
-    fn debug_log_frame(&self) {
-        if self.internal_frame_count % 60 == 0 || self.internal_frame_count < 5 {
-            let bus = self.bus.borrow();
-            let disp_en = bus.vdp.display_enabled();
-            let dma_en = bus.vdp.dma_enabled();
-
-            let cram_sum: u32 = bus.vdp.cram.iter().take(128).map(|&b| b as u32).sum();
-
-            let z80_pc = self.z80.pc;
-            let z80_reset = bus.z80_reset;
-            let z80_req = bus.z80_bus_request;
-            let z80_op = if (z80_pc as usize) < bus.z80_ram.len() {
-                bus.z80_ram[z80_pc as usize]
-            } else {
-                0
-            };
-
-            eprintln!("Frame {}: 68k={:06X} Disp={} DMA={} CRAM_SUM={} IntMask={} | Z80={:04X} [{:02X}] Rst={} Req={}",
-                     self.internal_frame_count, self.cpu.pc, disp_en, dma_en, cram_sum,
-                     (self.cpu.sr >> 8) & 7,
-                     z80_pc, z80_op, z80_reset, z80_req);
-        }
     }
 
     fn step_scanline(
@@ -313,7 +295,7 @@ impl Emulator {
             }
 
             let m68k_cycles = cpu.step_instruction(bus);
-            bus.apu.fm.step(m68k_cycles);
+            bus.sync_audio(m68k_cycles);
 
             // Check for Z80 state change
             if bus.z80_bus_request != initial_req || bus.z80_reset != initial_rst {
@@ -373,6 +355,7 @@ impl Emulator {
                     &mut self.z80_last_reset,
                     &mut self.z80_trace_count,
                     self.cpu.pc,
+                    self.debug,
                 );
                 cycles_scanline += result.cycles;
             }
@@ -396,6 +379,7 @@ impl Emulator {
                     &mut self.z80_last_reset,
                     &mut self.z80_trace_count,
                     self.cpu.pc,
+                    self.debug,
                 );
                 cycles_scanline += change.instruction_cycles;
             }
@@ -416,19 +400,20 @@ impl Emulator {
         z80_last_reset: &mut bool,
         z80_trace_count: &mut u32,
         cpu_pc: u32,
+        debug: bool,
     ) {
         const Z80_CYCLES_PER_M68K_CYCLE: f32 = 3.58 / 7.67;
 
         // Z80 execution
         let (z80_can_run, z80_is_reset) = {
             let prev = *z80_last_bus_req;
-            if bus.z80_bus_request != prev {
+            if debug && bus.z80_bus_request != prev {
                 eprintln!(
                     "DEBUG: Bus Req Changed: {} -> {} at 68k PC={:06X}",
                     prev, bus.z80_bus_request, cpu_pc
                 );
-                *z80_last_bus_req = bus.z80_bus_request;
             }
+            *z80_last_bus_req = bus.z80_bus_request;
             (!bus.z80_reset && !bus.z80_bus_request, bus.z80_reset)
         };
 
@@ -441,7 +426,7 @@ impl Emulator {
         *z80_last_reset = z80_is_reset;
 
         if z80_can_run && internal_frame_count > 0 {
-            if *z80_trace_count < 5000 {
+            if debug && *z80_trace_count < 5000 {
                 z80.debug = true;
                 *z80_trace_count += 1;
             } else {
@@ -465,29 +450,21 @@ impl Emulator {
         }
     }
 
-    fn generate_audio_samples(&mut self, samples_per_line: f32) {
-        self.apu_accumulator += samples_per_line;
-        let samples_to_run = self.apu_accumulator as usize;
-        if samples_to_run > 0 {
-            self.apu_accumulator -= samples_to_run as f32;
-
-            let mut bus = self.bus.borrow_mut();
-            for _ in 0..samples_to_run {
-                let sample = bus.apu.step();
-
-                if let Some(writer) = &mut self.wav_writer {
-                    let _ = writer.write_samples(&[sample, sample]);
-                }
-
-                // Security Fix: Prevent unbounded buffer growth if not consumed
-                // Cap at ~20 frames of audio (32768 samples)
-                if self.audio_buffer.len() < 32768 {
-                    // Stereo output (duplicate for now)
-                    self.audio_buffer.push(sample);
-                    self.audio_buffer.push(sample);
-                }
-            }
+    fn generate_audio_samples(&mut self, _samples_per_line: f32) {
+        let mut bus = self.bus.borrow_mut();
+        if bus.audio_buffer.is_empty() {
+            return;
         }
+
+        if let Some(writer) = &mut self.wav_writer {
+            let _ = writer.write_samples(&bus.audio_buffer);
+        }
+
+        // Move samples to emulator buffer for frontend consumption
+        if self.audio_buffer.len() < 32768 {
+            self.audio_buffer.extend(bus.audio_buffer.iter());
+        }
+        bus.audio_buffer.clear();
     }
 
     fn handle_interrupts(&mut self, line: u16, active_lines: u16) {
@@ -631,18 +608,22 @@ impl Emulator {
     }
 
     #[cfg(feature = "gui")]
-    fn print_debug_info(&self, frame_count: u64) {
-        let mut bus = self.bus.borrow_mut();
-        let disp_en = bus.vdp.display_enabled();
-        let dma_en = bus.vdp.dma_enabled();
+    fn log_debug(&self, frame_count: u64) {
+        let bus = self.bus.borrow();
+        let disp_en = if bus.vdp.display_enabled() {
+            "ON "
+        } else {
+            "OFF"
+        };
+        let dma_en = if bus.vdp.dma_enabled() { "ON " } else { "OFF" };
         let cram_val = if bus.vdp.cram.len() >= 2 {
             ((bus.vdp.cram[0] as u16) << 8) | (bus.vdp.cram[1] as u16)
         } else {
             0
         };
         let z80_pc = self.z80.pc;
-        let z80_reset = bus.z80_reset;
-        let z80_req = bus.z80_bus_request;
+        let z80_reset = if bus.z80_reset { "RST" } else { "RUN" };
+        let z80_req = if bus.z80_bus_request { "BUS" } else { "---" };
         let z80_op = if (z80_pc as usize) < bus.z80_ram.len() {
             bus.z80_ram[z80_pc as usize]
         } else {
@@ -650,29 +631,18 @@ impl Emulator {
         };
 
         println_safe!(
-            "Frame {}: 68k={:06X} Disp={} DMA={} CRAM={:04X} IntMask={} | Z80={:04X} [{:02X}] Rst={} Req={}",
+            "FRAME {:05} | 68k: PC={:06X} SR={:04X} | VDP: Disp={} DMA={} CRAM={:04X} | Z80: PC={:04X} OP={:02X} St={} Req={}",
             frame_count,
             self.cpu.pc,
+            self.cpu.sr,
             disp_en,
             dma_en,
             cram_val,
-            (self.cpu.sr >> 8) & 7,
             z80_pc,
             z80_op,
             z80_reset,
             z80_req
         );
-
-        // One-shot opcode dump for hangs
-        if (self.cpu.pc == 0x072764 || self.cpu.pc == 0x002F06) && frame_count <= 121 {
-            let dump_start = (self.cpu.pc - 0x10) & !1;
-            let dump_end = self.cpu.pc + 0x20;
-            eprintln!("Dumping code around {:06X}:", self.cpu.pc);
-            for addr in (dump_start..dump_end).step_by(2) {
-                let val = bus.read_word(addr);
-                eprintln!("{:06X}: {:04X}", addr, val);
-            }
-        }
     }
 
     #[cfg(feature = "gui")]
@@ -697,11 +667,16 @@ impl Emulator {
     #[cfg(feature = "gui")]
     pub fn run_with_frontend(mut self) -> Result<(), String> {
         use pixels::{Pixels, SurfaceTexture};
-        use winit::event::{ElementState, Event, KeyEvent, WindowEvent};
-        use winit::event_loop::{ControlFlow, EventLoop};
+        use winit::event::{ElementState, Event, WindowEvent};
+        use winit::event_loop::EventLoop;
         use winit::keyboard::{KeyCode, PhysicalKey};
         use winit::window::WindowBuilder;
-        println!("Controls: Arrow keys=D-pad, Z=A, X=B, C=C, Enter=Start");
+
+        if self.input_mapping == InputMapping::Original {
+            println!("Controls: Arrow keys=D-pad, Z=A, X=B, C=C, Enter=Start");
+        } else {
+            println!("Controls: WASD/Arrows=D-pad, J/Z=A, K/X=B, L/C=C, U=X, I=Y, O=Z, Enter=Start, Space=Mode");
+        }
 
         println!("Press Escape to quit.");
 
@@ -737,17 +712,31 @@ impl Emulator {
 
         // Audio setup
         let audio_buffer = audio::create_audio_buffer();
-        let _audio_output = audio::AudioOutput::new(audio_buffer.clone()).ok();
+        let audio_output = match audio::AudioOutput::new(audio_buffer.clone()) {
+            Ok(output) => {
+                self.bus.borrow_mut().sample_rate = output.sample_rate;
+                Some(output)
+            }
+            Err(e) => {
+                eprintln!("Warning: Failed to initialize audio: {}", e);
+                None
+            }
+        };
 
-        // Input state
+        let _audio_output = audio_output;
+
+        // Input and Timing state
         let mut input = input::FrameInput::default();
         let mut frame_count: u64 = 0;
+
+        let mut last_frame_inst = std::time::Instant::now();
+        let mut fps_timer = std::time::Instant::now();
+        let mut fps_count = 0;
+        let frame_duration = std::time::Duration::from_nanos(16_666_667); // 60.0 fps
 
         println!("Starting event loop...");
         event_loop
             .run(move |event, target| {
-                target.set_control_flow(ControlFlow::Poll);
-
                 match event {
                     Event::Resumed => {
                         println!("Event::Resumed");
@@ -760,24 +749,44 @@ impl Emulator {
                         }
 
                         WindowEvent::KeyboardInput {
-                            event:
-                                KeyEvent {
-                                    physical_key: PhysicalKey::Code(keycode),
-                                    state,
-                                    ..
-                                },
-                            ..
+                            event: key_event, ..
                         } => {
-                            let pressed = state == ElementState::Pressed;
+                            let pressed = key_event.state == ElementState::Pressed;
 
-                            if keycode == KeyCode::Escape && pressed {
-                                println!("Escape pressed, exiting");
-                                target.exit();
-                                return;
+                            // 1. Try physical key first (preferred for location-based mapping)
+                            let mut handled = false;
+                            if let PhysicalKey::Code(keycode) = key_event.physical_key {
+                                if keycode == KeyCode::Escape && pressed {
+                                    println!("Escape pressed, exiting");
+                                    target.exit();
+                                    return;
+                                }
+
+                                if let Some((button, _)) =
+                                    frontend::keycode_to_button(keycode, self.input_mapping)
+                                {
+                                    input.p1.set_button(button, pressed);
+                                    handled = true;
+                                }
                             }
 
-                            if let Some((button, _)) = frontend::keycode_to_button(keycode) {
-                                input.p1.set_button(button, pressed);
+                            // 2. Fallback to logical key (ensures Arrows/Enter/Space always work)
+                            if !handled {
+                                use winit::keyboard::Key;
+                                if let Key::Named(named) = key_event.logical_key {
+                                    let button = match named {
+                                        winit::keyboard::NamedKey::ArrowUp => Some("up"),
+                                        winit::keyboard::NamedKey::ArrowDown => Some("down"),
+                                        winit::keyboard::NamedKey::ArrowLeft => Some("left"),
+                                        winit::keyboard::NamedKey::ArrowRight => Some("right"),
+                                        winit::keyboard::NamedKey::Enter => Some("start"),
+                                        winit::keyboard::NamedKey::Space => Some("mode"),
+                                        _ => None,
+                                    };
+                                    if let Some(btn) = button {
+                                        input.p1.set_button(btn, pressed);
+                                    }
+                                }
                             }
                         }
 
@@ -789,10 +798,21 @@ impl Emulator {
 
                         WindowEvent::RedrawRequested => {
                             frame_count += 1;
+                            fps_count += 1;
+
+                            // Update FPS in title bar every second
+                            if fps_timer.elapsed() >= std::time::Duration::from_secs(1) {
+                                window.set_title(&format!(
+                                    "Genteel - Sega Genesis Emulator | FPS: {}",
+                                    fps_count
+                                ));
+                                fps_count = 0;
+                                fps_timer = std::time::Instant::now();
+                            }
 
                             // Debug: Print every 60 frames (about once per second)
-                            if frame_count % 60 == 1 {
-                                self.print_debug_info(frame_count);
+                            if self.debug && frame_count % 60 == 1 {
+                                self.log_debug(frame_count);
                             }
 
                             // Run one frame of emulation
@@ -812,9 +832,16 @@ impl Emulator {
                     },
 
                     Event::AboutToWait => {
-                        // Request a redraw just before waiting for events, only on redraw
-                        // println!("AboutToWait - requesting redraw"); // Too spammy?
-                        window.request_redraw();
+                        let now = std::time::Instant::now();
+                        let next_frame = last_frame_inst + frame_duration;
+                        if now >= next_frame {
+                            last_frame_inst = now;
+                            window.request_redraw();
+                        } else {
+                            target.set_control_flow(winit::event_loop::ControlFlow::WaitUntil(
+                                next_frame,
+                            ));
+                        }
                     }
 
                     _ => {}
@@ -835,9 +862,13 @@ fn print_usage() {
     println!("  --gdb [port]     Start GDB server (default port: 1234)");
     println!("  --gdb-password <pwd> Set password for GDB server");
     println!("  --dump-audio <file> Dump audio output to WAV file");
+    println!(
+        "  --input-mapping <type> Set keyboard mapping (original|ergonomic, default: original)"
+    );
+    println!("  --debug          Enable verbose debug output");
     println!("  --help           Show this help");
     println!();
-    println!("Controls (play mode):");
+    println!("Controls (play mode - original layout):");
     println!("  Arrow keys       D-pad");
     println!("  Z/X/C            A/B/C buttons");
     println!("  Enter            Start");
@@ -881,6 +912,8 @@ struct Config {
     gdb_port: Option<u16>,
     gdb_password: Option<String>,
     dump_audio_path: Option<String>,
+    input_mapping: InputMapping,
+    debug: bool,
     show_help: bool,
 }
 
@@ -923,6 +956,21 @@ impl Config {
                 "--dump-audio" => {
                     config.dump_audio_path = iter.next();
                 }
+                "--input-mapping" => {
+                    if let Some(mapping_str) = iter.next() {
+                        match mapping_str.to_lowercase().as_str() {
+                            "ergonomic" | "modern" | "wasd" => {
+                                config.input_mapping = InputMapping::Ergonomic;
+                            }
+                            _ => {
+                                config.input_mapping = InputMapping::Original;
+                            }
+                        }
+                    }
+                }
+                "--debug" => {
+                    config.debug = true;
+                }
                 arg if !arg.starts_with('-') => {
                     if let Some(ref mut path) = config.rom_path {
                         path.push(' ');
@@ -955,6 +1003,8 @@ fn main() {
     let dump_audio_path = config.dump_audio_path;
 
     let mut emulator = Emulator::new();
+    emulator.input_mapping = config.input_mapping;
+    emulator.debug = config.debug;
 
     if let Some(path) = dump_audio_path {
         println!("Dumping audio to: {}", path);

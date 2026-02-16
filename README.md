@@ -14,8 +14,27 @@ Genteel is an instrumentable Sega Mega Drive/Genesis emulator designed to be dri
 
 ## Building from Source
 
-To build Genteel, you will need the Rust toolchain installed. You can build the project using Cargo:
+To build Genteel, you will need the Rust toolchain installed.
 
+### Linux
+Install dependencies (Ubuntu/Debian example):
+```bash
+sudo apt-get install build-essential libasound2-dev
+```
+Then build:
+```bash
+cargo build --release
+```
+
+### Windows
+1.  Install the **Rust toolchain** from [rustup.rs](https://rustup.rs/).
+2.  Install **Build Tools for Visual Studio 2022** (available via the [Visual Studio Installer](https://visualstudio.microsoft.com/downloads/)). In the installer, select the "Desktop development with C++" workload.
+3.  Open a terminal (PowerShell or Command Prompt) and run:
+    ```powershell
+    cargo build --release
+    ```
+
+### macOS
 ```bash
 cargo build --release
 ```

@@ -28,6 +28,7 @@ const CRAM_READ: u8 = 0x08;
 const REG_MODE1: usize = 0;
 const REG_MODE2: usize = 1;
 const REG_PLANE_A: usize = 2;
+const REG_MODE3: usize = 11;
 const REG_PLANE_B: usize = 4;
 const REG_SPRITE_TABLE: usize = 5;
 const REG_BG_COLOR: usize = 7;
@@ -313,14 +314,18 @@ impl Vdp {
                     val = val.rotate_left(8);
                 }
                 let addr = (self.control_address & 0x7E) as usize;
-                // Pack 9-bit color to RGB565
-                let r = (val & 0xE) << 1;
-                let g = (val & 0xE0) >> 3;
-                let b = (val & 0xE00) >> 7;
-                let r5 = (r << 1) | (r >> 3);
-                let g6 = (g << 2) | (g >> 2);
-                let b5 = (b << 1) | (b >> 3);
-                self.cram_cache[addr >> 1] = (r5 << 11) | (g6 << 5) | b5;
+
+                // Extract 3-bit components (bits 1-3, 5-7, 9-11)
+                let r3 = (val >> 1) & 0x07;
+                let g3 = (val >> 5) & 0x07;
+                let b3 = (val >> 9) & 0x07;
+
+                // Scale to RGB565 using bit repetition
+                let r5 = (r3 << 2) | (r3 >> 1);
+                let g6 = (g3 << 3) | g3;
+                let b5 = (b3 << 2) | (b3 >> 1);
+
+                self.cram_cache[addr >> 1] = ((r5 as u16) << 11) | ((g6 as u16) << 5) | (b5 as u16);
 
                 self.cram[addr] = (val & 0xFF) as u8;
                 self.cram[addr + 1] = (val >> 8) as u8;
@@ -810,7 +815,9 @@ impl Vdp {
         let screen_width = self.screen_width();
         let line_offset = (draw_line as usize) * 320;
 
-        for attr in sprites {
+        // Render in reverse order so that sprites with lower indices (higher priority)
+        // are drawn last and appear on top.
+        for attr in sprites.iter().rev() {
             if attr.priority == priority_filter {
                 Self::render_sprite_scanline(
                     &self.vram,
@@ -824,16 +831,45 @@ impl Vdp {
             }
         }
     }
-    fn get_scroll_values(&self, is_plane_a: bool) -> (u16, u16) {
-        let vs_addr = if is_plane_a { 0 } else { 2 };
-        let v_scroll =
-            (((self.vsram[vs_addr] as u16) << 8) | (self.vsram[vs_addr + 1] as u16)) & 0x03FF;
+    fn get_scroll_values(&self, is_plane_a: bool, fetch_line: u16, tile_h: usize) -> (u16, u16) {
+        let mode3 = self.registers[REG_MODE3];
 
+        // Vertical Scroll (Bits 2 of Mode 3: 0=Full Screen, 1=2-Cell Strips)
+        let v_scroll = if (mode3 & 0x04) != 0 {
+            // 2-Cell (16-pixel) strips.
+            let strip_idx = (tile_h >> 1) as usize;
+            let vs_addr = (strip_idx * 4) + (if is_plane_a { 0 } else { 2 });
+            if vs_addr + 1 < self.vsram.len() {
+                (((self.vsram[vs_addr] as u16) << 8) | (self.vsram[vs_addr + 1] as u16)) & 0x07FF
+            } else {
+                0
+            }
+        } else {
+            // Full Screen
+            let vs_addr = if is_plane_a { 0 } else { 2 };
+            (((self.vsram[vs_addr] as u16) << 8) | (self.vsram[vs_addr + 1] as u16)) & 0x07FF
+        };
+
+        // Horizontal Scroll (Bits 1-0 of Mode 3: 00=Full, 01=Invalid/Cell, 10=Cell, 11=Line)
+        let hs_mode = mode3 & 0x03;
         let hs_base = self.hscroll_address();
-        let hs_addr = if is_plane_a { hs_base } else { hs_base + 2 };
-        let hi = self.vram[hs_addr];
-        let lo = self.vram[hs_addr + 1];
-        let h_scroll = (((hi as u16) << 8) | (lo as u16)) & 0x03FF;
+
+        let hs_addr = match hs_mode {
+            0x00 => hs_base,                                     // Full screen
+            0x02 => hs_base + ((fetch_line as usize >> 3) * 32), // 8-pixel strips (Cell)
+            0x03 => hs_base + (fetch_line as usize * 4),         // Per-line
+            _ => hs_base,                                        // Default/Fallback
+        } + (if is_plane_a { 0 } else { 2 });
+
+        let hi = self.vram[hs_addr & 0xFFFF];
+        let lo = self.vram[(hs_addr + 1) & 0xFFFF];
+
+        // Horizontal scroll is 10 bits, sign-extended to 16
+        let mut h_scroll = (((hi as u16) << 8) | (lo as u16)) & 0x03FF;
+        if (h_scroll & 0x0200) != 0 {
+            h_scroll |= 0xFC00;
+        }
+
         (v_scroll, h_scroll)
     }
 
@@ -882,9 +918,17 @@ impl Vdp {
 
         for i in 0..count {
             let current_pixel_h = pixel_h + i;
-            let eff_col = if h_flip { 7 - current_pixel_h } else { current_pixel_h };
+            let eff_col = if h_flip {
+                7 - current_pixel_h
+            } else {
+                current_pixel_h
+            };
             let byte = patterns[(eff_col as usize) / 2];
-            let col = if eff_col % 2 == 0 { byte >> 4 } else { byte & 0x0F };
+            let col = if eff_col % 2 == 0 {
+                byte >> 4
+            } else {
+                byte & 0x0F
+            };
 
             if col != 0 {
                 let color = self.get_cram_color(palette, col);
@@ -894,12 +938,7 @@ impl Vdp {
     }
 
     #[inline(always)]
-    unsafe fn draw_full_tile_row(
-        &mut self,
-        entry: u16,
-        pixel_v: u16,
-        dest_idx: usize,
-    ) {
+    unsafe fn draw_full_tile_row(&mut self, entry: u16, pixel_v: u16, dest_idx: usize) {
         let palette = ((entry >> 13) & 0x03) as u8;
         let v_flip = (entry & 0x1000) != 0;
         let h_flip = (entry & 0x0800) != 0;
@@ -918,38 +957,86 @@ impl Vdp {
         unsafe {
             if h_flip {
                 let mut col = p3 & 0x0F;
-                if col != 0 { *self.framebuffer.get_unchecked_mut(dest_idx) = *self.cram_cache.get_unchecked(palette_base + col as usize); }
+                if col != 0 {
+                    *self.framebuffer.get_unchecked_mut(dest_idx) =
+                        *self.cram_cache.get_unchecked(palette_base + col as usize);
+                }
                 col = p3 >> 4;
-                if col != 0 { *self.framebuffer.get_unchecked_mut(dest_idx + 1) = *self.cram_cache.get_unchecked(palette_base + col as usize); }
+                if col != 0 {
+                    *self.framebuffer.get_unchecked_mut(dest_idx + 1) =
+                        *self.cram_cache.get_unchecked(palette_base + col as usize);
+                }
                 col = p2 & 0x0F;
-                if col != 0 { *self.framebuffer.get_unchecked_mut(dest_idx + 2) = *self.cram_cache.get_unchecked(palette_base + col as usize); }
+                if col != 0 {
+                    *self.framebuffer.get_unchecked_mut(dest_idx + 2) =
+                        *self.cram_cache.get_unchecked(palette_base + col as usize);
+                }
                 col = p2 >> 4;
-                if col != 0 { *self.framebuffer.get_unchecked_mut(dest_idx + 3) = *self.cram_cache.get_unchecked(palette_base + col as usize); }
+                if col != 0 {
+                    *self.framebuffer.get_unchecked_mut(dest_idx + 3) =
+                        *self.cram_cache.get_unchecked(palette_base + col as usize);
+                }
                 col = p1 & 0x0F;
-                if col != 0 { *self.framebuffer.get_unchecked_mut(dest_idx + 4) = *self.cram_cache.get_unchecked(palette_base + col as usize); }
+                if col != 0 {
+                    *self.framebuffer.get_unchecked_mut(dest_idx + 4) =
+                        *self.cram_cache.get_unchecked(palette_base + col as usize);
+                }
                 col = p1 >> 4;
-                if col != 0 { *self.framebuffer.get_unchecked_mut(dest_idx + 5) = *self.cram_cache.get_unchecked(palette_base + col as usize); }
+                if col != 0 {
+                    *self.framebuffer.get_unchecked_mut(dest_idx + 5) =
+                        *self.cram_cache.get_unchecked(palette_base + col as usize);
+                }
                 col = p0 & 0x0F;
-                if col != 0 { *self.framebuffer.get_unchecked_mut(dest_idx + 6) = *self.cram_cache.get_unchecked(palette_base + col as usize); }
+                if col != 0 {
+                    *self.framebuffer.get_unchecked_mut(dest_idx + 6) =
+                        *self.cram_cache.get_unchecked(palette_base + col as usize);
+                }
                 col = p0 >> 4;
-                if col != 0 { *self.framebuffer.get_unchecked_mut(dest_idx + 7) = *self.cram_cache.get_unchecked(palette_base + col as usize); }
+                if col != 0 {
+                    *self.framebuffer.get_unchecked_mut(dest_idx + 7) =
+                        *self.cram_cache.get_unchecked(palette_base + col as usize);
+                }
             } else {
                 let mut col = p0 >> 4;
-                if col != 0 { *self.framebuffer.get_unchecked_mut(dest_idx) = *self.cram_cache.get_unchecked(palette_base + col as usize); }
+                if col != 0 {
+                    *self.framebuffer.get_unchecked_mut(dest_idx) =
+                        *self.cram_cache.get_unchecked(palette_base + col as usize);
+                }
                 col = p0 & 0x0F;
-                if col != 0 { *self.framebuffer.get_unchecked_mut(dest_idx + 1) = *self.cram_cache.get_unchecked(palette_base + col as usize); }
+                if col != 0 {
+                    *self.framebuffer.get_unchecked_mut(dest_idx + 1) =
+                        *self.cram_cache.get_unchecked(palette_base + col as usize);
+                }
                 col = p1 >> 4;
-                if col != 0 { *self.framebuffer.get_unchecked_mut(dest_idx + 2) = *self.cram_cache.get_unchecked(palette_base + col as usize); }
+                if col != 0 {
+                    *self.framebuffer.get_unchecked_mut(dest_idx + 2) =
+                        *self.cram_cache.get_unchecked(palette_base + col as usize);
+                }
                 col = p1 & 0x0F;
-                if col != 0 { *self.framebuffer.get_unchecked_mut(dest_idx + 3) = *self.cram_cache.get_unchecked(palette_base + col as usize); }
+                if col != 0 {
+                    *self.framebuffer.get_unchecked_mut(dest_idx + 3) =
+                        *self.cram_cache.get_unchecked(palette_base + col as usize);
+                }
                 col = p2 >> 4;
-                if col != 0 { *self.framebuffer.get_unchecked_mut(dest_idx + 4) = *self.cram_cache.get_unchecked(palette_base + col as usize); }
+                if col != 0 {
+                    *self.framebuffer.get_unchecked_mut(dest_idx + 4) =
+                        *self.cram_cache.get_unchecked(palette_base + col as usize);
+                }
                 col = p2 & 0x0F;
-                if col != 0 { *self.framebuffer.get_unchecked_mut(dest_idx + 5) = *self.cram_cache.get_unchecked(palette_base + col as usize); }
+                if col != 0 {
+                    *self.framebuffer.get_unchecked_mut(dest_idx + 5) =
+                        *self.cram_cache.get_unchecked(palette_base + col as usize);
+                }
                 col = p3 >> 4;
-                if col != 0 { *self.framebuffer.get_unchecked_mut(dest_idx + 6) = *self.cram_cache.get_unchecked(palette_base + col as usize); }
+                if col != 0 {
+                    *self.framebuffer.get_unchecked_mut(dest_idx + 6) =
+                        *self.cram_cache.get_unchecked(palette_base + col as usize);
+                }
                 col = p3 & 0x0F;
-                if col != 0 { *self.framebuffer.get_unchecked_mut(dest_idx + 7) = *self.cram_cache.get_unchecked(palette_base + col as usize); }
+                if col != 0 {
+                    *self.framebuffer.get_unchecked_mut(dest_idx + 7) =
+                        *self.cram_cache.get_unchecked(palette_base + col as usize);
+                }
             }
         }
     }
@@ -968,72 +1055,51 @@ impl Vdp {
             self.plane_b_address()
         };
 
-        let (v_scroll, h_scroll) = self.get_scroll_values(is_plane_a);
-
-        let scrolled_v = fetch_line.wrapping_add(v_scroll);
-        let tile_v = (scrolled_v as usize / 8) % plane_h;
-        let pixel_v = scrolled_v % 8;
-
         let screen_width = self.screen_width();
         let line_offset = (draw_line as usize) * 320;
-
-        let mut screen_x: u16 = 0;
-        let mut scrolled_h = (0u16).wrapping_sub(h_scroll);
-
         let plane_w_mask = plane_w - 1;
 
-        // Prologue: Handle unaligned start
-        let pixel_h = scrolled_h % 8;
-        if pixel_h != 0 {
-            let pixels_left_in_tile = 8 - pixel_h;
-            let pixels_to_process = std::cmp::min(pixels_left_in_tile, screen_width - screen_x);
+        let mut screen_x: u16 = 0;
 
-            let tile_h = (scrolled_h as usize >> 3) & plane_w_mask;
-            let entry = self.fetch_nametable_entry(name_table_base, tile_v, tile_h, plane_w);
-
-            let priority = (entry & 0x8000) != 0;
-            if priority == priority_filter {
-                self.draw_partial_tile_row(entry, pixel_v, pixel_h, pixels_to_process, line_offset + screen_x as usize);
-            }
-            screen_x += pixels_to_process;
-            scrolled_h = scrolled_h.wrapping_add(pixels_to_process);
-        }
-
-        // Main Loop: Process full 8-pixel tiles
-        while screen_x + 8 <= screen_width {
-            let tile_h = (scrolled_h as usize >> 3) & plane_w_mask;
-            let entry = self.fetch_nametable_entry(name_table_base, tile_v, tile_h, plane_w);
-
-            let priority = (entry & 0x8000) != 0;
-            if priority != priority_filter {
-                screen_x += 8;
-                scrolled_h = scrolled_h.wrapping_add(8);
-                continue;
-            }
-
-            unsafe {
-                self.draw_full_tile_row(entry, pixel_v, line_offset + screen_x as usize);
-            }
-
-            screen_x += 8;
-            scrolled_h = scrolled_h.wrapping_add(8);
-        }
-
-        // Epilogue: Handle remaining pixels
         while screen_x < screen_width {
-            let pixel_h = scrolled_h % 8;
+            // Fetch scroll for the current horizontal position (important for per-column VS)
+            let tile_h_idx = (screen_x >> 3) as usize;
+            let (v_scroll, h_scroll) = self.get_scroll_values(is_plane_a, fetch_line, tile_h_idx);
+
+            // Calculate horizontal position in the plane
+            let scrolled_h = (screen_x as i16).wrapping_sub(h_scroll as i16);
+            let pixel_h = (scrolled_h & 0x07) as u16;
+            let tile_h = ((scrolled_h >> 3) as usize) & plane_w_mask;
+
+            // Calculate vertical position in the plane
+            let scrolled_v = fetch_line.wrapping_add(v_scroll);
+            let tile_v = (scrolled_v as usize / 8) % plane_h;
+            let pixel_v = scrolled_v % 8;
+
+            let entry = self.fetch_nametable_entry(name_table_base, tile_v, tile_h, plane_w);
+            let priority = (entry & 0x8000) != 0;
+
             let pixels_left_in_tile = 8 - pixel_h;
             let pixels_to_process = std::cmp::min(pixels_left_in_tile, screen_width - screen_x);
 
-            let tile_h = (scrolled_h as usize >> 3) & plane_w_mask;
-            let entry = self.fetch_nametable_entry(name_table_base, tile_v, tile_h, plane_w);
-
-            let priority = (entry & 0x8000) != 0;
             if priority == priority_filter {
-                self.draw_partial_tile_row(entry, pixel_v, pixel_h, pixels_to_process, line_offset + screen_x as usize);
+                if pixels_to_process == 8 && pixel_h == 0 {
+                    // Fast path for full aligned tile
+                    unsafe {
+                        self.draw_full_tile_row(entry, pixel_v, line_offset + screen_x as usize);
+                    }
+                } else {
+                    self.draw_partial_tile_row(
+                        entry,
+                        pixel_v,
+                        pixel_h,
+                        pixels_to_process,
+                        line_offset + screen_x as usize,
+                    );
+                }
             }
+
             screen_x += pixels_to_process;
-            scrolled_h = scrolled_h.wrapping_add(pixels_to_process);
         }
     }
 }
@@ -1119,14 +1185,18 @@ impl Debuggable for Vdp {
                 let addr = i * 2;
                 if addr + 1 < self.cram.len() {
                     let val = ((self.cram[addr + 1] as u16) << 8) | (self.cram[addr] as u16);
-                    // Pack 9-bit color to RGB565
-                    let r = (val & 0xE) << 1;
-                    let g = (val & 0xE0) >> 3;
-                    let b = (val & 0xE00) >> 7;
-                    let r5 = (r << 1) | (r >> 3);
-                    let g6 = (g << 2) | (g >> 2);
-                    let b5 = (b << 1) | (b >> 3);
-                    self.cram_cache[i] = (r5 << 11) | (g6 << 5) | b5;
+
+                    // Extract 3-bit components (bits 1-3, 5-7, 9-11)
+                    let r3 = (val >> 1) & 0x07;
+                    let g3 = (val >> 5) & 0x07;
+                    let b3 = (val >> 9) & 0x07;
+
+                    // Scale to RGB565 using bit repetition
+                    let r5 = (r3 << 2) | (r3 >> 1);
+                    let g6 = (g3 << 3) | g3;
+                    let b5 = (b3 << 2) | (b3 >> 1);
+
+                    self.cram_cache[i] = ((r5 as u16) << 11) | ((g6 as u16) << 5) | (b5 as u16);
                 }
             }
         }
@@ -1247,7 +1317,7 @@ mod tests {
         assert_eq!(vdp2.is_pal, true);
 
         // Verify CRAM Cache
-        assert_eq!(vdp2.cram_cache[1], 0xDEFB);
+        assert_eq!(vdp2.cram_cache[1], 0xFFFF);
     }
 }
 

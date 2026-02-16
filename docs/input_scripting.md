@@ -75,7 +75,10 @@ This will execute 1000 frames at maximum speed and then terminate.
 
 ## Keyboard Mapping (Player 1)
 
-When running in interactive mode (GUI), the following default keyboard mappings are used for Player 1:
+When running in interactive mode (GUI), the emulator supports multiple input mapping schemes, selectable via the `--input-mapping` flag.
+
+### Original Mapping (Default)
+Used by default or via `--input-mapping original`.
 
 | Genesis Button | Keyboard Key |
 | :------------- | :----------- |
@@ -91,6 +94,24 @@ When running in interactive mode (GUI), the following default keyboard mappings 
 | **Y**          | S            |
 | **Z**          | D            |
 | **Mode**       | Q            |
+
+### Ergonomic Mapping
+Selectable via `--input-mapping ergonomic`. Uses a more standard PC gaming layout.
+
+| Genesis Button | Keyboard Key      |
+| :------------- | :---------------- |
+| **D-pad Up**   | W or Arrow Up     |
+| **D-pad Down** | S or Arrow Down   |
+| **D-pad Left** | A or Arrow Left   |
+| **D-pad Right**| D or Arrow Right  |
+| **A**          | J or Z            |
+| **B**          | K or X            |
+| **C**          | L or C            |
+| **Start**      | Enter             |
+| **X**          | U                 |
+| **Y**          | I                 |
+| **Z**          | O                 |
+| **Mode**       | Space             |
 
 *Note: Live keyboard input is combined with script playback if both are active. Keyboard input uses physical key codes (layout-independent).*
 

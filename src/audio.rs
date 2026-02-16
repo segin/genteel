@@ -102,6 +102,7 @@ pub fn create_audio_buffer() -> SharedAudioBuffer {
 #[cfg(feature = "gui")]
 pub struct AudioOutput {
     _stream: cpal::Stream,
+    pub sample_rate: u32,
 }
 
 #[cfg(feature = "gui")]
@@ -114,11 +115,37 @@ impl AudioOutput {
             .default_output_device()
             .ok_or("No audio output device found")?;
 
-        let config = cpal::StreamConfig {
-            channels: 2,
-            sample_rate: cpal::SampleRate(SAMPLE_RATE),
-            buffer_size: cpal::BufferSize::Default,
+        // Query device for supported configs to find something compatible
+        let mut supported_configs_range = device
+            .supported_output_configs()
+            .map_err(|e| format!("Error querying output configs: {}", e))?;
+
+        // Try to find a config that matches 44100Hz and stereo, otherwise pick the first one
+        let supported_config = supported_configs_range
+            .find(|c| {
+                c.channels() == 2
+                    && c.min_sample_rate().0 <= SAMPLE_RATE
+                    && c.max_sample_rate().0 >= SAMPLE_RATE
+            })
+            .or_else(|| {
+                device
+                    .supported_output_configs()
+                    .ok()
+                    .and_then(|mut c| c.next())
+            })
+            .ok_or("No supported output configurations found")?;
+
+        let sample_rate = if supported_config.min_sample_rate().0 <= SAMPLE_RATE
+            && supported_config.max_sample_rate().0 >= SAMPLE_RATE
+        {
+            cpal::SampleRate(SAMPLE_RATE)
+        } else {
+            supported_config.max_sample_rate()
         };
+
+        let config: cpal::StreamConfig = supported_config.with_sample_rate(sample_rate).into();
+        let actual_sample_rate = config.sample_rate.0;
+        let actual_channels = config.channels;
 
         let buffer_clone = buffer.clone();
 
@@ -127,7 +154,16 @@ impl AudioOutput {
                 &config,
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                     if let Ok(mut buf) = buffer_clone.lock() {
-                        buf.pop_f32(data);
+                        if actual_channels == 2 {
+                            buf.pop_f32(data);
+                        } else {
+                            // Hardware is mono, we need to mix down or just take left channel
+                            let mut temp = vec![0.0; data.len() * 2];
+                            buf.pop_f32(&mut temp);
+                            for i in 0..data.len() {
+                                data[i] = temp[i * 2]; // Just take Left channel
+                            }
+                        }
                     } else {
                         // Lock failed, output silence
                         for sample in data.iter_mut() {
@@ -142,7 +178,10 @@ impl AudioOutput {
 
         stream.play().map_err(|e| e.to_string())?;
 
-        Ok(Self { _stream: stream })
+        Ok(Self {
+            _stream: stream,
+            sample_rate: actual_sample_rate,
+        })
     }
 }
 

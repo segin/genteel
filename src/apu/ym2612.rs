@@ -16,6 +16,24 @@
 //! - Feedback/Algorithm
 //!
 
+use std::sync::OnceLock;
+
+/// Sine table size (must be power of 2 for masking)
+const SINE_TABLE_SIZE: usize = 1024;
+
+/// Precomputed sine table for fast lookup
+static SINE_TABLE: OnceLock<[f32; SINE_TABLE_SIZE]> = OnceLock::new();
+
+fn get_sine_table() -> &'static [f32; SINE_TABLE_SIZE] {
+    SINE_TABLE.get_or_init(|| {
+        let mut table = [0.0; SINE_TABLE_SIZE];
+        for i in 0..SINE_TABLE_SIZE {
+            table[i] = (i as f32 * 2.0 * std::f32::consts::PI / SINE_TABLE_SIZE as f32).sin();
+        }
+        table
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Bank {
     Bank0 = 0,
@@ -46,6 +64,13 @@ pub struct Ym2612 {
 
     /// Busy flag counter (counts down, Master Cycles)
     busy_cycles: i32,
+
+    /// Phase accumulators for the 6 channels (simplified FM)
+    phase: [f32; 6],
+    /// DAC value (register 0x2A)
+    dac_value: u8,
+    /// DAC enabled (register 0x2B bit 7)
+    dac_enabled: bool,
 }
 
 impl Ym2612 {
@@ -57,6 +82,9 @@ impl Ym2612 {
             timer_a_count: 0,
             timer_b_count: 0,
             busy_cycles: 0,
+            phase: [0.0; 6],
+            dac_value: 0x80,
+            dac_enabled: false,
         }
     }
 
@@ -194,9 +222,81 @@ impl Ym2612 {
             }
 
             self.registers[0][0x27] = val;
+        } else if bank == Bank::Bank0 && addr == 0x2A {
+            self.dac_value = val;
+            self.registers[0][0x2A] = val;
+        } else if bank == Bank::Bank0 && addr == 0x2B {
+            self.dac_enabled = (val & 0x80) != 0;
+            self.registers[0][0x2B] = val;
         } else {
             self.registers[bank_idx][addr as usize] = val;
         }
+    }
+
+    /// Generate one stereo sample pair
+    pub fn generate_sample(&mut self) -> (i16, i16) {
+        let mut left: f32 = 0.0;
+        let mut right: f32 = 0.0;
+        let sine_table = get_sine_table();
+
+        // Channel 6 DAC mode
+        if self.dac_enabled {
+            // DAC value is unsigned 8-bit, convert to centered float
+            let dac_f = (self.dac_value as f32 - 128.0) / 128.0;
+
+            // Panning for Channel 6
+            let pan = self.registers[1][0xB6];
+            if (pan & 0x80) != 0 {
+                left += dac_f;
+            }
+            if (pan & 0x40) != 0 {
+                right += dac_f;
+            }
+        }
+
+        // Channels 1-6 (including Ch 6 if DAC is off)
+        for ch in 0..6 {
+            if ch == 5 && self.dac_enabled {
+                continue;
+            }
+
+            let (block, f_num) = self.get_frequency(ch);
+            if f_num == 0 {
+                continue;
+            }
+
+            let freq_mult = (1 << block) as f32;
+            let phase_inc = (f_num as f32 * freq_mult) / 200000.0;
+
+            self.phase[ch] = (self.phase[ch] + phase_inc) % 1.0;
+
+            // Table-based sine wave lookup
+            let table_idx =
+                (self.phase[ch] * SINE_TABLE_SIZE as f32) as usize & (SINE_TABLE_SIZE - 1);
+            let sample_val = sine_table[table_idx];
+
+            let (bank, offset) = if ch < 3 { (0, ch) } else { (1, ch - 3) };
+            let tl = self.registers[bank][0x4C + offset] & 0x7F;
+            let volume = (127.0 - tl as f32) / 127.0;
+
+            let sample_out = sample_val * volume * 0.2;
+
+            // Optimized Panning
+            let pan_addr = 0xB4 + (ch % 3);
+            let pan = self.registers[if ch < 3 { 0 } else { 1 }][pan_addr];
+            if (pan & 0x80) != 0 || pan == 0 {
+                left += sample_out;
+            }
+            if (pan & 0x40) != 0 || pan == 0 {
+                right += sample_out;
+            }
+        }
+
+        // Clamp and convert to i16
+        (
+            (left.clamp(-1.0, 1.0) * 16384.0) as i16,
+            (right.clamp(-1.0, 1.0) * 16384.0) as i16,
+        )
     }
 
     /// Deprecated: Use [`write_addr`] with [`Bank::Bank0`]
@@ -504,5 +604,34 @@ mod tests {
         ym.step(1);
         // busy_cycles -= 7 -> 0.
         assert_eq!(ym.read_status() & 0x80, 0, "Should be free after 32 cycles");
+    }
+
+    #[test]
+    fn test_sample_generation_basic() {
+        let mut ym = Ym2612::new();
+
+        // Set Ch1 Frequency
+        ym.write_addr(Bank::Bank0, 0xA0);
+        ym.write_data_bank(Bank::Bank0, 0x55);
+        ym.write_addr(Bank::Bank0, 0xA4);
+        ym.write_data_bank(Bank::Bank0, 0x22);
+
+        // Set Ch1 Volume (TL) to 0 (Max)
+        ym.write_addr(Bank::Bank0, 0x4C); // Op 4 TL
+        ym.write_data_bank(Bank::Bank0, 0x00);
+
+        // Generate some samples
+        let mut saw_non_zero = false;
+        for _ in 0..100 {
+            let (l, r) = ym.generate_sample();
+            if l != 0 || r != 0 {
+                saw_non_zero = true;
+                break;
+            }
+        }
+        assert!(
+            saw_non_zero,
+            "Should generate non-zero samples when channel is active"
+        );
     }
 }

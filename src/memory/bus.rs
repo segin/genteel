@@ -61,12 +61,21 @@ pub struct Bus {
 
     /// TMSS (Trademark Security System) - lock/unlock state
     pub tmss_unlocked: bool,
+
+    /// Audio synchronization
+    pub audio_accumulator: f32,
+    pub audio_buffer: Vec<i16>,
+    pub sample_rate: u32,
+
+    // Cached pointers for fast path (safety: pointers valid as long as Bus is not moved/reallocated)
+    rom_ptr: *const u8,
+    wram_ptr: *mut u8,
 }
 
 impl Bus {
     /// Create a new empty bus
     pub fn new() -> Self {
-        Self {
+        let mut bus = Self {
             rom: Vec::new(),
             work_ram: [0; 0x10000],
             z80_ram: [0; 0x2000],
@@ -78,7 +87,14 @@ impl Bus {
             z80_bank_addr: 0,
             z80_bank_bit: 0,
             tmss_unlocked: false,
-        }
+            audio_accumulator: 0.0,
+            audio_buffer: Vec::with_capacity(2048),
+            sample_rate: 44100,
+            rom_ptr: std::ptr::null(),
+            wram_ptr: std::ptr::null_mut(),
+        };
+        bus.wram_ptr = bus.work_ram.as_mut_ptr();
+        bus
     }
 
     /// Load a ROM into the bus
@@ -88,6 +104,7 @@ impl Bus {
         if self.rom.len() < 512 {
             self.rom.resize(512, 0);
         }
+        self.rom_ptr = self.rom.as_ptr();
     }
 
     /// Clear the ROM
@@ -104,17 +121,24 @@ impl Bus {
     pub fn read_byte(&mut self, address: u32) -> u8 {
         let addr = address & 0xFFFFFF; // 24-bit address bus
 
-        match addr {
-            // ROM: 0x000000-0x3FFFFF
-            0x000000..=0x3FFFFF => {
-                let rom_addr = addr as usize;
-                if rom_addr < self.rom.len() {
-                    self.rom[rom_addr]
-                } else {
-                    0xFF // Unmapped ROM area
+        // Fast Path: ROM (0x000000-0x3FFFFF)
+        if addr <= 0x3FFFFF {
+            if addr < self.rom.len() as u32 {
+                unsafe {
+                    return *self.rom_ptr.add(addr as usize);
                 }
             }
+            return 0xFF;
+        }
 
+        // Fast Path: Work RAM (0xE00000-0xFFFFFF)
+        if addr >= 0xE00000 {
+            unsafe {
+                return *self.wram_ptr.add((addr & 0xFFFF) as usize);
+            }
+        }
+
+        match addr {
             // Z80 Address Space: 0xA00000-0xA0FFFF
             0xA00000..=0xA01FFF => {
                 // Z80 RAM (8KB) - Only accessible if Z80 bus is requested (Z80 stopped)
@@ -185,11 +209,17 @@ impl Bus {
     pub fn write_byte(&mut self, address: u32, value: u8) {
         let addr = address & 0xFFFFFF;
 
+        // Fast Path: Work RAM
+        if addr >= 0xE00000 {
+            unsafe {
+                *self.wram_ptr.add((addr & 0xFFFF) as usize) = value;
+            }
+            return;
+        }
+
         match addr {
             // ROM is read-only (writes are ignored)
-            0x000000..=0x3FFFFF => {
-                // Some mappers/SRAM use writes here, but basic implementation ignores
-            }
+            0x000000..=0x3FFFFF => {}
 
             // Z80 RAM
             0xA00000..=0xA01FFF => {
@@ -264,6 +294,26 @@ impl Bus {
         }
     }
 
+    /// Sync audio generation with CPU cycles
+    pub fn sync_audio(&mut self, m68k_cycles: u32) {
+        // M68k Clock = 7,670,453 Hz
+        let cycles_per_sample = 7670453.0 / (self.sample_rate as f32);
+
+        self.audio_accumulator += m68k_cycles as f32;
+
+        while self.audio_accumulator >= cycles_per_sample {
+            self.audio_accumulator -= cycles_per_sample;
+
+            let (l, r) = self.apu.step();
+
+            // Limit buffer size to ~20 frames
+            if self.audio_buffer.len() < 32768 {
+                self.audio_buffer.push(l);
+                self.audio_buffer.push(r);
+            }
+        }
+    }
+
     /// Read a word (16-bit, big-endian) from the memory map
     #[inline]
     pub fn read_word(&mut self, address: u32) -> u16 {
@@ -271,18 +321,26 @@ impl Bus {
 
         // ROM Fast Path
         if addr <= 0x3FFFFF {
-            let idx = addr as usize;
-            if idx + 1 < self.rom.len() {
-                let high = self.rom[idx];
-                let low = self.rom[idx + 1];
-                return byte_utils::join_u16(high, low);
-            } else if idx < self.rom.len() {
-                // Partial read at end of ROM
-                let high = self.rom[idx];
-                let low = 0xFF; // Unmapped
-                return byte_utils::join_u16(high, low);
-            } else {
-                return 0xFFFF; // Unmapped
+            if addr + 1 < self.rom.len() as u32 {
+                unsafe {
+                    let p = self.rom_ptr.add(addr as usize);
+                    return ((*p as u16) << 8) | (*p.add(1) as u16);
+                }
+            }
+            return 0xFFFF;
+        }
+
+        // Work RAM Fast Path (0xE00000-0xFFFFFF, 64KB mirrored)
+        if addr >= 0xE00000 {
+            let offset = (addr & 0xFFFF) as usize;
+            unsafe {
+                let p = self.wram_ptr.add(offset);
+                // Handle 16-bit wrapping at 64KB boundary if necessary, but typically Genesis code doesn't rely on it for WRAM
+                if offset < 0xFFFF {
+                    return ((*p as u16) << 8) | (*p.add(1) as u16);
+                } else {
+                    return ((*p as u16) << 8) | (*self.wram_ptr as u16);
+                }
             }
         }
 
@@ -315,6 +373,22 @@ impl Bus {
     /// Write a word (16-bit, big-endian) to the memory map
     pub fn write_word(&mut self, address: u32, value: u16) {
         let addr = address & 0xFFFFFF;
+
+        // Work RAM Fast Path
+        if addr >= 0xE00000 {
+            let offset = (addr & 0xFFFF) as usize;
+            unsafe {
+                let p = self.wram_ptr.add(offset);
+                if offset < 0xFFFF {
+                    *p = (value >> 8) as u8;
+                    *p.add(1) = (value & 0xFF) as u8;
+                } else {
+                    *p = (value >> 8) as u8;
+                    *self.wram_ptr = (value & 0xFF) as u8;
+                }
+            }
+            return;
+        }
 
         // VDP Data Port
         if (0xC00000..=0xC00003).contains(&addr) {
