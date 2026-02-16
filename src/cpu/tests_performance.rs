@@ -1,4 +1,4 @@
-use crate::cpu::{Cpu, flags};
+use crate::cpu::{flags, Cpu};
 use crate::memory::{Memory, MemoryInterface};
 use std::time::Instant;
 
@@ -38,8 +38,14 @@ fn benchmark_interrupt_handler() {
         let cycles_int = cpu.step_instruction(&mut memory);
 
         // Verify we are at the handler
-        assert_eq!(cpu.pc, 0x400, "PC should be at handler (0x400) after interrupt");
-        assert!(cycles_int >= 44, "Interrupt processing should take at least 44 cycles");
+        assert_eq!(
+            cpu.pc, 0x400,
+            "PC should be at handler (0x400) after interrupt"
+        );
+        assert!(
+            cycles_int >= 44,
+            "Interrupt processing should take at least 44 cycles"
+        );
 
         // 2. Execute RTE
         // This should pop SR/PC and return to 0x100
@@ -49,12 +55,20 @@ fn benchmark_interrupt_handler() {
         assert_eq!(cpu.pc, 0x100, "PC should return to 0x100 after RTE");
 
         // Ensure interrupt mask is back to 0 (RTE restored SR)
-        assert_eq!(cpu.sr & flags::INTERRUPT_MASK, 0, "SR Interrupt mask should be restored");
+        assert_eq!(
+            cpu.sr & flags::INTERRUPT_MASK,
+            0,
+            "SR Interrupt mask should be restored"
+        );
     }
 
     let duration = start.elapsed();
     println!("Benchmark duration: {:?}", duration);
 
     // Threshold: 500ms. If debug prints were present, this would be >> 1s.
-    assert!(duration.as_millis() < 500, "Interrupt handling is too slow! Duration: {:?}", duration);
+    assert!(
+        duration.as_millis() < 500,
+        "Interrupt handling is too slow! Duration: {:?}",
+        duration
+    );
 }

@@ -26,23 +26,8 @@ mod tests_m68k_torture;
 mod tests_performance;
 
 use self::addressing::{read_ea, EffectiveAddress};
-use self::decoder::{decode, BitSource, Condition, Instruction, Size};
+use self::decoder::{decode, BitSource, Condition, DecodeCacheEntry, Instruction, Size};
 use crate::memory::MemoryInterface;
-
-#[derive(Clone, Copy, Debug)]
-struct DecodeCacheEntry {
-    pc: u32,
-    instruction: Instruction,
-}
-
-impl Default for DecodeCacheEntry {
-    fn default() -> Self {
-        Self {
-            pc: u32::MAX,
-            instruction: Instruction::Nop,
-        }
-    }
-}
 
 /// Status Register flags
 pub mod flags {
@@ -82,17 +67,12 @@ pub struct Cpu {
     // Interrupt pending bitmask (bit N = level N is pending)
     pub interrupt_pending_mask: u8,
 
-    // Instruction Cache (Direct mapped, 64K entries)
-    decode_cache: Box<[DecodeCacheEntry; 65536]>,
+    // Instruction cache (Direct Mapped, 64K entries)
+    pub decode_cache: Box<[DecodeCacheEntry]>,
 }
 
 impl Cpu {
     pub fn new<M: MemoryInterface>(memory: &mut M) -> Self {
-        let decode_cache = vec![DecodeCacheEntry::default(); 65536]
-            .into_boxed_slice()
-            .try_into()
-            .unwrap();
-
         let mut cpu = Self {
             d: [0; 8],
             a: [0; 8],
@@ -105,7 +85,7 @@ impl Cpu {
             pending_interrupt: 0,
             pending_exception: false,
             interrupt_pending_mask: 0,
-            decode_cache,
+            decode_cache: vec![DecodeCacheEntry::default(); 65536].into_boxed_slice(),
         };
 
         // At startup, the supervisor stack pointer is read from address 0x00000000
@@ -129,14 +109,14 @@ impl Cpu {
         self.halted = false;
         self.pending_interrupt = 0;
         self.interrupt_pending_mask = 0;
-        self.invalidate_cache();
+        // Invalidate cache on reset
+        self.decode_cache.fill(DecodeCacheEntry::default());
     }
 
-    /// Invalidates the entire instruction cache
+    /// Invalidate the instruction cache.
+    /// Should be called when code in ROM/RAM is modified (e.g. self-modifying code, or tests).
     pub fn invalidate_cache(&mut self) {
-        for entry in self.decode_cache.iter_mut() {
-            entry.pc = u32::MAX;
-        }
+        self.decode_cache.fill(DecodeCacheEntry::default());
     }
 
     fn invalidate_cache_line(&mut self, addr: u32) {
@@ -195,15 +175,44 @@ impl Cpu {
         }
 
         let pc = self.pc;
+        let instruction;
 
-        // Try to fetch from cache
-        let cache_index = ((pc >> 1) & 0xFFFF) as usize;
-        let entry = self.decode_cache[cache_index];
+        // Optimized instruction fetch with cache
+        if pc < 0x400000 {
+            // ROM/Cartridge space - Cacheable
+            // Index: (PC / 2) & 0xFFFF. Maps 0-128KB repeating or just lower bits.
+            // Since we check entry.pc == pc, aliasing is handled safely.
+            let cache_index = ((pc >> 1) & 0xFFFF) as usize;
 
-        let instruction = if entry.pc == pc {
-            entry.instruction
+            // Safety: cache size is 65536, index is masked to 0xFFFF.
+            let entry = unsafe { *self.decode_cache.get_unchecked(cache_index) };
+
+            if entry.pc == pc {
+                // Cache Hit
+                instruction = entry.instruction;
+                self.pc = pc.wrapping_add(2);
+            } else {
+                // Cache Miss
+                let opcode = self.read_instruction_word(pc, memory);
+                if self.pending_exception {
+                    // Address Error during fetch
+                    self.cycles += 34;
+                    return 34;
+                }
+
+                self.pc = self.pc.wrapping_add(2);
+                instruction = decode(opcode);
+
+                // Update Cache
+                unsafe {
+                    *self.decode_cache.get_unchecked_mut(cache_index) = DecodeCacheEntry {
+                        pc,
+                        instruction,
+                    };
+                }
+            }
         } else {
-            // Cache miss: read from memory and decode
+            // Uncached (RAM, I/O, etc.)
             let opcode = self.read_instruction_word(pc, memory);
             if self.pending_exception {
                 // Address Error during fetch
@@ -211,18 +220,9 @@ impl Cpu {
                 return 34;
             }
 
-            let instr = decode(opcode);
-
-            // Update cache
-            self.decode_cache[cache_index] = DecodeCacheEntry {
-                pc,
-                instruction: instr,
-            };
-
-            instr
-        };
-
-        self.pc = self.pc.wrapping_add(2);
+            self.pc = self.pc.wrapping_add(2);
+            instruction = decode(opcode);
+        }
 
         let mut cycles = self.execute(instruction, memory);
 
