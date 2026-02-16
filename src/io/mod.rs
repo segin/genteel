@@ -24,6 +24,9 @@
 //! | 0xA1001D  | Expansion serial RX                |
 //! | 0xA1001F  | Expansion serial control           |
 
+use crate::debugger::Debuggable;
+use serde_json::{json, Value};
+
 /// Button state for a Genesis controller
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ControllerState {
@@ -371,6 +374,21 @@ impl Io {
     pub fn update(&mut self, cycles: u32) {
         self.port1.update(cycles);
         self.port2.update(cycles);
+    }
+}
+
+impl Debuggable for Io {
+    fn read_state(&self) -> Value {
+        json!({
+            "version": self.version,
+            "port1_control": self.port1.control,
+            "port2_control": self.port2.control,
+            "expansion_control": self.expansion.control,
+        })
+    }
+
+    fn write_state(&mut self, _state: &Value) {
+        // Simple stub for now
     }
 }
 

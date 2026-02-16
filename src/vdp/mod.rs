@@ -176,9 +176,9 @@ pub struct Vdp {
     pub registers: [u8; NUM_REGISTERS],
 
     /// Control port state
-    control_pending: bool,
-    control_code: u8,
-    control_address: u16,
+    pub control_pending: bool,
+    pub control_code: u8,
+    pub control_address: u16,
 
     /// DMA state
     pub dma_pending: bool,
@@ -831,47 +831,43 @@ impl Vdp {
             }
         }
     }
-    fn get_scroll_values(&self, is_plane_a: bool, fetch_line: u16, tile_h: usize) -> (u16, u16) {
-        let mode3 = self.registers[REG_MODE3];
-
-        // Vertical Scroll (Bits 2 of Mode 3: 0=Full Screen, 1=2-Cell Strips)
-        let v_scroll = if (mode3 & 0x04) != 0 {
-            // 2-Cell (16-pixel) strips.
-            let strip_idx = (tile_h >> 1) as usize;
-            let vs_addr = (strip_idx * 4) + (if is_plane_a { 0 } else { 2 });
-            if vs_addr + 1 < self.vsram.len() {
-                (((self.vsram[vs_addr] as u16) << 8) | (self.vsram[vs_addr + 1] as u16)) & 0x07FF
+        fn get_scroll_values(&self, is_plane_a: bool, fetch_line: u16, tile_h: usize) -> (u16, u16) {
+            let mode3 = self.registers[REG_MODE3];
+            
+            // Vertical Scroll (Bits 2 of Mode 3: 0=Full Screen, 1=2-Cell Strips)
+            let v_scroll = if (mode3 & 0x04) != 0 {
+                // 2-Cell (16-pixel) strips. Each entry in VSRAM is 2 bytes and handles 2 cells.
+                let strip_idx = (tile_h >> 1) as usize;
+                let vs_addr = (strip_idx * 4) + (if is_plane_a { 0 } else { 2 });
+                if vs_addr + 1 < self.vsram.len() {
+                    (((self.vsram[vs_addr] as u16) << 8) | (self.vsram[vs_addr + 1] as u16)) & 0x03FF
+                } else {
+                    0
+                }
             } else {
-                0
-            }
-        } else {
-            // Full Screen
-            let vs_addr = if is_plane_a { 0 } else { 2 };
-            (((self.vsram[vs_addr] as u16) << 8) | (self.vsram[vs_addr + 1] as u16)) & 0x07FF
-        };
-
-        // Horizontal Scroll (Bits 1-0 of Mode 3: 00=Full, 01=Invalid/Cell, 10=Cell, 11=Line)
-        let hs_mode = mode3 & 0x03;
-        let hs_base = self.hscroll_address();
-
-        let hs_addr = match hs_mode {
-            0x00 => hs_base,                                     // Full screen
-            0x02 => hs_base + ((fetch_line as usize >> 3) * 32), // 8-pixel strips (Cell)
-            0x03 => hs_base + (fetch_line as usize * 4),         // Per-line
-            _ => hs_base,                                        // Default/Fallback
-        } + (if is_plane_a { 0 } else { 2 });
-
-        let hi = self.vram[hs_addr & 0xFFFF];
-        let lo = self.vram[(hs_addr + 1) & 0xFFFF];
-
-        // Horizontal scroll is 10 bits, sign-extended to 16
-        let mut h_scroll = (((hi as u16) << 8) | (lo as u16)) & 0x03FF;
-        if (h_scroll & 0x0200) != 0 {
-            h_scroll |= 0xFC00;
+                // Full Screen
+                let vs_addr = if is_plane_a { 0 } else { 2 };
+                (((self.vsram[vs_addr] as u16) << 8) | (self.vsram[vs_addr + 1] as u16)) & 0x03FF
+            };
+    
+            // Horizontal Scroll (Bits 1-0 of Mode 3: 00=Full, 01=Invalid/Cell, 10=Cell, 11=Line)
+            let hs_mode = mode3 & 0x03;
+            let hs_base = self.hscroll_address();
+            
+            let hs_addr = match hs_mode {
+                0x00 => hs_base, // Full screen
+                0x02 => hs_base + ((fetch_line as usize >> 3) * 32), // 8-pixel strips (Cell)
+                0x03 => hs_base + (fetch_line as usize * 4), // Per-line
+                _ => hs_base, // Default/Fallback
+            } + (if is_plane_a { 0 } else { 2 });
+    
+            let hi = self.vram[hs_addr & 0xFFFF];
+            let lo = self.vram[(hs_addr + 1) & 0xFFFF];
+            let h_scroll = (((hi as u16) << 8) | (lo as u16)) & 0x03FF;
+            
+            (v_scroll, h_scroll)
         }
-
-        (v_scroll, h_scroll)
-    }
+    
 
     #[inline(always)]
     fn fetch_nametable_entry(
@@ -1059,19 +1055,21 @@ impl Vdp {
         let line_offset = (draw_line as usize) * 320;
         let plane_w_mask = plane_w - 1;
 
+        // Fetch H-scroll once for the line (matching real hardware behavior for per-line/cell)
+        let (_, h_scroll) = self.get_scroll_values(is_plane_a, fetch_line, 0);
+
         let mut screen_x: u16 = 0;
 
         while screen_x < screen_width {
-            // Fetch scroll for the current horizontal position (important for per-column VS)
-            let tile_h_idx = (screen_x >> 3) as usize;
-            let (v_scroll, h_scroll) = self.get_scroll_values(is_plane_a, fetch_line, tile_h_idx);
-
-            // Calculate horizontal position in the plane
-            let scrolled_h = (screen_x as i16).wrapping_sub(h_scroll as i16);
+            // Horizontal position in plane
+            let scrolled_h = screen_x.wrapping_sub(h_scroll);
             let pixel_h = (scrolled_h & 0x07) as u16;
             let tile_h = ((scrolled_h >> 3) as usize) & plane_w_mask;
 
-            // Calculate vertical position in the plane
+            // Fetch V-scroll for this specific column (per-column VS support)
+            let (v_scroll, _) = self.get_scroll_values(is_plane_a, fetch_line, (screen_x >> 3) as usize);
+
+            // Vertical position in plane
             let scrolled_v = fetch_line.wrapping_add(v_scroll);
             let tile_v = (scrolled_v as usize / 8) % plane_h;
             let pixel_v = scrolled_v % 8;
@@ -1100,6 +1098,15 @@ impl Vdp {
             }
 
             screen_x += pixels_to_process;
+        }
+    }
+
+    /// Internal VRAM word write (big-endian, used for DMA)
+    pub fn write_vram_word(&mut self, addr: u16, value: u16) {
+        let addr = addr as usize;
+        if addr < 0x10000 {
+            self.vram[addr] = (value >> 8) as u8;
+            self.vram[addr ^ 1] = (value & 0xFF) as u8;
         }
     }
 }
