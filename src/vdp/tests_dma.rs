@@ -66,7 +66,10 @@ fn test_dma_fill_vram() {
     // It fills `dma_length` bytes starting at `control_address` (0x0000).
     vdp.write_data(0xAA00);
 
-    assert!(!vdp.dma_pending, "DMA pending should be false after data write");
+    assert!(
+        !vdp.dma_pending,
+        "DMA pending should be false after data write"
+    );
 
     // 7. Verify VRAM
     // Length is 0x10 (16 bytes).

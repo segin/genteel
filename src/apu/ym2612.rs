@@ -300,7 +300,7 @@ mod tests {
         ym.write_data_bank(Bank::Bank1, 0x22); // 001 00010 (Block 4, Hi 2)
 
         let (block, f_num) = ym.get_frequency(3); // Channel 3 is first channel of Bank 1
-        // Reg 0xA4 = 0x22 = 0010 0010. Bits 5-3 are Block (100 = 4). Bits 2-0 are F-High (010 = 2).
+                                                  // Reg 0xA4 = 0x22 = 0010 0010. Bits 5-3 are Block (100 = 4). Bits 2-0 are F-High (010 = 2).
         assert_eq!(block, 4);
         assert_eq!(f_num, 0x255); // 0x200 | 0x55
 
