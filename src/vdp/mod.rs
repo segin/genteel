@@ -873,32 +873,6 @@ impl Vdp {
         }
     }
 
-    fn draw_partial_tile_row(
-        &mut self,
-        tile_index: u16,
-        palette: u8,
-        v_flip: bool,
-        h_flip: bool,
-        pixel_v: u16,
-        pixel_h: u16,
-        count: u16,
-        dest_idx: usize,
-    ) {
-        let patterns = self.fetch_tile_pattern(tile_index, pixel_v, v_flip);
-
-        for i in 0..count {
-            let current_pixel_h = pixel_h + i;
-            let eff_col = if h_flip { 7 - current_pixel_h } else { current_pixel_h };
-            let byte = patterns[(eff_col as usize) / 2];
-            let col = if eff_col % 2 == 0 { byte >> 4 } else { byte & 0x0F };
-
-            if col != 0 {
-                let color = self.get_cram_color(palette, col);
-                self.framebuffer[dest_idx + i as usize] = color;
-            }
-        }
-    }
-
     #[inline(always)]
     unsafe fn draw_full_tile_row(
         &mut self,
@@ -954,6 +928,32 @@ impl Vdp {
                 if col != 0 { *self.framebuffer.get_unchecked_mut(dest_idx + 6) = *self.cram_cache.get_unchecked(palette_base + col as usize); }
                 col = p3 & 0x0F;
                 if col != 0 { *self.framebuffer.get_unchecked_mut(dest_idx + 7) = *self.cram_cache.get_unchecked(palette_base + col as usize); }
+            }
+        }
+    }
+
+    fn draw_partial_tile_row(
+        &mut self,
+        tile_index: u16,
+        palette: u8,
+        v_flip: bool,
+        h_flip: bool,
+        pixel_v: u16,
+        pixel_h_start: u16,
+        count: u16,
+        dest_idx: usize,
+    ) {
+        let patterns = self.fetch_tile_pattern(tile_index, pixel_v, v_flip);
+
+        for i in 0..count {
+            let current_pixel_h = pixel_h_start + i;
+            let eff_col = if h_flip { 7 - current_pixel_h } else { current_pixel_h };
+            let byte = patterns[(eff_col as usize) / 2];
+            let col = if eff_col % 2 == 0 { byte >> 4 } else { byte & 0x0F };
+
+            if col != 0 {
+                let color = self.get_cram_color(palette, col);
+                self.framebuffer[dest_idx + i as usize] = color;
             }
         }
     }
