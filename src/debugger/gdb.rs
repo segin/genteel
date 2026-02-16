@@ -69,7 +69,7 @@ impl GdbServer {
             );
             Some(pwd)
         } else {
-            let token = format!("{:016x}", rand::random::<u64>());
+            let token = format!("{:032x}", rand::random::<u128>());
             eprintln!(
                 "🔒 GDB Server listening on 127.0.0.1:{}. Protected with auto-generated token.",
                 port
@@ -1106,8 +1106,8 @@ mod tests {
         );
         let generated_pwd = server.password.as_ref().unwrap().clone();
 
-        // Check password format (16 chars hex)
-        assert_eq!(generated_pwd.len(), 16, "Generated password should be 16 chars");
+        // Check password format (32 chars hex)
+        assert_eq!(generated_pwd.len(), 32, "Generated password should be 32 chars");
         assert!(
             generated_pwd.chars().all(|c| c.is_digit(16)),
             "Generated password should be hex"
