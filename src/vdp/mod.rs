@@ -681,12 +681,16 @@ impl Vdp {
             return;
         }
 
+        let mut sprites = [SpriteAttributes::default(); 80];
+        let count = self.collect_scanline_sprites(fetch_line, &mut sprites);
+        let active_sprites = &sprites[..count];
+
         self.render_plane(false, fetch_line, draw_line, false);
         self.render_plane(true, fetch_line, draw_line, false);
-        self.render_sprites(fetch_line, draw_line, false);
+        self.render_sprites(active_sprites, fetch_line, draw_line, false);
         self.render_plane(false, fetch_line, draw_line, true);
         self.render_plane(true, fetch_line, draw_line, true);
-        self.render_sprites(fetch_line, draw_line, true);
+        self.render_sprites(active_sprites, fetch_line, draw_line, true);
     }
 
     fn render_sprite_scanline(
@@ -768,10 +772,11 @@ impl Vdp {
         }
     }
 
-    fn render_sprites(&mut self, fetch_line: u16, draw_line: u16, priority_filter: bool) {
-        let screen_width = self.screen_width();
-        let line_offset = (draw_line as usize) * 320;
-
+    fn collect_scanline_sprites(
+        &self,
+        fetch_line: u16,
+        sprites: &mut [SpriteAttributes],
+    ) -> usize {
         let sat_base = self.sprite_table_address() as usize;
         let max_sprites = if self.h40_mode() { 80 } else { 64 };
 
@@ -783,19 +788,40 @@ impl Vdp {
             sat_base,
         };
 
+        let mut count = 0;
         for attr in iter {
             // Check if sprite is visible on this line
             let sprite_v_px = (attr.v_size as u16) * 8;
-            if attr.priority == priority_filter
-                && fetch_line >= attr.v_pos
-                && fetch_line < attr.v_pos + sprite_v_px
-            {
+            if fetch_line >= attr.v_pos && fetch_line < attr.v_pos + sprite_v_px {
+                if count < sprites.len() {
+                    sprites[count] = attr;
+                    count += 1;
+                } else {
+                    break;
+                }
+            }
+        }
+        count
+    }
+
+    fn render_sprites(
+        &mut self,
+        sprites: &[SpriteAttributes],
+        fetch_line: u16,
+        draw_line: u16,
+        priority_filter: bool,
+    ) {
+        let screen_width = self.screen_width();
+        let line_offset = (draw_line as usize) * 320;
+
+        for attr in sprites {
+            if attr.priority == priority_filter {
                 Self::render_sprite_scanline(
                     &self.vram,
                     &mut self.framebuffer,
                     &self.cram_cache,
                     fetch_line,
-                    &attr,
+                    attr,
                     line_offset,
                     screen_width,
                 );
@@ -1248,3 +1274,6 @@ mod tests {
 
 #[cfg(test)]
 mod tests_bulk_write;
+
+#[cfg(test)]
+mod bench_render;
