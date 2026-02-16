@@ -735,41 +735,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_additional_queries() {
-        let mut server = GdbServer {
-            listener: TcpListener::bind("127.0.0.1:0").unwrap(),
-            client: None,
-            breakpoints: HashSet::new(),
-            stop_reason: StopReason::Halted,
-            no_ack_mode: false,
-            password: None,
-            authenticated: true,
-        };
-        let mut regs = GdbRegisters::default();
-        let mut mem = MockMemory::new();
-
-        // qfThreadInfo - Thread list
-        assert_eq!(
-            server.process_command("qfThreadInfo", &mut regs, &mut mem),
-            "m1"
-        );
-
-        // qsThreadInfo - End of thread list
-        assert_eq!(
-            server.process_command("qsThreadInfo", &mut regs, &mut mem),
-            "l"
-        );
-
-        // qAttached - Attached to existing process
-        assert_eq!(
-            server.process_command("qAttached", &mut regs, &mut mem),
-            "1"
-        );
-
-        // Unknown query
-        assert_eq!(server.process_command("qUnknown", &mut regs, &mut mem), "");
-    }
 
     #[test]
     fn test_checksum() {
@@ -908,29 +873,57 @@ mod tests {
         let mut regs = GdbRegisters::default();
         let mut mem = MockMemory::new();
 
-        assert!(server
-            .process_command("qSupported", &mut regs, &mut mem)
-            .contains("PacketSize"));
-        assert!(server
-            .process_command("qSupported:multiprocess+;swbreak+", &mut regs, &mut mem)
-            .contains("PacketSize"));
+        // Strict check for qSupported
+        let expected_supported = format!("PacketSize={};swbreak+;QStartNoAckMode+", MAX_PACKET_SIZE);
+        assert_eq!(
+            server.process_command("qSupported", &mut regs, &mut mem),
+            expected_supported
+        );
+        assert_eq!(
+            server.process_command("qSupported:multiprocess+;swbreak+", &mut regs, &mut mem),
+            expected_supported
+        );
+
+        // Strict check for qC
         assert_eq!(server.process_command("qC", &mut regs, &mut mem), "QC1");
+
+        // Strict check for qfThreadInfo
         assert_eq!(
             server.process_command("qfThreadInfo", &mut regs, &mut mem),
             "m1"
         );
+
+        // Strict check for qsThreadInfo
         assert_eq!(
             server.process_command("qsThreadInfo", &mut regs, &mut mem),
             "l"
         );
+
+        // Strict check for qAttached
         assert_eq!(
             server.process_command("qAttached", &mut regs, &mut mem),
             "1"
         );
+
+        // Unknown/Unsupported queries should return empty string
         assert_eq!(
             server.process_command("qUnknown", &mut regs, &mut mem),
             ""
         );
+        assert_eq!(
+            server.process_command("qSymbol::", &mut regs, &mut mem),
+            ""
+        );
+        assert_eq!(
+            server.process_command("qTStatus", &mut regs, &mut mem),
+            ""
+        );
+        assert_eq!(
+            server.process_command("qOffsets", &mut regs, &mut mem),
+            ""
+        );
+
+        // QStartNoAckMode
         assert_eq!(
             server.process_command("QStartNoAckMode", &mut regs, &mut mem),
             "OK"
