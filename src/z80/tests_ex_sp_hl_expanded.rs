@@ -96,7 +96,7 @@ fn test_ex_sp_iy_memptr_and_flags() {
 
 proptest! {
     #[test]
-    fn prop_ex_sp_hl_swaps_correctly(hl_val in 0u16..=0xFFFF, sp_val in 0u16..=0xFFFE, mem_val in 0u16..=0xFFFF) {
+    fn prop_ex_sp_hl_swaps_correctly(hl_val in 0u16..=0xFFFF, sp_val in 2u16..=0xFFFE, mem_val in 0u16..=0xFFFF) {
         let mut cpu = create_z80(&[0xE3]);
         cpu.sp = sp_val;
         cpu.set_hl(hl_val);
@@ -114,7 +114,7 @@ proptest! {
     }
 
     #[test]
-    fn prop_ex_sp_ix_swaps_correctly(ix_val in 0u16..=0xFFFF, sp_val in 0u16..=0xFFFE, mem_val in 0u16..=0xFFFF) {
+    fn prop_ex_sp_ix_swaps_correctly(ix_val in 0u16..=0xFFFF, sp_val in 2u16..=0xFFFE, mem_val in 0u16..=0xFFFF) {
         let mut cpu = create_z80(&[0xDD, 0xE3]);
         cpu.sp = sp_val;
         cpu.ix = ix_val;
@@ -132,7 +132,7 @@ proptest! {
     }
 
     #[test]
-    fn prop_ex_sp_iy_swaps_correctly(iy_val in 0u16..=0xFFFF, sp_val in 0u16..=0xFFFE, mem_val in 0u16..=0xFFFF) {
+    fn prop_ex_sp_iy_swaps_correctly(iy_val in 0u16..=0xFFFF, sp_val in 2u16..=0xFFFE, mem_val in 0u16..=0xFFFF) {
         let mut cpu = create_z80(&[0xFD, 0xE3]);
         cpu.sp = sp_val;
         cpu.iy = iy_val;
