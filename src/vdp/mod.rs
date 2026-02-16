@@ -681,12 +681,16 @@ impl Vdp {
             return;
         }
 
+        let mut sprites = [SpriteAttributes::default(); 80];
+        let count = self.collect_scanline_sprites(fetch_line, &mut sprites);
+        let active_sprites = &sprites[..count];
+
         self.render_plane(false, fetch_line, draw_line, false);
         self.render_plane(true, fetch_line, draw_line, false);
-        self.render_sprites(fetch_line, draw_line, false);
+        self.render_sprites(active_sprites, fetch_line, draw_line, false);
         self.render_plane(false, fetch_line, draw_line, true);
         self.render_plane(true, fetch_line, draw_line, true);
-        self.render_sprites(fetch_line, draw_line, true);
+        self.render_sprites(active_sprites, fetch_line, draw_line, true);
     }
 
     fn render_sprite_scanline(
@@ -768,10 +772,11 @@ impl Vdp {
         }
     }
 
-    fn render_sprites(&mut self, fetch_line: u16, draw_line: u16, priority_filter: bool) {
-        let screen_width = self.screen_width();
-        let line_offset = (draw_line as usize) * 320;
-
+    fn collect_scanline_sprites(
+        &self,
+        fetch_line: u16,
+        sprites: &mut [SpriteAttributes],
+    ) -> usize {
         let sat_base = self.sprite_table_address() as usize;
         let max_sprites = if self.h40_mode() { 80 } else { 64 };
 
@@ -783,19 +788,40 @@ impl Vdp {
             sat_base,
         };
 
+        let mut count = 0;
         for attr in iter {
             // Check if sprite is visible on this line
             let sprite_v_px = (attr.v_size as u16) * 8;
-            if attr.priority == priority_filter
-                && fetch_line >= attr.v_pos
-                && fetch_line < attr.v_pos + sprite_v_px
-            {
+            if fetch_line >= attr.v_pos && fetch_line < attr.v_pos + sprite_v_px {
+                if count < sprites.len() {
+                    sprites[count] = attr;
+                    count += 1;
+                } else {
+                    break;
+                }
+            }
+        }
+        count
+    }
+
+    fn render_sprites(
+        &mut self,
+        sprites: &[SpriteAttributes],
+        fetch_line: u16,
+        draw_line: u16,
+        priority_filter: bool,
+    ) {
+        let screen_width = self.screen_width();
+        let line_offset = (draw_line as usize) * 320;
+
+        for attr in sprites {
+            if attr.priority == priority_filter {
                 Self::render_sprite_scanline(
                     &self.vram,
                     &mut self.framebuffer,
                     &self.cram_cache,
                     fetch_line,
-                    &attr,
+                    attr,
                     line_offset,
                     screen_width,
                 );
@@ -815,6 +841,7 @@ impl Vdp {
         (v_scroll, h_scroll)
     }
 
+    #[inline(always)]
     fn fetch_nametable_entry(
         &self,
         base: usize,
@@ -823,23 +850,31 @@ impl Vdp {
         plane_w: usize,
     ) -> u16 {
         let nt_entry_addr = base + (tile_v * plane_w + tile_h) * 2;
-        let hi = self.vram[nt_entry_addr & 0xFFFF];
-        let lo = self.vram[(nt_entry_addr + 1) & 0xFFFF];
-        ((hi as u16) << 8) | (lo as u16)
+        // SAFETY: nt_entry_addr & 0xFFFF guarantees range 0..65535, which is within vram bounds (65536)
+        unsafe {
+            let hi = *self.vram.get_unchecked(nt_entry_addr & 0xFFFF);
+            let lo = *self.vram.get_unchecked((nt_entry_addr + 1) & 0xFFFF);
+            ((hi as u16) << 8) | (lo as u16)
+        }
     }
 
+    #[inline(always)]
     fn fetch_tile_pattern(&self, tile_index: u16, pixel_v: u16, v_flip: bool) -> [u8; 4] {
         let row = if v_flip { 7 - pixel_v } else { pixel_v };
         let row_addr = (tile_index as usize * 32) + (row as usize * 4);
 
-        let p0 = self.vram[row_addr & 0xFFFF];
-        let p1 = self.vram[(row_addr + 1) & 0xFFFF];
-        let p2 = self.vram[(row_addr + 2) & 0xFFFF];
-        let p3 = self.vram[(row_addr + 3) & 0xFFFF];
-        [p0, p1, p2, p3]
+        // SAFETY: row_addr & 0xFFFF guarantees range 0..65535, which is within vram bounds (65536)
+        unsafe {
+            let p0 = *self.vram.get_unchecked(row_addr & 0xFFFF);
+            let p1 = *self.vram.get_unchecked((row_addr + 1) & 0xFFFF);
+            let p2 = *self.vram.get_unchecked((row_addr + 2) & 0xFFFF);
+            let p3 = *self.vram.get_unchecked((row_addr + 3) & 0xFFFF);
+            [p0, p1, p2, p3]
+        }
     }
 
-    fn draw_full_tile_row(
+    #[inline(always)]
+    unsafe fn draw_full_tile_row(
         &mut self,
         tile_index: u16,
         palette: u8,
@@ -855,40 +890,45 @@ impl Vdp {
         let p3 = patterns[3];
         let palette_base = (palette as usize) * 16;
 
-        if h_flip {
-            let mut col = p3 & 0x0F;
-            if col != 0 { self.framebuffer[dest_idx] = self.cram_cache[palette_base + col as usize]; }
-            col = p3 >> 4;
-            if col != 0 { self.framebuffer[dest_idx + 1] = self.cram_cache[palette_base + col as usize]; }
-            col = p2 & 0x0F;
-            if col != 0 { self.framebuffer[dest_idx + 2] = self.cram_cache[palette_base + col as usize]; }
-            col = p2 >> 4;
-            if col != 0 { self.framebuffer[dest_idx + 3] = self.cram_cache[palette_base + col as usize]; }
-            col = p1 & 0x0F;
-            if col != 0 { self.framebuffer[dest_idx + 4] = self.cram_cache[palette_base + col as usize]; }
-            col = p1 >> 4;
-            if col != 0 { self.framebuffer[dest_idx + 5] = self.cram_cache[palette_base + col as usize]; }
-            col = p0 & 0x0F;
-            if col != 0 { self.framebuffer[dest_idx + 6] = self.cram_cache[palette_base + col as usize]; }
-            col = p0 >> 4;
-            if col != 0 { self.framebuffer[dest_idx + 7] = self.cram_cache[palette_base + col as usize]; }
-        } else {
-            let mut col = p0 >> 4;
-            if col != 0 { self.framebuffer[dest_idx] = self.cram_cache[palette_base + col as usize]; }
-            col = p0 & 0x0F;
-            if col != 0 { self.framebuffer[dest_idx + 1] = self.cram_cache[palette_base + col as usize]; }
-            col = p1 >> 4;
-            if col != 0 { self.framebuffer[dest_idx + 2] = self.cram_cache[palette_base + col as usize]; }
-            col = p1 & 0x0F;
-            if col != 0 { self.framebuffer[dest_idx + 3] = self.cram_cache[palette_base + col as usize]; }
-            col = p2 >> 4;
-            if col != 0 { self.framebuffer[dest_idx + 4] = self.cram_cache[palette_base + col as usize]; }
-            col = p2 & 0x0F;
-            if col != 0 { self.framebuffer[dest_idx + 5] = self.cram_cache[palette_base + col as usize]; }
-            col = p3 >> 4;
-            if col != 0 { self.framebuffer[dest_idx + 6] = self.cram_cache[palette_base + col as usize]; }
-            col = p3 & 0x0F;
-            if col != 0 { self.framebuffer[dest_idx + 7] = self.cram_cache[palette_base + col as usize]; }
+        // SAFETY: Caller ensures dest_idx + 7 is within framebuffer bounds.
+        // palette is 2 bits, so palette_base is max 48. col is 4 bits (0-15).
+        // Max index is 63, which is within cram_cache bounds (64).
+        unsafe {
+            if h_flip {
+                let mut col = p3 & 0x0F;
+                if col != 0 { *self.framebuffer.get_unchecked_mut(dest_idx) = *self.cram_cache.get_unchecked(palette_base + col as usize); }
+                col = p3 >> 4;
+                if col != 0 { *self.framebuffer.get_unchecked_mut(dest_idx + 1) = *self.cram_cache.get_unchecked(palette_base + col as usize); }
+                col = p2 & 0x0F;
+                if col != 0 { *self.framebuffer.get_unchecked_mut(dest_idx + 2) = *self.cram_cache.get_unchecked(palette_base + col as usize); }
+                col = p2 >> 4;
+                if col != 0 { *self.framebuffer.get_unchecked_mut(dest_idx + 3) = *self.cram_cache.get_unchecked(palette_base + col as usize); }
+                col = p1 & 0x0F;
+                if col != 0 { *self.framebuffer.get_unchecked_mut(dest_idx + 4) = *self.cram_cache.get_unchecked(palette_base + col as usize); }
+                col = p1 >> 4;
+                if col != 0 { *self.framebuffer.get_unchecked_mut(dest_idx + 5) = *self.cram_cache.get_unchecked(palette_base + col as usize); }
+                col = p0 & 0x0F;
+                if col != 0 { *self.framebuffer.get_unchecked_mut(dest_idx + 6) = *self.cram_cache.get_unchecked(palette_base + col as usize); }
+                col = p0 >> 4;
+                if col != 0 { *self.framebuffer.get_unchecked_mut(dest_idx + 7) = *self.cram_cache.get_unchecked(palette_base + col as usize); }
+            } else {
+                let mut col = p0 >> 4;
+                if col != 0 { *self.framebuffer.get_unchecked_mut(dest_idx) = *self.cram_cache.get_unchecked(palette_base + col as usize); }
+                col = p0 & 0x0F;
+                if col != 0 { *self.framebuffer.get_unchecked_mut(dest_idx + 1) = *self.cram_cache.get_unchecked(palette_base + col as usize); }
+                col = p1 >> 4;
+                if col != 0 { *self.framebuffer.get_unchecked_mut(dest_idx + 2) = *self.cram_cache.get_unchecked(palette_base + col as usize); }
+                col = p1 & 0x0F;
+                if col != 0 { *self.framebuffer.get_unchecked_mut(dest_idx + 3) = *self.cram_cache.get_unchecked(palette_base + col as usize); }
+                col = p2 >> 4;
+                if col != 0 { *self.framebuffer.get_unchecked_mut(dest_idx + 4) = *self.cram_cache.get_unchecked(palette_base + col as usize); }
+                col = p2 & 0x0F;
+                if col != 0 { *self.framebuffer.get_unchecked_mut(dest_idx + 5) = *self.cram_cache.get_unchecked(palette_base + col as usize); }
+                col = p3 >> 4;
+                if col != 0 { *self.framebuffer.get_unchecked_mut(dest_idx + 6) = *self.cram_cache.get_unchecked(palette_base + col as usize); }
+                col = p3 & 0x0F;
+                if col != 0 { *self.framebuffer.get_unchecked_mut(dest_idx + 7) = *self.cram_cache.get_unchecked(palette_base + col as usize); }
+            }
         }
     }
 
@@ -967,7 +1007,7 @@ impl Vdp {
                     palette,
                     v_flip,
                     h_flip,
-                    pixel_v as u16,
+                    pixel_v,
                     pixel_h,
                     pixels_to_process,
                     line_offset + screen_x as usize,
@@ -994,7 +1034,9 @@ impl Vdp {
             let h_flip = (entry & 0x0800) != 0;
             let tile_index = entry & 0x07FF;
 
-            self.draw_full_tile_row(tile_index, palette, v_flip, h_flip, pixel_v as u16, line_offset + screen_x as usize);
+            unsafe {
+                self.draw_full_tile_row(tile_index, palette, v_flip, h_flip, pixel_v, line_offset + screen_x as usize);
+            }
 
             screen_x += 8;
             scrolled_h = scrolled_h.wrapping_add(8);
@@ -1021,7 +1063,7 @@ impl Vdp {
                     palette,
                     v_flip,
                     h_flip,
-                    pixel_v as u16,
+                    pixel_v,
                     pixel_h,
                     pixels_to_process,
                     line_offset + screen_x as usize,
@@ -1247,7 +1289,7 @@ mod tests {
 }
 
 #[cfg(test)]
-mod tests_security;
+mod tests_bulk_write;
 
 #[cfg(test)]
-mod tests_bulk_write;
+mod bench_render;
