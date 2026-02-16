@@ -1201,6 +1201,69 @@ mod tests {
 
         // Test with 71 chars (one less than the current check of 72)
         let data = "0".repeat(71);
-        assert_eq!(server.process_command(&format!("G{}", data), &mut regs, &mut mem), "E01");
+        assert_eq!(
+            server.process_command(&format!("G{}", data), &mut regs, &mut mem),
+            "E01"
+        );
+    }
+
+    #[test]
+    fn test_query_commands_strict_conformance() {
+        let mut server = create_test_server();
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+
+        // qSupported: Check full response
+        let expected_supported =
+            format!("PacketSize={};swbreak+;QStartNoAckMode+", MAX_PACKET_SIZE);
+        assert_eq!(
+            server.process_command("qSupported", &mut regs, &mut mem),
+            expected_supported
+        );
+
+        // qSupported with features (should be ignored and return same list)
+        assert_eq!(
+            server.process_command("qSupported:multiprocess+;swbreak+", &mut regs, &mut mem),
+            expected_supported
+        );
+
+        // qC: Current thread
+        assert_eq!(server.process_command("qC", &mut regs, &mut mem), "QC1");
+
+        // qfThreadInfo: Start thread list
+        assert_eq!(
+            server.process_command("qfThreadInfo", &mut regs, &mut mem),
+            "m1"
+        );
+
+        // qsThreadInfo: Continue thread list (end)
+        assert_eq!(
+            server.process_command("qsThreadInfo", &mut regs, &mut mem),
+            "l"
+        );
+
+        // qAttached: Process attached status
+        assert_eq!(
+            server.process_command("qAttached", &mut regs, &mut mem),
+            "1"
+        );
+
+        // qAttached with PID (not supported currently, should return empty string because of exact match check)
+        assert_eq!(
+            server.process_command("qAttached:1", &mut regs, &mut mem),
+            ""
+        );
+
+        // qOffsets (not supported)
+        assert_eq!(
+            server.process_command("qOffsets", &mut regs, &mut mem),
+            ""
+        );
+
+        // qSymbol (not supported)
+        assert_eq!(
+            server.process_command("qSymbol::", &mut regs, &mut mem),
+            ""
+        );
     }
 }
