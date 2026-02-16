@@ -74,7 +74,7 @@ mod tests {
     fn test_u32_word_ops() {
         assert_eq!(join_u32_words(0x1234, 0x5678), 0x12345678);
         assert_eq!(split_u32_to_words(0x12345678), (0x1234, 0x5678));
-        
+
         assert_eq!(join_u32_from_u16(0x1234, 0x5678), 0x12345678);
         assert_eq!(split_u32_to_u16(0x12345678), (0x1234, 0x5678));
     }
