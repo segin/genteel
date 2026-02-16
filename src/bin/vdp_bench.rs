@@ -4,43 +4,57 @@ use std::time::Instant;
 fn main() {
     let mut vdp = Vdp::new();
 
-    // Enable display
-    vdp.registers[1] |= 0x40;
+    // Setup sprite table at 0x0000
+    // REG_SPRITE_TABLE is register 5. Value is address / 0x200.
+    // So 0 -> 0x0000.
+    vdp.registers[5] = 0;
 
-    // Set Plane A to 0xC000 (Reg 2 = 0x30)
-    vdp.registers[2] = 0x30;
+    // Setup 80 sprites linked together
+    for i in 0..80 {
+        let addr = i * 8;
+        let next_link = if i == 79 { 0 } else { i + 1 };
 
-    // Palette 0, Color 1: Red
-    vdp.write_control(0xC000); // Access CRAM addr 0
-    vdp.write_control(0x0000);
-    vdp.write_data(0xF800);
+        // Y position (0..=0x3FF) - centered around 128
+        // Let's scatter them vertically so some are visible on some lines
+        let y_pos = 128 + (i as u16 * 2);
+        vdp.vram[addr] = (y_pos >> 8) as u8;
+        vdp.vram[addr + 1] = (y_pos & 0xFF) as u8;
 
-    // Set Tile 1 to solid Color 1
-    for i in 0..16 {
-        vdp.vram[32 + i] = 0x11;
+        // Size (Bits 0-1: V-size-1, Bits 2-3: H-size-1)
+        // Let's make them 2x2 tiles (size=5: 0101)
+        vdp.vram[addr + 2] = 0x05;
+
+        // Link
+        vdp.vram[addr + 3] = next_link as u8;
+
+        // Priority/Palette/Flip/BaseTile
+        // High priority on even sprites, low on odd
+        let priority = if i % 2 == 0 { 0x80 } else { 0x00 };
+        vdp.vram[addr + 4] = priority;
+        vdp.vram[addr + 5] = 0x00; // Tile 0
+
+        // X position
+        let x_pos = 128 + (i as u16 * 3);
+        vdp.vram[addr + 6] = (x_pos >> 8) as u8;
+        vdp.vram[addr + 7] = (x_pos & 0xFF) as u8;
     }
 
-    // Set Nametable Entry (0,0) to Tile 1
-    vdp.vram[0xC000] = 0x00;
-    vdp.vram[0xC001] = 0x01;
+    // Enable display
+    vdp.registers[1] |= 0x40; // MODE2_DISPLAY_ENABLE
 
-    let iterations = 1000;
-    println!("Benchmarking VDP rendering for {} frames...", iterations);
+    // Warmup
+    for _ in 0..100 {
+        vdp.render_line(100);
+    }
 
     let start = Instant::now();
+    let iterations = 10_000;
 
     for _ in 0..iterations {
-        for line in 0..224 {
-            vdp.render_line(line);
-        }
+        // Render a line where many sprites are visible
+        vdp.render_line(150);
     }
 
     let duration = start.elapsed();
-    println!("Time for {} frames: {:?}", iterations, duration);
-    let fps = (iterations as f64) / duration.as_secs_f64();
-    println!("FPS: {:.2}", fps);
-    println!(
-        "Time per frame: {:.2} ms",
-        duration.as_millis() as f64 / iterations as f64
-    );
+    println!("Time for {} iterations: {:?}", iterations, duration);
 }

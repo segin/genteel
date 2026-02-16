@@ -259,8 +259,7 @@ impl Vdp {
             // Update last_data_write
             if data.len() >= 2 {
                 let last_idx = data.len() - 2;
-                self.last_data_write =
-                    ((data[last_idx] as u16) << 8) | (data[last_idx + 1] as u16);
+                self.last_data_write = ((data[last_idx] as u16) << 8) | (data[last_idx + 1] as u16);
             }
             return;
         }
@@ -403,7 +402,8 @@ impl Vdp {
             }
         } else {
             // First word of command
-            self.control_code = ((value >> CTRL_CODE_LOW_SHIFT) & (CTRL_CODE_LOW_MASK as u16)) as u8;
+            self.control_code =
+                ((value >> CTRL_CODE_LOW_SHIFT) & (CTRL_CODE_LOW_MASK as u16)) as u8;
             self.control_address = value & CTRL_ADDR_LO_MASK;
             self.control_pending = true;
         }
@@ -581,7 +581,8 @@ impl Vdp {
     pub fn step(&mut self, _cycles: u64) {}
 
     pub fn vblank_pending(&self) -> bool {
-        (self.status & STATUS_VINT_PENDING) != 0 && (self.registers[REG_MODE2] & MODE2_VINT_ENABLE) != 0
+        (self.status & STATUS_VINT_PENDING) != 0
+            && (self.registers[REG_MODE2] & MODE2_VINT_ENABLE) != 0
     }
 
     pub fn set_vblank(&mut self, active: bool) {
@@ -681,9 +682,9 @@ impl Vdp {
             return;
         }
 
-        let mut sprites = [SpriteAttributes::default(); 80];
-        let count = self.collect_scanline_sprites(fetch_line, &mut sprites);
-        let active_sprites = &sprites[..count];
+        // Pre-calculate visible sprites for this line to avoid traversing the SAT twice
+        let (sprite_count, active_sprites) = self.get_active_sprites(fetch_line);
+        let active_sprites = &active_sprites[..sprite_count];
 
         self.render_plane(false, fetch_line, draw_line, false);
         self.render_plane(true, fetch_line, draw_line, false);
@@ -691,6 +692,35 @@ impl Vdp {
         self.render_plane(false, fetch_line, draw_line, true);
         self.render_plane(true, fetch_line, draw_line, true);
         self.render_sprites(active_sprites, fetch_line, draw_line, true);
+    }
+
+    fn get_active_sprites(&self, line: u16) -> (usize, [SpriteAttributes; 80]) {
+        let mut sprites = [SpriteAttributes::default(); 80];
+        let mut count = 0;
+
+        let sat_base = self.sprite_table_address() as usize;
+        let max_sprites = if self.h40_mode() { 80 } else { 64 };
+
+        let iter = SpriteIterator {
+            vram: &self.vram,
+            next_idx: 0,
+            count: 0,
+            max_sprites,
+            sat_base,
+        };
+
+        for attr in iter {
+            let sprite_v_px = (attr.v_size as u16) * 8;
+            if line >= attr.v_pos && line < attr.v_pos + sprite_v_px {
+                sprites[count] = attr;
+                count += 1;
+                // Safety check, though SpriteIterator limits iterations
+                if count >= 80 {
+                    break;
+                }
+            }
+        }
+        (count, sprites)
     }
 
     fn render_sprite_scanline(
@@ -770,38 +800,6 @@ impl Vdp {
                 }
             }
         }
-    }
-
-    fn collect_scanline_sprites(
-        &self,
-        fetch_line: u16,
-        sprites: &mut [SpriteAttributes],
-    ) -> usize {
-        let sat_base = self.sprite_table_address() as usize;
-        let max_sprites = if self.h40_mode() { 80 } else { 64 };
-
-        let iter = SpriteIterator {
-            vram: &self.vram,
-            next_idx: 0,
-            count: 0,
-            max_sprites,
-            sat_base,
-        };
-
-        let mut count = 0;
-        for attr in iter {
-            // Check if sprite is visible on this line
-            let sprite_v_px = (attr.v_size as u16) * 8;
-            if fetch_line >= attr.v_pos && fetch_line < attr.v_pos + sprite_v_px {
-                if count < sprites.len() {
-                    sprites[count] = attr;
-                    count += 1;
-                } else {
-                    break;
-                }
-            }
-        }
-        count
     }
 
     fn render_sprites(
