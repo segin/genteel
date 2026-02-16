@@ -30,10 +30,8 @@ pub struct Ym2612 {
     /// Bank 1: [1][addr]
     pub registers: [[u8; 256]; 2],
 
-    /// Current register address for Bank 0 port
-    addr0: u8,
-    /// Current register address for Bank 1 port
-    addr1: u8,
+    /// Current register addresses for each bank
+    address: [u8; 2],
 
     /// Status register
     /// Bit 7: Busy
@@ -54,8 +52,7 @@ impl Ym2612 {
     pub fn new() -> Self {
         Self {
             registers: [[0; 256]; 2],
-            addr0: 0,
-            addr1: 0,
+            address: [0; 2],
             status: 0,
             timer_a_count: 0,
             timer_b_count: 0,
@@ -143,34 +140,31 @@ impl Ym2612 {
 
     /// Unified write address to port (0 or 1)
     pub fn write_address(&mut self, port: u8, val: u8) {
-        if port == 0 {
-            self.write_addr0(val);
-        } else {
-            self.write_addr1(val);
-        }
+        let bank = if port == 0 { Bank::Bank0 } else { Bank::Bank1 };
+        self.write_addr(bank, val);
     }
 
     /// Unified write data to port (0 or 1)
     pub fn write_data(&mut self, port: u8, val: u8) {
-        if port == 0 {
-            self.write_data0(val);
-        } else {
-            self.write_data1(val);
-        }
+        let bank = if port == 0 { Bank::Bank0 } else { Bank::Bank1 };
+        self.write_data_bank(bank, val);
     }
 
-    /// Write to Address Port 0 (Part I)
-    pub fn write_addr0(&mut self, val: u8) {
-        self.addr0 = val;
+    /// Write to address port for a specific bank
+    pub fn write_addr(&mut self, bank: Bank, val: u8) {
+        self.address[bank as usize] = val;
     }
 
-    /// Write to Data Port 0 (Part I)
-    pub fn write_data0(&mut self, val: u8) {
+    /// Write to data port for a specific bank
+    pub fn write_data_bank(&mut self, bank: Bank, val: u8) {
         // Set busy flag duration (32 internal YM2612 cycles * 7 = 224 Master Cycles)
         // This corresponds to 32 M68k cycles.
         self.busy_cycles = 224;
 
-        if self.addr0 == 0x27 {
+        let bank_idx = bank as usize;
+        let addr = self.address[bank_idx];
+
+        if bank == Bank::Bank0 && addr == 0x27 {
             let old_val = self.registers[0][0x27];
 
             // Handle Reset Flags
@@ -201,19 +195,32 @@ impl Ym2612 {
 
             self.registers[0][0x27] = val;
         } else {
-            self.registers[0][self.addr0 as usize] = val;
+            self.registers[bank_idx][addr as usize] = val;
         }
     }
 
-    /// Write to Address Port 1 (Part II)
-    pub fn write_addr1(&mut self, val: u8) {
-        self.addr1 = val;
+    /// Deprecated: Use [`write_addr`] with [`Bank::Bank0`]
+    #[deprecated(note = "Use write_addr(Bank::Bank0, val)")]
+    pub fn write_addr0(&mut self, val: u8) {
+        self.write_addr(Bank::Bank0, val);
     }
 
-    /// Write to Data Port 1 (Part II)
+    /// Deprecated: Use [`write_data_bank`] with [`Bank::Bank0`]
+    #[deprecated(note = "Use write_data_bank(Bank::Bank0, val)")]
+    pub fn write_data0(&mut self, val: u8) {
+        self.write_data_bank(Bank::Bank0, val);
+    }
+
+    /// Deprecated: Use [`write_addr`] with [`Bank::Bank1`]
+    #[deprecated(note = "Use write_addr(Bank::Bank1, val)")]
+    pub fn write_addr1(&mut self, val: u8) {
+        self.write_addr(Bank::Bank1, val);
+    }
+
+    /// Deprecated: Use [`write_data_bank`] with [`Bank::Bank1`]
+    #[deprecated(note = "Use write_data_bank(Bank::Bank1, val)")]
     pub fn write_data1(&mut self, val: u8) {
-        self.busy_cycles = 224;
-        self.registers[1][self.addr1 as usize] = val;
+        self.write_data_bank(Bank::Bank1, val);
     }
 
     // === Helper Accessors ===
@@ -264,15 +271,15 @@ mod tests {
         let mut ym = Ym2612::new();
 
         // Write to Bank 0, Register 0x30 (Detune/Mult for Ch1 Op1)
-        ym.write_addr0(0x30);
-        ym.write_data0(0x71);
+        ym.write_addr(Bank::Bank0, 0x30);
+        ym.write_data_bank(Bank::Bank0, 0x71);
 
         assert_eq!(ym.registers[0][0x30], 0x71);
         assert_eq!(ym.registers[1][0x30], 0x00);
 
         // Write to Bank 1, Register 0x30 (Detune/Mult for Ch4 Op1)
-        ym.write_addr1(0x30);
-        ym.write_data1(0x42);
+        ym.write_addr(Bank::Bank1, 0x30);
+        ym.write_data_bank(Bank::Bank1, 0x42);
 
         assert_eq!(ym.registers[1][0x30], 0x42);
         assert_eq!(ym.registers[0][0x30], 0x71);
@@ -287,13 +294,13 @@ mod tests {
         // Bank 1 registers are accessed via port 1 (write_addr1/write_data1).
         // F-Num low = 0x55 (Reg 0xA0)
         // Block/F-Num high = 0x22 (Reg 0xA4) -> Block 4, F-Num high 2
-        ym.write_addr1(0xA0);
-        ym.write_data1(0x55);
-        ym.write_addr1(0xA4);
-        ym.write_data1(0x22); // 001 00010 (Block 4, Hi 2)
+        ym.write_addr(Bank::Bank1, 0xA0);
+        ym.write_data_bank(Bank::Bank1, 0x55);
+        ym.write_addr(Bank::Bank1, 0xA4);
+        ym.write_data_bank(Bank::Bank1, 0x22); // 001 00010 (Block 4, Hi 2)
 
         let (block, f_num) = ym.get_frequency(3); // Channel 3 is first channel of Bank 1
-        // Reg 0xA4 = 0x22 = 0010 0010. Bits 5-3 are Block (100 = 4). Bits 2-0 are F-High (010 = 2).
+                                                  // Reg 0xA4 = 0x22 = 0010 0010. Bits 5-3 are Block (100 = 4). Bits 2-0 are F-High (010 = 2).
         assert_eq!(block, 4);
         assert_eq!(f_num, 0x255); // 0x200 | 0x55
 
@@ -310,10 +317,10 @@ mod tests {
         // Set Ch1 Frequency (Bank 0)
         // F-Num low = 0x55 (Reg 0xA0)
         // Block/F-Num high = 0x22 (Reg 0xA4) -> Block 4, F-Num high 2
-        ym.write_addr0(0xA0);
-        ym.write_data0(0x55);
-        ym.write_addr0(0xA4);
-        ym.write_data0(0x22); // 001 00010 (Block 4, Hi 2)
+        ym.write_addr(Bank::Bank0, 0xA0);
+        ym.write_data_bank(Bank::Bank0, 0x55);
+        ym.write_addr(Bank::Bank0, 0xA4);
+        ym.write_data_bank(Bank::Bank0, 0x22); // 001 00010 (Block 4, Hi 2)
 
         let (block, f_num) = ym.get_frequency(0);
         // Reg 0xA4 = 0x22 = 0010 0010. Bits 5-3 are Block (100 = 4). Bits 2-0 are F-High (010 = 2).
@@ -329,14 +336,14 @@ mod tests {
         // N = 1000. Period = (1024 - 1000) * 144 = 24 * 144 = 3456 Master Cycles.
         // Reg 0x24 (High 8 bits) = 1000 >> 2 = 250 (0xFA)
         // Reg 0x25 (Low 2 bits) = 1000 & 3 = 0
-        ym.write_addr0(0x24);
-        ym.write_data0(0xFA);
-        ym.write_addr0(0x25);
-        ym.write_data0(0x00);
+        ym.write_addr(Bank::Bank0, 0x24);
+        ym.write_data_bank(Bank::Bank0, 0xFA);
+        ym.write_addr(Bank::Bank0, 0x25);
+        ym.write_data_bank(Bank::Bank0, 0x00);
 
         // Enable Timer A (Bit 0) and Enable Flag (Bit 2) -> 0x05
-        ym.write_addr0(0x27);
-        ym.write_data0(0x05);
+        ym.write_addr(Bank::Bank0, 0x27);
+        ym.write_data_bank(Bank::Bank0, 0x05);
 
         assert_eq!(ym.timer_a_count, 3456);
 
@@ -352,8 +359,8 @@ mod tests {
 
         // Reset Flag
         // Write 0x05 | 0x10 (Reset Flag A) = 0x15
-        ym.write_addr0(0x27);
-        ym.write_data0(0x15);
+        ym.write_addr(Bank::Bank0, 0x27);
+        ym.write_data_bank(Bank::Bank0, 0x15);
         assert_eq!(ym.status & 0x01, 0, "Timer A flag should be cleared");
 
         // Wait for next overflow
@@ -368,12 +375,12 @@ mod tests {
         // Configure Timer B
         // N = 200. Period = (256 - 200) * 2304 = 56 * 2304 = 129024 Master Cycles.
         // Reg 0x26 = 200 (0xC8)
-        ym.write_addr0(0x26);
-        ym.write_data0(0xC8);
+        ym.write_addr(Bank::Bank0, 0x26);
+        ym.write_data_bank(Bank::Bank0, 0xC8);
 
         // Enable Timer B (Bit 1) and Enable Flag (Bit 3) -> 0x0A
-        ym.write_addr0(0x27);
-        ym.write_data0(0x0A);
+        ym.write_addr(Bank::Bank0, 0x27);
+        ym.write_data_bank(Bank::Bank0, 0x0A);
 
         assert_eq!(ym.timer_b_count, 129024);
 
@@ -386,8 +393,8 @@ mod tests {
         assert_eq!(ym.status & 0x02, 0x02, "Timer B should have fired");
 
         // Reset Flag
-        ym.write_addr0(0x27);
-        ym.write_data0(0x0A | 0x20); // 0x2A
+        ym.write_addr(Bank::Bank0, 0x27);
+        ym.write_data_bank(Bank::Bank0, 0x0A | 0x20); // 0x2A
         assert_eq!(ym.status & 0x02, 0, "Timer B flag should be cleared");
     }
 
@@ -399,15 +406,15 @@ mod tests {
         // Reset A (Bit 4) -> 0x10
         // Preserve Load/Enable bits if we wanted, but writing 0x10 disables them unless we set them too.
         // Actually writing 0x10 sets Load=0, Enable=0. So it stops timers too.
-        ym.write_addr0(0x27);
-        ym.write_data0(0x10);
+        ym.write_addr(Bank::Bank0, 0x27);
+        ym.write_data_bank(Bank::Bank0, 0x10);
 
         assert_eq!(ym.status & 0x01, 0x00); // A cleared
         assert_eq!(ym.status & 0x02, 0x02); // B stays
 
         // Reset B (Bit 5) -> 0x20
-        ym.write_addr0(0x27);
-        ym.write_data0(0x20);
+        ym.write_addr(Bank::Bank0, 0x27);
+        ym.write_data_bank(Bank::Bank0, 0x20);
         assert_eq!(ym.status & 0x02, 0x00); // B cleared
     }
 
@@ -416,25 +423,25 @@ mod tests {
         let mut ym = Ym2612::new();
 
         // N = 1023. Period 144. (20.5 68k cycles)
-        ym.write_addr0(0x24);
-        ym.write_data0(0xFF);
-        ym.write_addr0(0x25);
-        ym.write_data0(0x03);
+        ym.write_addr(Bank::Bank0, 0x24);
+        ym.write_data_bank(Bank::Bank0, 0xFF);
+        ym.write_addr(Bank::Bank0, 0x25);
+        ym.write_data_bank(Bank::Bank0, 0x03);
 
         // Enable Timer A with Flag (0x05)
-        ym.write_addr0(0x27);
-        ym.write_data0(0x05);
+        ym.write_addr(Bank::Bank0, 0x27);
+        ym.write_data_bank(Bank::Bank0, 0x05);
 
         ym.step(15); // 105 master cycles.
 
         // Stop (0x04 - keep flag enabled but stop timer? or 0x00)
         // Write 0x04 (Flag enable only, Load=0).
-        ym.write_addr0(0x27);
-        ym.write_data0(0x04);
+        ym.write_addr(Bank::Bank0, 0x27);
+        ym.write_data_bank(Bank::Bank0, 0x04);
 
         // Start (0x05). 0->1 transition on Bit 0. Reloads.
-        ym.write_addr0(0x27);
-        ym.write_data0(0x05);
+        ym.write_addr(Bank::Bank0, 0x27);
+        ym.write_data_bank(Bank::Bank0, 0x05);
 
         ym.step(15); // 105 master. Total 105 (if reloaded).
         assert_eq!(ym.status & 0x01, 0, "Should have reloaded and not fired");
@@ -453,12 +460,12 @@ mod tests {
         // High: 0xA4 + 1 = 0xA5
 
         // Write Low byte 0x55 to 0xA1 (Bank 1)
-        ym.write_addr1(0xA1);
-        ym.write_data1(0x55);
+        ym.write_addr(Bank::Bank1, 0xA1);
+        ym.write_data_bank(Bank::Bank1, 0x55);
 
         // Write High byte 0x22 to 0xA5 (Bank 1) -> Block 4, F-Num High 2
-        ym.write_addr1(0xA5);
-        ym.write_data1(0x22);
+        ym.write_addr(Bank::Bank1, 0xA5);
+        ym.write_data_bank(Bank::Bank1, 0x22);
 
         let (block, f_num) = ym.get_frequency(4);
         assert_eq!(block, 4);

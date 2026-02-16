@@ -130,8 +130,8 @@ pub fn exec_movep<M: MemoryInterface>(
         Size::Word => {
             if reg_to_mem {
                 let val = cpu.d[reg as usize] as u16;
-                memory.write_byte(addr, (val >> 8) as u8);
-                memory.write_byte(addr.wrapping_add(2), val as u8);
+                cpu.write_byte(addr, (val >> 8) as u8, memory);
+                cpu.write_byte(addr.wrapping_add(2), val as u8, memory);
             } else {
                 let hi = memory.read_byte(addr);
                 let lo = memory.read_byte(addr.wrapping_add(2));
@@ -143,10 +143,10 @@ pub fn exec_movep<M: MemoryInterface>(
         Size::Long => {
             if reg_to_mem {
                 let val = cpu.d[reg as usize];
-                memory.write_byte(addr, (val >> 24) as u8);
-                memory.write_byte(addr.wrapping_add(2), (val >> 16) as u8);
-                memory.write_byte(addr.wrapping_add(4), (val >> 8) as u8);
-                memory.write_byte(addr.wrapping_add(6), val as u8);
+                cpu.write_byte(addr, (val >> 24) as u8, memory);
+                cpu.write_byte(addr.wrapping_add(2), (val >> 16) as u8, memory);
+                cpu.write_byte(addr.wrapping_add(4), (val >> 8) as u8, memory);
+                cpu.write_byte(addr.wrapping_add(6), val as u8, memory);
             } else {
                 let b3 = memory.read_byte(addr);
                 let b2 = memory.read_byte(addr.wrapping_add(2));
