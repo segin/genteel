@@ -734,13 +734,9 @@ impl Vdp {
                 continue;
             }
 
-            // Prefetch the 4 bytes (8 pixels) for this row
-            // We use wrapping arithmetic for safety although checks above should prevent OOB
-            let p0 = vram[row_addr];
-            let p1 = vram[(row_addr + 1) & 0xFFFF];
-            let p2 = vram[(row_addr + 2) & 0xFFFF];
-            let p3 = vram[(row_addr + 3) & 0xFFFF];
-            let patterns = [p0, p1, p2, p3];
+            // Prefetch the 4 bytes (8 pixels) for this row.
+            // Safe to slice here because of the 'row_addr + 4 > 0x10000' check above.
+            let patterns: [u8; 4] = vram[row_addr..row_addr + 4].try_into().unwrap();
 
             let base_screen_x = attr.h_pos.wrapping_add(tile_h_offset * 8);
 
@@ -831,12 +827,12 @@ impl Vdp {
     fn fetch_tile_pattern(&self, tile_index: u16, pixel_v: u16, v_flip: bool) -> [u8; 4] {
         let row = if v_flip { 7 - pixel_v } else { pixel_v };
         let row_addr = (tile_index as usize * 32) + (row as usize * 4);
+        // Mask to 64KB VRAM. Since each row fetch is 4 bytes and row_addr is a
+        // multiple of 4, masking with 0xFFFC ensures the slice never crosses
+        // the 64KB boundary (max addr 0xFFFC + 4 = 0x10000).
+        let addr = row_addr & 0xFFFC;
 
-        let p0 = self.vram[row_addr & 0xFFFF];
-        let p1 = self.vram[(row_addr + 1) & 0xFFFF];
-        let p2 = self.vram[(row_addr + 2) & 0xFFFF];
-        let p3 = self.vram[(row_addr + 3) & 0xFFFF];
-        [p0, p1, p2, p3]
+        self.vram[addr..addr + 4].try_into().unwrap()
     }
 
     fn draw_full_tile_row(
