@@ -150,6 +150,7 @@ fn test_addq_1_to_8() {
         cpu.invalidate_cache();
         cpu.d[0] = 100;
         cpu.pc = 0x1000;
+        cpu.invalidate_cache();
         cpu.step_instruction(&mut memory);
         assert_eq!(cpu.d[0] & 0xFFFF, 100 + data as u32, "ADDQ #{}", data);
     }
@@ -299,6 +300,7 @@ fn test_subq_1_to_8() {
         cpu.invalidate_cache();
         cpu.d[0] = 100;
         cpu.pc = 0x1000;
+        cpu.invalidate_cache();
         cpu.step_instruction(&mut memory);
         assert_eq!(cpu.d[0] & 0xFFFF, 100 - data as u32, "SUBQ #{}", data);
     }
