@@ -4,7 +4,7 @@
 //! Uses a ring buffer to transfer samples from emulation thread to audio callback.
 
 #[cfg(feature = "gui")]
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use rodio::Source;
 use std::sync::{Arc, Mutex};
 
 /// Sample rate for audio output
@@ -12,6 +12,49 @@ pub const SAMPLE_RATE: u32 = 44100;
 
 /// Audio buffer size (in stereo sample pairs)
 pub const BUFFER_SIZE: usize = 2048;
+
+/// Source for rodio that pulls from the emulator's ring buffer
+#[cfg(feature = "gui")]
+struct EmulatorSource {
+    buffer: SharedAudioBuffer,
+}
+
+#[cfg(feature = "gui")]
+impl Iterator for EmulatorSource {
+    type Item = f32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut buf = self.buffer.lock().ok()?;
+        if buf.available > 0 {
+            let i16_sample = buf.buffer[buf.read_pos];
+            buf.read_pos = (buf.read_pos + 1) % buf.buffer.len();
+            buf.available -= 1;
+            Some(i16_sample as f32 / 32768.0)
+        } else {
+            // Underflow - return silence instead of None to keep the stream alive
+            Some(0.0)
+        }
+    }
+}
+
+#[cfg(feature = "gui")]
+impl Source for EmulatorSource {
+    fn current_frame_len(&self) -> Option<usize> {
+        None // Unknown length
+    }
+
+    fn channels(&self) -> u16 {
+        2 // Stereo
+    }
+
+    fn sample_rate(&self) -> u32 {
+        SAMPLE_RATE
+    }
+
+    fn total_duration(&self) -> Option<std::time::Duration> {
+        None
+    }
+}
 
 /// Ring buffer for transferring audio samples between threads
 #[derive(Debug)]
@@ -101,86 +144,33 @@ pub fn create_audio_buffer() -> SharedAudioBuffer {
 /// Audio output stream wrapper
 #[cfg(feature = "gui")]
 pub struct AudioOutput {
-    _stream: cpal::Stream,
+    _stream: rodio::OutputStream,
+    _handle: rodio::OutputStreamHandle,
+    _sink: rodio::Sink,
     pub sample_rate: u32,
 }
 
 #[cfg(feature = "gui")]
 impl AudioOutput {
-    /// Create a new audio output using cpal
+    /// Create a new audio output using rodio
     pub fn new(buffer: SharedAudioBuffer) -> Result<Self, String> {
-        let host = cpal::default_host();
+        let (stream, handle) = rodio::OutputStream::try_default()
+            .map_err(|e| format!("Failed to open audio output: {}", e))?;
+        
+        let sink = rodio::Sink::try_new(&handle)
+            .map_err(|e| format!("Failed to create audio sink: {}", e))?;
 
-        let device = host
-            .default_output_device()
-            .ok_or("No audio output device found")?;
-
-        // Query device for supported configs to find something compatible
-        let mut supported_configs_range = device
-            .supported_output_configs()
-            .map_err(|e| format!("Error querying output configs: {}", e))?;
-
-        // Try to find a config that matches 44100Hz and stereo, otherwise pick the first one
-        let supported_config = supported_configs_range
-            .find(|c| {
-                c.channels() == 2
-                    && c.min_sample_rate().0 <= SAMPLE_RATE
-                    && c.max_sample_rate().0 >= SAMPLE_RATE
-            })
-            .or_else(|| {
-                device
-                    .supported_output_configs()
-                    .ok()
-                    .and_then(|mut c| c.next())
-            })
-            .ok_or("No supported output configurations found")?;
-
-        let sample_rate = if supported_config.min_sample_rate().0 <= SAMPLE_RATE
-            && supported_config.max_sample_rate().0 >= SAMPLE_RATE
-        {
-            cpal::SampleRate(SAMPLE_RATE)
-        } else {
-            supported_config.max_sample_rate()
-        };
-
-        let config: cpal::StreamConfig = supported_config.with_sample_rate(sample_rate).into();
-        let actual_sample_rate = config.sample_rate.0;
-        let actual_channels = config.channels;
-
-        let buffer_clone = buffer.clone();
-
-        let stream = device
-            .build_output_stream(
-                &config,
-                move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                    if let Ok(mut buf) = buffer_clone.lock() {
-                        if actual_channels == 2 {
-                            buf.pop_f32(data);
-                        } else {
-                            // Hardware is mono, we need to mix down or just take left channel
-                            let mut temp = vec![0.0; data.len() * 2];
-                            buf.pop_f32(&mut temp);
-                            for i in 0..data.len() {
-                                data[i] = temp[i * 2]; // Just take Left channel
-                            }
-                        }
-                    } else {
-                        // Lock failed, output silence
-                        for sample in data.iter_mut() {
-                            *sample = 0.0;
-                        }
-                    }
-                },
-                |err| eprintln!("Audio stream error: {}", err),
-                None,
-            )
-            .map_err(|e| e.to_string())?;
-
-        stream.play().map_err(|e| e.to_string())?;
+        let source = EmulatorSource { buffer };
+        
+        // Use rodio's automatic resampling and channel mixing
+        sink.append(source);
+        sink.play();
 
         Ok(Self {
             _stream: stream,
-            sample_rate: actual_sample_rate,
+            _handle: handle,
+            _sink: sink,
+            sample_rate: SAMPLE_RATE,
         })
     }
 }
@@ -306,16 +296,11 @@ mod tests {
         assert_eq!(out_silence[0], 0);
 
         // 6. Verify reset state by pushing new data and checking order
-        // If write_pos was not reset, we'd be writing at index 2.
-        // If read_pos was not reset, we'd be reading from index 1.
         buf.push(&[30i16]);
 
         let mut out2 = [0i16; 1];
         buf.pop(&mut out2);
 
-        // Expect 30.
-        // If read_pos was 1, we'd read from index 1 (which holds 20 from before clear).
-        // If write_pos was 2, we'd write 30 to index 2. If read_pos was 0, we'd read index 0 (holds 10).
         assert_eq!(out2[0], 30);
         assert_eq!(buf.buffer[0], 30);
     }
