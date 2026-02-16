@@ -1203,4 +1203,48 @@ mod tests {
         let data = "0".repeat(71);
         assert_eq!(server.process_command(&format!("G{}", data), &mut regs, &mut mem), "E01");
     }
+
+    #[test]
+    fn test_breakpoint_edge_cases() {
+        let mut server = GdbServer {
+            listener: TcpListener::bind("127.0.0.1:0").unwrap(),
+            client: None,
+            breakpoints: HashSet::new(),
+            stop_reason: StopReason::Halted,
+            no_ack_mode: false,
+            password: None,
+            authenticated: true,
+        };
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+
+        // Test invalid address format (non-hex)
+        assert_eq!(server.process_command("Z0,xyz,4", &mut regs, &mut mem), "E01");
+        assert_eq!(server.process_command("z0,xyz,4", &mut regs, &mut mem), "E01");
+
+        // Test duplicate breakpoint set (idempotency)
+        assert_eq!(server.process_command("Z0,1000,4", &mut regs, &mut mem), "OK");
+        assert!(server.is_breakpoint(0x1000));
+        assert_eq!(server.process_command("Z0,1000,4", &mut regs, &mut mem), "OK");
+        assert!(server.is_breakpoint(0x1000));
+
+        // Test removing non-existent breakpoint (idempotency)
+        // Ensure 0x2000 is not set
+        assert!(!server.is_breakpoint(0x2000));
+        assert_eq!(server.process_command("z0,2000,4", &mut regs, &mut mem), "OK");
+        assert!(!server.is_breakpoint(0x2000));
+
+        // Test unsupported breakpoint types (Z1/z1 is hardware bp, etc.)
+        // Z1, Z2 (write watch), Z3 (read watch), Z4 (access watch)
+        assert_eq!(server.process_command("Z1,1000,4", &mut regs, &mut mem), "");
+        assert_eq!(server.process_command("Z2,1000,4", &mut regs, &mut mem), "");
+        assert_eq!(server.process_command("Z3,1000,4", &mut regs, &mut mem), "");
+        assert_eq!(server.process_command("Z4,1000,4", &mut regs, &mut mem), "");
+
+        // Same for z
+        assert_eq!(server.process_command("z1,1000,4", &mut regs, &mut mem), "");
+        assert_eq!(server.process_command("z2,1000,4", &mut regs, &mut mem), "");
+        assert_eq!(server.process_command("z3,1000,4", &mut regs, &mut mem), "");
+        assert_eq!(server.process_command("z4,1000,4", &mut regs, &mut mem), "");
+    }
 }
