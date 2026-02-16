@@ -24,7 +24,7 @@ pub fn exec_bsr<M: MemoryInterface>(cpu: &mut Cpu, displacement: i16, memory: &m
 
     // Push return address
     cpu.a[7] = cpu.a[7].wrapping_sub(4);
-    memory.write_long(cpu.a[7], return_addr);
+    cpu.write_long(cpu.a[7], return_addr, memory);
 
     if displacement == 0 {
         let disp = cpu.read_word(cpu.pc, memory) as i16;
@@ -125,7 +125,7 @@ pub fn exec_jsr<M: MemoryInterface>(cpu: &mut Cpu, dst: AddressingMode, memory: 
     if let EffectiveAddress::Memory(addr) = ea {
         // Push return address
         cpu.a[7] = cpu.a[7].wrapping_sub(4);
-        memory.write_long(cpu.a[7], cpu.pc);
+        cpu.write_long(cpu.a[7], cpu.pc, memory);
         cpu.pc = addr;
     }
 

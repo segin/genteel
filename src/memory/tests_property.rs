@@ -16,7 +16,7 @@ proptest! {
         let b0 = bus.read_byte(addr);
         let b1 = bus.read_byte(addr + 1);
         let word = bus.read_word(addr);
-        
+
         prop_assert_eq!(word, ((b0 as u16) << 8) | (b1 as u16));
     }
 
@@ -26,7 +26,7 @@ proptest! {
         let mut bus = Bus::new();
         let base_addr = 0xFF0000;
         let mirror_addr = 0xE00000 + addr;
-        
+
         bus.write_byte(base_addr + addr, val);
         prop_assert_eq!(bus.read_byte(mirror_addr), val);
     }
@@ -37,7 +37,7 @@ proptest! {
         let mut bus = Bus::new();
         let addr = 0xFF0000;
         bus.write_long(addr, val);
-        
+
         prop_assert_eq!(bus.read_byte(addr), (val >> 24) as u8);
         prop_assert_eq!(bus.read_byte(addr + 1), (val >> 16) as u8);
         prop_assert_eq!(bus.read_byte(addr + 2), (val >> 8) as u8);

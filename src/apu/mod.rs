@@ -13,7 +13,7 @@ pub mod ym2612;
 use crate::debugger::Debuggable;
 use psg::Psg;
 use serde_json::{json, Value};
-use ym2612::Ym2612;
+use ym2612::{Bank, Ym2612};
 
 #[derive(Debug)]
 pub struct Apu {
@@ -44,20 +44,36 @@ impl Apu {
         self.fm.read_status()
     }
 
+    pub fn write_fm_addr(&mut self, bank: Bank, data: u8) {
+        self.fm.write_addr(bank, data);
+    }
+
+    pub fn write_fm_data(&mut self, bank: Bank, data: u8) {
+        self.fm.write_data_bank(bank, data);
+    }
+
+    /// Deprecated: Use [`write_fm_addr`] with [`Bank::Bank0`]
+    #[deprecated(note = "Use write_fm_addr(Bank::Bank0, data)")]
     pub fn write_fm_addr0(&mut self, data: u8) {
-        self.fm.write_addr0(data);
+        self.write_fm_addr(Bank::Bank0, data);
     }
 
+    /// Deprecated: Use [`write_fm_data`] with [`Bank::Bank0`]
+    #[deprecated(note = "Use write_fm_data(Bank::Bank0, data)")]
     pub fn write_fm_data0(&mut self, data: u8) {
-        self.fm.write_data0(data);
+        self.write_fm_data(Bank::Bank0, data);
     }
 
+    /// Deprecated: Use [`write_fm_addr`] with [`Bank::Bank1`]
+    #[deprecated(note = "Use write_fm_addr(Bank::Bank1, data)")]
     pub fn write_fm_addr1(&mut self, data: u8) {
-        self.fm.write_addr1(data);
+        self.write_fm_addr(Bank::Bank1, data);
     }
 
+    /// Deprecated: Use [`write_fm_data`] with [`Bank::Bank1`]
+    #[deprecated(note = "Use write_fm_data(Bank::Bank1, data)")]
     pub fn write_fm_data1(&mut self, data: u8) {
-        self.fm.write_data1(data);
+        self.write_fm_data(Bank::Bank1, data);
     }
 
     /// Run one sample cycle (at ~44100Hz or system clock)
@@ -123,8 +139,8 @@ mod tests {
     #[test]
     fn test_fm_passthrough() {
         let mut apu = Apu::new();
-        apu.write_fm_addr0(0x28);
-        apu.write_fm_data0(0xF0); // Key on Ch 1
+        apu.write_fm_addr(Bank::Bank0, 0x28);
+        apu.write_fm_data(Bank::Bank0, 0xF0); // Key on Ch 1
         assert_eq!(apu.fm.registers[0][0x28], 0xF0);
     }
 }
