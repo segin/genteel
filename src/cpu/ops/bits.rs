@@ -546,12 +546,12 @@ mod tests {
     #[test]
     fn test_exec_or_word() {
         let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x1234F000;
+        cpu.d[0] = 0x1234F0F0;
         cpu.d[1] = 0x77660F0F;
 
         let cycles = exec_or(&mut cpu, Size::Word, AddressingMode::DataRegister(0), AddressingMode::DataRegister(1), true, &mut memory);
 
-        assert_eq!(cpu.d[1], 0x7766FFFF); // 0xF000 | 0x0F0F = 0xFFFF
+        assert_eq!(cpu.d[1], 0x7766FFFF); // 0xF0F0 | 0x0F0F = 0xFFFF
         assert!(cpu.get_flag(flags::NEGATIVE));
         assert!(!cpu.get_flag(flags::ZERO));
         assert_eq!(cycles, 4);
