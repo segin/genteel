@@ -17,6 +17,9 @@ fn bench_render_line_performance() {
     // Set Plane B base address (Reg 4 = 0x07 -> 0xE000)
     vdp.registers[4] = 0x07;
 
+    // Set Sprite Table at 0xD400 (Reg 5 = 0x6A)
+    vdp.registers[5] = 0x6A;
+
     // Fill VRAM with random data to simulate patterns and nametables
     // We want a mix of tiles to ensure we aren't just hitting zeros
     for i in 0..0x10000 {
@@ -30,6 +33,38 @@ fn bench_render_line_performance() {
     // Update cram cache with some colors so we actually write to framebuffer
     for i in 0..64 {
         vdp.cram_cache[i] = (i as u16) * 0x0400 + 0x0020;
+    }
+
+    // Setup Sprites
+    let sat_base = 0xD400;
+
+    // Create 40 linked sprites
+    for i in 0..40 {
+        let addr = sat_base + (i * 8);
+        // V Pos: center around line 100 (visible)
+        // Line 100 + 128 = 228
+        let y = 90 + (i % 20);
+        vdp.vram[addr] = 0x00;
+        vdp.vram[addr + 1] = (y + 128) as u8;
+
+        // Size: 0 (1x1)
+        vdp.vram[addr + 2] = 0x00;
+
+        // Link: i + 1. Last one links to 0.
+        let link = if i == 39 { 0 } else { i + 1 };
+        vdp.vram[addr + 3] = link as u8;
+
+        // Attr: Priority mixed. Palette 0.
+        // Priority bit is 0x8000. Byte 4 bit 7.
+        let priority = if i % 2 == 0 { 0x80 } else { 0x00 };
+        vdp.vram[addr + 4] = priority; // Palette 0, Priority
+        vdp.vram[addr + 5] = 0x00; // Tile 0
+
+        // H Pos: Spread across 320 pixels.
+        // 128 + (i * 8)
+        let x = 128 + (i * 8);
+        vdp.vram[addr + 6] = (x >> 8) as u8;
+        vdp.vram[addr + 7] = (x & 0xFF) as u8;
     }
 
     let start = Instant::now();

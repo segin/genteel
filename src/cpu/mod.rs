@@ -26,7 +26,7 @@ mod tests_m68k_torture;
 mod tests_performance;
 
 use self::addressing::{read_ea, write_ea, EffectiveAddress};
-use self::decoder::{decode, BitSource, Condition, Instruction, Size};
+use self::decoder::{decode, BitSource, Condition, DecodeCacheEntry, Instruction, Size};
 use crate::memory::MemoryInterface;
 
 /// Status Register flags
@@ -66,6 +66,9 @@ pub struct Cpu {
 
     // Interrupt pending bitmask (bit N = level N is pending)
     pub interrupt_pending_mask: u8,
+
+    // Instruction cache (Direct Mapped, 64K entries)
+    pub decode_cache: Box<[DecodeCacheEntry]>,
 }
 
 impl Cpu {
@@ -82,6 +85,7 @@ impl Cpu {
             pending_interrupt: 0,
             pending_exception: false,
             interrupt_pending_mask: 0,
+            decode_cache: vec![DecodeCacheEntry::default(); 65536].into_boxed_slice(),
         };
 
         // At startup, the supervisor stack pointer is read from address 0x00000000
@@ -105,6 +109,14 @@ impl Cpu {
         self.halted = false;
         self.pending_interrupt = 0;
         self.interrupt_pending_mask = 0;
+        // Invalidate cache on reset
+        self.decode_cache.fill(DecodeCacheEntry::default());
+    }
+
+    /// Invalidate the instruction cache.
+    /// Should be called when code in ROM/RAM is modified (e.g. self-modifying code, or tests).
+    pub fn invalidate_cache(&mut self) {
+        self.decode_cache.fill(DecodeCacheEntry::default());
     }
 
     /// Request an interrupt at the specified level
@@ -158,16 +170,59 @@ impl Cpu {
         }
 
         let pc = self.pc;
-        let opcode = self.read_instruction_word(pc, memory);
-        if self.pending_exception {
-            // Address Error during fetch
-            self.cycles += 34;
-            return 34;
+        let instruction;
+
+        // Optimized instruction fetch with cache
+        if pc < 0x400000 {
+            // ROM/Cartridge space - Cacheable
+            // Index: (PC / 2) & 0xFFFF. Maps 0-128KB repeating or just lower bits.
+            // Since we check entry.pc == pc, aliasing is handled safely.
+            let cache_index = ((pc >> 1) & 0xFFFF) as usize;
+
+            // Safety: cache size is 65536, index is masked to 0xFFFF.
+            let entry = unsafe { *self.decode_cache.get_unchecked(cache_index) };
+
+            if entry.pc == pc {
+                // Cache Hit
+                instruction = entry.instruction;
+                self.pc = pc.wrapping_add(2);
+            } else {
+                // Cache Miss
+                let opcode = self.read_instruction_word(pc, memory);
+                if self.pending_exception {
+                    // Address Error during fetch
+                    self.cycles += 34;
+                    return 34;
+                }
+
+                self.pc = self.pc.wrapping_add(2);
+                instruction = decode(opcode);
+
+                // Update Cache
+                // We use unsafe here to match the read, but safe index is also fine.
+                // Using safe index for write as it's less critical for perf than read?
+                // Actually, let's use safe access for simplicity unless profiling shows otherwise.
+                // But get_unchecked was used above.
+                unsafe {
+                    *self.decode_cache.get_unchecked_mut(cache_index) = DecodeCacheEntry {
+                        pc,
+                        instruction,
+                    };
+                }
+            }
+        } else {
+            // Uncached (RAM, I/O, etc.)
+            let opcode = self.read_instruction_word(pc, memory);
+            if self.pending_exception {
+                // Address Error during fetch
+                self.cycles += 34;
+                return 34;
+            }
+
+            self.pc = self.pc.wrapping_add(2);
+            instruction = decode(opcode);
         }
 
-        self.pc = self.pc.wrapping_add(2);
-
-        let instruction = decode(opcode);
         let mut cycles = self.execute(instruction, memory);
 
         if self.pending_exception {
