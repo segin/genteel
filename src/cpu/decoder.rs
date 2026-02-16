@@ -1683,3 +1683,11 @@ mod tests {
 fn print_instruction_size() {
     println!("Size of Instruction: {} bytes", std::mem::size_of::<Instruction>());
 }
+
+/// Cache entry for decoded instructions
+#[derive(Clone, Copy, Debug)]
+#[repr(align(16))]
+pub struct DecodeCacheEntry {
+    pub instruction: Instruction,
+    pub pc: u32,
+}

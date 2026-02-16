@@ -24,9 +24,11 @@ mod tests_m68k_shift;
 mod tests_m68k_torture;
 #[cfg(test)]
 mod tests_performance;
+#[cfg(test)]
+mod tests_cache;
 
 use self::addressing::{read_ea, write_ea, EffectiveAddress};
-use self::decoder::{decode, BitSource, Condition, Instruction, Size};
+use self::decoder::{decode, BitSource, Condition, DecodeCacheEntry, Instruction, Size};
 use crate::memory::MemoryInterface;
 
 /// Status Register flags
@@ -66,10 +68,23 @@ pub struct Cpu {
 
     // Interrupt pending bitmask (bit N = level N is pending)
     pub interrupt_pending_mask: u8,
+
+    // Instruction cache
+    pub decode_cache: Box<[DecodeCacheEntry; 65536]>,
 }
 
 impl Cpu {
     pub fn new<M: MemoryInterface>(memory: &mut M) -> Self {
+        let default_entry = DecodeCacheEntry {
+            instruction: Instruction::Nop,
+            pc: u32::MAX,
+        };
+        // Use Vec to avoid stack overflow, then convert to Box<[T; N]>
+        let decode_cache = vec![default_entry; 65536]
+            .into_boxed_slice()
+            .try_into()
+            .unwrap();
+
         let mut cpu = Self {
             d: [0; 8],
             a: [0; 8],
@@ -82,6 +97,7 @@ impl Cpu {
             pending_interrupt: 0,
             pending_exception: false,
             interrupt_pending_mask: 0,
+            decode_cache,
         };
 
         // At startup, the supervisor stack pointer is read from address 0x00000000
@@ -105,6 +121,19 @@ impl Cpu {
         self.halted = false;
         self.pending_interrupt = 0;
         self.interrupt_pending_mask = 0;
+        self.invalidate_cache();
+    }
+
+    /// Invalidate the entire instruction cache
+    pub fn invalidate_cache(&mut self) {
+        for entry in self.decode_cache.iter_mut() {
+            entry.pc = u32::MAX;
+        }
+    }
+
+    fn invalidate_cache_at(&mut self, addr: u32) {
+        let index = ((addr >> 1) & 0xFFFF) as usize;
+        self.decode_cache[index].pc = u32::MAX;
     }
 
     /// Request an interrupt at the specified level
@@ -158,16 +187,32 @@ impl Cpu {
         }
 
         let pc = self.pc;
-        let opcode = self.read_instruction_word(pc, memory);
-        if self.pending_exception {
-            // Address Error during fetch
-            self.cycles += 34;
-            return 34;
-        }
+
+        // Optimization: Check instruction cache
+        // If PC is odd, it will miss the cache (cached PCs are always even),
+        // and read_instruction_word will handle the Address Error.
+        let cache_index = ((pc >> 1) & 0xFFFF) as usize;
+        let cached_entry = self.decode_cache[cache_index];
+
+        let instruction = if cached_entry.pc == pc {
+            cached_entry.instruction
+        } else {
+            let opcode = self.read_instruction_word(pc, memory);
+            if self.pending_exception {
+                // Address Error during fetch
+                self.cycles += 34;
+                return 34;
+            }
+            let instr = decode(opcode);
+            self.decode_cache[cache_index] = DecodeCacheEntry {
+                pc,
+                instruction: instr,
+            };
+            instr
+        };
 
         self.pc = self.pc.wrapping_add(2);
 
-        let instruction = decode(opcode);
         let mut cycles = self.execute(instruction, memory);
 
         if self.pending_exception {
@@ -730,6 +775,7 @@ impl Cpu {
             return;
         }
         memory.write_word(addr, val);
+        self.invalidate_cache_at(addr);
     }
 
     pub(crate) fn write_long<M: MemoryInterface>(&mut self, addr: u32, val: u32, memory: &mut M) {
@@ -738,6 +784,8 @@ impl Cpu {
             return;
         }
         memory.write_long(addr, val);
+        self.invalidate_cache_at(addr);
+        self.invalidate_cache_at(addr.wrapping_add(2));
     }
 
     // === Centralized Memory and Register Access Helpers ===
@@ -763,7 +811,10 @@ impl Cpu {
         memory: &mut M,
     ) {
         match size {
-            Size::Byte => memory.write_byte(addr, val as u8),
+            Size::Byte => {
+                memory.write_byte(addr, val as u8);
+                self.invalidate_cache_at(addr);
+            }
             Size::Word => self.write_word(addr, val as u16, memory),
             Size::Long => self.write_long(addr, val, memory),
         }
@@ -798,6 +849,16 @@ impl Cpu {
             }
         }
         write_ea(ea, size, val, &mut self.d, &mut self.a, memory);
+
+        if let EffectiveAddress::Memory(addr) = ea {
+            match size {
+                Size::Byte | Size::Word => self.invalidate_cache_at(addr),
+                Size::Long => {
+                    self.invalidate_cache_at(addr);
+                    self.invalidate_cache_at(addr.wrapping_add(2));
+                }
+            }
+        }
     }
 
     // === System / Program Control ===
