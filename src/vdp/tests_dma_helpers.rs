@@ -118,31 +118,45 @@ fn test_dma_length() {
 }
 
 #[test]
-fn test_is_dma_fill_and_transfer() {
+fn test_dma_type_checks() {
     let mut vdp = Vdp::new();
 
-    // Case 0: Transfer (0x00)
+    // Transfer: Bit 7 = 0
     vdp.registers[REG_DMA_SRC_HI] = 0x00;
-    assert!(vdp.is_dma_transfer(), "Mode 0x00 should be transfer");
-    assert!(!vdp.is_dma_fill(), "Mode 0x00 should not be fill");
+    assert!(vdp.is_dma_transfer());
+    assert!(!vdp.is_dma_fill());
 
-    // Case 1: Fill (0x80)
-    vdp.registers[REG_DMA_SRC_HI] = DMA_MODE_FILL;
-    assert!(!vdp.is_dma_transfer(), "Mode 0x80 should not be transfer");
-    assert!(vdp.is_dma_fill(), "Mode 0x80 should be fill");
+    vdp.registers[REG_DMA_SRC_HI] = 0x7F;
+    assert!(vdp.is_dma_transfer());
+    assert!(!vdp.is_dma_fill());
 
-    // Case 2: Copy (0xC0)
-    vdp.registers[REG_DMA_SRC_HI] = DMA_MODE_COPY;
-    assert!(!vdp.is_dma_transfer(), "Mode 0xC0 should not be transfer");
-    assert!(!vdp.is_dma_fill(), "Mode 0xC0 should not be fill");
+    // Fill: Bit 7 = 1, Bit 6 = 0
+    vdp.registers[REG_DMA_SRC_HI] = 0x80;
+    assert!(!vdp.is_dma_transfer());
+    assert!(vdp.is_dma_fill());
 
-    // Case 3: Random bits in lower part should not affect mode
-    vdp.registers[REG_DMA_SRC_HI] = DMA_MODE_FILL | 0x1F;
-    assert!(!vdp.is_dma_transfer(), "Mode 0x9F should not be transfer");
-    assert!(vdp.is_dma_fill(), "Mode 0x9F should be fill");
+    vdp.registers[REG_DMA_SRC_HI] = 0xBF;
+    assert!(!vdp.is_dma_transfer());
+    assert!(vdp.is_dma_fill());
+
+    // Copy: Bit 7 = 1, Bit 6 = 1
+    vdp.registers[REG_DMA_SRC_HI] = 0xC0;
+    assert!(!vdp.is_dma_transfer());
+    assert!(!vdp.is_dma_fill());
+
+    vdp.registers[REG_DMA_SRC_HI] = 0xFF;
+    assert!(!vdp.is_dma_transfer());
+    assert!(!vdp.is_dma_fill());
 }
 
 proptest! {
+    #[test]
+    fn test_dma_mode_prop(val in 0u8..=255) {
+        let mut vdp = Vdp::new();
+        vdp.registers[REG_DMA_SRC_HI] = val;
+        prop_assert_eq!(vdp.dma_mode(), val);
+    }
+
     #[test]
     fn test_dma_source_prop(hi in 0u8..=255, mid in 0u8..=255, lo in 0u8..=255) {
         let mut vdp = Vdp::new();
@@ -173,18 +187,31 @@ proptest! {
     }
 
     #[test]
-    fn test_dma_mode_prop(val in 0u8..=255) {
-        let mut vdp = Vdp::new();
-        vdp.registers[REG_DMA_SRC_HI] = val;
-        prop_assert_eq!(vdp.dma_mode(), val);
-    }
-
-    #[test]
     fn test_dma_length_prop(hi in 0u8..=255, lo in 0u8..=255) {
         let mut vdp = Vdp::new();
         vdp.registers[REG_DMA_LEN_HI] = hi;
         vdp.registers[REG_DMA_LEN_LO] = lo;
         let expected = ((hi as u32) << 8) | (lo as u32);
         prop_assert_eq!(vdp.dma_length(), expected);
+    }
+
+    #[test]
+    fn test_is_dma_transfer_prop(reg_hi in 0u8..=255u8) {
+        let mut vdp = Vdp::new();
+        vdp.registers[REG_DMA_SRC_HI] = reg_hi;
+
+        // Transfer if bit 7 is 0
+        let is_transfer = (reg_hi & 0x80) == 0;
+        prop_assert_eq!(vdp.is_dma_transfer(), is_transfer);
+    }
+
+    #[test]
+    fn test_is_dma_fill_prop(reg_hi in 0u8..=255u8) {
+        let mut vdp = Vdp::new();
+        vdp.registers[REG_DMA_SRC_HI] = reg_hi;
+
+        // Fill if bits 7,6 are 10 (0x80)
+        let is_fill = (reg_hi & 0xC0) == 0x80;
+        prop_assert_eq!(vdp.is_dma_fill(), is_fill);
     }
 }
