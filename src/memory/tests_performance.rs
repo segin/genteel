@@ -1,7 +1,67 @@
 #[cfg(test)]
 mod performance_tests {
     use crate::memory::bus::Bus;
+    use crate::memory::{MemoryInterface, SharedBus, Z80Bus};
+    use std::cell::RefCell;
+    use std::rc::Rc;
     use std::time::Instant;
+
+    #[test]
+    fn benchmark_z80_bus_access() {
+        let bus = Rc::new(RefCell::new(Bus::new()));
+        let mut z80_bus = Z80Bus::new(SharedBus::new(bus.clone()));
+
+        // Setup some Z80 RAM
+        bus.borrow_mut().z80_ram[0] = 0xAA;
+
+        let iterations = 30_000_000;
+        let start = Instant::now();
+        let mut sum: u64 = 0;
+
+        for i in 0..iterations {
+            // Read from Z80 RAM (address varies to prevent optimization)
+            sum += z80_bus.read_byte((i % 1024) as u32) as u64;
+            // Write to Z80 RAM
+            z80_bus.write_byte(((i + 1) % 1024) as u32, (i % 256) as u8);
+        }
+
+        let duration = start.elapsed();
+        println!(
+            "Z80 Bus Benchmark (Safe): {:?} for {} iterations. Sum: {}",
+            duration, iterations, sum
+        );
+    }
+
+    #[test]
+    fn benchmark_z80_bus_access_raw() {
+        let bus = Rc::new(RefCell::new(Bus::new()));
+        let mut z80_bus = Z80Bus::new(SharedBus::new(bus.clone()));
+
+        // Setup some Z80 RAM
+        bus.borrow_mut().z80_ram[0] = 0xAA;
+
+        // Unsafe setup
+        unsafe {
+            z80_bus.set_raw_bus(bus.as_ptr());
+        }
+
+        let iterations = 30_000_000;
+        let start = Instant::now();
+        let mut sum: u64 = 0;
+
+        for i in 0..iterations {
+            // Read from Z80 RAM
+            sum += z80_bus.read_byte((i % 1024) as u32) as u64;
+            // Write to Z80 RAM
+            z80_bus.write_byte(((i + 1) % 1024) as u32, (i % 256) as u8);
+        }
+
+        let duration = start.elapsed();
+        println!(
+            "Z80 Bus Benchmark (Raw): {:?} for {} iterations. Sum: {}",
+            duration, iterations, sum
+        );
+    }
 
     #[test]
     fn benchmark_dma_transfer() {

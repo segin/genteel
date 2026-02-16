@@ -94,6 +94,15 @@ impl Emulator {
             z80_trace_count: 0,
         };
 
+        // Optimization: Use raw pointer for Z80 bus access to bypass RefCell
+        // Safety: The bus is owned by Rc in Emulator, so it will remain valid.
+        // We ensure no conflicting borrows occur during Z80 execution (in sync_z80).
+        unsafe {
+            let bus_ptr = emulator.bus.as_ptr();
+            emulator.z80.memory.set_raw_bus(bus_ptr);
+            emulator.z80.io.set_raw_bus(bus_ptr);
+        }
+
         {
             let mut bus = emulator.bus.borrow_mut();
             emulator.cpu.reset(&mut *bus);
