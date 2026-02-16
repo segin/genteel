@@ -265,6 +265,7 @@ impl Bus {
     }
 
     /// Read a word (16-bit, big-endian) from the memory map
+    #[inline]
     pub fn read_word(&mut self, address: u32) -> u16 {
         let addr = address & 0xFFFFFF;
 
@@ -272,9 +273,8 @@ impl Bus {
         if addr <= 0x3FFFFF {
             let idx = addr as usize;
             if idx + 1 < self.rom.len() {
-                // SAFETY: We checked bounds above
-                let high = unsafe { *self.rom.get_unchecked(idx) };
-                let low = unsafe { *self.rom.get_unchecked(idx + 1) };
+                let high = self.rom[idx];
+                let low = self.rom[idx + 1];
                 return byte_utils::join_u16(high, low);
             } else if idx < self.rom.len() {
                 // Partial read at end of ROM
@@ -347,6 +347,7 @@ impl Bus {
     }
 
     /// Read a long word (32-bit, big-endian) from the memory map
+    #[inline]
     pub fn read_long(&mut self, address: u32) -> u32 {
         let addr = address & 0xFFFFFF;
 
@@ -354,11 +355,10 @@ impl Bus {
         if addr <= 0x3FFFFF {
             let idx = addr as usize;
             if idx + 3 < self.rom.len() {
-                // SAFETY: We checked bounds above
-                let b0 = unsafe { *self.rom.get_unchecked(idx) };
-                let b1 = unsafe { *self.rom.get_unchecked(idx + 1) };
-                let b2 = unsafe { *self.rom.get_unchecked(idx + 2) };
-                let b3 = unsafe { *self.rom.get_unchecked(idx + 3) };
+                let b0 = self.rom[idx];
+                let b1 = self.rom[idx + 1];
+                let b2 = self.rom[idx + 2];
+                let b3 = self.rom[idx + 3];
                 return byte_utils::join_u32(b0, b1, b2, b3);
             }
         }
