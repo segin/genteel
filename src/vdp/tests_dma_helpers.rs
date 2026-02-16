@@ -117,6 +117,31 @@ fn test_dma_length() {
     assert_eq!(vdp.dma_length(), 0x3412);
 }
 
+#[test]
+fn test_is_dma_fill_and_transfer() {
+    let mut vdp = Vdp::new();
+
+    // Case 0: Transfer (0x00)
+    vdp.registers[REG_DMA_SRC_HI] = 0x00;
+    assert!(vdp.is_dma_transfer(), "Mode 0x00 should be transfer");
+    assert!(!vdp.is_dma_fill(), "Mode 0x00 should not be fill");
+
+    // Case 1: Fill (0x80)
+    vdp.registers[REG_DMA_SRC_HI] = DMA_MODE_FILL;
+    assert!(!vdp.is_dma_transfer(), "Mode 0x80 should not be transfer");
+    assert!(vdp.is_dma_fill(), "Mode 0x80 should be fill");
+
+    // Case 2: Copy (0xC0)
+    vdp.registers[REG_DMA_SRC_HI] = DMA_MODE_COPY;
+    assert!(!vdp.is_dma_transfer(), "Mode 0xC0 should not be transfer");
+    assert!(!vdp.is_dma_fill(), "Mode 0xC0 should not be fill");
+
+    // Case 3: Random bits in lower part should not affect mode
+    vdp.registers[REG_DMA_SRC_HI] = DMA_MODE_FILL | 0x1F;
+    assert!(!vdp.is_dma_transfer(), "Mode 0x9F should not be transfer");
+    assert!(vdp.is_dma_fill(), "Mode 0x9F should be fill");
+}
+
 proptest! {
     #[test]
     fn test_dma_source_prop(hi in 0u8..=255, mid in 0u8..=255, lo in 0u8..=255) {
