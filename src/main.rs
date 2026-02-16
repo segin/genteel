@@ -45,6 +45,29 @@ struct CpuBatchResult {
     z80_change: Option<Z80Change>,
 }
 
+struct Z80BusGuard<'a> {
+    pub z80: &'a mut Z80<Z80Bus, Z80Bus>,
+}
+
+impl<'a> Z80BusGuard<'a> {
+    fn new(z80: &'a mut Z80<Z80Bus, Z80Bus>, bus: &mut Bus) -> Self {
+        unsafe {
+            z80.memory.set_raw_bus(bus);
+            z80.io.set_raw_bus(bus);
+        }
+        Self { z80 }
+    }
+}
+
+impl<'a> Drop for Z80BusGuard<'a> {
+    fn drop(&mut self) {
+        unsafe {
+            self.z80.memory.clear_raw_bus();
+            self.z80.io.clear_raw_bus();
+        }
+    }
+}
+
 pub struct Emulator {
     pub cpu: Cpu,
     pub z80: Z80<Z80Bus, Z80Bus>,
@@ -97,6 +120,9 @@ impl Emulator {
         {
             let mut bus = emulator.bus.borrow_mut();
             emulator.cpu.reset(&mut *bus);
+            // Enable Z80 to test bus contention/optimization
+            bus.z80_reset = false;
+            bus.z80_bus_request = false;
         }
         emulator.z80.reset();
 
@@ -287,8 +313,7 @@ impl Emulator {
         }
     }
 
-    fn run_cpu_batch(&mut self, max_cycles: u32) -> CpuBatchResult {
-        let mut bus = self.bus.borrow_mut();
+    fn run_cpu_batch(cpu: &mut Cpu, bus: &mut Bus, max_cycles: u32) -> CpuBatchResult {
         let initial_req = bus.z80_bus_request;
         let initial_rst = bus.z80_reset;
         let mut pending_cycles = 0;
@@ -301,7 +326,7 @@ impl Emulator {
                 };
             }
 
-            let m68k_cycles = self.cpu.step_instruction(&mut *bus);
+            let m68k_cycles = cpu.step_instruction(bus);
             bus.apu.fm.step(m68k_cycles);
 
             // Check for Z80 state change
@@ -327,43 +352,83 @@ impl Emulator {
         const BATCH_SIZE: u32 = 128;
         let mut cycles_scanline: u32 = 0;
 
+        // Acquire bus lock for the entire loop
+        let mut bus_ref = self.bus.borrow_mut();
+
+        // Create guard which sets raw_bus and clears it on drop
+        let z80_guard = Z80BusGuard::new(&mut self.z80, &mut *bus_ref);
+
         while cycles_scanline < CYCLES_PER_LINE {
             let remaining = CYCLES_PER_LINE - cycles_scanline;
             let limit = std::cmp::min(remaining, BATCH_SIZE);
 
-            let result = self.run_cpu_batch(limit);
+            let result = Self::run_cpu_batch(&mut self.cpu, &mut *bus_ref, limit);
 
             // If state changed, revert to old state temporarily so we can sync the batch cycles
             // with the state that was active during those cycles.
             if let Some(change) = result.z80_change {
-                let mut bus = self.bus.borrow_mut();
-                bus.z80_bus_request = change.old_req;
-                bus.z80_reset = change.old_rst;
+                bus_ref.z80_bus_request = change.old_req;
+                bus_ref.z80_reset = change.old_rst;
             }
 
             if result.cycles > 0 {
                 let trigger_vint = line == active_lines && cycles_scanline < 10;
-                self.sync_z80(result.cycles, trigger_vint, z80_cycle_debt);
+                let req = bus_ref.z80_bus_request;
+                let rst = bus_ref.z80_reset;
+
+                Self::sync_z80(
+                    z80_guard.z80,
+                    req,
+                    rst,
+                    &mut self.z80_last_bus_req,
+                    &mut self.z80_last_reset,
+                    &mut self.z80_trace_count,
+                    self.internal_frame_count,
+                    self.cpu.pc,
+                    result.cycles,
+                    trigger_vint,
+                    z80_cycle_debt,
+                );
                 cycles_scanline += result.cycles;
             }
 
             if let Some(change) = result.z80_change {
                 // Now apply the new state for the instruction that caused the change
-                {
-                    let mut bus = self.bus.borrow_mut();
-                    bus.z80_bus_request = change.new_req;
-                    bus.z80_reset = change.new_rst;
-                }
+                bus_ref.z80_bus_request = change.new_req;
+                bus_ref.z80_reset = change.new_rst;
 
                 let trigger_vint = line == active_lines && cycles_scanline < 10;
-                self.sync_z80(change.instruction_cycles, trigger_vint, z80_cycle_debt);
+                let req = change.new_req;
+                let rst = change.new_rst;
+
+                Self::sync_z80(
+                    z80_guard.z80,
+                    req,
+                    rst,
+                    &mut self.z80_last_bus_req,
+                    &mut self.z80_last_reset,
+                    &mut self.z80_trace_count,
+                    self.internal_frame_count,
+                    self.cpu.pc,
+                    change.instruction_cycles,
+                    trigger_vint,
+                    z80_cycle_debt,
+                );
                 cycles_scanline += change.instruction_cycles;
             }
         }
+        // z80_guard and bus_ref are dropped here
     }
 
     fn sync_z80(
-        &mut self,
+        z80: &mut Z80<Z80Bus, Z80Bus>,
+        z80_bus_request: bool,
+        z80_reset: bool,
+        z80_last_bus_req: &mut bool,
+        z80_last_reset: &mut bool,
+        z80_trace_count: &mut u32,
+        internal_frame_count: u64,
+        cpu_pc: u32,
         m68k_cycles: u32,
         trigger_vint: bool,
         z80_cycle_debt: &mut f32,
@@ -372,46 +437,45 @@ impl Emulator {
 
         // Z80 execution
         let (z80_can_run, z80_is_reset) = {
-            let bus = self.bus.borrow();
-            let prev = self.z80_last_bus_req;
-            if bus.z80_bus_request != prev {
+            let prev = *z80_last_bus_req;
+            if z80_bus_request != prev {
                 eprintln!(
                     "DEBUG: Bus Req Changed: {} -> {} at 68k PC={:06X}",
-                    prev, bus.z80_bus_request, self.cpu.pc
+                    prev, z80_bus_request, cpu_pc
                 );
-                self.z80_last_bus_req = bus.z80_bus_request;
+                *z80_last_bus_req = z80_bus_request;
             }
-            (!bus.z80_reset && !bus.z80_bus_request, bus.z80_reset)
+            (!z80_reset && !z80_bus_request, z80_reset)
         };
 
         // Z80 reset logic:
         // Reset the Z80 on the leading edge of the reset signal.
         // The Z80 is held in reset (not stepped) as long as z80_reset is true.
-        if z80_is_reset && !self.z80_last_reset {
-            self.z80.reset();
+        if z80_is_reset && !*z80_last_reset {
+            z80.reset();
         }
-        self.z80_last_reset = z80_is_reset;
+        *z80_last_reset = z80_is_reset;
 
-        if z80_can_run && self.internal_frame_count > 0 {
-            if self.z80_trace_count < 5000 {
-                self.z80.debug = true;
-                self.z80_trace_count += 1;
+        if z80_can_run && internal_frame_count > 0 {
+            if *z80_trace_count < 5000 {
+                z80.debug = true;
+                *z80_trace_count += 1;
             } else {
-                self.z80.debug = false;
+                z80.debug = false;
             }
         } else {
-            self.z80.debug = false;
+            z80.debug = false;
         }
 
         // Trigger Z80 VInt at start of VBlank
         if trigger_vint && !z80_is_reset {
-            self.z80.trigger_interrupt(0xFF);
+            z80.trigger_interrupt(0xFF);
         }
 
         if z80_can_run {
             *z80_cycle_debt += (m68k_cycles as f32) * Z80_CYCLES_PER_M68K_CYCLE;
             while *z80_cycle_debt >= 1.0 {
-                let z80_cycles = self.z80.step();
+                let z80_cycles = z80.step();
                 *z80_cycle_debt -= z80_cycles as f32;
             }
         }
@@ -1147,5 +1211,45 @@ mod tests {
 
         // Verify rejection
         assert!(result.is_err(), "Should reject large ROM file (>32MB)");
+    }
+
+    #[test]
+    fn test_emulator_performance_baseline() {
+        use std::time::Instant;
+        let mut emulator = Emulator::new();
+        // Create a simple infinite loop ROM
+        // 0x200: 60 FE (BRA -2) -> Jump to self
+        let mut rom = vec![0u8; 1024];
+        // Reset Vector (Stack Pointer at 0x000000) - Set to 0x1000
+        rom[0] = 0x00; rom[1] = 0x00; rom[2] = 0x10; rom[3] = 0x00;
+        // Reset Vector (PC at 0x000004) - Set to 0x200
+        rom[4] = 0x00; rom[5] = 0x00; rom[6] = 0x02; rom[7] = 0x00;
+        // Code at 0x200: 60 FE (BRA *)
+        rom[0x200] = 0x60; rom[0x201] = 0xFE;
+
+        emulator.bus.borrow_mut().load_rom(&rom);
+
+        // Reset CPU to pick up new vectors
+        {
+            let mut bus = emulator.bus.borrow_mut();
+            emulator.cpu.reset(&mut *bus);
+        }
+        emulator.z80.reset();
+
+        // Warmup
+        for _ in 0..100 {
+            emulator.step_frame(None);
+        }
+
+        let frames = 3000;
+        let start = Instant::now();
+
+        for _ in 0..frames {
+            emulator.step_frame(None);
+        }
+
+        let duration = start.elapsed();
+        println!("Benchmark: {} frames took {:?}", frames, duration);
+        println!("FPS: {:.2}", frames as f64 / duration.as_secs_f64());
     }
 }
