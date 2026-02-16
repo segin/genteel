@@ -967,7 +967,7 @@ impl Vdp {
                     palette,
                     v_flip,
                     h_flip,
-                    pixel_v as u16,
+                    pixel_v,
                     pixel_h,
                     pixels_to_process,
                     line_offset + screen_x as usize,
@@ -994,7 +994,7 @@ impl Vdp {
             let h_flip = (entry & 0x0800) != 0;
             let tile_index = entry & 0x07FF;
 
-            self.draw_full_tile_row(tile_index, palette, v_flip, h_flip, pixel_v as u16, line_offset + screen_x as usize);
+            self.draw_full_tile_row(tile_index, palette, v_flip, h_flip, pixel_v, line_offset + screen_x as usize);
 
             screen_x += 8;
             scrolled_h = scrolled_h.wrapping_add(8);
@@ -1021,7 +1021,7 @@ impl Vdp {
                     palette,
                     v_flip,
                     h_flip,
-                    pixel_v as u16,
+                    pixel_v,
                     pixel_h,
                     pixels_to_process,
                     line_offset + screen_x as usize,
