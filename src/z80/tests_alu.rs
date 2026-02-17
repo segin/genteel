@@ -1,4 +1,3 @@
-#![allow(unused_imports)]
 //! Unit tests for Z80 CPU - Part 2: ALU Operations
 
 use super::*;
