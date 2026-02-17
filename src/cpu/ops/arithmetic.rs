@@ -808,3 +808,135 @@ fn fetch_postinc_operand<M: MemoryInterface>(
     cpu.a[reg as usize] = addr.wrapping_add(size.bytes());
     val
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cpu::Cpu;
+    use crate::memory::Memory;
+    use crate::cpu::flags;
+
+    fn create_test_setup() -> (Cpu, Memory) {
+        let mut memory = Memory::new(0x10000); // Small memory for testing
+        let mut cpu = Cpu::new(&mut memory);
+
+        // Initialize basic CPU state
+        cpu.pc = 0x1000;
+        cpu.a[7] = 0x8000; // Initialize stack pointer
+        cpu.sr = 0x2700;   // Supervisor mode, interrupts masked
+
+        (cpu, memory)
+    }
+
+    #[test]
+    fn test_chk_within_bounds() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // Setup: Bound = 100, Val = 50 (within 0..100)
+        cpu.d[0] = 100; // Bound (D0)
+        cpu.d[1] = 50;  // Value (D1)
+
+        // CHK D0, D1
+        // D0 is source (bound), D1 is destination (value)
+        // src is AddressingMode::DataRegister(0)
+        let cycles = exec_chk(&mut cpu, AddressingMode::DataRegister(0), 1, &mut memory);
+
+        // Check no exception (PC should not change to vector handler)
+        assert_eq!(cpu.pc, 0x1000);
+        assert!(!cpu.get_flag(flags::NEGATIVE)); // N should be clear (val >= 0)
+        // Z flag depends on implementation: val != 0 so Z clear?
+        assert!(!cpu.get_flag(flags::ZERO));
+
+        assert_eq!(cycles, 10);
+    }
+
+    #[test]
+    fn test_chk_less_than_zero() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // Setup: Bound = 100, Val = -1
+        cpu.d[0] = 100; // Bound
+        cpu.d[1] = 0xFFFF; // -1 as word
+
+        // Set vector 6 handler
+        memory.write_long(0x18, 0x2000); // Vector 6 address
+
+        let _ = exec_chk(&mut cpu, AddressingMode::DataRegister(0), 1, &mut memory);
+
+        // Check exception triggered
+        assert_eq!(cpu.pc, 0x2000);
+
+        // Check N flag is set (val < 0)
+        assert!(cpu.get_flag(flags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_chk_greater_than_bound() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // Setup: Bound = 100, Val = 101
+        cpu.d[0] = 100; // Bound
+        cpu.d[1] = 101; // Value
+
+        // Set vector 6 handler
+        memory.write_long(0x18, 0x2000); // Vector 6 address
+
+        let _ = exec_chk(&mut cpu, AddressingMode::DataRegister(0), 1, &mut memory);
+
+        // Check exception triggered
+        assert_eq!(cpu.pc, 0x2000);
+
+        // Check N flag is cleared (val > bound)
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_chk_negative_bound() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // Setup: Bound = -5, Val = 0
+        cpu.d[0] = 0xFFFB; // -5 as word
+        cpu.d[1] = 0;      // Value
+
+        // Set vector 6 handler
+        memory.write_long(0x18, 0x2000); // Vector 6 address
+
+        let _ = exec_chk(&mut cpu, AddressingMode::DataRegister(0), 1, &mut memory);
+
+        // Check exception triggered (0 > -5 is true for signed check)
+        assert_eq!(cpu.pc, 0x2000);
+
+        // Check N flag is cleared (val > bound)
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_chk_edge_cases() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // Setup: Bound = 100, Val = 100 (inclusive upper bound)
+        cpu.d[0] = 100;
+        cpu.d[1] = 100;
+
+        // Set vector 6 handler
+        memory.write_long(0x18, 0x2000);
+
+        let _ = exec_chk(&mut cpu, AddressingMode::DataRegister(0), 1, &mut memory);
+
+        // Should NOT trap
+        assert_eq!(cpu.pc, 0x1000);
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+
+        // Setup: Bound = 100, Val = 0 (inclusive lower bound)
+        cpu.d[0] = 100;
+        cpu.d[1] = 0;
+
+        let _ = exec_chk(&mut cpu, AddressingMode::DataRegister(0), 1, &mut memory);
+
+        // Should NOT trap
+        assert_eq!(cpu.pc, 0x1000);
+        // Z flag should be set
+        assert!(cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+    }
+}
