@@ -659,39 +659,25 @@ pub fn decode(opcode: u16) -> Instruction {
 }
 
 fn decode_uncached(opcode: u16) -> Instruction {
-    let group = ((opcode >> 12) & 0x0F) as usize;
-    GROUP_DECODERS[group](opcode)
-}
-
-// === Group decoders ===
-
-type DecoderFn = fn(u16) -> Instruction;
-
-const GROUP_DECODERS: [DecoderFn; 16] = [
-    decode_group_0,
-    decode_move_byte,
-    decode_move_long,
-    decode_move_word,
-    decode_group_4,
-    decode_group_5,
-    decode_group_6,
-    decode_moveq,
-    decode_group_8,
-    decode_sub,
-    decode_line_a,
-    decode_group_b,
-    decode_group_c,
-    decode_add,
-    decode_shifts,
-    decode_line_f,
-];
-
-fn decode_line_a(opcode: u16) -> Instruction {
-    Instruction::LineA { opcode }
-}
-
-fn decode_line_f(opcode: u16) -> Instruction {
-    Instruction::LineF { opcode }
+    match (opcode >> 12) & 0x0F {
+        0x0 => decode_group_0(opcode),
+        0x1 => decode_move(opcode, Size::Byte),
+        0x2 => decode_move(opcode, Size::Long),
+        0x3 => decode_move(opcode, Size::Word),
+        0x4 => decode_group_4(opcode),
+        0x5 => decode_group_5(opcode),
+        0x6 => decode_group_6(opcode),
+        0x7 => decode_moveq(opcode),
+        0x8 => decode_group_8(opcode),
+        0x9 => decode_sub(opcode),
+        0xA => Instruction::LineA { opcode },
+        0xB => decode_group_b(opcode),
+        0xC => decode_group_c(opcode),
+        0xD => decode_add(opcode),
+        0xE => decode_shifts(opcode),
+        0xF => Instruction::LineF { opcode },
+        _ => unreachable!("4-bit value cannot exceed 15"),
+    }
 }
 
 fn decode_group_0(opcode: u16) -> Instruction {
@@ -819,17 +805,6 @@ fn decode_immediate_alu(opcode: u16) -> Option<Instruction> {
     None
 }
 
-fn decode_move_byte(opcode: u16) -> Instruction {
-    decode_move(opcode, Size::Byte)
-}
-
-fn decode_move_long(opcode: u16) -> Instruction {
-    decode_move(opcode, Size::Long)
-}
-
-fn decode_move_word(opcode: u16) -> Instruction {
-    decode_move(opcode, Size::Word)
-}
 
 fn decode_move(opcode: u16, size: Size) -> Instruction {
     // MOVE instruction format:
