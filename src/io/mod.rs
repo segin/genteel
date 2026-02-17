@@ -612,4 +612,37 @@ mod tests {
         assert_eq!(io.port1.controller_type, ControllerType::SixButton);
         assert_eq!(io.port2.controller_type, ControllerType::None);
     }
+
+    #[test]
+    fn test_non_6button_no_timeout() {
+        let mut port = ControllerPort::new(ControllerType::ThreeButton);
+        port.th_counter = 5;
+
+        port.update(2000);
+
+        assert_eq!(port.th_counter, 5);
+        assert_eq!(port.th_timer, 0);
+    }
+
+    #[test]
+    fn test_io_update() {
+        let mut io = Io::new();
+        io.set_controller_type(1, ControllerType::SixButton);
+
+        // Initially 0
+        assert_eq!(io.port1.th_counter, 0);
+
+        // Toggle TH (write to control port).
+        // For port 1, data is at 0xA10003.
+        // th_state starts true (high).
+        // Writing 0x00 sets TH low -> falling edge -> increments counter.
+        io.write(0xA10003, 0x00);
+        assert_eq!(io.port1.th_counter, 1);
+
+        // Update IO with cycles > 1500
+        io.update(1501);
+
+        // Should be reset
+        assert_eq!(io.port1.th_counter, 0);
+    }
 }
