@@ -640,4 +640,124 @@ mod tests {
         assert!(!cpu.get_flag(flags::ZERO));
         assert_eq!(cycles, 8); // 4 (base) + 0 (DataReg) + 4 (AddrIndirect)
     }
+
+    #[test]
+    fn test_exec_and_byte() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x123456FF;
+        cpu.d[1] = 0x776655AA;
+
+        // AND.B D0, D1
+        let cycles = exec_and(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            true,
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1], 0x776655AA); // 0xFF & 0xAA = 0xAA
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert_eq!(cycles, 4);
+    }
+
+    #[test]
+    fn test_exec_and_word() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x1234F0F0;
+        cpu.d[1] = 0x77660F0F;
+
+        // AND.W D0, D1
+        let cycles = exec_and(
+            &mut cpu,
+            Size::Word,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            true,
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1], 0x77660000); // 0xF0F0 & 0x0F0F = 0x0000
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(cpu.get_flag(flags::ZERO));
+        assert_eq!(cycles, 4);
+    }
+
+    #[test]
+    fn test_exec_and_long() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0xF0F0F0F0;
+        cpu.d[1] = 0x0F0F0F0F;
+
+        // AND.L D0, D1
+        let cycles = exec_and(
+            &mut cpu,
+            Size::Long,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            true,
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1], 0x00000000);
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(cpu.get_flag(flags::ZERO));
+        assert_eq!(cycles, 4);
+    }
+
+    #[test]
+    fn test_exec_and_zero() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x00000000;
+        cpu.d[1] = 0xFFFFFFFF;
+
+        // Pre-set flags to ensure they are cleared/updated
+        cpu.set_flag(flags::CARRY, true);
+        cpu.set_flag(flags::OVERFLOW, true);
+        cpu.set_flag(flags::NEGATIVE, true);
+
+        // AND.L D0, D1
+        let cycles = exec_and(
+            &mut cpu,
+            Size::Long,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            true,
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1], 0x00000000);
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert_eq!(cycles, 4);
+    }
+
+    #[test]
+    fn test_exec_and_memory() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x000000AA;
+        cpu.a[0] = 0x2000;
+        memory.write_byte(0x2000, 0xFF);
+
+        // AND.B D0, (A0)
+        let cycles = exec_and(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            AddressingMode::AddressIndirect(0),
+            true,
+            &mut memory,
+        );
+
+        assert_eq!(memory.read_byte(0x2000), 0xAA);
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert_eq!(cycles, 8); // 4 (base) + 0 (DataReg) + 4 (AddrIndirect)
+    }
 }
