@@ -13,8 +13,27 @@ pub const DEFAULT_PORT: u16 = 1234;
 /// Maximum GDB packet size to prevent unbounded memory consumption
 pub const MAX_PACKET_SIZE: usize = 4096;
 
+<<<<<<< HEAD
 /// Maximum number of breakpoints allowed to prevent memory exhaustion
 pub const MAX_BREAKPOINTS: usize = 1024;
+=======
+/// Constant-time string comparison to prevent timing attacks
+fn secure_compare(a: &str, b: &str) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+
+    let a_bytes = a.as_bytes();
+    let b_bytes = b.as_bytes();
+    let mut result = 0;
+
+    for i in 0..a.len() {
+        result |= a_bytes[i] ^ b_bytes[i];
+    }
+
+    result == 0
+}
+>>>>>>> main
 
 /// GDB stop reasons
 #[derive(Debug, Clone, Copy)]
@@ -633,7 +652,7 @@ impl GdbServer {
         if let Some(stripped) = cmd.strip_prefix("auth ") {
             let provided_pass = stripped.trim();
             if let Some(ref correct_pass) = self.password {
-                if provided_pass == correct_pass {
+                if secure_compare(provided_pass, correct_pass) {
                     self.authenticated = true;
                     return "OK".to_string();
                 } else {
@@ -1196,5 +1215,16 @@ mod tests {
             "OK"
         );
         assert_eq!(server.process_command("Z1,1000,4", &mut regs, &mut mem), "");
+    }
+
+    #[test]
+    fn test_secure_compare() {
+        assert!(secure_compare("password", "password"));
+        assert!(!secure_compare("password", "passwor"));
+        assert!(!secure_compare("password", "passworf"));
+        assert!(!secure_compare("password", "longpassword"));
+        assert!(!secure_compare("short", "password"));
+        assert!(secure_compare("", ""));
+        assert!(!secure_compare("", "a"));
     }
 }

@@ -1,4 +1,17 @@
 #!/usr/bin/env python3
+"""
+Security & Quality Audit Tool for genteel.
+
+This script scans the repository for potential secrets, TODO items, and unsafe code blocks.
+It generates a JSON report and a CSV risk register.
+
+Usage:
+    Run from the repository root:
+    $ python3 scripts/audit_tool.py
+
+    The report will be generated in the `audit_reports/` directory.
+"""
+
 import os
 import re
 import json
@@ -18,18 +31,19 @@ RISK_CSV = os.path.join(REPORT_DIR, "RISK_REGISTER.csv")
 
 findings = []
 
-# Pre-compiled regex patterns at global scope for performance
+# Pre-compiled regex patterns at global scope for performance.
+# Note: String concatenation is used to prevent this script from detecting itself as a false positive.
 SECRET_PATTERNS = {
-    "Generic Secret": re.compile(r"(?i)secret\s*[:=]\s*['\"]"),
-    "API Key": re.compile(r"(?i)api[_-]?key\s*[:=]\s*['\"]"),
-    "Password": re.compile(r"(?i)password\s*[:=]\s*['\"]"),
-    "AWS Key": re.compile(r"AKIA[0-9A-Z]{16}"),
-    "Private Key": re.compile(r"-----BEGIN .* PRIVATE KEY-----"),
-    "Generic Token": re.compile(r"token\s*=\s*['\"][a-zA-Z0-9]{20,}['\"]")
+    "Generic Secret": re.compile(r"(?i)secret" + r"\s*[:=]\s*['\"]"),
+    "API Key": re.compile(r"(?i)api" + r"[_-]?key\s*[:=]\s*['\"]"),
+    "Password": re.compile(r"(?i)password" + r"\s*[:=]\s*['\"]"),
+    "AWS Key": re.compile(r"AKIA" + r"[0-9A-Z]{16}"),
+    "Private Key": re.compile(r"-----BEGIN .* PRIVATE " + r"KEY-----"),
+    "Generic Token": re.compile(r"token" + r"\s*=\s*['\"][a-zA-Z0-9]{20,}['\"]")
 }
 
-TODO_PATTERN = re.compile(r"(TODO|FIXME|XXX):")
-UNSAFE_PATTERN = re.compile(r"unsafe\s*\{")
+TODO_PATTERN = re.compile(r"(TODO|FIXME|XXX)" + r":")
+UNSAFE_PATTERN = re.compile(r"unsafe" + r"\s*\{")
 
 def add_finding(title, severity, description, file_path, line_number=None):
     findings.append({
@@ -43,6 +57,7 @@ def add_finding(title, severity, description, file_path, line_number=None):
 
 def get_tracked_files():
     try:
+        # Check if run from root or scripts dir, but prefer running git from CWD
         out = subprocess.check_output(["git", "ls-files"], stderr=subprocess.STDOUT).decode("utf-8")
         files = out.splitlines()
         # Filter out target directories and audit reports
@@ -106,6 +121,9 @@ def scan_text_patterns():
 def run_audit():
     print("🚀 Starting genteel security & quality audit...")
     
+    # Ensure we are running from the root directory or adjust
+    # For now, assume CWD is root.
+
     if not os.path.exists(REPORT_DIR):
         os.makedirs(REPORT_DIR)
 
