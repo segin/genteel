@@ -487,3 +487,72 @@ fn test_ex_de_hl() {
     assert_eq!(z80.de(), 0xABCD);
     assert_eq!(z80.hl(), 0x1234);
 }
+
+#[test]
+fn test_debug_state() {
+    use crate::debugger::Debuggable;
+    use serde_json::json;
+    let mut z80 = create_z80(&[]);
+
+    // Set some initial state
+    z80.a = 0xAA;
+    z80.pc = 0x1234;
+    z80.cycles = 100;
+
+    // Read state
+    let state = z80.read_state();
+    assert_eq!(state["a"], 0xAA);
+    assert_eq!(state["pc"], 0x1234);
+    assert_eq!(state["cycles"], 100);
+
+    // Partial update
+    let update = json!({
+        "a": 0xBB,
+        "cycles": 200
+    });
+    z80.write_state(&update);
+
+    assert_eq!(z80.a, 0xBB);
+    assert_eq!(z80.pc, 0x1234); // Should not change
+    assert_eq!(z80.cycles, 200);
+
+    // Full update
+    let full_update = json!({
+        "a": 0xCC,
+        "f": 0xDD,
+        "b": 0x11,
+        "c": 0x22,
+        "d": 0x33,
+        "e": 0x44,
+        "h": 0x55,
+        "l": 0x66,
+        "ix": 0x1000,
+        "iy": 0x2000,
+        "sp": 0x3000,
+        "pc": 0x4000,
+        "iff1": true,
+        "iff2": true,
+        "im": 2,
+        "halted": true,
+        "cycles": 300
+    });
+    z80.write_state(&full_update);
+
+    assert_eq!(z80.a, 0xCC);
+    assert_eq!(z80.f, 0xDD);
+    assert_eq!(z80.b, 0x11);
+    assert_eq!(z80.c, 0x22);
+    assert_eq!(z80.d, 0x33);
+    assert_eq!(z80.e, 0x44);
+    assert_eq!(z80.h, 0x55);
+    assert_eq!(z80.l, 0x66);
+    assert_eq!(z80.ix, 0x1000);
+    assert_eq!(z80.iy, 0x2000);
+    assert_eq!(z80.sp, 0x3000);
+    assert_eq!(z80.pc, 0x4000);
+    assert_eq!(z80.iff1, true);
+    assert_eq!(z80.iff2, true);
+    assert_eq!(z80.im, 2);
+    assert_eq!(z80.halted, true);
+    assert_eq!(z80.cycles, 300);
+}

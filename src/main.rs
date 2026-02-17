@@ -210,6 +210,7 @@ pub struct Emulator {
     pub z80_trace_count: u32,
     pub input_mapping: InputMapping,
     pub debug: bool,
+    pub allowed_paths: Vec<std::path::PathBuf>,
 }
 impl Default for Emulator {
     fn default() -> Self {
@@ -241,6 +242,7 @@ impl Emulator {
             z80_trace_count: 0,
             input_mapping: InputMapping::default(),
             debug: false,
+            allowed_paths: Vec::new(),
         };
         {
             let mut bus = emulator.bus.borrow_mut();
@@ -249,7 +251,38 @@ impl Emulator {
         emulator.z80.reset();
         emulator
     }
+    /// Add a path to the whitelist of allowed ROM directories.
+    /// If no paths are added, `load_rom` will fail (secure by default).
+    /// The path is canonicalized before addition.
+    pub fn add_allowed_path<P: AsRef<std::path::Path>>(&mut self, path: P) -> std::io::Result<()> {
+        let canonical = path.as_ref().canonicalize()?;
+        self.allowed_paths.push(canonical);
+        Ok(())
+    }
+
     pub fn load_rom(&mut self, path: &str) -> std::io::Result<()> {
+        // Security: Validate path against whitelist
+        let path_obj = std::path::Path::new(path);
+        let canonical_path = path_obj.canonicalize()?;
+
+        if self.allowed_paths.is_empty() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "ROM loading is restricted. No allowed paths configured.",
+            ));
+        }
+
+        let allowed = self.allowed_paths.iter().any(|allowed_base| {
+            canonical_path.starts_with(allowed_base)
+        });
+
+        if !allowed {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!("Access denied to ROM path: {:?}", canonical_path),
+            ));
+        }
+
         let data = if path.to_lowercase().ends_with(".zip") {
             // Extract ROM from zip file
             Self::load_rom_from_zip(path)?
@@ -746,7 +779,6 @@ impl Emulator {
         }
         Ok(())
     }
-    #[cfg(feature = "gui")]
     fn log_debug(&self, frame_count: u64) {
         let bus = self.bus.borrow();
         let disp_en = if bus.vdp.display_enabled() {
@@ -1138,6 +1170,16 @@ fn main() {
     // Load ROM if provided
     if let Some(ref path) = rom_path {
         println!("Loading ROM: {}", path);
+
+        // Security: Whitelist the directory containing the ROM
+        if let Ok(canonical) = std::path::Path::new(path).canonicalize() {
+            if let Some(parent) = canonical.parent() {
+                if let Err(e) = emulator.add_allowed_path(parent) {
+                    eprintln!("Warning: Failed to whitelist ROM directory: {}", e);
+                }
+            }
+        }
+
         if let Err(e) = emulator.load_rom(path) {
             eprintln!("Failed to load ROM: {}", e);
             return;
@@ -1338,10 +1380,53 @@ mod tests {
         let data = vec![0u8; size];
         std::fs::write(path, &data).unwrap();
         let mut emulator = Emulator::new();
+        // Must whitelist the path first
+        emulator.add_allowed_path(".").unwrap();
         let result = emulator.load_rom(path);
         // Cleanup
         let _ = std::fs::remove_file(path);
         // Verify rejection
         assert!(result.is_err(), "Should reject large ROM file (>32MB)");
+    }
+
+    #[test]
+    fn test_path_traversal_protection() {
+        let dummy_rom = "dummy_traversal.bin";
+        std::fs::write(dummy_rom, b"dummy rom content").unwrap();
+
+        let mut emulator = Emulator::new();
+
+        // 1. Should fail without whitelist (Secure by Default)
+        let result = emulator.load_rom(dummy_rom);
+        assert!(result.is_err(), "Should fail without whitelisted path");
+        assert_eq!(
+            result.as_ref().err().unwrap().kind(),
+            std::io::ErrorKind::PermissionDenied
+        );
+
+        // 2. Should fail if whitelist doesn't cover the file
+        // Whitelist a different directory (e.g., system temp)
+        let temp_dir = std::env::temp_dir();
+        // Only if temp_dir exists and is different from CWD
+        if let Ok(_) = emulator.add_allowed_path(&temp_dir) {
+             let result = emulator.load_rom(dummy_rom);
+             // Assuming dummy_rom is in CWD and not in temp_dir
+             // If CWD == temp_dir, this test is weak but passes.
+             // Usually CWD is project root.
+             // We can check canonical paths to be sure.
+             let cwd = std::env::current_dir().unwrap().canonicalize().unwrap();
+             let temp = temp_dir.canonicalize().unwrap();
+             if !cwd.starts_with(&temp) {
+                 assert!(result.is_err(), "Should fail if path not in whitelist");
+             }
+        }
+
+        // 3. Should succeed if whitelisted
+        emulator.add_allowed_path(".").unwrap();
+        let result = emulator.load_rom(dummy_rom);
+        assert!(result.is_ok(), "Should succeed if path is whitelisted");
+
+        // Cleanup
+        let _ = std::fs::remove_file(dummy_rom);
     }
 }
