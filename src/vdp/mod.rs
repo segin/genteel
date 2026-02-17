@@ -918,98 +918,67 @@ impl Vdp {
         let tile_index = entry & 0x07FF;
 
         let patterns = self.fetch_tile_pattern(tile_index, pixel_v, v_flip);
-        let p0 = patterns[0];
-        let p1 = patterns[1];
-        let p2 = patterns[2];
-        let p3 = patterns[3];
+
+        if u32::from_ne_bytes(patterns) == 0 {
+            return;
+        }
+
+        let (p0, p1, p2, p3) = if h_flip {
+            (
+                (patterns[3] >> 4) | (patterns[3] << 4),
+                (patterns[2] >> 4) | (patterns[2] << 4),
+                (patterns[1] >> 4) | (patterns[1] << 4),
+                (patterns[0] >> 4) | (patterns[0] << 4),
+            )
+        } else {
+            (patterns[0], patterns[1], patterns[2], patterns[3])
+        };
+
         let palette_base = (palette as usize) * 16;
 
         // SAFETY: Caller ensures dest_idx + 7 is within framebuffer bounds.
         // palette is 2 bits, so palette_base is max 48. col is 4 bits (0-15).
         // Max index is 63, which is within cram_cache bounds (64).
         unsafe {
-            if h_flip {
-                let mut col = p3 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p3 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 1) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p2 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 2) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p2 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 3) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p1 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 4) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p1 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 5) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p0 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 6) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p0 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 7) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-            } else {
-                let mut col = p0 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p0 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 1) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p1 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 2) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p1 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 3) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p2 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 4) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p2 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 5) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p3 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 6) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p3 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 7) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
+            let mut col = p0 >> 4;
+            if col != 0 {
+                *self.framebuffer.get_unchecked_mut(dest_idx) =
+                    *self.cram_cache.get_unchecked(palette_base + col as usize);
+            }
+            col = p0 & 0x0F;
+            if col != 0 {
+                *self.framebuffer.get_unchecked_mut(dest_idx + 1) =
+                    *self.cram_cache.get_unchecked(palette_base + col as usize);
+            }
+            col = p1 >> 4;
+            if col != 0 {
+                *self.framebuffer.get_unchecked_mut(dest_idx + 2) =
+                    *self.cram_cache.get_unchecked(palette_base + col as usize);
+            }
+            col = p1 & 0x0F;
+            if col != 0 {
+                *self.framebuffer.get_unchecked_mut(dest_idx + 3) =
+                    *self.cram_cache.get_unchecked(palette_base + col as usize);
+            }
+            col = p2 >> 4;
+            if col != 0 {
+                *self.framebuffer.get_unchecked_mut(dest_idx + 4) =
+                    *self.cram_cache.get_unchecked(palette_base + col as usize);
+            }
+            col = p2 & 0x0F;
+            if col != 0 {
+                *self.framebuffer.get_unchecked_mut(dest_idx + 5) =
+                    *self.cram_cache.get_unchecked(palette_base + col as usize);
+            }
+            col = p3 >> 4;
+            if col != 0 {
+                *self.framebuffer.get_unchecked_mut(dest_idx + 6) =
+                    *self.cram_cache.get_unchecked(palette_base + col as usize);
+            }
+            col = p3 & 0x0F;
+            if col != 0 {
+                *self.framebuffer.get_unchecked_mut(dest_idx + 7) =
+                    *self.cram_cache.get_unchecked(palette_base + col as usize);
             }
         }
     }

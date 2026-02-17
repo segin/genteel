@@ -68,7 +68,7 @@ fn bench_render_line_performance() {
     }
 
     let start = Instant::now();
-    let iterations = 10000;
+    let iterations = 50000;
 
     for _ in 0..iterations {
         // Render line 100
@@ -78,6 +78,85 @@ fn bench_render_line_performance() {
     let duration = start.elapsed();
     println!(
         "Render Line ({} iterations) took: {:?}",
+        iterations, duration
+    );
+}
+
+#[test]
+fn bench_render_line_sparse() {
+    let mut vdp = Vdp::new();
+
+    // Enable display (Reg 1 bit 6) and V30 (Reg 1 bit 3)
+    vdp.registers[1] = 0x40 | 0x04;
+
+    // Set plane sizes to 64x64 (Reg 16 = 0x11)
+    vdp.registers[16] = 0x11;
+
+    // Set Plane A base address (Reg 2 = 0x30 -> 0xC000)
+    vdp.registers[2] = 0x30;
+
+    // Set Plane B base address (Reg 4 = 0x07 -> 0xE000)
+    vdp.registers[4] = 0x07;
+
+    // Set Sprite Table at 0xD400 (Reg 5 = 0x6A)
+    vdp.registers[5] = 0x6A;
+
+    // Fill VRAM with sparse data (50% empty tiles)
+    for i in (0..0x10000).step_by(32) {
+        // Make every other tile empty (all zeros)
+        if (i / 32) % 2 == 0 {
+            for j in 0..32 {
+                if i + j < 0x10000 {
+                    vdp.vram[i + j] = 0;
+                }
+            }
+        } else {
+             for j in 0..32 {
+                if i + j < 0x10000 {
+                    vdp.vram[i + j] = ((i + j) & 0xFF) as u8;
+                }
+            }
+        }
+    }
+
+    // Fill CRAM
+    for i in 0..128 {
+        vdp.cram[i] = (i & 0xFF) as u8;
+    }
+    // Update cram cache with some colors so we actually write to framebuffer
+    for i in 0..64 {
+        vdp.cram_cache[i] = (i as u16) * 0x0400 + 0x0020;
+    }
+
+    // Setup Sprites
+    let sat_base = 0xD400;
+
+    // Create 40 linked sprites
+    for i in 0..40 {
+        let addr = sat_base + (i * 8);
+        let y = 90 + (i % 20);
+        vdp.vram[addr] = 0x00;
+        vdp.vram[addr + 1] = (y + 128) as u8;
+        vdp.vram[addr + 2] = 0x00;
+        let link = if i == 39 { 0 } else { i + 1 };
+        vdp.vram[addr + 3] = link as u8;
+        vdp.vram[addr + 4] = if i % 2 == 0 { 0x80 } else { 0x00 };
+        vdp.vram[addr + 5] = 0x00; // Tile 0
+        let x = 128 + (i * 8);
+        vdp.vram[addr + 6] = (x >> 8) as u8;
+        vdp.vram[addr + 7] = (x & 0xFF) as u8;
+    }
+
+    let start = Instant::now();
+    let iterations = 50000;
+
+    for _ in 0..iterations {
+        vdp.render_line(100);
+    }
+
+    let duration = start.elapsed();
+    println!(
+        "Render Line Sparse ({} iterations) took: {:?}",
         iterations, duration
     );
 }
