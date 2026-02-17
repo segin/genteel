@@ -22,6 +22,7 @@ pub mod flags {
 }
 
 use crate::debugger::Debuggable;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 /// Z80 CPU
@@ -2065,72 +2066,104 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
     }
 }
 
+#[derive(Serialize, Deserialize)]
+struct Z80State {
+    a: Option<u8>,
+    f: Option<u8>,
+    b: Option<u8>,
+    c: Option<u8>,
+    d: Option<u8>,
+    e: Option<u8>,
+    h: Option<u8>,
+    l: Option<u8>,
+    ix: Option<u16>,
+    iy: Option<u16>,
+    sp: Option<u16>,
+    pc: Option<u16>,
+    iff1: Option<bool>,
+    iff2: Option<bool>,
+    im: Option<u8>,
+    halted: Option<bool>,
+    cycles: Option<u64>,
+}
+
 impl<M: MemoryInterface, I: IoInterface> Debuggable for Z80<M, I> {
     fn read_state(&self) -> Value {
-        json!({
-            "a": self.a, "f": self.f,
-            "b": self.b, "c": self.c,
-            "d": self.d, "e": self.e,
-            "h": self.h, "l": self.l,
-            "ix": self.ix, "iy": self.iy,
-            "sp": self.sp, "pc": self.pc,
-            "iff1": self.iff1, "iff2": self.iff2,
-            "im": self.im, "halted": self.halted,
-            "cycles": self.cycles,
-        })
+        let state = Z80State {
+            a: Some(self.a),
+            f: Some(self.f),
+            b: Some(self.b),
+            c: Some(self.c),
+            d: Some(self.d),
+            e: Some(self.e),
+            h: Some(self.h),
+            l: Some(self.l),
+            ix: Some(self.ix),
+            iy: Some(self.iy),
+            sp: Some(self.sp),
+            pc: Some(self.pc),
+            iff1: Some(self.iff1),
+            iff2: Some(self.iff2),
+            im: Some(self.im),
+            halted: Some(self.halted),
+            cycles: Some(self.cycles),
+        };
+        serde_json::to_value(state).unwrap_or(json!({}))
     }
 
     fn write_state(&mut self, state: &Value) {
-        if let Some(a) = state["a"].as_u64() {
-            self.a = a as u8;
-        }
-        if let Some(f) = state["f"].as_u64() {
-            self.f = f as u8;
-        }
-        if let Some(b) = state["b"].as_u64() {
-            self.b = b as u8;
-        }
-        if let Some(c) = state["c"].as_u64() {
-            self.c = c as u8;
-        }
-        if let Some(d) = state["d"].as_u64() {
-            self.d = d as u8;
-        }
-        if let Some(e) = state["e"].as_u64() {
-            self.e = e as u8;
-        }
-        if let Some(h) = state["h"].as_u64() {
-            self.h = h as u8;
-        }
-        if let Some(l) = state["l"].as_u64() {
-            self.l = l as u8;
-        }
-        if let Some(ix) = state["ix"].as_u64() {
-            self.ix = ix as u16;
-        }
-        if let Some(iy) = state["iy"].as_u64() {
-            self.iy = iy as u16;
-        }
-        if let Some(sp) = state["sp"].as_u64() {
-            self.sp = sp as u16;
-        }
-        if let Some(pc) = state["pc"].as_u64() {
-            self.pc = pc as u16;
-        }
-        if let Some(iff1) = state["iff1"].as_bool() {
-            self.iff1 = iff1;
-        }
-        if let Some(iff2) = state["iff2"].as_bool() {
-            self.iff2 = iff2;
-        }
-        if let Some(im) = state["im"].as_u64() {
-            self.im = im as u8;
-        }
-        if let Some(halted) = state["halted"].as_bool() {
-            self.halted = halted;
-        }
-        if let Some(cycles) = state["cycles"].as_u64() {
-            self.cycles = cycles;
+        if let Ok(state) = serde_json::from_value::<Z80State>(state.clone()) {
+            if let Some(val) = state.a {
+                self.a = val;
+            }
+            if let Some(val) = state.f {
+                self.f = val;
+            }
+            if let Some(val) = state.b {
+                self.b = val;
+            }
+            if let Some(val) = state.c {
+                self.c = val;
+            }
+            if let Some(val) = state.d {
+                self.d = val;
+            }
+            if let Some(val) = state.e {
+                self.e = val;
+            }
+            if let Some(val) = state.h {
+                self.h = val;
+            }
+            if let Some(val) = state.l {
+                self.l = val;
+            }
+            if let Some(val) = state.ix {
+                self.ix = val;
+            }
+            if let Some(val) = state.iy {
+                self.iy = val;
+            }
+            if let Some(val) = state.sp {
+                self.sp = val;
+            }
+            if let Some(val) = state.pc {
+                self.pc = val;
+            }
+            if let Some(val) = state.iff1 {
+                self.iff1 = val;
+            }
+            if let Some(val) = state.iff2 {
+                self.iff2 = val;
+            }
+            if let Some(val) = state.im {
+                self.im = val;
+            }
+            if let Some(val) = state.halted {
+                self.halted = val;
+            }
+            if let Some(val) = state.cycles {
+                self.cycles = val;
+            }
         }
     }
 }
@@ -2191,3 +2224,5 @@ mod tests_ddcb;
 
 #[cfg(test)]
 mod tests_ex_sp_hl_expanded;
+#[cfg(test)]
+mod tests_state;
