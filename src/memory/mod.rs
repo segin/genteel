@@ -15,6 +15,8 @@ use crate::cpu::decoder::Size;
 
 #[cfg(test)]
 mod tests_property;
+#[cfg(test)]
+mod tests_bus_refactor;
 
 #[cfg(test)]
 mod tests_bus_vdp;
@@ -314,3 +316,4 @@ mod tests {
         assert_eq!(mem.read_word(addr + 4), word_val, "Read word mismatch");
     }
 }
+#[cfg(test)] mod tests_bus_vdp;
