@@ -103,7 +103,7 @@ impl Cpu {
             pending_exception: false,
             interrupt_pending_mask: 0,
             // 2M entries * 16 bytes = 32MB cache. Covers 4MB ROM without aliasing.
-            decode_cache: vec![DecodeCacheEntry::default(); 2097152].into_boxed_slice(),
+            decode_cache: vec![DecodeCacheEntry::default(); 2_097_152].into_boxed_slice(),
         };
 
         // At startup, the supervisor stack pointer is read from address 0x00000000
@@ -138,8 +138,12 @@ impl Cpu {
     }
 
     fn invalidate_cache_line(&mut self, addr: u32) {
-        let index = ((addr >> 1) & 0x1FFFFF) as usize;
-        self.decode_cache[index].pc = u32::MAX;
+        // Only invalidate if address is within cacheable ROM space (0-4MB)
+        if addr < 0x400000 {
+            let index = ((addr >> 1) & 0x1FFFFF) as usize;
+            // Safety: index is masked to cache size
+            self.decode_cache[index].pc = u32::MAX;
+        }
     }
 
     /// Request an interrupt at the specified level
@@ -198,11 +202,11 @@ impl Cpu {
         // Optimized instruction fetch with cache
         if pc < 0x400000 {
             // ROM/Cartridge space - Cacheable
-            // Index: (PC / 2) & 0x1FFFFF. Covers 4MB ROM without aliasing.
+            // Index: (PC / 2) & 0x1FFFFF. Maps full 4MB range.
             // Since we check entry.pc == pc, aliasing is handled safely.
             let cache_index = ((pc >> 1) & 0x1FFFFF) as usize;
 
-            // Safety: cache size is 2,097,152, index is masked to 0x1FFFFF.
+            // Safety: cache size is 2_097_152, index is masked to 0x1FFFFF.
             let entry = unsafe { *self.decode_cache.get_unchecked(cache_index) };
 
             if entry.pc == pc {
