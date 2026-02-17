@@ -871,11 +871,20 @@ impl Vdp {
     fn fetch_tile_pattern(&self, tile_index: u16, pixel_v: u16, v_flip: bool) -> [u8; 4] {
         let row = if v_flip { 7 - pixel_v } else { pixel_v };
         let row_addr = (tile_index as usize * 32) + (row as usize * 4);
-        // Mask to 64KB boundary. Since each row fetch is 4 bytes and row_addr is a
-        // multiple of 4, masking with 0xFFFC ensures the slice never crosses
-        // the 64KB boundary.
-        let addr = row_addr & 0xFFFC;
-        self.vram[addr..addr + 4].try_into().unwrap()
+        // Mask to 64KB boundary and align to 4 bytes.
+        // We use (row_addr & 0xFFFF) to ensure we wrap within 64KB, and then mask with 0xFFFC
+        // to clear the bottom 2 bits for alignment. 0xFFFC effectively does both, but we make
+        // the wrapping explicit for clarity and safety against potential type width assumptions.
+        let addr = (row_addr & 0xFFFF) & 0xFFFC;
+
+        // SAFETY:
+        // 1. addr is explicitly masked to be <= 0xFFFC and 4-byte aligned.
+        // 2. self.vram is [u8; 0x10000].
+        // 3. Reading 4 bytes from addr <= 0xFFFC accesses bytes up to 0xFFFF, which is within bounds.
+        unsafe {
+            let ptr = self.vram.as_ptr().add(addr) as *const u32;
+            ptr.read_unaligned().to_ne_bytes()
+        }
     }
 
     fn draw_partial_tile_row(
