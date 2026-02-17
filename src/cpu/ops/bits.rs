@@ -640,4 +640,134 @@ mod tests {
         assert!(!cpu.get_flag(flags::ZERO));
         assert_eq!(cycles, 8); // 4 (base) + 0 (DataReg) + 4 (AddrIndirect)
     }
+
+    #[test]
+    fn test_exec_btst_reg_zero() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x0000_0000;
+        cpu.d[1] = 0; // Bit number 0
+
+        // BTST D1, D0
+        let cycles = exec_btst(
+            &mut cpu,
+            BitSource::Register(1),
+            AddressingMode::DataRegister(0),
+            &mut memory,
+        );
+
+        assert!(cpu.get_flag(flags::ZERO)); // Bit 0 is 0, so Z=1
+        assert_eq!(cycles, 10);
+    }
+
+    #[test]
+    fn test_exec_btst_reg_one() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x0000_0001;
+        cpu.d[1] = 0; // Bit number 0
+
+        let cycles = exec_btst(
+            &mut cpu,
+            BitSource::Register(1),
+            AddressingMode::DataRegister(0),
+            &mut memory,
+        );
+
+        assert!(!cpu.get_flag(flags::ZERO)); // Bit 0 is 1, so Z=0
+        assert_eq!(cycles, 10);
+    }
+
+    #[test]
+    fn test_exec_btst_imm() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x8000_0000;
+
+        // Immediate bit number 31.
+        // fetch_bit_num reads word at PC.
+        memory.write_word(cpu.pc, 0x001F); // 31
+
+        let cycles = exec_btst(
+            &mut cpu,
+            BitSource::Immediate,
+            AddressingMode::DataRegister(0),
+            &mut memory,
+        );
+
+        assert!(!cpu.get_flag(flags::ZERO)); // Bit 31 is 1
+        assert_eq!(cpu.pc, 0x1002); // PC advanced by 2
+        assert_eq!(cycles, 10);
+    }
+
+    #[test]
+    fn test_exec_btst_mem() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.a[0] = 0x2000;
+        memory.write_byte(0x2000, 0x80); // Bit 7 is 1
+
+        cpu.d[0] = 7; // Bit number 7
+
+        // BTST D0, (A0)
+        let cycles = exec_btst(
+            &mut cpu,
+            BitSource::Register(0),
+            AddressingMode::AddressIndirect(0),
+            &mut memory,
+        );
+
+        assert!(!cpu.get_flag(flags::ZERO));
+        // cycles:
+        // base 4
+        // dst_cycles (Indirect) = 4
+        // is_memory = true -> cycles += 4
+        // Total = 12.
+        assert_eq!(cycles, 12);
+    }
+
+    #[test]
+    fn test_exec_btst_modulo_32() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x0000_0001; // Bit 0 set
+        cpu.d[1] = 32; // Bit number 32. 32 % 32 = 0.
+
+        exec_btst(
+            &mut cpu,
+            BitSource::Register(1),
+            AddressingMode::DataRegister(0),
+            &mut memory,
+        );
+
+        assert!(!cpu.get_flag(flags::ZERO)); // Should test bit 0
+    }
+
+    #[test]
+    fn test_exec_btst_modulo_8() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.a[0] = 0x2000;
+        memory.write_byte(0x2000, 0x01); // Bit 0 set
+        cpu.d[0] = 8; // Bit number 8. 8 % 8 = 0.
+
+        exec_btst(
+            &mut cpu,
+            BitSource::Register(0),
+            AddressingMode::AddressIndirect(0),
+            &mut memory,
+        );
+
+        assert!(!cpu.get_flag(flags::ZERO)); // Should test bit 0
+    }
+
+    #[test]
+    fn test_exec_btst_no_modification() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0xFFFFFFFF;
+        cpu.d[1] = 0;
+
+        exec_btst(
+            &mut cpu,
+            BitSource::Register(1),
+            AddressingMode::DataRegister(0),
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[0], 0xFFFFFFFF);
+    }
 }
