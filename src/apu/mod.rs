@@ -52,7 +52,10 @@ impl Apu {
         self.fm.write_data_bank(bank, data);
     }
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> main
     /// Run one sample cycle (at ~44100Hz or system clock)
     /// Returns a stereo mixed sample pair.
     pub fn step(&mut self) -> (i16, i16) {
