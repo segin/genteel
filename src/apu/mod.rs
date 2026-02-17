@@ -52,29 +52,6 @@ impl Apu {
         self.fm.write_data_bank(bank, data);
     }
 
-    /// Deprecated: Use [`write_fm_addr`] with [`Bank::Bank0`]
-    #[deprecated(note = "Use write_fm_addr(Bank::Bank0, data)")]
-    pub fn write_fm_addr0(&mut self, data: u8) {
-        self.write_fm_addr(Bank::Bank0, data);
-    }
-
-    /// Deprecated: Use [`write_fm_data`] with [`Bank::Bank0`]
-    #[deprecated(note = "Use write_fm_data(Bank::Bank0, data)")]
-    pub fn write_fm_data0(&mut self, data: u8) {
-        self.write_fm_data(Bank::Bank0, data);
-    }
-
-    /// Deprecated: Use [`write_fm_addr`] with [`Bank::Bank1`]
-    #[deprecated(note = "Use write_fm_addr(Bank::Bank1, data)")]
-    pub fn write_fm_addr1(&mut self, data: u8) {
-        self.write_fm_addr(Bank::Bank1, data);
-    }
-
-    /// Deprecated: Use [`write_fm_data`] with [`Bank::Bank1`]
-    #[deprecated(note = "Use write_fm_data(Bank::Bank1, data)")]
-    pub fn write_fm_data1(&mut self, data: u8) {
-        self.write_fm_data(Bank::Bank1, data);
-    }
 
     /// Run one sample cycle (at ~44100Hz or system clock)
     /// Returns a stereo mixed sample pair.
