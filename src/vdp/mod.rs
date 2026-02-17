@@ -309,7 +309,7 @@ impl Vdp {
                 let g6 = (g3 << 3) | g3;
                 let b5 = (b3 << 2) | (b3 >> 1);
 
-                self.cram_cache[addr >> 1] = ((r5 as u16) << 11) | ((g6 as u16) << 5) | (b5 as u16);
+                self.cram_cache[addr >> 1] = (r5 << 11) | (g6 << 5) | b5;
 
                 self.cram[addr] = (val & 0xFF) as u8;
                 self.cram[addr + 1] = (val >> 8) as u8;
@@ -815,7 +815,7 @@ impl Vdp {
         // Vertical Scroll (Bits 2 of Mode 3: 0=Full Screen, 1=2-Cell Strips)
         let v_scroll = if (mode3 & 0x04) != 0 {
             // 2-Cell (16-pixel) strips. Each entry in VSRAM is 2 bytes and handles 2 cells.
-            let strip_idx = (tile_h >> 1) as usize;
+            let strip_idx = tile_h >> 1;
             let vs_addr = (strip_idx * 4) + (if is_plane_a { 0 } else { 2 });
             if vs_addr + 1 < self.vsram.len() {
                 (((self.vsram[vs_addr] as u16) << 8) | (self.vsram[vs_addr + 1] as u16)) & 0x03FF
@@ -911,6 +911,30 @@ impl Vdp {
     }
 
     #[inline(always)]
+    unsafe fn draw_tile_segment(
+        &mut self,
+        byte: u8,
+        dest_idx: usize,
+        palette_base: usize,
+        swap_nibbles: bool,
+    ) {
+        let (first, second) = if swap_nibbles {
+            (byte & 0x0F, byte >> 4)
+        } else {
+            (byte >> 4, byte & 0x0F)
+        };
+
+        if first != 0 {
+            *self.framebuffer.get_unchecked_mut(dest_idx) =
+                *self.cram_cache.get_unchecked(palette_base + first as usize);
+        }
+        if second != 0 {
+            *self.framebuffer.get_unchecked_mut(dest_idx + 1) =
+                *self.cram_cache.get_unchecked(palette_base + second as usize);
+        }
+    }
+
+    #[inline(always)]
     unsafe fn draw_full_tile_row(&mut self, entry: u16, pixel_v: u16, dest_idx: usize) {
         let palette = ((entry >> 13) & 0x03) as u8;
         let v_flip = (entry & 0x1000) != 0;
@@ -929,87 +953,15 @@ impl Vdp {
         // Max index is 63, which is within cram_cache bounds (64).
         unsafe {
             if h_flip {
-                let mut col = p3 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p3 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 1) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p2 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 2) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p2 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 3) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p1 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 4) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p1 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 5) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p0 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 6) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p0 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 7) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
+                self.draw_tile_segment(p3, dest_idx, palette_base, true);
+                self.draw_tile_segment(p2, dest_idx + 2, palette_base, true);
+                self.draw_tile_segment(p1, dest_idx + 4, palette_base, true);
+                self.draw_tile_segment(p0, dest_idx + 6, palette_base, true);
             } else {
-                let mut col = p0 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p0 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 1) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p1 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 2) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p1 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 3) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p2 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 4) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p2 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 5) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p3 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 6) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p3 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 7) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
+                self.draw_tile_segment(p0, dest_idx, palette_base, false);
+                self.draw_tile_segment(p1, dest_idx + 2, palette_base, false);
+                self.draw_tile_segment(p2, dest_idx + 4, palette_base, false);
+                self.draw_tile_segment(p3, dest_idx + 6, palette_base, false);
             }
         }
     }
@@ -1041,7 +993,7 @@ impl Vdp {
             // Horizontal position in plane
             // The scroll value is subtracted from the horizontal position
             let scrolled_h = screen_x.wrapping_sub(h_scroll);
-            let pixel_h = (scrolled_h & 0x07) as u16;
+            let pixel_h = scrolled_h & 0x07;
             let tile_h = ((scrolled_h >> 3) as usize) & plane_w_mask;
 
             // Fetch V-scroll for this specific column (per-column VS support)
@@ -1183,7 +1135,7 @@ impl Debuggable for Vdp {
                     let g6 = (g3 << 3) | g3;
                     let b5 = (b3 << 2) | (b3 >> 1);
 
-                    self.cram_cache[i] = ((r5 as u16) << 11) | ((g6 as u16) << 5) | (b5 as u16);
+                    self.cram_cache[i] = (r5 << 11) | (g6 << 5) | b5;
                 }
             }
         }
