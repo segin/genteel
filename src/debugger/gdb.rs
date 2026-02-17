@@ -6,12 +6,19 @@
 use std::collections::HashSet;
 use std::io::{BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::time::{Duration, Instant};
 
 /// Default GDB server port
 pub const DEFAULT_PORT: u16 = 1234;
 
 /// Maximum GDB packet size to prevent unbounded memory consumption
 pub const MAX_PACKET_SIZE: usize = 4096;
+
+/// Lockout duration in seconds after failed authentication attempts
+#[cfg(not(test))]
+const LOCKOUT_DURATION_SECS: u64 = 60;
+#[cfg(test)]
+const LOCKOUT_DURATION_SECS: u64 = 1;
 
 /// GDB stop reasons
 #[derive(Debug, Clone, Copy)]
@@ -54,6 +61,10 @@ pub struct GdbServer {
     password: Option<String>,
     /// Whether the client is authenticated
     authenticated: bool,
+    /// Failed authentication attempts
+    failed_attempts: u32,
+    /// Lockout timestamp
+    lockout_until: Option<Instant>,
 }
 
 impl GdbServer {
@@ -92,6 +103,8 @@ impl GdbServer {
             no_ack_mode: false,
             password: final_password,
             authenticated,
+            failed_attempts: 0,
+            lockout_until: None,
         })
     }
 
@@ -620,12 +633,33 @@ impl GdbServer {
 
         let cmd = String::from_utf8_lossy(&bytes);
         if let Some(stripped) = cmd.strip_prefix("auth ") {
+            // Check lockout
+            if let Some(until) = self.lockout_until {
+                if Instant::now() < until {
+                    return "E01".to_string();
+                } else {
+                    self.lockout_until = None;
+                    self.failed_attempts = 0;
+                }
+            }
+
             let provided_pass = stripped.trim();
             if let Some(ref correct_pass) = self.password {
                 if provided_pass == correct_pass {
                     self.authenticated = true;
+                    self.failed_attempts = 0;
+                    self.lockout_until = None;
                     return "OK".to_string();
                 } else {
+                    self.failed_attempts += 1;
+                    if self.failed_attempts >= 3 {
+                        self.lockout_until =
+                            Some(Instant::now() + Duration::from_secs(LOCKOUT_DURATION_SECS));
+                        eprintln!(
+                            "⚠️  Too many failed authentication attempts. Locking out for {} seconds.",
+                            LOCKOUT_DURATION_SECS
+                        );
+                    }
                     return "E01".to_string(); // Invalid password
                 }
             } else {
@@ -709,6 +743,8 @@ mod tests {
             no_ack_mode: false,
             password: None,
             authenticated: true,
+            failed_attempts: 0,
+            lockout_until: None,
         }
     }
 
@@ -1155,5 +1191,45 @@ mod tests {
             "OK"
         );
         assert_eq!(server.process_command("Z1,1000,4", &mut regs, &mut mem), "");
+    }
+
+    #[test]
+    fn test_authentication_lockout() {
+        let password = "secret".to_string();
+        let mut server = GdbServer::new(0, Some(password)).unwrap();
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+
+        fn to_hex(s: &str) -> String {
+            s.bytes().map(|b| format!("{:02x}", b)).collect()
+        }
+
+        let wrong_cmd = format!("qRcmd,{}", to_hex("auth wrong"));
+        let right_cmd = format!("qRcmd,{}", to_hex("auth secret"));
+
+        // 1st failed attempt
+        assert_eq!(server.process_command(&wrong_cmd, &mut regs, &mut mem), "E01");
+        assert_eq!(server.failed_attempts, 1);
+
+        // 2nd failed attempt
+        assert_eq!(server.process_command(&wrong_cmd, &mut regs, &mut mem), "E01");
+        assert_eq!(server.failed_attempts, 2);
+
+        // 3rd failed attempt -> Lockout triggers
+        assert_eq!(server.process_command(&wrong_cmd, &mut regs, &mut mem), "E01");
+        assert!(server.lockout_until.is_some());
+
+        // Immediately try correct password -> Should fail due to lockout
+        assert_eq!(server.process_command(&right_cmd, &mut regs, &mut mem), "E01");
+
+        // Wait for lockout to expire
+        // LOCKOUT_DURATION_SECS is 1 in tests
+        std::thread::sleep(Duration::from_millis(1100));
+
+        // Try correct password again -> Should succeed
+        assert_eq!(server.process_command(&right_cmd, &mut regs, &mut mem), "OK");
+        assert!(server.authenticated);
+        assert!(server.lockout_until.is_none());
+        assert_eq!(server.failed_attempts, 0);
     }
 }
