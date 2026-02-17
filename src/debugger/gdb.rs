@@ -603,6 +603,19 @@ impl GdbServer {
         }
     }
 
+    /// Constant-time string comparison to prevent timing attacks
+    fn secure_compare(a: &str, b: &str) -> bool {
+        let a = a.as_bytes();
+        let b = b.as_bytes();
+        if a.len() != b.len() {
+            return false;
+        }
+        a.iter()
+            .zip(b.iter())
+            .fold(0, |acc, (&x, &y)| acc | (x ^ y))
+            == 0
+    }
+
     fn handle_monitor_command(&mut self, cmd_hex: &str) -> String {
         if cmd_hex.len() % 2 != 0 {
             return "E01".to_string();
@@ -622,7 +635,7 @@ impl GdbServer {
         if let Some(stripped) = cmd.strip_prefix("auth ") {
             let provided_pass = stripped.trim();
             if let Some(ref correct_pass) = self.password {
-                if provided_pass == correct_pass {
+                if Self::secure_compare(provided_pass, correct_pass) {
                     self.authenticated = true;
                     return "OK".to_string();
                 } else {
@@ -1155,5 +1168,19 @@ mod tests {
             "OK"
         );
         assert_eq!(server.process_command("Z1,1000,4", &mut regs, &mut mem), "");
+    }
+
+    #[test]
+    fn test_secure_compare() {
+        assert!(GdbServer::secure_compare("foo", "foo"));
+        assert!(!GdbServer::secure_compare("foo", "bar"));
+        assert!(!GdbServer::secure_compare("foo", "foobar"));
+        assert!(!GdbServer::secure_compare("foo", "fo"));
+        assert!(GdbServer::secure_compare("", ""));
+        assert!(!GdbServer::secure_compare("", "a"));
+
+        // Test unicode
+        assert!(GdbServer::secure_compare("🔒", "🔒"));
+        assert!(!GdbServer::secure_compare("🔒", "🔑"));
     }
 }
