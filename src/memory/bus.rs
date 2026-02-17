@@ -68,9 +68,8 @@ pub struct Bus {
     pub sample_rate: u32,
 }
 
-impl Bus {
-    /// Create a new empty bus
-    pub fn new() -> Self {
+impl Default for Bus {
+    fn default() -> Self {
         Self {
             rom: Vec::new(),
             work_ram: [0; 0x10000],
@@ -87,6 +86,13 @@ impl Bus {
             audio_buffer: Vec::with_capacity(2048),
             sample_rate: 44100,
         }
+    }
+}
+
+impl Bus {
+    /// Create a new empty bus
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Load a ROM into the bus

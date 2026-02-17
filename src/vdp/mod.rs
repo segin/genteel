@@ -73,70 +73,6 @@ struct SpriteAttributes {
     base_tile: u16,
 }
 
-struct SpriteIterator<'a> {
-    vram: &'a [u8; 0x10000],
-    next_idx: u8,
-    count: usize,
-    max_sprites: usize,
-    sat_base: usize,
-}
-
-impl<'a> Iterator for SpriteIterator<'a> {
-    type Item = SpriteAttributes;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.count >= self.max_sprites {
-            return None;
-        }
-
-        // Check SAT boundary
-        if self.sat_base + (self.next_idx as usize * 8) + 8 > 0x10000 {
-            return None;
-        }
-
-        let addr = self.sat_base + (self.next_idx as usize * 8);
-
-        let cur_v = (((self.vram[addr] as u16) << 8) | (self.vram[addr + 1] as u16)) & 0x03FF;
-        let v_pos = cur_v.wrapping_sub(128);
-
-        let size = self.vram[addr + 2];
-        let h_size = ((size >> 2) & 0x03) + 1;
-        let v_size = (size & 0x03) + 1;
-
-        let link = self.vram[addr + 3] & 0x7F;
-
-        let attr_word = ((self.vram[addr + 4] as u16) << 8) | (self.vram[addr + 5] as u16);
-        let priority = (attr_word & 0x8000) != 0;
-        let palette = ((attr_word >> 13) & 0x03) as u8;
-        let v_flip = (attr_word & 0x1000) != 0;
-        let h_flip = (attr_word & 0x0800) != 0;
-        let base_tile = attr_word & 0x07FF;
-
-        let cur_h = (((self.vram[addr + 6] as u16) << 8) | (self.vram[addr + 7] as u16)) & 0x03FF;
-        let h_pos = cur_h.wrapping_sub(128);
-
-        let attr = SpriteAttributes {
-            v_pos,
-            h_pos,
-            h_size,
-            v_size,
-            priority,
-            palette,
-            v_flip,
-            h_flip,
-            base_tile,
-        };
-
-        self.count += 1;
-        self.next_idx = link;
-
-        if link == 0 {
-            self.count = self.max_sprites; // Stop after this one
-        }
-
-        Some(attr)
-    }
-}
 
 const NUM_REGISTERS: usize = 24;
 
@@ -309,7 +245,7 @@ impl Vdp {
                 let g6 = (g3 << 3) | g3;
                 let b5 = (b3 << 2) | (b3 >> 1);
 
-                self.cram_cache[addr >> 1] = ((r5 as u16) << 11) | ((g6 as u16) << 5) | (b5 as u16);
+                self.cram_cache[addr >> 1] = (r5 << 11) | (g6 << 5) | b5;
 
                 self.cram[addr] = (val & 0xFF) as u8;
                 self.cram[addr + 1] = (val >> 8) as u8;
@@ -683,24 +619,62 @@ impl Vdp {
         let sat_base = self.sprite_table_address() as usize;
         let max_sprites = if self.h40_mode() { 80 } else { 64 };
 
-        let iter = SpriteIterator {
-            vram: &self.vram,
-            next_idx: 0,
-            count: 0,
-            max_sprites,
-            sat_base,
-        };
+        let mut current_idx = 0;
+        let mut processed_sprites = 0;
 
-        for attr in iter {
-            let sprite_v_px = (attr.v_size as u16) * 8;
-            if line >= attr.v_pos && line < attr.v_pos + sprite_v_px {
-                sprites[count] = attr;
+        while processed_sprites < max_sprites {
+            let addr = sat_base + (current_idx as usize * 8);
+
+            if addr + 8 > 0x10000 {
+                break;
+            }
+
+            // Read V-Position and Size first to check visibility
+            let cur_v = (((self.vram[addr] as u16) << 8) | (self.vram[addr + 1] as u16)) & 0x03FF;
+            let v_pos = cur_v.wrapping_sub(128);
+
+            let size = self.vram[addr + 2];
+            let v_size = (size & 0x03) + 1;
+            let sprite_v_px = (v_size as u16) * 8;
+
+            let link = self.vram[addr + 3] & 0x7F;
+
+            // Check if visible on this line
+            if line >= v_pos && line < v_pos + sprite_v_px {
+                let h_size = ((size >> 2) & 0x03) + 1;
+
+                let attr_word = ((self.vram[addr + 4] as u16) << 8) | (self.vram[addr + 5] as u16);
+                let priority = (attr_word & 0x8000) != 0;
+                let palette = ((attr_word >> 13) & 0x03) as u8;
+                let v_flip = (attr_word & 0x1000) != 0;
+                let h_flip = (attr_word & 0x0800) != 0;
+                let base_tile = attr_word & 0x07FF;
+
+                let cur_h = (((self.vram[addr + 6] as u16) << 8) | (self.vram[addr + 7] as u16)) & 0x03FF;
+                let h_pos = cur_h.wrapping_sub(128);
+
+                sprites[count] = SpriteAttributes {
+                    v_pos,
+                    h_pos,
+                    h_size,
+                    v_size,
+                    priority,
+                    palette,
+                    v_flip,
+                    h_flip,
+                    base_tile,
+                };
                 count += 1;
-                // Safety check, though SpriteIterator limits iterations
                 if count >= 80 {
                     break;
                 }
             }
+
+            processed_sprites += 1;
+            if link == 0 {
+                break;
+            }
+            current_idx = link;
         }
         (count, sprites)
     }
@@ -815,7 +789,7 @@ impl Vdp {
         // Vertical Scroll (Bits 2 of Mode 3: 0=Full Screen, 1=2-Cell Strips)
         let v_scroll = if (mode3 & 0x04) != 0 {
             // 2-Cell (16-pixel) strips. Each entry in VSRAM is 2 bytes and handles 2 cells.
-            let strip_idx = (tile_h >> 1) as usize;
+            let strip_idx = tile_h >> 1;
             let vs_addr = (strip_idx * 4) + (if is_plane_a { 0 } else { 2 });
             if vs_addr + 1 < self.vsram.len() {
                 (((self.vsram[vs_addr] as u16) << 8) | (self.vsram[vs_addr + 1] as u16)) & 0x03FF
@@ -1041,7 +1015,7 @@ impl Vdp {
             // Horizontal position in plane
             // The scroll value is subtracted from the horizontal position
             let scrolled_h = screen_x.wrapping_sub(h_scroll);
-            let pixel_h = (scrolled_h & 0x07) as u16;
+            let pixel_h = scrolled_h & 0x07;
             let tile_h = ((scrolled_h >> 3) as usize) & plane_w_mask;
 
             // Fetch V-scroll for this specific column (per-column VS support)
@@ -1183,7 +1157,7 @@ impl Debuggable for Vdp {
                     let g6 = (g3 << 3) | g3;
                     let b5 = (b3 << 2) | (b3 >> 1);
 
-                    self.cram_cache[i] = ((r5 as u16) << 11) | ((g6 as u16) << 5) | (b5 as u16);
+                    self.cram_cache[i] = (r5 << 11) | (g6 << 5) | b5;
                 }
             }
         }

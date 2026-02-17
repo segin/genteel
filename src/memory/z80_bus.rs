@@ -156,7 +156,7 @@ impl MemoryInterface for Z80Bus {
             Self::read_byte_from_bus(bus, address)
         } else {
             let mut bus_guard = self.bus.bus.borrow_mut();
-            Self::read_byte_from_bus(&mut *bus_guard, address)
+            Self::read_byte_from_bus(&mut bus_guard, address)
         }
     }
 
@@ -166,7 +166,7 @@ impl MemoryInterface for Z80Bus {
             Self::write_byte_to_bus(bus, address, value)
         } else {
             let mut bus_guard = self.bus.bus.borrow_mut();
-            Self::write_byte_to_bus(&mut *bus_guard, address, value)
+            Self::write_byte_to_bus(&mut bus_guard, address, value)
         }
     }
 
