@@ -67,6 +67,8 @@ pub struct Ym2612 {
 
     /// Phase accumulators for the 6 channels (simplified FM)
     phase: [f32; 6],
+    /// Precomputed phase increments for the 6 channels
+    phase_inc: [f32; 6],
     /// DAC value (register 0x2A)
     dac_value: u8,
     /// DAC enabled (register 0x2B bit 7)
@@ -83,6 +85,7 @@ impl Ym2612 {
             timer_b_count: 0,
             busy_cycles: 0,
             phase: [0.0; 6],
+            phase_inc: [0.0; 6],
             dac_value: 0x80,
             dac_enabled: false,
         }
@@ -230,6 +233,16 @@ impl Ym2612 {
             self.registers[0][0x2B] = val;
         } else {
             self.registers[bank_idx][addr as usize] = val;
+
+            let bank_offset = if bank == Bank::Bank1 { 3 } else { 0 };
+
+            if (0xA0..=0xA2).contains(&addr) {
+                let ch = (addr - 0xA0) as usize + bank_offset;
+                self.update_phase_inc(ch);
+            } else if (0xA4..=0xA6).contains(&addr) {
+                let ch = (addr - 0xA4) as usize + bank_offset;
+                self.update_phase_inc(ch);
+            }
         }
     }
 
@@ -260,13 +273,10 @@ impl Ym2612 {
                 continue;
             }
 
-            let (block, f_num) = self.get_frequency(ch);
-            if f_num == 0 {
+            let phase_inc = self.phase_inc[ch];
+            if phase_inc == 0.0 {
                 continue;
             }
-
-            let freq_mult = (1 << block) as f32;
-            let phase_inc = (f_num as f32 * freq_mult) / 200000.0;
 
             self.phase[ch] = (self.phase[ch] + phase_inc) % 1.0;
 
@@ -341,6 +351,17 @@ impl Ym2612 {
         let block = (hi >> 3) & 0x07;
         let f_num = ((hi as u16 & 0x07) << 8) | (lo as u16);
         (block, f_num)
+    }
+
+    /// Calculate and cache phase increment for a channel
+    fn update_phase_inc(&mut self, channel: usize) {
+        let (block, f_num) = self.get_frequency(channel);
+        if f_num == 0 {
+            self.phase_inc[channel] = 0.0;
+        } else {
+            let freq_mult = (1 << block) as f32;
+            self.phase_inc[channel] = (f_num as f32 * freq_mult) / 200000.0;
+        }
     }
 
     /// Check if channel key is on (conceptually, exact register is per-operator)
