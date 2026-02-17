@@ -4,11 +4,34 @@ import re
 import json
 import csv
 import subprocess
+import sys
 from datetime import datetime
 
 # =============================================================================
 # Security & Quality Audit Tool for genteel
 # =============================================================================
+
+def find_project_root():
+    """
+    Finds the project root directory by looking for .git or Cargo.toml.
+    Returns the path to the root directory.
+    """
+    current_dir = os.path.abspath(os.path.dirname(__file__))
+    while True:
+        if os.path.exists(os.path.join(current_dir, ".git")) or os.path.exists(os.path.join(current_dir, "Cargo.toml")):
+            return current_dir
+        parent_dir = os.path.dirname(current_dir)
+        if parent_dir == current_dir:
+            return None
+        current_dir = parent_dir
+
+# Change to project root
+project_root = find_project_root()
+if project_root:
+    os.chdir(project_root)
+else:
+    print("Error: Could not find project root (looking for .git or Cargo.toml)")
+    sys.exit(1)
 
 REPORT_DIR = "audit_reports"
 FINDINGS_JSON = os.path.join(REPORT_DIR, "findings.json")
@@ -105,6 +128,7 @@ def scan_text_patterns():
 
 def run_audit():
     print("🚀 Starting genteel security & quality audit...")
+    print(f"📂 Working directory: {os.getcwd()}")
     
     if not os.path.exists(REPORT_DIR):
         os.makedirs(REPORT_DIR)

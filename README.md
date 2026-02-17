@@ -47,6 +47,21 @@ Genteel features a comprehensive test suite including unit tests, property-based
 cargo test
 ```
 
+## Development Tools
+
+### Code Audit Tool
+
+The repository includes a static analysis tool in `scripts/audit_tool.py` to check for:
+- Potential secrets (API keys, private keys, etc.)
+- Technical debt (`TODO`, `FIXME`, `XXX` tags)
+- Usage of `unsafe` blocks
+
+To run the audit:
+```bash
+python3 scripts/audit_tool.py
+```
+Reports are generated in the `audit_reports/` directory.
+
 ## Status
 
 Phase 4: System Integration is currently in progress.
