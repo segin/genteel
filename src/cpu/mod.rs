@@ -1586,3 +1586,4 @@ mod tests {
         );
     }
 }
+#[cfg(test)] mod bench_decoder;
