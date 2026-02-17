@@ -320,3 +320,89 @@ pub fn exec_eori_to_sr<M: MemoryInterface>(cpu: &mut Cpu, memory: &mut M) -> u32
     cpu.set_sr(cpu.sr ^ imm);
     20
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::memory::Memory;
+
+    fn create_test_cpu() -> (Cpu, Memory) {
+        let mut memory = Memory::new(0x10000);
+        // Initial SP and PC
+        memory.write_long(0, 0x1000); // SP
+        memory.write_long(4, 0x100); // PC
+        let cpu = Cpu::new(&mut memory);
+        (cpu, memory)
+    }
+
+    #[test]
+    fn test_exec_trap_vectors() {
+        for vector in 0..16 {
+            let (mut cpu, mut memory) = create_test_cpu();
+
+            // Setup
+            let initial_pc = 0x200;
+            cpu.pc = initial_pc;
+            cpu.sr = 0x0000; // User mode, no flags
+            let initial_sp = cpu.a[7];
+
+            // Set exception vector handler address
+            // Vector num = 32 + vector
+            let vector_num = 32 + vector as u32;
+            let handler_addr = 0x4000 + (vector as u32 * 0x10);
+
+            memory.write_long(vector_num * 4, handler_addr);
+
+            // Execute TRAP
+            let cycles = exec_trap(&mut cpu, vector, &mut memory);
+
+            // Verify
+            assert_eq!(cycles, 34); // Standard exception processing time
+            assert_eq!(cpu.pc, handler_addr);
+
+            // Verify Stack
+            // SP should decrease by 6 (4 bytes PC + 2 bytes SR)
+            // Initial SP was 0x1000. New SP should be 0x0FFA.
+            assert_eq!(cpu.a[7], initial_sp.wrapping_sub(6));
+
+            let pushed_sr = memory.read_word(cpu.a[7]);
+            let pushed_pc = memory.read_long(cpu.a[7].wrapping_add(2));
+
+            assert_eq!(pushed_sr, 0x0000); // Old SR
+            assert_eq!(pushed_pc, initial_pc); // Old PC
+
+            // Verify New SR
+            // Supervisor bit (bit 13) should be set. Trace bit (bit 15) cleared.
+            assert_eq!(cpu.sr & 0x2000, 0x2000, "Supervisor bit not set");
+            assert_eq!(cpu.sr & 0x8000, 0, "Trace bit not cleared");
+        }
+    }
+
+    #[test]
+    fn test_exec_trap_trace_bit() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        let vector = 5;
+
+        cpu.pc = 0x200;
+        cpu.sr = 0x8000; // Trace bit set
+        let initial_sp = cpu.a[7];
+
+        // Set vector
+        let handler = 0x5000;
+        memory.write_long((32 + vector as u32) * 4, handler);
+
+        exec_trap(&mut cpu, vector, &mut memory);
+
+        // Verify stack pointer updated
+        assert_eq!(cpu.a[7], initial_sp.wrapping_sub(6));
+
+        // Old SR on stack should have Trace bit set
+        let pushed_sr = memory.read_word(cpu.a[7]);
+        assert_eq!(pushed_sr & 0x8000, 0x8000);
+
+        // New SR should have Trace bit cleared
+        assert_eq!(cpu.sr & 0x8000, 0);
+        // And Supervisor bit set
+        assert_eq!(cpu.sr & 0x2000, 0x2000);
+    }
+}
