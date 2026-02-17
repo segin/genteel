@@ -871,7 +871,16 @@ impl Vdp {
         // multiple of 4, masking with 0xFFFC ensures the slice never crosses
         // the 64KB boundary.
         let addr = row_addr & 0xFFFC;
-        self.vram[addr..addr + 4].try_into().unwrap()
+
+        // SAFETY:
+        // 1. `addr` is masked with 0xFFFC, so it's guaranteed to be <= 0xFFFC.
+        // 2. `addr + 4` is <= 0x10000.
+        // 3. `self.vram` has a length of 0x10000, so [addr..addr+4] is always within bounds.
+        // 4. We use `read_unaligned` because `vram` alignment is 1 (u8 array).
+        unsafe {
+            let ptr = self.vram.as_ptr().add(addr) as *const u32;
+            ptr.read_unaligned().to_ne_bytes()
+        }
     }
 
     fn draw_partial_tile_row(
