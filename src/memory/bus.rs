@@ -204,13 +204,33 @@ impl Bus {
             // ROM is read-only (writes are ignored)
             0x000000..=0x3FFFFF => {}
 
-            // Z80 Area: 0xA00000-0xA0FFFF
+            // Z80 RAM Area
+            0xA00000..=0xA0FFFF => self.write_z80_area(addr, value),
+
+            // I/O Ports Area
+            0xA10000..=0xA1FFFF => self.write_io_area(addr, value),
+
+            // VDP Ports Area
+            0xC00000..=0xC0FFFF => self.write_vdp_area(addr, value),
+
+            // Work RAM
+            0xE00000..=0xFFFFFF => self.write_ram(addr, value),
+
+            // Unmapped regions (writes ignored)
+            _ => {}
+        }
+    }
+
+    fn write_z80_area(&mut self, addr: u32, value: u8) {
+        match addr {
+            // Z80 RAM
             0xA00000..=0xA01FFF => {
                 // Only accessible if Z80 bus is requested (Z80 stopped)
                 if self.z80_bus_request {
                     self.z80_ram[(addr & 0x1FFF) as usize] = value;
                 }
             }
+
             // YM2612 FM Chip: 0xA04000-0xA04003
             0xA04000..=0xA04003 => {
                 let port = (addr & 2) >> 1;
@@ -221,6 +241,7 @@ impl Bus {
                     self.apu.fm.write_address(port as u8, value);
                 }
             }
+
             // Z80 area bank registers and other hardware
             0xA06000..=0xA060FF => {
                 // Update bank register (LSB shifts in)
@@ -229,28 +250,33 @@ impl Bus {
                 self.z80_bank_addr = (self.z80_bank_addr & !mask) | bit;
                 self.z80_bank_bit = (self.z80_bank_bit + 1) % 9;
             }
+            _ => {}
+        }
+    }
 
-            // I/O & Z80 Control: 0xA10000-0xA1FFFF
+    fn write_io_area(&mut self, addr: u32, value: u8) {
+        match addr {
+            // I/O Ports
             0xA10000..=0xA1001F => {
                 self.io.write(addr, value);
             }
+
+            // Z80 Bus Request
             0xA11100 => {
                 self.z80_bus_request = (value & 0x01) != 0;
             }
+            0xA11101 => {
+                // Ignore writes to lower byte of Z80 bus request
+            }
+
+            // Z80 Reset
             0xA11200 => {
                 self.z80_reset = (value & 0x01) == 0;
                 if self.z80_reset {
                     self.z80_bank_bit = 0; // Hardware resets shift pointer
                 }
             }
-
-            // VDP Ports: 0xC00000-0xC0FFFF
-            0xC00000..=0xC0FFFF => self.write_vdp_area(addr, value),
-
-            // Work RAM: 0xE00000-0xFFFFFF
-            0xE00000..=0xFFFFFF => self.write_ram(addr, value),
-
-            // Unmapped regions
+            0xA11201 => {}
             _ => {}
         }
     }
