@@ -21,25 +21,30 @@
 //! | 0xE00000-0xFFFFFF  | 2 MB   | Work RAM (64KB mirrored)       |
 
 use super::byte_utils;
+use super::byte_utils::big_array;
 use super::MemoryInterface;
 use crate::apu::Apu;
 use crate::debugger::Debuggable;
 use crate::io::Io;
 use crate::vdp::Vdp;
-use serde_json::{json, Value};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// Sega Genesis Memory Bus
 ///
 /// Routes memory accesses to the appropriate component based on address.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Bus {
     /// ROM data (up to 4MB)
+    #[serde(skip)]
     pub rom: Vec<u8>,
 
     /// Work RAM (64KB at 0xFF0000-0xFFFFFF, mirrored in 0xE00000-0xFFFFFF)
+    #[serde(with = "big_array")]
     pub work_ram: [u8; 0x10000],
 
     /// Z80 RAM (8KB at 0xA00000-0xA01FFF)
+    #[serde(with = "big_array")]
     pub z80_ram: [u8; 0x2000],
 
     /// VDP Port access
@@ -64,6 +69,7 @@ pub struct Bus {
 
     /// Audio synchronization
     pub audio_accumulator: f32,
+    #[serde(skip)]
     pub audio_buffer: Vec<i16>,
     pub sample_rate: u32,
 }
@@ -499,28 +505,17 @@ impl MemoryInterface for Bus {
 
 impl Debuggable for Bus {
     fn read_state(&self) -> Value {
-        json!({
-            "z80_bus_request": self.z80_bus_request,
-            "z80_reset": self.z80_reset,
-            "z80_bank_addr": self.z80_bank_addr,
-            "vdp": self.vdp.read_state(),
-            "io": self.io.read_state(),
-            "apu": self.apu.read_state(),
-        })
+        serde_json::to_value(self).unwrap()
     }
 
     fn write_state(&mut self, state: &Value) {
-        if let Some(req) = state["z80_bus_request"].as_bool() {
-            self.z80_bus_request = req;
+        if let Ok(mut new_bus) = serde_json::from_value::<Bus>(state.clone()) {
+            new_bus.rom = std::mem::take(&mut self.rom);
+            if new_bus.vdp.framebuffer.len() != 320 * 240 {
+                new_bus.vdp.framebuffer.resize(320 * 240, 0);
+            }
+            new_bus.vdp.reconstruct_cram_cache();
+            *self = new_bus;
         }
-        if let Some(reset) = state["z80_reset"].as_bool() {
-            self.z80_reset = reset;
-        }
-        if let Some(bank) = state["z80_bank_addr"].as_u64() {
-            self.z80_bank_addr = bank as u32;
-        }
-        self.vdp.write_state(&state["vdp"]);
-        self.io.write_state(&state["io"]);
-        self.apu.write_state(&state["apu"]);
     }
 }
