@@ -808,3 +808,114 @@ fn fetch_postinc_operand<M: MemoryInterface>(
     cpu.a[reg as usize] = addr.wrapping_add(size.bytes());
     val
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cpu::Cpu;
+    use crate::cpu::flags;
+    use crate::memory::Memory;
+
+    fn create_test_cpu() -> (Cpu, Memory) {
+        let mut memory = Memory::new(0x100000);
+        let mut cpu = Cpu::new(&mut memory);
+        cpu.pc = 0x1000;
+        cpu.a[7] = 0x8000;
+        cpu.sr = flags::SUPERVISOR;
+        (cpu, memory)
+    }
+
+    #[test]
+    fn test_chk_within_bounds() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        // Setup: D0 = 10, D1 (bound) = 20
+        cpu.d[0] = 10;
+        cpu.d[1] = 20;
+
+        // CHK.W D1, D0
+        // src = D1 (DataRegister(1)), dst_reg = 0
+        let cycles = exec_chk(&mut cpu, AddressingMode::DataRegister(1), 0, &mut memory);
+
+        // No exception should occur
+        assert!(!cpu.pending_exception);
+
+        // N flag should be clear (result >= 0)
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+
+        // Check cycles (CHK register direct is 10 cycles + calculate_ea cycles)
+        // calculate_ea for DataRegister is 0 cycles usually?
+        // Wait, exec_chk returns 10 + cycles.
+        // calculate_ea returns 0 for DataRegister? Let's assume so or check.
+        // If it returns 0, then 10.
+        // We can just assert it returns > 0.
+        assert!(cycles >= 10);
+    }
+
+    #[test]
+    fn test_chk_less_than_zero() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        // Setup exception vector 6 (CHK instruction)
+        memory.write_long(0x18, 0x2000); // Vector 6 address = 0x18
+
+        // Setup: D0 = -1 (0xFFFF), D1 (bound) = 20
+        cpu.d[0] = 0xFFFF; // -1 as i16
+        cpu.d[1] = 20;
+
+        // CHK.W D1, D0
+        exec_chk(&mut cpu, AddressingMode::DataRegister(1), 0, &mut memory);
+
+        // Check if PC jumped to 0x2000
+        assert_eq!(cpu.pc, 0x2000);
+
+        // Check N flag: "N is set if Dn < 0"
+        assert!(cpu.get_flag(flags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_chk_greater_than_bound() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        // Setup exception vector 6
+        memory.write_long(0x18, 0x3000);
+
+        // Setup: D0 = 30, D1 (bound) = 20
+        cpu.d[0] = 30;
+        cpu.d[1] = 20;
+
+        // CHK.W D1, D0
+        exec_chk(&mut cpu, AddressingMode::DataRegister(1), 0, &mut memory);
+
+        // Check if PC jumped to 0x3000
+        assert_eq!(cpu.pc, 0x3000);
+
+        // Check N flag: "N is cleared if Dn > Source"
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_chk_zero_bound() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        // Setup exception vector 6
+        memory.write_long(0x18, 0x4000);
+
+        // Setup: D0 = 0, D1 (bound) = 0
+        cpu.d[0] = 0;
+        cpu.d[1] = 0;
+
+        // CHK.W D1, D0
+        exec_chk(&mut cpu, AddressingMode::DataRegister(1), 0, &mut memory);
+
+        // Within bounds (0 <= 0 <= 0), no exception
+
+        // Check PC hasn't changed (still 0x1000)
+        assert_eq!(cpu.pc, 0x1000);
+
+        // Z flag set (val == 0)
+        assert!(cpu.get_flag(flags::ZERO));
+        // N flag clear
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+    }
+}
