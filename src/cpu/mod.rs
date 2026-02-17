@@ -7,6 +7,8 @@ pub mod addressing;
 pub mod decoder;
 pub mod ops;
 #[cfg(test)]
+mod tests_addressing;
+#[cfg(test)]
 mod tests_bug_fixes;
 #[cfg(test)]
 mod tests_cache;
