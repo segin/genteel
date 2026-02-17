@@ -36,6 +36,26 @@ impl StopReason {
             StopReason::Interrupt => 2,  // SIGINT
         }
     }
+
+}
+
+/// Constant-time string comparison to prevent timing attacks
+///
+/// Note: This function leaks the length of the string via early return,
+/// but performs constant-time comparison for strings of equal length
+/// to prevent prefix matching attacks.
+fn constant_time_eq(a: &str, b: &str) -> bool {
+    let a_bytes = a.as_bytes();
+    let b_bytes = b.as_bytes();
+    if a_bytes.len() != b_bytes.len() {
+        return false;
+    }
+
+    let mut result = 0;
+    for (x, y) in a_bytes.iter().zip(b_bytes.iter()) {
+        result |= x ^ y;
+    }
+    result == 0
 }
 
 /// GDB Server state
@@ -622,7 +642,7 @@ impl GdbServer {
         if let Some(stripped) = cmd.strip_prefix("auth ") {
             let provided_pass = stripped.trim();
             if let Some(ref correct_pass) = self.password {
-                if provided_pass == correct_pass {
+                if constant_time_eq(provided_pass, correct_pass) {
                     self.authenticated = true;
                     return "OK".to_string();
                 } else {
@@ -1155,5 +1175,67 @@ mod tests {
             "OK"
         );
         assert_eq!(server.process_command("Z1,1000,4", &mut regs, &mut mem), "");
+    }
+
+    #[test]
+    fn test_auth_timing_attack_mitigation() {
+        let password = "secret".to_string();
+        // Since we cannot easily create a TcpListener on port 0 in tests without risking failure or mocking it fully,
+        // we'll use GdbServer::new which internally binds. Hopefully port 0 works fine.
+        let mut server = GdbServer::new(0, Some(password)).unwrap();
+
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+
+        assert!(!server.authenticated);
+
+        // Helper to encode auth command
+        fn make_auth_cmd(pwd: &str) -> String {
+            let cmd_str = format!("auth {}", pwd);
+            let hex_cmd: String = cmd_str.bytes().map(|b| format!("{:02x}", b)).collect();
+            format!("qRcmd,{}", hex_cmd)
+        }
+
+        // Correct password
+        let correct_cmd = make_auth_cmd("secret");
+        assert_eq!(server.process_command(&correct_cmd, &mut regs, &mut mem), "OK");
+        assert!(server.authenticated);
+
+        // Reset auth for negative tests manually
+        server.authenticated = false;
+
+        // Incorrect password (same length)
+        let incorrect_cmd = make_auth_cmd("secreT");
+        assert_eq!(server.process_command(&incorrect_cmd, &mut regs, &mut mem), "E01");
+        assert!(!server.authenticated);
+
+        // Incorrect password (different length - shorter)
+        let short_cmd = make_auth_cmd("short");
+        assert_eq!(server.process_command(&short_cmd, &mut regs, &mut mem), "E01");
+        assert!(!server.authenticated);
+
+        // Incorrect password (different length - longer)
+        let long_cmd = make_auth_cmd("secretlong");
+        assert_eq!(server.process_command(&long_cmd, &mut regs, &mut mem), "E01");
+        assert!(!server.authenticated);
+
+        // Empty password
+        let empty_cmd = make_auth_cmd("");
+        assert_eq!(server.process_command(&empty_cmd, &mut regs, &mut mem), "E01");
+        assert!(!server.authenticated);
+    }
+
+    #[test]
+    fn test_constant_time_eq_logic() {
+        assert!(constant_time_eq("secret", "secret"));
+        assert!(!constant_time_eq("secret", "secreT"));
+        assert!(!constant_time_eq("secret", "short"));
+        assert!(!constant_time_eq("secret", "secretlong"));
+        assert!(!constant_time_eq("", "secret"));
+        assert!(!constant_time_eq("secret", ""));
+        assert!(constant_time_eq("", ""));
+
+        // Ensure it doesn't just check prefix
+        assert!(!constant_time_eq("secret", "secreta"));
     }
 }
