@@ -513,7 +513,7 @@ pub fn exec_tas<M: MemoryInterface>(cpu: &mut Cpu, dst: AddressingMode, memory: 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cpu::decoder::{AddressingMode, Size};
+    use crate::cpu::decoder::{AddressingMode, ShiftCount, Size};
     use crate::cpu::flags;
     use crate::cpu::Cpu;
     use crate::memory::Memory;
@@ -639,5 +639,290 @@ mod tests {
         assert!(cpu.get_flag(flags::NEGATIVE));
         assert!(!cpu.get_flag(flags::ZERO));
         assert_eq!(cycles, 8); // 4 (base) + 0 (DataReg) + 4 (AddrIndirect)
+    }
+
+    #[test]
+    fn test_exec_lsl() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // Case 1: LSL.B #1, D0 (0x01 -> 0x02)
+        cpu.d[0] = 0x01;
+        exec_shift(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(1),
+            true,  // left
+            false, // arithmetic (logical for LSL)
+            &mut memory,
+        );
+        assert_eq!(cpu.d[0] & 0xFF, 0x02);
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::EXTEND));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+
+        // Case 2: LSL.B #1, D0 (0x80 -> 0x00)
+        cpu.d[0] = 0x80;
+        exec_shift(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(1),
+            true,
+            false,
+            &mut memory,
+        );
+        assert_eq!(cpu.d[0] & 0xFF, 0x00);
+        assert!(cpu.get_flag(flags::CARRY)); // Bit 7 shifted out
+        assert!(cpu.get_flag(flags::EXTEND));
+        assert!(cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::OVERFLOW)); // LSL clears V
+
+        // Case 3: LSL.B by 0, D0 (No change)
+        cpu.d[1] = 0; // Count = 0
+        cpu.d[0] = 0xFF;
+        cpu.set_flag(flags::CARRY, true); // Should be cleared
+        exec_shift(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Register(1),
+            true,
+            false,
+            &mut memory,
+        );
+        assert_eq!(cpu.d[0] & 0xFF, 0xFF);
+        assert!(!cpu.get_flag(flags::CARRY)); // Cleared when count is 0
+        assert!(cpu.get_flag(flags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_exec_lsr() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // Case 1: LSR.B #1, D0 (0x02 -> 0x01)
+        cpu.d[0] = 0x02;
+        exec_shift(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(1),
+            false, // right
+            false, // logical
+            &mut memory,
+        );
+        assert_eq!(cpu.d[0] & 0xFF, 0x01);
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::EXTEND));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+
+        // Case 2: LSR.B #1, D0 (0x01 -> 0x00)
+        cpu.d[0] = 0x01;
+        exec_shift(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(1),
+            false,
+            false,
+            &mut memory,
+        );
+        assert_eq!(cpu.d[0] & 0xFF, 0x00);
+        assert!(cpu.get_flag(flags::CARRY)); // Bit 0 shifted out
+        assert!(cpu.get_flag(flags::EXTEND));
+        assert!(cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+    }
+
+    #[test]
+    fn test_exec_asl() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // Case 1: ASL.B #1, D0 (0x01 -> 0x02). V=0.
+        cpu.d[0] = 0x01;
+        exec_shift(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(1),
+            true, // left
+            true, // arithmetic
+            &mut memory,
+        );
+        assert_eq!(cpu.d[0] & 0xFF, 0x02);
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert!(!cpu.get_flag(flags::CARRY));
+
+        // Case 2: ASL.B #1, D0 (0x40 -> 0x80). Sign change 0->1. V=1.
+        cpu.d[0] = 0x40;
+        exec_shift(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(1),
+            true,
+            true,
+            &mut memory,
+        );
+        assert_eq!(cpu.d[0] & 0xFF, 0x80);
+        assert!(cpu.get_flag(flags::OVERFLOW));
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::CARRY));
+
+        // Case 3: ASL.B #1, D0 (0x80 -> 0x00). Sign change 1->0. V=1.
+        cpu.d[0] = 0x80;
+        exec_shift(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(1),
+            true,
+            true,
+            &mut memory,
+        );
+        assert_eq!(cpu.d[0] & 0xFF, 0x00);
+        assert!(cpu.get_flag(flags::OVERFLOW));
+        assert!(cpu.get_flag(flags::ZERO));
+        assert!(cpu.get_flag(flags::CARRY));
+
+        // Case 4: ASL.B #1, D0 (0xC0 -> 0x80). Sign change 1->1. V=0.
+        cpu.d[0] = 0xC0;
+        exec_shift(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(1),
+            true,
+            true,
+            &mut memory,
+        );
+        assert_eq!(cpu.d[0] & 0xFF, 0x80);
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert!(cpu.get_flag(flags::CARRY));
+    }
+
+    #[test]
+    fn test_exec_asr() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // Case 1: ASR.B #1, D0 (0x80 -> 0xC0). Sign preserved (-128 -> -64).
+        cpu.d[0] = 0x80;
+        exec_shift(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(1),
+            false, // right
+            true,  // arithmetic
+            &mut memory,
+        );
+        assert_eq!(cpu.d[0] & 0xFF, 0xC0);
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::EXTEND));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+
+        // Case 2: ASR.B #1, D0 (0x02 -> 0x01).
+        cpu.d[0] = 0x02;
+        exec_shift(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(1),
+            false,
+            true,
+            &mut memory,
+        );
+        assert_eq!(cpu.d[0] & 0xFF, 0x01);
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::EXTEND));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+
+        // Case 3: ASR.B #1, D0 (0x01 -> 0x00). C=1.
+        cpu.d[0] = 0x01;
+        exec_shift(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(1),
+            false,
+            true,
+            &mut memory,
+        );
+        assert_eq!(cpu.d[0] & 0xFF, 0x00);
+        assert!(cpu.get_flag(flags::CARRY));
+        assert!(cpu.get_flag(flags::EXTEND));
+        assert!(cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_exec_shift_counts() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // Case 1: LSL.B #8, D0. 8 is large for byte (clears it).
+        // 0xFF -> 0x00.
+        cpu.d[0] = 0xFF;
+        exec_shift(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(8),
+            true, // left
+            false,
+            &mut memory,
+        );
+        assert_eq!(cpu.d[0] & 0xFF, 0x00);
+        assert!(cpu.get_flag(flags::CARRY)); // Last bit shifted out was 1.
+        assert!(cpu.get_flag(flags::ZERO));
+
+        // Case 2: Register Count Modulo 63.
+        // D1 = 64 (0x40). 64 & 63 = 0.
+        // LSL.B D1, D0. Shift by 0.
+        cpu.d[1] = 64;
+        cpu.d[0] = 0xFF;
+        cpu.set_flag(flags::CARRY, true);
+        exec_shift(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Register(1),
+            true,
+            false,
+            &mut memory,
+        );
+        assert_eq!(cpu.d[0] & 0xFF, 0xFF);
+        assert!(!cpu.get_flag(flags::CARRY)); // Cleared for count 0.
+
+        // Case 3: Register Count Modulo 63.
+        // D1 = 33 (0x21). 33 & 63 = 33.
+        // LSL.L D1, D0. Shift by 33.
+        // 0xFFFFFFFF << 33 = 0.
+        cpu.d[1] = 33;
+        cpu.d[0] = 0xFFFFFFFF;
+        exec_shift(
+            &mut cpu,
+            Size::Long,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Register(1),
+            true,
+            false,
+            &mut memory,
+        );
+        assert_eq!(cpu.d[0], 0);
+        // Last shifted bit depends on the sequence.
+        // 32nd shift: 1 shifted out (result 0). 33rd shift: 0 shifted out (result 0).
+        // C should be 0.
+        assert!(!cpu.get_flag(flags::CARRY));
     }
 }
