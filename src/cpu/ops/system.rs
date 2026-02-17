@@ -320,3 +320,107 @@ pub fn exec_eori_to_sr<M: MemoryInterface>(cpu: &mut Cpu, memory: &mut M) -> u32
     cpu.set_sr(cpu.sr ^ imm);
     20
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::memory::Memory;
+    use crate::cpu::flags;
+
+    #[test]
+    fn test_exec_trap_user_to_supervisor() {
+        let mut memory = Memory::new(0x10000);
+        let mut cpu = Cpu::new(&mut memory);
+
+        // Setup User Mode
+        // Clear Supervisor (bit 13) and Trace (bit 15)
+        cpu.sr = 0x0000;
+
+        // Setup Stack Pointers
+        cpu.usp = 0x2000; // Expected User Stack
+        cpu.ssp = 0x4000; // Expected Supervisor Stack
+
+        // In user mode, A7 is USP
+        cpu.a[7] = cpu.usp;
+
+        // Set PC
+        cpu.pc = 0x1000;
+
+        // Setup Vector 33 (TRAP #1 -> 32 + 1)
+        // Vector address: 33 * 4 = 132 (0x84)
+        memory.write_long(132, 0x3000); // Target PC
+
+        // Execute TRAP #1
+        let cycles = exec_trap(&mut cpu, 1, &mut memory);
+
+        // Verify Cycles
+        assert_eq!(cycles, 34);
+
+        // Verify PC Jump
+        assert_eq!(cpu.pc, 0x3000);
+
+        // Verify SR: Supervisor Set, Trace Cleared
+        assert_eq!(cpu.sr & flags::SUPERVISOR, flags::SUPERVISOR);
+        assert_eq!(cpu.sr & flags::TRACE, 0);
+
+        // Verify Stack Switch
+        // A7 should now be SSP - 6 (4 bytes PC + 2 bytes SR)
+        assert_eq!(cpu.a[7], 0x4000 - 6);
+
+        // USP should be preserved (saved from old A7)
+        assert_eq!(cpu.usp, 0x2000);
+
+        // Verify Stack Content
+        // Stack grows down:
+        // 0x3FFC: PC (0x1000)
+        // 0x3FFA: SR (Old SR = 0x0000)
+        assert_eq!(memory.read_long(0x3FFC), 0x1000);
+        assert_eq!(memory.read_word(0x3FFA), 0x0000);
+    }
+
+    #[test]
+    fn test_exec_trap_supervisor_to_supervisor() {
+        let mut memory = Memory::new(0x10000);
+        let mut cpu = Cpu::new(&mut memory);
+
+        // Setup Supervisor Mode
+        cpu.sr = flags::SUPERVISOR;
+
+        // Setup Stack Pointers
+        cpu.ssp = 0x4000;
+        cpu.usp = 0x2000;
+
+        // In supervisor mode, A7 is SSP
+        cpu.a[7] = cpu.ssp;
+
+        // Set PC
+        cpu.pc = 0x1000;
+
+        // Setup Vector 34 (TRAP #2 -> 32 + 2)
+        // Vector address: 34 * 4 = 136 (0x88)
+        memory.write_long(136, 0x5000); // Target PC
+
+        // Execute TRAP #2
+        let cycles = exec_trap(&mut cpu, 2, &mut memory);
+
+        // Verify Cycles
+        assert_eq!(cycles, 34);
+
+        // Verify PC Jump
+        assert_eq!(cpu.pc, 0x5000);
+
+        // Verify SR: Still Supervisor
+        assert_eq!(cpu.sr & flags::SUPERVISOR, flags::SUPERVISOR);
+
+        // Verify Stack (No Switch, just push)
+        // A7 should be old SSP - 6
+        assert_eq!(cpu.a[7], 0x4000 - 6);
+
+        // USP should be unchanged
+        assert_eq!(cpu.usp, 0x2000);
+
+        // Verify Stack Content
+        assert_eq!(memory.read_long(0x3FFC), 0x1000);
+        assert_eq!(memory.read_word(0x3FFA), flags::SUPERVISOR);
+    }
+}
