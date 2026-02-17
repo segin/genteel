@@ -241,10 +241,10 @@ pub fn exec_movem<M: MemoryInterface>(
         for i in 0..16 {
             if (mask & (1 << i)) != 0 {
                 if i < 8 {
-                    // Data register: Word load affects only lower 16 bits, Long load affects all
+                    // Data register: Word load is sign-extended, Long load is normal
                     if size == Size::Word {
                         let val = cpu.read_word(addr, memory);
-                        cpu.d[i] = (cpu.d[i] & 0xFFFF0000) | (val as u32);
+                        cpu.d[i] = (val as i16) as i32 as u32;
                     } else {
                         cpu.d[i] = cpu.read_long(addr, memory);
                     }

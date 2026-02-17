@@ -19,6 +19,8 @@ mod tests_m68k_comprehensive;
 #[cfg(test)]
 mod tests_m68k_control;
 #[cfg(test)]
+mod tests_m68k_data;
+#[cfg(test)]
 mod tests_m68k_extended;
 #[cfg(test)]
 mod tests_m68k_shift;
