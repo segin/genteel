@@ -135,3 +135,90 @@ fn test_dma_copy_vram() {
         assert_eq!(vdp.vram[i], expected, "Mismatch at index 0x{:04X}", i);
     }
 }
+
+#[test]
+fn test_dma_fill_wrap_around() {
+    let mut vdp = Vdp::new();
+
+    // 1. Enable DMA (Reg 1 bit 4)
+    vdp.write_control(0x8114);
+
+    // 2. Set DMA Length to 0 (0x0000)
+    vdp.write_control(0x9300); // Reg 19 = 0x00
+    vdp.write_control(0x9400); // Reg 20 = 0x00
+
+    // 3. Set DMA Mode to Fill (Reg 23 bits 7,6 = 1,0) -> 0x80
+    vdp.write_control(0x9780); // Reg 23 = 0x80
+
+    // 4. Set Auto-increment to 1
+    vdp.write_control(0x8F01);
+
+    // 5. Setup DMA Fill destination (VRAM 0x0000)
+    vdp.write_control(0x4000);
+    vdp.write_control(0x0080);
+
+    assert!(vdp.dma_pending, "DMA pending should be true for Fill setup");
+
+    // 6. Write Fill Data (e.g. 0xAA)
+    // This triggers the fill of 64KB (length 0 treated as 0x10000)
+    vdp.write_data(0xAA00);
+
+    assert!(
+        !vdp.dma_pending,
+        "DMA pending should be false after data write"
+    );
+
+    // 7. Verify VRAM
+    // Should have filled the entire 64KB VRAM with 0xAA
+    for i in 0..0x10000 {
+        assert_eq!(vdp.vram[i], 0xAA, "Mismatch at index 0x{:04X}", i);
+    }
+}
+
+#[test]
+fn test_dma_copy_wrap_around() {
+    let mut vdp = Vdp::new();
+
+    // 1. Enable DMA
+    vdp.write_control(0x8114);
+
+    // 2. Setup initial VRAM state
+    // Set vram[0] to 0xFF, others 0x00 (default)
+    vdp.vram[0] = 0xFF;
+
+    // 3. Set DMA Length to 0 (0x0000) -> 64KB
+    vdp.write_control(0x9300);
+    vdp.write_control(0x9400);
+
+    // 4. Set DMA Mode to Copy (Reg 23 = 0xC0) and Source Address 0x0000
+    // Source: 0x000000. Reg 21=0, Reg 22=0, Reg 23=0xC0
+    vdp.write_control(0x9500); // Reg 21 = 0x00
+    vdp.write_control(0x9600); // Reg 22 = 0x00
+    vdp.write_control(0x97C0); // Reg 23 = 0xC0
+
+    // 5. Set Auto-increment to 1
+    vdp.write_control(0x8F01);
+
+    // 6. Setup Destination (0x0001) - overlapping copy
+    // Command 0x4000 (VRAM Write) + addr 0x0001
+    // Word 1: 0x4001
+    // Word 2: 0x0080 (DMA bit set).
+    vdp.write_control(0x4001);
+    vdp.write_control(0x0080); // DMA Enable bit in command
+
+    assert!(vdp.dma_pending);
+
+    // 7. Execute DMA
+    // Length 0 -> 0x10000 bytes.
+    // Copy from 0 to 1.
+    // This overlapping copy should propagate 0xFF through the entire VRAM.
+    let count = vdp.execute_dma();
+
+    assert!(!vdp.dma_pending);
+    assert_eq!(count, 0x10000);
+
+    // Verify VRAM
+    for i in 0..0x10000 {
+        assert_eq!(vdp.vram[i], 0xFF, "Mismatch at index 0x{:04X}", i);
+    }
+}

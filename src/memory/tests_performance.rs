@@ -123,4 +123,84 @@ mod performance_tests {
             duration, iterations
         );
     }
+
+    #[test]
+    fn benchmark_vdp_long_access() {
+        let mut bus = Bus::new();
+        // Setup VDP for VRAM Write at address 0
+        bus.write_word(0xC00004, 0x4000);
+        bus.write_word(0xC00004, 0x0000);
+
+        let iterations = 1_000_000;
+        let start = Instant::now();
+
+        for i in 0..iterations {
+            bus.write_long(0xC00000, i);
+        }
+
+        let duration = start.elapsed();
+        println!(
+            "VDP Long Write Benchmark: {:?} for {} iterations",
+            duration, iterations
+        );
+
+        // Setup VDP for VRAM Read at address 0
+        bus.write_word(0xC00004, 0x0000);
+        bus.write_word(0xC00004, 0x0000);
+
+        let start = Instant::now();
+        let mut sum: u32 = 0;
+        for _ in 0..iterations {
+            sum = sum.wrapping_add(bus.read_long(0xC00000));
+        }
+
+        let duration = start.elapsed();
+        println!(
+            "VDP Long Read Benchmark: {:?} for {} iterations. Sum: {}",
+            duration, iterations, sum
+        );
+    }
+
+    #[test]
+    fn test_vdp_long_access_correctness() {
+        let mut bus = Bus::new();
+
+        // 1. Setup VDP Auto-Increment to 2
+        bus.vdp.registers[15] = 2;
+
+        // 2. Setup VRAM Write to address 0x0000
+        // Command: 0x40000000 (VRAM Write)
+        bus.write_word(0xC00004, 0x4000);
+        bus.write_word(0xC00004, 0x0000);
+
+        // 3. Write Long 0x11223344 to Data Port
+        bus.write_long(0xC00000, 0x11223344);
+
+        // Verify VRAM content
+        // 0x0000: 0x11 (High byte of first word)
+        // 0x0001: 0x22 (Low byte of first word)
+        // 0x0002: 0x33 (High byte of second word)
+        // 0x0003: 0x44 (Low byte of second word)
+        assert_eq!(bus.vdp.vram[0], 0x11);
+        assert_eq!(bus.vdp.vram[1], 0x22);
+        assert_eq!(bus.vdp.vram[2], 0x33);
+        assert_eq!(bus.vdp.vram[3], 0x44);
+
+        // Verify address incremented by 4 (2 * 2 words)
+        // Since VDP address register wraps, we can check it via control port read or internal state.
+        // Let's use internal state via debug interface which is easier in test
+        // But we are in bus test, so we can access bus.vdp directly.
+        // Wait, Vdp struct fields are public in crate, but `control_address` is public? Yes.
+        assert_eq!(bus.vdp.control_address, 4);
+
+        // 4. Setup VRAM Read from address 0x0000
+        bus.write_word(0xC00004, 0x0000);
+        bus.write_word(0xC00004, 0x0000);
+
+        // 5. Read Long from Data Port
+        let val = bus.read_long(0xC00000);
+
+        assert_eq!(val, 0x11223344);
+        assert_eq!(bus.vdp.control_address, 4);
+    }
 }
