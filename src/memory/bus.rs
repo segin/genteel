@@ -367,13 +367,7 @@ impl Bus {
         // VDP Control Port
         if (0xC00004..=0xC00007).contains(&addr) {
             self.vdp.write_control(value);
-            if self.vdp.dma_pending {
-                if self.vdp.is_dma_transfer() {
-                    self.run_dma();
-                } else {
-                    self.vdp.execute_dma();
-                }
-            }
+            self.handle_dma();
             return;
         }
 
@@ -410,6 +404,19 @@ impl Bus {
             }
         }
 
+        // VDP Data Port (Long access = 2 word reads)
+        if (0xC00000..=0xC00003).contains(&addr) {
+            let high = self.vdp.read_data();
+            let low = self.vdp.read_data();
+            return ((high as u32) << 16) | (low as u32);
+        }
+        // VDP Control Port (Long access)
+        if (0xC00004..=0xC00007).contains(&addr) {
+            let high = self.vdp.read_status();
+            let low = self.vdp.read_status();
+            return ((high as u32) << 16) | (low as u32);
+        }
+
         // Optimize Work RAM access
         if addr >= 0xE00000 {
             let r_addr = (addr & 0xFFFF) as usize;
@@ -434,6 +441,26 @@ impl Bus {
     pub fn write_long(&mut self, address: u32, value: u32) {
         let addr = address & 0xFFFFFF;
 
+        // VDP Data Port (Long access = 2 word writes)
+        if (0xC00000..=0xC00003).contains(&addr) {
+            let high = (value >> 16) as u16;
+            let low = (value & 0xFFFF) as u16;
+            self.vdp.write_data(high);
+            self.vdp.write_data(low);
+            return;
+        }
+
+        // VDP Control Port (Long access)
+        if (0xC00004..=0xC00007).contains(&addr) {
+            let high = (value >> 16) as u16;
+            let low = (value & 0xFFFF) as u16;
+            self.vdp.write_control(high);
+            self.handle_dma();
+            self.vdp.write_control(low);
+            self.handle_dma();
+            return;
+        }
+
         // Optimize Work RAM access
         if addr >= 0xE00000 {
             let r_addr = (addr & 0xFFFF) as usize;
@@ -452,6 +479,16 @@ impl Bus {
         self.write_byte(address.wrapping_add(1), b1);
         self.write_byte(address.wrapping_add(2), b2);
         self.write_byte(address.wrapping_add(3), b3);
+    }
+
+    fn handle_dma(&mut self) {
+        if self.vdp.dma_pending {
+            if self.vdp.is_dma_transfer() {
+                self.run_dma();
+            } else {
+                self.vdp.execute_dma();
+            }
+        }
     }
 
     fn run_dma(&mut self) {

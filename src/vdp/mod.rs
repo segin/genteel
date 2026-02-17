@@ -371,8 +371,7 @@ impl Vdp {
             // When combined with CD1-CD0 from the first word, we get the 6-bit code.
             let high = ((value >> 4) & 0x0F) << 2;
             self.control_code = (self.control_code & 0x03) | high as u8;
-            self.control_address = (self.control_address & 0x3FFF)
-                | ((value & 0x03) << 14);
+            self.control_address = (self.control_address & 0x3FFF) | ((value & 0x03) << 14);
             self.control_pending = false;
 
             // DMA initiation check
