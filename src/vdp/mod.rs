@@ -1014,6 +1014,63 @@ impl Vdp {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn render_tile(
+        &mut self,
+        is_plane_a: bool,
+        fetch_line: u16,
+        name_table_base: usize,
+        plane_w: usize,
+        plane_h: usize,
+        plane_w_mask: usize,
+        h_scroll: u16,
+        screen_x: u16,
+        screen_width: u16,
+        line_offset: usize,
+        priority_filter: bool,
+    ) -> u16 {
+        // Horizontal position in plane
+        // The scroll value is subtracted from the horizontal position
+        let scrolled_h = screen_x.wrapping_sub(h_scroll);
+        let pixel_h = (scrolled_h & 0x07) as u16;
+        let tile_h = ((scrolled_h >> 3) as usize) & plane_w_mask;
+
+        // Fetch V-scroll for this specific column (per-column VS support)
+        let (v_scroll, _) =
+            self.get_scroll_values(is_plane_a, fetch_line, (screen_x >> 3) as usize);
+
+        // Vertical position in plane
+        let scrolled_v = fetch_line.wrapping_add(v_scroll);
+        let tile_v = (scrolled_v as usize / 8) % plane_h;
+        let pixel_v = scrolled_v % 8;
+
+        let entry = self.fetch_nametable_entry(name_table_base, tile_v, tile_h, plane_w);
+        let tile_index = entry & 0x07FF;
+        let priority = (entry & 0x8000) != 0;
+
+        let pixels_left_in_tile = 8 - pixel_h;
+        let pixels_to_process = std::cmp::min(pixels_left_in_tile, screen_width - screen_x);
+
+        if priority == priority_filter && tile_index != 0 {
+            if pixels_to_process == 8 && pixel_h == 0 {
+                // Fast path for full aligned tile
+                unsafe {
+                    self.draw_full_tile_row(entry, pixel_v, line_offset + screen_x as usize);
+                }
+            } else {
+                self.draw_partial_tile_row(
+                    entry,
+                    pixel_v,
+                    pixel_h,
+                    pixels_to_process,
+                    line_offset + screen_x as usize,
+                );
+            }
+        }
+
+        pixels_to_process
+    }
+
     fn render_plane(
         &mut self,
         is_plane_a: bool,
@@ -1038,46 +1095,20 @@ impl Vdp {
         let mut screen_x: u16 = 0;
 
         while screen_x < screen_width {
-            // Horizontal position in plane
-            // The scroll value is subtracted from the horizontal position
-            let scrolled_h = screen_x.wrapping_sub(h_scroll);
-            let pixel_h = (scrolled_h & 0x07) as u16;
-            let tile_h = ((scrolled_h >> 3) as usize) & plane_w_mask;
-
-            // Fetch V-scroll for this specific column (per-column VS support)
-            let (v_scroll, _) =
-                self.get_scroll_values(is_plane_a, fetch_line, (screen_x >> 3) as usize);
-
-            // Vertical position in plane
-            let scrolled_v = fetch_line.wrapping_add(v_scroll);
-            let tile_v = (scrolled_v as usize / 8) % plane_h;
-            let pixel_v = scrolled_v % 8;
-
-            let entry = self.fetch_nametable_entry(name_table_base, tile_v, tile_h, plane_w);
-            let tile_index = entry & 0x07FF;
-            let priority = (entry & 0x8000) != 0;
-
-            let pixels_left_in_tile = 8 - pixel_h;
-            let pixels_to_process = std::cmp::min(pixels_left_in_tile, screen_width - screen_x);
-
-            if priority == priority_filter && tile_index != 0 {
-                if pixels_to_process == 8 && pixel_h == 0 {
-                    // Fast path for full aligned tile
-                    unsafe {
-                        self.draw_full_tile_row(entry, pixel_v, line_offset + screen_x as usize);
-                    }
-                } else {
-                    self.draw_partial_tile_row(
-                        entry,
-                        pixel_v,
-                        pixel_h,
-                        pixels_to_process,
-                        line_offset + screen_x as usize,
-                    );
-                }
-            }
-
-            screen_x += pixels_to_process;
+            let pixels_processed = self.render_tile(
+                is_plane_a,
+                fetch_line,
+                name_table_base,
+                plane_w,
+                plane_h,
+                plane_w_mask,
+                h_scroll,
+                screen_x,
+                screen_width,
+                line_offset,
+                priority_filter,
+            );
+            screen_x += pixels_processed;
         }
     }
 
