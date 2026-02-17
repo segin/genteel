@@ -808,3 +808,119 @@ fn fetch_postinc_operand<M: MemoryInterface>(
     cpu.a[reg as usize] = addr.wrapping_add(size.bytes());
     val
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::memory::Memory;
+
+    fn create_test_setup() -> (Cpu, Memory) {
+        let mut memory = Memory::new(0x10000);
+        memory.write_long(0x0, 0x8000); // Stack pointer
+        memory.write_long(0x4, 0x1000); // PC
+        let cpu = Cpu::new(&mut memory);
+        (cpu, memory)
+    }
+
+    #[test]
+    fn test_exec_sbcd_reg_simple() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x12; // Destination
+        cpu.d[1] = 0x01; // Source
+
+        // SBCD D1, D0
+        exec_sbcd(&mut cpu, 1, 0, false, &mut memory);
+
+        assert_eq!(cpu.d[0] & 0xFF, 0x11); // 0x12 - 0x01 = 0x11
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::EXTEND));
+    }
+
+    #[test]
+    fn test_exec_sbcd_reg_borrow_low() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x22; // Destination
+        cpu.d[1] = 0x05; // Source
+
+        // SBCD D1, D0
+        exec_sbcd(&mut cpu, 1, 0, false, &mut memory);
+
+        assert_eq!(cpu.d[0] & 0xFF, 0x17); // 22 - 5 = 17
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::EXTEND));
+    }
+
+    #[test]
+    fn test_exec_sbcd_reg_borrow_high() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x15; // Destination
+        cpu.d[1] = 0x25; // Source
+
+        // SBCD D1, D0
+        exec_sbcd(&mut cpu, 1, 0, false, &mut memory);
+
+        assert_eq!(cpu.d[0] & 0xFF, 0x90); // 15 - 25 = 90 (borrow)
+        assert!(cpu.get_flag(flags::CARRY));
+        assert!(cpu.get_flag(flags::EXTEND));
+    }
+
+    #[test]
+    fn test_exec_sbcd_z_flag() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // Case 1: Result 0, Z originally 1 -> Z remains 1
+        cpu.d[0] = 0x33;
+        cpu.d[1] = 0x33;
+        cpu.set_flag(flags::ZERO, true);
+        exec_sbcd(&mut cpu, 1, 0, false, &mut memory);
+        assert_eq!(cpu.d[0] & 0xFF, 0x00);
+        assert!(cpu.get_flag(flags::ZERO));
+
+        // Case 2: Result 0, Z originally 0 -> Z remains 0
+        cpu.d[0] = 0x33;
+        cpu.d[1] = 0x33;
+        cpu.set_flag(flags::ZERO, false);
+        exec_sbcd(&mut cpu, 1, 0, false, &mut memory);
+        assert_eq!(cpu.d[0] & 0xFF, 0x00);
+        assert!(!cpu.get_flag(flags::ZERO));
+
+        // Case 3: Result non-zero, Z originally 1 -> Z becomes 0
+        cpu.d[0] = 0x33;
+        cpu.d[1] = 0x11;
+        cpu.set_flag(flags::ZERO, true);
+        exec_sbcd(&mut cpu, 1, 0, false, &mut memory);
+        assert_eq!(cpu.d[0] & 0xFF, 0x22);
+        assert!(!cpu.get_flag(flags::ZERO));
+    }
+
+    #[test]
+    fn test_exec_sbcd_memory_mode() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.a[0] = 0x2001; // Dest pointer
+        cpu.a[1] = 0x3001; // Src pointer
+        memory.write_byte(0x2000, 0x33);
+        memory.write_byte(0x3000, 0x11);
+
+        // SBCD -(A1), -(A0)
+        exec_sbcd(&mut cpu, 1, 0, true, &mut memory);
+
+        assert_eq!(memory.read_byte(0x2000), 0x22); // 33 - 11 = 22
+        assert_eq!(cpu.a[0], 0x2000); // Decremented
+        assert_eq!(cpu.a[1], 0x3000); // Decremented
+    }
+
+    #[test]
+    fn test_exec_sbcd_extend_flag() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x10;
+        cpu.d[1] = 0x00;
+        cpu.set_flag(flags::EXTEND, true); // Borrow input
+
+        // SBCD D1, D0
+        exec_sbcd(&mut cpu, 1, 0, false, &mut memory);
+
+        assert_eq!(cpu.d[0] & 0xFF, 0x09); // 10 - 0 - 1 = 09
+        assert!(!cpu.get_flag(flags::CARRY)); // No borrow generated from this operation (10 >= 1)
+        assert!(!cpu.get_flag(flags::EXTEND));
+    }
+}
