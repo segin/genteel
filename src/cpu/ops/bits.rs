@@ -248,6 +248,28 @@ pub fn exec_shift<M: MemoryInterface>(
     6 + cycles + 2 * count_val
 }
 
+pub fn exec_shift_mem<M: MemoryInterface>(
+    cpu: &mut Cpu,
+    dst: AddressingMode,
+    left: bool,
+    arithmetic: bool,
+    memory: &mut M,
+) -> u32 {
+    // Memory shifts are always word size, count 1
+    let cycles = exec_shift(
+        cpu,
+        Size::Word,
+        dst,
+        ShiftCount::Immediate(1),
+        left,
+        arithmetic,
+        memory,
+    );
+    // V is always cleared for memory shifts
+    cpu.set_flag(flags::OVERFLOW, false);
+    cycles + 2 // Memory shifts take 8 cycles + EA (exec_shift returns 6 + cycles + 2*1 = 8 + cycles)
+}
+
 pub fn exec_rotate<M: MemoryInterface>(
     cpu: &mut Cpu,
     size: Size,

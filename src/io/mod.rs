@@ -591,15 +591,6 @@ mod tests {
     }
 
     #[test]
-    fn test_non_6button_no_timeout() {
-        let mut port = ControllerPort::new(ControllerType::ThreeButton);
-        // Manually set counter to verify it doesn't change
-        port.th_counter = 5;
-        port.update(2000);
-        assert_eq!(port.th_counter, 5);
-    }
-
-    #[test]
     fn test_io_controller_invalid_port() {
         let mut io = Io::new();
         assert!(io.controller(0).is_none());

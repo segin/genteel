@@ -5,6 +5,7 @@
 
 pub mod addressing;
 pub mod decoder;
+pub mod instructions;
 pub mod ops;
 #[cfg(test)]
 mod tests_addressing;
@@ -38,7 +39,11 @@ mod tests_m68k_torture;
 mod tests_performance;
 
 use self::addressing::{read_ea, EffectiveAddress};
-use self::decoder::{decode, BitSource, Condition, DecodeCacheEntry, Instruction, Size};
+use self::decoder::decode;
+use crate::cpu::instructions::{
+    ArithmeticInstruction, BitSource, BitsInstruction, Condition, DataInstruction,
+    DecodeCacheEntry, Instruction, Size, SystemInstruction,
+};
 use crate::memory::MemoryInterface;
 
 /// Status Register flags
@@ -248,344 +253,248 @@ impl Cpu {
     /// Execute a decoded instruction
     fn execute<M: MemoryInterface>(&mut self, instruction: Instruction, memory: &mut M) -> u32 {
         match instruction {
-            // === Data Movement ===
-            inst @ (Instruction::Move { .. }
-            | Instruction::MoveA { .. }
-            | Instruction::MoveQ { .. }
-            | Instruction::Lea { .. }
-            | Instruction::Exg { .. }
-            | Instruction::Clr { .. }
-            | Instruction::Movep { .. }
-            | Instruction::Swap { .. }
-            | Instruction::Ext { .. }
-            | Instruction::Movem { .. }
-            | Instruction::Pea { .. }) => self.execute_data(inst, memory),
-
-            // === Arithmetic ===
-            inst @ (Instruction::Add { .. }
-            | Instruction::AddA { .. }
-            | Instruction::AddI { .. }
-            | Instruction::AddQ { .. }
-            | Instruction::Sub { .. }
-            | Instruction::SubA { .. }
-            | Instruction::SubI { .. }
-            | Instruction::SubQ { .. }
-            | Instruction::Neg { .. }
-            | Instruction::NegX { .. }
-            | Instruction::AddX { .. }
-            | Instruction::SubX { .. }
-            | Instruction::MulU { .. }
-            | Instruction::MulS { .. }
-            | Instruction::DivU { .. }
-            | Instruction::DivS { .. }
-            | Instruction::Abcd { .. }
-            | Instruction::Sbcd { .. }
-            | Instruction::Nbcd { .. }
-            | Instruction::Cmp { .. }
-            | Instruction::CmpA { .. }
-            | Instruction::CmpI { .. }
-            | Instruction::CmpM { .. }
-            | Instruction::Tst { .. }
-            | Instruction::Chk { .. }) => self.execute_arithmetic(inst, memory),
-
-            // === Logical / Shifts / Bit Manipulation ===
-            inst @ (Instruction::And { .. }
-            | Instruction::AndI { .. }
-            | Instruction::Or { .. }
-            | Instruction::OrI { .. }
-            | Instruction::Eor { .. }
-            | Instruction::EorI { .. }
-            | Instruction::Not { .. }
-            | Instruction::Lsl { .. }
-            | Instruction::Lsr { .. }
-            | Instruction::Asl { .. }
-            | Instruction::AslM { .. }
-            | Instruction::Asr { .. }
-            | Instruction::AsrM { .. }
-            | Instruction::Rol { .. }
-            | Instruction::Ror { .. }
-            | Instruction::Roxl { .. }
-            | Instruction::Roxr { .. }
-            | Instruction::Btst { .. }
-            | Instruction::Bset { .. }
-            | Instruction::Bclr { .. }
-            | Instruction::Bchg { .. }
-            | Instruction::Tas { .. }) => self.execute_bits(inst, memory),
-
-            // === System / Branch / Control ===
-            inst @ (Instruction::Bra { .. }
-            | Instruction::Bsr { .. }
-            | Instruction::Bcc { .. }
-            | Instruction::Scc { .. }
-            | Instruction::DBcc { .. }
-            | Instruction::Jmp { .. }
-            | Instruction::Jsr { .. }
-            | Instruction::Rts
-            | Instruction::Nop
-            | Instruction::Link { .. }
-            | Instruction::Unlk { .. }
-            | Instruction::MoveUsp { .. }
-            | Instruction::Trap { .. }
-            | Instruction::Rte
-            | Instruction::Stop
-            | Instruction::Reset
-            | Instruction::TrapV
-            | Instruction::Rtr
-            | Instruction::MoveToSr { .. }
-            | Instruction::MoveFromSr { .. }
-            | Instruction::MoveToCcr { .. }
-            | Instruction::AndiToCcr
-            | Instruction::AndiToSr
-            | Instruction::OriToCcr
-            | Instruction::OriToSr
-            | Instruction::EoriToCcr
-            | Instruction::EoriToSr
-            | Instruction::Illegal
-            | Instruction::LineA { .. }
-            | Instruction::LineF { .. }
-            | Instruction::Unimplemented { .. }) => self.execute_system(inst, memory),
+            Instruction::Data(inst) => self.execute_data(inst, memory),
+            Instruction::Arithmetic(inst) => self.execute_arithmetic(inst, memory),
+            Instruction::Bits(inst) => self.execute_bits(inst, memory),
+            Instruction::System(inst) => self.execute_system(inst, memory),
         }
     }
 
     fn execute_data<M: MemoryInterface>(
         &mut self,
-        instruction: Instruction,
+        instruction: DataInstruction,
         memory: &mut M,
     ) -> u32 {
         match instruction {
-            Instruction::Move { size, src, dst } => {
+            DataInstruction::Move { size, src, dst } => {
                 ops::data::exec_move(self, size, src, dst, memory)
             }
-            Instruction::MoveA { size, src, dst_reg } => {
+            DataInstruction::MoveA { size, src, dst_reg } => {
                 ops::data::exec_movea(self, size, src, dst_reg, memory)
             }
-            Instruction::MoveQ { dst_reg, data } => ops::data::exec_moveq(self, dst_reg, data),
-            Instruction::Lea { src, dst_reg } => ops::data::exec_lea(self, src, dst_reg, memory),
-            Instruction::Exg { rx, ry, mode } => ops::data::exec_exg(self, rx, ry, mode),
-            Instruction::Clr { size, dst } => ops::data::exec_clr(self, size, dst, memory),
-            Instruction::Movep {
+            DataInstruction::MoveQ { dst_reg, data } => ops::data::exec_moveq(self, dst_reg, data),
+            DataInstruction::Lea { src, dst_reg } => ops::data::exec_lea(self, src, dst_reg, memory),
+            DataInstruction::Exg { rx, ry, mode } => ops::data::exec_exg(self, rx, ry, mode),
+            DataInstruction::Clr { size, dst } => ops::data::exec_clr(self, size, dst, memory),
+            DataInstruction::Movep {
                 size,
                 reg,
                 an,
                 direction,
             } => ops::data::exec_movep(self, size, reg, an, direction, memory),
-            Instruction::Swap { reg } => ops::data::exec_swap(self, reg),
-            Instruction::Ext { size, reg } => ops::data::exec_ext(self, size, reg),
-            Instruction::Movem {
+            DataInstruction::Swap { reg } => ops::data::exec_swap(self, reg),
+            DataInstruction::Ext { size, reg } => ops::data::exec_ext(self, size, reg),
+            DataInstruction::Movem {
                 size,
                 direction,
                 mask: _,
                 ea,
             } => ops::data::exec_movem(self, size, direction, ea, memory),
-            Instruction::Pea { src } => ops::data::exec_pea(self, src, memory),
-            _ => unreachable!("Invalid instruction for execute_data"),
+            DataInstruction::Pea { src } => ops::data::exec_pea(self, src, memory),
         }
     }
 
     fn execute_arithmetic<M: MemoryInterface>(
         &mut self,
-        instruction: Instruction,
+        instruction: ArithmeticInstruction,
         memory: &mut M,
     ) -> u32 {
         match instruction {
-            Instruction::Add {
+            ArithmeticInstruction::Add {
                 size,
                 src,
                 dst,
                 direction: _,
             } => ops::arithmetic::exec_add(self, size, src, dst, memory),
-            Instruction::AddA { size, src, dst_reg } => {
+            ArithmeticInstruction::AddA { size, src, dst_reg } => {
                 ops::arithmetic::exec_adda(self, size, src, dst_reg, memory)
             }
-            Instruction::AddI { size, dst } => ops::arithmetic::exec_addi(self, size, dst, memory),
-            Instruction::AddQ { size, dst, data } => {
+            ArithmeticInstruction::AddI { size, dst } => ops::arithmetic::exec_addi(self, size, dst, memory),
+            ArithmeticInstruction::AddQ { size, dst, data } => {
                 ops::arithmetic::exec_addq(self, size, data, dst, memory)
             }
-            Instruction::Sub {
+            ArithmeticInstruction::Sub {
                 size,
                 src,
                 dst,
                 direction: _,
             } => ops::arithmetic::exec_sub(self, size, src, dst, memory),
-            Instruction::SubA { size, src, dst_reg } => {
+            ArithmeticInstruction::SubA { size, src, dst_reg } => {
                 ops::arithmetic::exec_suba(self, size, src, dst_reg, memory)
             }
-            Instruction::SubI { size, dst } => ops::arithmetic::exec_subi(self, size, dst, memory),
-            Instruction::SubQ { size, dst, data } => {
+            ArithmeticInstruction::SubI { size, dst } => ops::arithmetic::exec_subi(self, size, dst, memory),
+            ArithmeticInstruction::SubQ { size, dst, data } => {
                 ops::arithmetic::exec_subq(self, size, data, dst, memory)
             }
-            Instruction::Neg { size, dst } => ops::arithmetic::exec_neg(self, size, dst, memory),
-            Instruction::NegX { size, dst } => ops::arithmetic::exec_negx(self, size, dst, memory),
-            Instruction::AddX {
+            ArithmeticInstruction::Neg { size, dst } => ops::arithmetic::exec_neg(self, size, dst, memory),
+            ArithmeticInstruction::NegX { size, dst } => ops::arithmetic::exec_negx(self, size, dst, memory),
+            ArithmeticInstruction::AddX {
                 size,
                 src_reg,
                 dst_reg,
                 memory_mode,
             } => ops::arithmetic::exec_addx(self, size, src_reg, dst_reg, memory_mode, memory),
-            Instruction::SubX {
+            ArithmeticInstruction::SubX {
                 size,
                 src_reg,
                 dst_reg,
                 memory_mode,
             } => ops::arithmetic::exec_subx(self, size, src_reg, dst_reg, memory_mode, memory),
-            Instruction::MulU { src, dst_reg } => {
+            ArithmeticInstruction::MulU { src, dst_reg } => {
                 ops::arithmetic::exec_mulu(self, src, dst_reg, memory)
             }
-            Instruction::MulS { src, dst_reg } => {
+            ArithmeticInstruction::MulS { src, dst_reg } => {
                 ops::arithmetic::exec_muls(self, src, dst_reg, memory)
             }
-            Instruction::DivU { src, dst_reg } => {
+            ArithmeticInstruction::DivU { src, dst_reg } => {
                 ops::arithmetic::exec_divu(self, src, dst_reg, memory)
             }
-            Instruction::DivS { src, dst_reg } => {
+            ArithmeticInstruction::DivS { src, dst_reg } => {
                 ops::arithmetic::exec_divs(self, src, dst_reg, memory)
             }
-            Instruction::Abcd {
+            ArithmeticInstruction::Abcd {
                 src_reg,
                 dst_reg,
                 memory_mode,
             } => ops::arithmetic::exec_abcd(self, src_reg, dst_reg, memory_mode, memory),
-            Instruction::Sbcd {
+            ArithmeticInstruction::Sbcd {
                 src_reg,
                 dst_reg,
                 memory_mode,
             } => ops::arithmetic::exec_sbcd(self, src_reg, dst_reg, memory_mode, memory),
-            Instruction::Nbcd { dst } => ops::arithmetic::exec_nbcd(self, dst, memory),
-            Instruction::Cmp { size, src, dst_reg } => {
+            ArithmeticInstruction::Nbcd { dst } => ops::arithmetic::exec_nbcd(self, dst, memory),
+            ArithmeticInstruction::Cmp { size, src, dst_reg } => {
                 ops::arithmetic::exec_cmp(self, size, src, dst_reg, memory)
             }
-            Instruction::CmpA { size, src, dst_reg } => {
+            ArithmeticInstruction::CmpA { size, src, dst_reg } => {
                 ops::arithmetic::exec_cmpa(self, size, src, dst_reg, memory)
             }
-            Instruction::CmpI { size, dst } => ops::arithmetic::exec_cmpi(self, size, dst, memory),
-            Instruction::CmpM { size, ax, ay } => {
+            ArithmeticInstruction::CmpI { size, dst } => ops::arithmetic::exec_cmpi(self, size, dst, memory),
+            ArithmeticInstruction::CmpM { size, ax, ay } => {
                 ops::arithmetic::exec_cmpm(self, size, ax, ay, memory)
             }
-            Instruction::Tst { size, dst } => ops::arithmetic::exec_tst(self, size, dst, memory),
-            Instruction::Chk { src, dst_reg } => {
+            ArithmeticInstruction::Tst { size, dst } => ops::arithmetic::exec_tst(self, size, dst, memory),
+            ArithmeticInstruction::Chk { src, dst_reg } => {
                 ops::arithmetic::exec_chk(self, src, dst_reg, memory)
             }
-            _ => unreachable!("Invalid instruction for execute_arithmetic"),
         }
     }
 
     fn execute_bits<M: MemoryInterface>(
         &mut self,
-        instruction: Instruction,
+        instruction: BitsInstruction,
         memory: &mut M,
     ) -> u32 {
         match instruction {
-            Instruction::And {
+            BitsInstruction::And {
                 size,
                 src,
                 dst,
                 direction,
             } => ops::bits::exec_and(self, size, src, dst, direction, memory),
-            Instruction::AndI { size, dst } => ops::bits::exec_andi(self, size, dst, memory),
-            Instruction::Or {
+            BitsInstruction::AndI { size, dst } => ops::bits::exec_andi(self, size, dst, memory),
+            BitsInstruction::Or {
                 size,
                 src,
                 dst,
                 direction,
             } => ops::bits::exec_or(self, size, src, dst, direction, memory),
-            Instruction::OrI { size, dst } => ops::bits::exec_ori(self, size, dst, memory),
-            Instruction::Eor { size, src_reg, dst } => {
+            BitsInstruction::OrI { size, dst } => ops::bits::exec_ori(self, size, dst, memory),
+            BitsInstruction::Eor { size, src_reg, dst } => {
                 ops::bits::exec_eor(self, size, src_reg, dst, memory)
             }
-            Instruction::EorI { size, dst } => ops::bits::exec_eori(self, size, dst, memory),
-            Instruction::Not { size, dst } => ops::bits::exec_not(self, size, dst, memory),
-            Instruction::Lsl { size, dst, count } => {
+            BitsInstruction::EorI { size, dst } => ops::bits::exec_eori(self, size, dst, memory),
+            BitsInstruction::Not { size, dst } => ops::bits::exec_not(self, size, dst, memory),
+            BitsInstruction::Lsl { size, dst, count } => {
                 ops::bits::exec_shift(self, size, dst, count, true, false, memory)
             }
-            Instruction::Lsr { size, dst, count } => {
+            BitsInstruction::Lsr { size, dst, count } => {
                 ops::bits::exec_shift(self, size, dst, count, false, false, memory)
             }
-            Instruction::Asl { size, dst, count } => {
+            BitsInstruction::Asl { size, dst, count } => {
                 ops::bits::exec_shift(self, size, dst, count, true, true, memory)
             }
-            Instruction::AslM { dst } => ops::bits::exec_shift_mem(self, dst, true, true, memory),
-            Instruction::Asr { size, dst, count } => {
+            BitsInstruction::AslM { dst } => ops::bits::exec_shift_mem(self, dst, true, true, memory),
+            BitsInstruction::Asr { size, dst, count } => {
                 ops::bits::exec_shift(self, size, dst, count, false, true, memory)
             }
-            Instruction::AsrM { dst } => ops::bits::exec_shift_mem(self, dst, false, true, memory),
-            Instruction::Rol { size, dst, count } => {
+            BitsInstruction::AsrM { dst } => ops::bits::exec_shift_mem(self, dst, false, true, memory),
+            BitsInstruction::Rol { size, dst, count } => {
                 ops::bits::exec_rotate(self, size, dst, count, true, false, memory)
             }
-            Instruction::Ror { size, dst, count } => {
+            BitsInstruction::Ror { size, dst, count } => {
                 ops::bits::exec_rotate(self, size, dst, count, false, false, memory)
             }
-            Instruction::Roxl { size, dst, count } => {
+            BitsInstruction::Roxl { size, dst, count } => {
                 ops::bits::exec_roxl(self, size, dst, count, memory)
             }
-            Instruction::Roxr { size, dst, count } => {
+            BitsInstruction::Roxr { size, dst, count } => {
                 ops::bits::exec_roxr(self, size, dst, count, memory)
             }
-            Instruction::Btst { bit, dst } => ops::bits::exec_btst(self, bit, dst, memory),
-            Instruction::Bset { bit, dst } => ops::bits::exec_bset(self, bit, dst, memory),
-            Instruction::Bclr { bit, dst } => ops::bits::exec_bclr(self, bit, dst, memory),
-            Instruction::Bchg { bit, dst } => ops::bits::exec_bchg(self, bit, dst, memory),
-            Instruction::Tas { dst } => ops::bits::exec_tas(self, dst, memory),
-            _ => unreachable!("Invalid instruction for execute_bits"),
+            BitsInstruction::Btst { bit, dst } => ops::bits::exec_btst(self, bit, dst, memory),
+            BitsInstruction::Bset { bit, dst } => ops::bits::exec_bset(self, bit, dst, memory),
+            BitsInstruction::Bclr { bit, dst } => ops::bits::exec_bclr(self, bit, dst, memory),
+            BitsInstruction::Bchg { bit, dst } => ops::bits::exec_bchg(self, bit, dst, memory),
+            BitsInstruction::Tas { dst } => ops::bits::exec_tas(self, dst, memory),
         }
     }
 
     fn execute_system<M: MemoryInterface>(
         &mut self,
-        instruction: Instruction,
+        instruction: SystemInstruction,
         memory: &mut M,
     ) -> u32 {
         match instruction {
-            Instruction::Bra { displacement } => ops::system::exec_bra(self, displacement, memory),
-            Instruction::Bsr { displacement } => ops::system::exec_bsr(self, displacement, memory),
-            Instruction::Bcc {
+            SystemInstruction::Bra { displacement } => ops::system::exec_bra(self, displacement, memory),
+            SystemInstruction::Bsr { displacement } => ops::system::exec_bsr(self, displacement, memory),
+            SystemInstruction::Bcc {
                 condition,
                 displacement,
             } => ops::system::exec_bcc(self, condition, displacement, memory),
-            Instruction::Scc { condition, dst } => {
+            SystemInstruction::Scc { condition, dst } => {
                 ops::system::exec_scc(self, condition, dst, memory)
             }
-            Instruction::DBcc { condition, reg } => {
+            SystemInstruction::DBcc { condition, reg } => {
                 ops::system::exec_dbcc(self, condition, reg, memory)
             }
-            Instruction::Jmp { dst } => ops::system::exec_jmp(self, dst, memory),
-            Instruction::Jsr { dst } => ops::system::exec_jsr(self, dst, memory),
-            Instruction::Rts => ops::system::exec_rts(self, memory),
-            Instruction::Nop => 4,
-            Instruction::Link { reg } => {
+            SystemInstruction::Jmp { dst } => ops::system::exec_jmp(self, dst, memory),
+            SystemInstruction::Jsr { dst } => ops::system::exec_jsr(self, dst, memory),
+            SystemInstruction::Rts => ops::system::exec_rts(self, memory),
+            SystemInstruction::Nop => 4,
+            SystemInstruction::Link { reg } => {
                 let displacement = self.read_word(self.pc, memory) as i16;
                 self.pc = self.pc.wrapping_add(2);
                 ops::system::exec_link(self, reg, displacement, memory)
             }
-            Instruction::Unlk { reg } => ops::system::exec_unlk(self, reg, memory),
-            Instruction::MoveUsp { reg, to_usp } => {
+            SystemInstruction::Unlk { reg } => ops::system::exec_unlk(self, reg, memory),
+            SystemInstruction::MoveUsp { reg, to_usp } => {
                 ops::system::exec_move_usp(self, reg, to_usp, memory)
             }
-            Instruction::Trap { vector } => ops::system::exec_trap(self, vector, memory),
-            Instruction::Rte => ops::system::exec_rte(self, memory),
-            Instruction::Stop => ops::system::exec_stop(self, memory),
-            Instruction::Reset => 132,
-            Instruction::TrapV => {
+            SystemInstruction::Trap { vector } => ops::system::exec_trap(self, vector, memory),
+            SystemInstruction::Rte => ops::system::exec_rte(self, memory),
+            SystemInstruction::Stop => ops::system::exec_stop(self, memory),
+            SystemInstruction::Reset => 132,
+            SystemInstruction::TrapV => {
                 if self.get_flag(flags::OVERFLOW) {
                     self.process_exception(7, memory)
                 } else {
                     4
                 }
             }
-            Instruction::Rtr => ops::system::exec_rtr(self, memory),
-            Instruction::MoveToSr { src } => ops::system::exec_move_to_sr(self, src, memory),
-            Instruction::MoveFromSr { dst } => ops::system::exec_move_from_sr(self, dst, memory),
-            Instruction::MoveToCcr { src } => ops::system::exec_move_to_ccr(self, src, memory),
-            Instruction::AndiToCcr => ops::system::exec_andi_to_ccr(self, memory),
-            Instruction::AndiToSr => ops::system::exec_andi_to_sr(self, memory),
-            Instruction::OriToCcr => ops::system::exec_ori_to_ccr(self, memory),
-            Instruction::OriToSr => ops::system::exec_ori_to_sr(self, memory),
-            Instruction::EoriToCcr => ops::system::exec_eori_to_ccr(self, memory),
-            Instruction::EoriToSr => ops::system::exec_eori_to_sr(self, memory),
-            Instruction::Illegal => self.process_exception(4, memory),
-            Instruction::LineA { opcode: _ } => self.process_exception(10, memory),
-            Instruction::LineF { opcode: _ } => self.process_exception(11, memory),
-            Instruction::Unimplemented { opcode: _ } => self.process_exception(4, memory),
-            _ => unreachable!("Invalid instruction for execute_system"),
+            SystemInstruction::Rtr => ops::system::exec_rtr(self, memory),
+            SystemInstruction::MoveToSr { src } => ops::system::exec_move_to_sr(self, src, memory),
+            SystemInstruction::MoveFromSr { dst } => ops::system::exec_move_from_sr(self, dst, memory),
+            SystemInstruction::MoveToCcr { src } => ops::system::exec_move_to_ccr(self, src, memory),
+            SystemInstruction::AndiToCcr => ops::system::exec_andi_to_ccr(self, memory),
+            SystemInstruction::AndiToSr => ops::system::exec_andi_to_sr(self, memory),
+            SystemInstruction::OriToCcr => ops::system::exec_ori_to_ccr(self, memory),
+            SystemInstruction::OriToSr => ops::system::exec_ori_to_sr(self, memory),
+            SystemInstruction::EoriToCcr => ops::system::exec_eori_to_ccr(self, memory),
+            SystemInstruction::EoriToSr => ops::system::exec_eori_to_sr(self, memory),
+            SystemInstruction::Illegal => self.process_exception(4, memory),
+            SystemInstruction::LineA { opcode: _ } => self.process_exception(10, memory),
+            SystemInstruction::LineF { opcode: _ } => self.process_exception(11, memory),
+            SystemInstruction::Unimplemented { opcode: _ } => self.process_exception(4, memory),
         }
     }
 
@@ -1210,8 +1119,8 @@ mod tests {
         // Opcode: 1000 001 1 0000 0 000 = 0x8300
         cpu.pc = 0x102;
         memory.write_word(0x102, 0x8300);
-        cpu.d[0] = 33;
-        cpu.d[1] = 78;
+        cpu.d[0] = 0x33;
+        cpu.d[1] = 0x78;
         cpu.set_flag(flags::ZERO, true);
 
         cpu.step_instruction(&mut memory);

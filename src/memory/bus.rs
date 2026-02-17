@@ -425,13 +425,13 @@ impl Bus {
         }
 
         // VDP Data Port (Long access = 2 word reads)
-        if (0xC00000..=0xC00003).contains(&addr) {
+        if addr == 0xC00000 {
             let high = self.vdp.read_data();
             let low = self.vdp.read_data();
             return ((high as u32) << 16) | (low as u32);
         }
         // VDP Control Port (Long access)
-        if (0xC00004..=0xC00007).contains(&addr) {
+        if addr == 0xC00004 {
             let high = self.vdp.read_status();
             let low = self.vdp.read_status();
             return ((high as u32) << 16) | (low as u32);
