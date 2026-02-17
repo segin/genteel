@@ -7,6 +7,8 @@ pub mod addressing;
 pub mod decoder;
 pub mod ops;
 #[cfg(test)]
+mod tests_addressing;
+#[cfg(test)]
 mod tests_bug_fixes;
 #[cfg(test)]
 mod tests_cache;
@@ -17,11 +19,17 @@ mod tests_m68k_bcd;
 #[cfg(test)]
 mod tests_m68k_bits;
 #[cfg(test)]
+mod tests_m68k_data;
+#[cfg(test)]
 mod tests_m68k_comprehensive;
 #[cfg(test)]
 mod tests_m68k_control;
 #[cfg(test)]
+mod tests_m68k_data_unit;
+#[cfg(test)]
 mod tests_m68k_extended;
+#[cfg(test)]
+mod tests_m68k_movep;
 #[cfg(test)]
 mod tests_m68k_shift;
 #[cfg(test)]
@@ -71,7 +79,7 @@ pub struct Cpu {
     // Interrupt pending bitmask (bit N = level N is pending)
     pub interrupt_pending_mask: u8,
 
-    // Instruction cache (Direct Mapped, 64K entries)
+    // Instruction cache (Direct Mapped, 2M entries to cover 4MB ROM)
     pub decode_cache: Box<[DecodeCacheEntry]>,
 }
 
@@ -89,7 +97,7 @@ impl Cpu {
             pending_interrupt: 0,
             pending_exception: false,
             interrupt_pending_mask: 0,
-            decode_cache: vec![DecodeCacheEntry::default(); 65536].into_boxed_slice(),
+            decode_cache: vec![DecodeCacheEntry::default(); 2097152].into_boxed_slice(),
         };
 
         // At startup, the supervisor stack pointer is read from address 0x00000000
@@ -124,7 +132,7 @@ impl Cpu {
     }
 
     fn invalidate_cache_line(&mut self, addr: u32) {
-        let index = ((addr >> 1) & 0xFFFF) as usize;
+        let index = ((addr >> 1) & 0x1FFFFF) as usize;
         self.decode_cache[index].pc = u32::MAX;
     }
 
@@ -184,11 +192,11 @@ impl Cpu {
         // Optimized instruction fetch with cache
         if pc < 0x400000 {
             // ROM/Cartridge space - Cacheable
-            // Index: (PC / 2) & 0xFFFF. Maps 0-128KB repeating or just lower bits.
+            // Index: (PC / 2) & 0x1FFFFF. Covers 4MB ROM without aliasing.
             // Since we check entry.pc == pc, aliasing is handled safely.
-            let cache_index = ((pc >> 1) & 0xFFFF) as usize;
+            let cache_index = ((pc >> 1) & 0x1FFFFF) as usize;
 
-            // Safety: cache size is 65536, index is masked to 0xFFFF.
+            // Safety: cache size is 2,097,152, index is masked to 0x1FFFFF.
             let entry = unsafe { *self.decode_cache.get_unchecked(cache_index) };
 
             if entry.pc == pc {
@@ -208,10 +216,7 @@ impl Cpu {
                 instruction = decode(opcode);
 
                 // Update Cache
-                unsafe {
-                    *self.decode_cache.get_unchecked_mut(cache_index) =
-                        DecodeCacheEntry { pc, instruction };
-                }
+                self.decode_cache[cache_index] = DecodeCacheEntry { pc, instruction };
             }
         } else {
             // Uncached (RAM, I/O, etc.)
@@ -1200,8 +1205,8 @@ mod tests {
         // Opcode: 1000 001 1 0000 0 000 = 0x8300
         cpu.pc = 0x102;
         memory.write_word(0x102, 0x8300);
-        cpu.d[0] = 0x33;
-        cpu.d[1] = 0x78;
+        cpu.d[0] = 33;
+        cpu.d[1] = 78;
         cpu.set_flag(flags::ZERO, true);
 
         cpu.step_instruction(&mut memory);
