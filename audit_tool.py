@@ -1,5 +1,22 @@
 #!/usr/bin/env python3
+"""
+Security & Quality Audit Tool for genteel
+
+This script scans the codebase for:
+- Potential secrets (API keys, private keys, passwords)
+- Technical debt markers (TODO, FIXME, XXX)
+- Unsafe code blocks (unsafe { ... })
+
+Usage:
+    python3 audit_tool.py
+
+Output:
+    - audit_reports/findings.json: Detailed findings in JSON format
+    - audit_reports/RISK_REGISTER.csv: Summary of findings in CSV format
+"""
+
 import os
+import sys
 import re
 import json
 import csv
@@ -104,6 +121,11 @@ def scan_text_patterns():
             print(f"Error scanning {f}: {e}")
 
 def run_audit():
+    # Ensure we are running from the project root
+    if not os.path.exists("Cargo.toml") and not os.path.exists(".git"):
+        print("❌ Error: This script must be run from the project root.")
+        sys.exit(1)
+
     print("🚀 Starting genteel security & quality audit...")
     
     if not os.path.exists(REPORT_DIR):
