@@ -640,4 +640,160 @@ mod tests {
         assert!(!cpu.get_flag(flags::ZERO));
         assert_eq!(cycles, 8); // 4 (base) + 0 (DataReg) + 4 (AddrIndirect)
     }
+
+    #[test]
+    fn test_exec_shift_lsl_immediate() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x1; // 0...01
+
+        // LSL.L #1, D0
+        let cycles = exec_shift(
+            &mut cpu,
+            Size::Long,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(1),
+            true,  // left
+            false, // arithmetic=false (LSL)
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[0], 0x2); // 0...10
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::EXTEND));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert_eq!(cycles, 6 + 2 * 1); // 6 + 2*n
+    }
+
+    #[test]
+    fn test_exec_shift_lsr_immediate() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0xFFFF; // 1...1
+
+        // LSR.W #2, D0
+        let cycles = exec_shift(
+            &mut cpu,
+            Size::Word,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(2),
+            false, // right
+            false, // arithmetic=false (LSR)
+            &mut memory,
+        );
+
+        // 0xFFFF >> 2 = 0x3FFF
+        assert_eq!(cpu.d[0] & 0xFFFF, 0x3FFF);
+        assert!(cpu.get_flag(flags::CARRY)); // Last bit shifted out was 1
+        assert!(cpu.get_flag(flags::EXTEND));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert_eq!(cycles, 6 + 2 * 2);
+    }
+
+    #[test]
+    fn test_exec_shift_asl_overflow() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x4000; // 0100 0000 0000 0000
+
+        // ASL.W #1, D0
+        exec_shift(
+            &mut cpu,
+            Size::Word,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(1),
+            true, // left
+            true, // arithmetic=true (ASL)
+            &mut memory,
+        );
+
+        // 0x4000 << 1 = 0x8000 (Negative)
+        assert_eq!(cpu.d[0] & 0xFFFF, 0x8000);
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::EXTEND));
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert!(cpu.get_flag(flags::OVERFLOW)); // MSB changed from 0 to 1
+    }
+
+    #[test]
+    fn test_exec_shift_asr_sign_extension() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x80; // -128 in byte (1000 0000)
+
+        // ASR.B #1, D0
+        exec_shift(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(1),
+            false, // right
+            true,  // arithmetic=true (ASR)
+            &mut memory,
+        );
+
+        // 0x80 >> 1 | 0x80 = 0xC0 (1100 0000)
+        assert_eq!(cpu.d[0] & 0xFF, 0xC0);
+        assert!(!cpu.get_flag(flags::CARRY)); // 0 shifted out
+        assert!(!cpu.get_flag(flags::EXTEND));
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+    }
+
+    #[test]
+    fn test_exec_shift_zero_count() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x12345678;
+        cpu.d[1] = 0; // Shift count 0
+        cpu.set_flag(flags::CARRY, true);
+        cpu.set_flag(flags::EXTEND, true);
+        cpu.set_flag(flags::OVERFLOW, true);
+
+        // LSL.L D1, D0
+        let cycles = exec_shift(
+            &mut cpu,
+            Size::Long,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Register(1),
+            true,  // left
+            false, // arithmetic=false
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[0], 0x12345678);
+        assert!(!cpu.get_flag(flags::CARRY)); // Cleared
+        assert!(!cpu.get_flag(flags::OVERFLOW)); // Cleared
+        assert!(cpu.get_flag(flags::EXTEND)); // Unaffected
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert_eq!(cycles, 6); // 6 + 2*0
+    }
+
+    #[test]
+    fn test_exec_shift_memory() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.a[0] = 0x2000;
+        memory.write_word(0x2000, 0x0001);
+
+        // ASL.W (A0) - Memory shift is always 1 bit
+        // In actual instruction decoding, count is always Immediate(1) for memory shifts.
+        // We simulate that here.
+        let cycles = exec_shift(
+            &mut cpu,
+            Size::Word,
+            AddressingMode::AddressIndirect(0),
+            ShiftCount::Immediate(1),
+            true, // left
+            true, // arithmetic
+            &mut memory,
+        );
+
+        assert_eq!(memory.read_word(0x2000), 0x0002);
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::EXTEND));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert_eq!(cycles, 12);
+    }
 }
