@@ -316,9 +316,7 @@ impl Bus {
         if addr <= 0x3FFFFF {
             let idx = addr as usize;
             if idx + 1 < self.rom.len() {
-                let high = self.rom[idx];
-                let low = self.rom[idx + 1];
-                return byte_utils::join_u16(high, low);
+                return u16::from_be_bytes(self.rom[idx..idx + 2].try_into().unwrap());
             } else if idx < self.rom.len() {
                 // Partial read at end of ROM
                 let high = self.rom[idx];
@@ -402,11 +400,7 @@ impl Bus {
         if addr <= 0x3FFFFF {
             let idx = addr as usize;
             if idx + 3 < self.rom.len() {
-                let b0 = self.rom[idx];
-                let b1 = self.rom[idx + 1];
-                let b2 = self.rom[idx + 2];
-                let b3 = self.rom[idx + 3];
-                return byte_utils::join_u32(b0, b1, b2, b3);
+                return u32::from_be_bytes(self.rom[idx..idx + 4].try_into().unwrap());
             }
         }
 
