@@ -22,6 +22,7 @@ pub mod flags {
 }
 
 use crate::debugger::Debuggable;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 /// Z80 CPU
@@ -2065,72 +2066,104 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
     }
 }
 
+#[derive(Serialize, Deserialize, Default)]
+struct Z80State {
+    a: Option<u8>,
+    f: Option<u8>,
+    b: Option<u8>,
+    c: Option<u8>,
+    d: Option<u8>,
+    e: Option<u8>,
+    h: Option<u8>,
+    l: Option<u8>,
+    ix: Option<u16>,
+    iy: Option<u16>,
+    sp: Option<u16>,
+    pc: Option<u16>,
+    iff1: Option<bool>,
+    iff2: Option<bool>,
+    im: Option<u8>,
+    halted: Option<bool>,
+    cycles: Option<u64>,
+}
+
 impl<M: MemoryInterface, I: IoInterface> Debuggable for Z80<M, I> {
     fn read_state(&self) -> Value {
-        json!({
-            "a": self.a, "f": self.f,
-            "b": self.b, "c": self.c,
-            "d": self.d, "e": self.e,
-            "h": self.h, "l": self.l,
-            "ix": self.ix, "iy": self.iy,
-            "sp": self.sp, "pc": self.pc,
-            "iff1": self.iff1, "iff2": self.iff2,
-            "im": self.im, "halted": self.halted,
-            "cycles": self.cycles,
+        serde_json::to_value(Z80State {
+            a: Some(self.a),
+            f: Some(self.f),
+            b: Some(self.b),
+            c: Some(self.c),
+            d: Some(self.d),
+            e: Some(self.e),
+            h: Some(self.h),
+            l: Some(self.l),
+            ix: Some(self.ix),
+            iy: Some(self.iy),
+            sp: Some(self.sp),
+            pc: Some(self.pc),
+            iff1: Some(self.iff1),
+            iff2: Some(self.iff2),
+            im: Some(self.im),
+            halted: Some(self.halted),
+            cycles: Some(self.cycles),
         })
+        .unwrap()
     }
 
     fn write_state(&mut self, state: &Value) {
-        if let Some(a) = state["a"].as_u64() {
-            self.a = a as u8;
+        let z80_state: Z80State = serde_json::from_value(state.clone()).unwrap_or_default();
+
+        if let Some(v) = z80_state.a {
+            self.a = v;
         }
-        if let Some(f) = state["f"].as_u64() {
-            self.f = f as u8;
+        if let Some(v) = z80_state.f {
+            self.f = v;
         }
-        if let Some(b) = state["b"].as_u64() {
-            self.b = b as u8;
+        if let Some(v) = z80_state.b {
+            self.b = v;
         }
-        if let Some(c) = state["c"].as_u64() {
-            self.c = c as u8;
+        if let Some(v) = z80_state.c {
+            self.c = v;
         }
-        if let Some(d) = state["d"].as_u64() {
-            self.d = d as u8;
+        if let Some(v) = z80_state.d {
+            self.d = v;
         }
-        if let Some(e) = state["e"].as_u64() {
-            self.e = e as u8;
+        if let Some(v) = z80_state.e {
+            self.e = v;
         }
-        if let Some(h) = state["h"].as_u64() {
-            self.h = h as u8;
+        if let Some(v) = z80_state.h {
+            self.h = v;
         }
-        if let Some(l) = state["l"].as_u64() {
-            self.l = l as u8;
+        if let Some(v) = z80_state.l {
+            self.l = v;
         }
-        if let Some(ix) = state["ix"].as_u64() {
-            self.ix = ix as u16;
+        if let Some(v) = z80_state.ix {
+            self.ix = v;
         }
-        if let Some(iy) = state["iy"].as_u64() {
-            self.iy = iy as u16;
+        if let Some(v) = z80_state.iy {
+            self.iy = v;
         }
-        if let Some(sp) = state["sp"].as_u64() {
-            self.sp = sp as u16;
+        if let Some(v) = z80_state.sp {
+            self.sp = v;
         }
-        if let Some(pc) = state["pc"].as_u64() {
-            self.pc = pc as u16;
+        if let Some(v) = z80_state.pc {
+            self.pc = v;
         }
-        if let Some(iff1) = state["iff1"].as_bool() {
-            self.iff1 = iff1;
+        if let Some(v) = z80_state.iff1 {
+            self.iff1 = v;
         }
-        if let Some(iff2) = state["iff2"].as_bool() {
-            self.iff2 = iff2;
+        if let Some(v) = z80_state.iff2 {
+            self.iff2 = v;
         }
-        if let Some(im) = state["im"].as_u64() {
-            self.im = im as u8;
+        if let Some(v) = z80_state.im {
+            self.im = v;
         }
-        if let Some(halted) = state["halted"].as_bool() {
-            self.halted = halted;
+        if let Some(v) = z80_state.halted {
+            self.halted = v;
         }
-        if let Some(cycles) = state["cycles"].as_u64() {
-            self.cycles = cycles;
+        if let Some(v) = z80_state.cycles {
+            self.cycles = v;
         }
     }
 }
