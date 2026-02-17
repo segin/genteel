@@ -411,30 +411,34 @@ impl GdbServer {
 
         // D0-D7
         for i in 0..8 {
-            if let Ok(v) = u32::from_str_radix(&data[pos..pos + 8], 16) {
-                registers.d[i] = v;
+            match u32::from_str_radix(&data[pos..pos + 8], 16) {
+                Ok(v) => registers.d[i] = v,
+                Err(_) => return "E01".to_string(),
             }
             pos += 8;
         }
 
         // A0-A7
         for i in 0..8 {
-            if let Ok(v) = u32::from_str_radix(&data[pos..pos + 8], 16) {
-                registers.a[i] = v;
+            match u32::from_str_radix(&data[pos..pos + 8], 16) {
+                Ok(v) => registers.a[i] = v,
+                Err(_) => return "E01".to_string(),
             }
             pos += 8;
         }
 
         // SR
-        if let Ok(v) = u32::from_str_radix(&data[pos..pos + 8], 16) {
-            registers.sr = v as u16;
+        match u32::from_str_radix(&data[pos..pos + 8], 16) {
+            Ok(v) => registers.sr = v as u16,
+            Err(_) => return "E01".to_string(),
         }
         pos += 8;
 
         // PC
         if pos + 8 <= data.len() {
-            if let Ok(v) = u32::from_str_radix(&data[pos..pos + 8], 16) {
-                registers.pc = v;
+            match u32::from_str_radix(&data[pos..pos + 8], 16) {
+                Ok(v) => registers.pc = v,
+                Err(_) => return "E01".to_string(),
             }
         }
 
@@ -1155,5 +1159,21 @@ mod tests {
             "OK"
         );
         assert_eq!(server.process_command("Z1,1000,4", &mut regs, &mut mem), "");
+    }
+
+    #[test]
+    fn test_write_registers_malformed_content() {
+        let mut server = create_test_server();
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+
+        // 144 chars of non-hex data (all 'G')
+        let data_malformed = "G".repeat(144);
+
+        // This should return E01 because 'G' is not a valid hex digit
+        assert_eq!(
+            server.process_command(&format!("G{}", data_malformed), &mut regs, &mut mem),
+            "E01"
+        );
     }
 }
