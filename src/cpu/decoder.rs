@@ -1481,7 +1481,9 @@ fn decode_shifts(opcode: u16) -> Instruction {
         let ea_reg = (opcode & 0x07) as u8;
         if let Some(dst) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
             let count = ShiftCount::Immediate(1); // Memory shifts are always by 1
-            return make_shift_instruction(op_type, direction, Size::Word, dst, count);
+            // For memory shifts, the op type is encoded in bits 10-9 (part of count_or_reg)
+            let mem_op_type = count_or_reg & 0x03;
+            return make_shift_instruction(mem_op_type, direction, Size::Word, dst, count);
         }
     }
 
