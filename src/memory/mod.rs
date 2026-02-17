@@ -15,6 +15,8 @@ use crate::cpu::decoder::Size;
 
 #[cfg(test)]
 mod tests_property;
+#[cfg(test)]
+mod tests_bus_refactor;
 
 pub trait MemoryInterface: std::fmt::Debug {
     fn read_byte(&mut self, address: u32) -> u8;
