@@ -320,3 +320,81 @@ pub fn exec_eori_to_sr<M: MemoryInterface>(cpu: &mut Cpu, memory: &mut M) -> u32
     cpu.set_sr(cpu.sr ^ imm);
     20
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cpu::flags;
+    use crate::memory::Memory;
+
+    #[test]
+    fn test_exec_trap_user_to_supervisor() {
+        let mut memory = Memory::new(0x10000); // Small memory
+        let mut cpu = Cpu::new(&mut memory);
+
+        // Setup initial state: User Mode
+        cpu.pc = 0x1000;
+        cpu.sr = 0x0000; // User mode, no flags
+        cpu.usp = 0x2000; // User stack
+        cpu.ssp = 0x4000; // Supervisor stack
+        cpu.a[7] = cpu.usp; // Active stack is USP in User mode
+
+        // Setup vector table
+        // TRAP #2 -> Vector 32 + 2 = 34. Address = 34 * 4 = 136 (0x88)
+        memory.write_long(136, 0x3000); // Target PC
+
+        // Call exec_trap
+        let cycles = exec_trap(&mut cpu, 2, &mut memory);
+
+        // Verify
+        assert_eq!(cycles, 34); // process_exception returns 34
+        assert_eq!(cpu.pc, 0x3000); // Jumped to vector
+
+        // SR Check: Supervisor bit set, Trace bit cleared
+        assert!((cpu.sr & flags::SUPERVISOR) != 0);
+        assert!((cpu.sr & flags::TRACE) == 0);
+
+        // Stack verification
+        // Should have switched to SSP (0x4000)
+        // Pushed PC (4 bytes) -> 0x3FFC
+        // Pushed SR (2 bytes) -> 0x3FFA
+        assert_eq!(cpu.a[7], 0x3FFA); // A7 should be SSP now
+        assert_eq!(cpu.usp, 0x2000); // USP preserved
+
+        assert_eq!(memory.read_word(0x3FFA), 0x0000); // Old SR (User mode)
+        assert_eq!(memory.read_long(0x3FFC), 0x1000); // Old PC
+    }
+
+    #[test]
+    fn test_exec_trap_supervisor_to_supervisor() {
+        let mut memory = Memory::new(0x10000);
+        let mut cpu = Cpu::new(&mut memory);
+
+        // Setup initial state: Supervisor Mode
+        cpu.pc = 0x1000;
+        cpu.sr = flags::SUPERVISOR;
+        cpu.usp = 0x2000;
+        cpu.ssp = 0x4000;
+        cpu.a[7] = cpu.ssp; // Active stack is SSP
+
+        // Setup vector table
+        // TRAP #3 -> Vector 32 + 3 = 35. Address = 35 * 4 = 140 (0x8C)
+        memory.write_long(140, 0x5000); // Target PC
+
+        // Call exec_trap
+        let cycles = exec_trap(&mut cpu, 3, &mut memory);
+
+        assert_eq!(cycles, 34);
+        assert_eq!(cpu.pc, 0x5000);
+        assert!((cpu.sr & flags::SUPERVISOR) != 0);
+
+        // Stack verification
+        // Should continue using SSP (0x4000)
+        // Pushed PC -> 0x3FFC
+        // Pushed SR -> 0x3FFA
+        assert_eq!(cpu.a[7], 0x3FFA);
+
+        assert_eq!(memory.read_word(0x3FFA), flags::SUPERVISOR); // Old SR
+        assert_eq!(memory.read_long(0x3FFC), 0x1000); // Old PC
+    }
+}
