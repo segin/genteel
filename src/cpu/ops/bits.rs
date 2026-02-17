@@ -640,4 +640,29 @@ mod tests {
         assert!(!cpu.get_flag(flags::ZERO));
         assert_eq!(cycles, 8); // 4 (base) + 0 (DataReg) + 4 (AddrIndirect)
     }
+
+    #[test]
+    fn test_exec_or_memory_to_reg() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0xAA;
+        cpu.a[0] = 0x2000;
+        memory.write_byte(0x2000, 0x55);
+
+        // OR.B (A0), D0
+        let cycles = exec_or(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::AddressIndirect(0),
+            AddressingMode::DataRegister(0),
+            false,
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[0] & 0xFF, 0xFF); // 0xAA | 0x55 = 0xFF
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert_eq!(cycles, 8); // 4 (base) + 4 (AddrIndirect) + 0 (DataReg)
+    }
 }
