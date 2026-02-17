@@ -88,6 +88,25 @@ pub struct Z80<M: MemoryInterface, I: IoInterface> {
     pub debug: bool,
 }
 
+macro_rules! z_dispatch {
+    ($z:expr, $self:ident, $y:expr, [
+        $f0:ident, $f1:ident, $f2:ident, $f3:ident,
+        $f4:ident, $f5:ident, $f6:ident, $f7:ident
+    ]) => {
+        match $z {
+            0 => $self.$f0($y),
+            1 => $self.$f1($y),
+            2 => $self.$f2($y),
+            3 => $self.$f3($y),
+            4 => $self.$f4($y),
+            5 => $self.$f5($y),
+            6 => $self.$f6($y),
+            7 => $self.$f7($y),
+            _ => 4,
+        }
+    };
+}
+
 impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
     pub fn new(memory: M, io: I) -> Self {
         Self {
@@ -731,14 +750,12 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         let x = (opcode >> 6) & 0x03;
         let y = (opcode >> 3) & 0x07;
         let z = opcode & 0x07;
-        let p = (y >> 1) & 0x03;
-        let q = y & 0x01;
 
         let t_states = match x {
-            0 => self.execute_x0(opcode, y, z, p, q),
+            0 => self.execute_x0(y, z),
             1 => self.execute_x1(y, z),
             2 => self.execute_x2(y, z),
-            3 => self.execute_x3(opcode, y, z, p, q),
+            3 => self.execute_x3(y, z),
             _ => 4,
         };
 
@@ -746,18 +763,17 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         t_states
     }
 
-    fn execute_x0(&mut self, _opcode: u8, y: u8, z: u8, p: u8, q: u8) -> u8 {
-        match z {
-            0 => self.execute_x0_control_misc(y),
-            1 => self.execute_x0_load_add_hl(p, q),
-            2 => self.execute_x0_load_indirect(p, q),
-            3 => self.execute_x0_inc_dec_rp(p, q),
-            4 => self.execute_x0_inc_r(y),
-            5 => self.execute_x0_dec_r(y),
-            6 => self.execute_x0_ld_r_n(y),
-            7 => self.execute_x0_rotate_accum_flags(y),
-            _ => 4,
-        }
+    fn execute_x0(&mut self, y: u8, z: u8) -> u8 {
+        z_dispatch!(z, self, y, [
+            execute_x0_control_misc,
+            execute_x0_load_add_hl,
+            execute_x0_load_indirect,
+            execute_x0_inc_dec_rp,
+            execute_x0_inc_r,
+            execute_x0_dec_r,
+            execute_x0_ld_r_n,
+            execute_x0_rotate_accum_flags
+        ])
     }
 
     fn execute_x0_control_misc(&mut self, y: u8) -> u8 {
@@ -800,7 +816,9 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
     }
 
-    fn execute_x0_load_add_hl(&mut self, p: u8, q: u8) -> u8 {
+    fn execute_x0_load_add_hl(&mut self, y: u8) -> u8 {
+        let p = (y >> 1) & 0x03;
+        let q = y & 0x01;
         if q == 0 {
             // LD rp, nn
             let nn = self.fetch_word();
@@ -814,7 +832,9 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
     }
 
-    fn execute_x0_load_indirect(&mut self, p: u8, q: u8) -> u8 {
+    fn execute_x0_load_indirect(&mut self, y: u8) -> u8 {
+        let p = (y >> 1) & 0x03;
+        let q = y & 0x01;
         match (p, q) {
             (0, 0) => {
                 // LD (BC), A
@@ -878,7 +898,9 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
     }
 
-    fn execute_x0_inc_dec_rp(&mut self, p: u8, q: u8) -> u8 {
+    fn execute_x0_inc_dec_rp(&mut self, y: u8) -> u8 {
+        let p = (y >> 1) & 0x03;
+        let q = y & 0x01;
         // INC/DEC rp
         let rp = self.get_rp(p);
         if q == 0 {
@@ -1045,18 +1067,17 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
     }
 
-    fn execute_x3(&mut self, _opcode: u8, y: u8, z: u8, p: u8, q: u8) -> u8 {
-        match z {
-            0 => self.execute_x3_ret_cc(y),
-            1 => self.execute_x3_pop_ret_exx(p, q),
-            2 => self.execute_x3_jp_cc(y),
-            3 => self.execute_x3_jp_out_ex_di_ei(y),
-            4 => self.execute_x3_call_cc(y),
-            5 => self.execute_x3_push_call_prefixes(p, q),
-            6 => self.execute_x3_alu_n(y),
-            7 => self.execute_x3_rst(y),
-            _ => 4,
-        }
+    fn execute_x3(&mut self, y: u8, z: u8) -> u8 {
+        z_dispatch!(z, self, y, [
+            execute_x3_ret_cc,
+            execute_x3_pop_ret_exx,
+            execute_x3_jp_cc,
+            execute_x3_jp_out_ex_di_ei,
+            execute_x3_call_cc,
+            execute_x3_push_call_prefixes,
+            execute_x3_alu_n,
+            execute_x3_rst
+        ])
     }
 
     fn execute_x3_ret_cc(&mut self, y: u8) -> u8 {
@@ -1069,7 +1090,9 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
     }
 
-    fn execute_x3_pop_ret_exx(&mut self, p: u8, q: u8) -> u8 {
+    fn execute_x3_pop_ret_exx(&mut self, y: u8) -> u8 {
+        let p = (y >> 1) & 0x03;
+        let q = y & 0x01;
         if q == 0 {
             // POP rp2
             let val = self.pop();
@@ -1185,7 +1208,9 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
     }
 
-    fn execute_x3_push_call_prefixes(&mut self, p: u8, q: u8) -> u8 {
+    fn execute_x3_push_call_prefixes(&mut self, y: u8) -> u8 {
+        let p = (y >> 1) & 0x03;
+        let q = y & 0x01;
         if q == 0 {
             // PUSH rp2
             let val = self.get_rp2(p);
