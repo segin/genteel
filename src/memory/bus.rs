@@ -26,7 +26,19 @@ use crate::apu::Apu;
 use crate::debugger::Debuggable;
 use crate::io::Io;
 use crate::vdp::Vdp;
-use serde_json::{json, Value};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+#[derive(Serialize, Deserialize, Default)]
+#[serde(default)]
+struct BusJsonState {
+    z80_bus_request: Option<bool>,
+    z80_reset: Option<bool>,
+    z80_bank_addr: Option<u32>,
+    vdp: Option<Value>,
+    io: Option<Value>,
+    apu: Option<Value>,
+}
 
 /// Sega Genesis Memory Bus
 ///
@@ -499,28 +511,97 @@ impl MemoryInterface for Bus {
 
 impl Debuggable for Bus {
     fn read_state(&self) -> Value {
-        json!({
-            "z80_bus_request": self.z80_bus_request,
-            "z80_reset": self.z80_reset,
-            "z80_bank_addr": self.z80_bank_addr,
-            "vdp": self.vdp.read_state(),
-            "io": self.io.read_state(),
-            "apu": self.apu.read_state(),
-        })
+        let state = BusJsonState {
+            z80_bus_request: Some(self.z80_bus_request),
+            z80_reset: Some(self.z80_reset),
+            z80_bank_addr: Some(self.z80_bank_addr),
+            vdp: Some(self.vdp.read_state()),
+            io: Some(self.io.read_state()),
+            apu: Some(self.apu.read_state()),
+        };
+        serde_json::to_value(state).unwrap_or(Value::Null)
     }
 
     fn write_state(&mut self, state: &Value) {
-        if let Some(req) = state["z80_bus_request"].as_bool() {
-            self.z80_bus_request = req;
+        if let Ok(bus_state) = serde_json::from_value::<BusJsonState>(state.clone()) {
+            if let Some(req) = bus_state.z80_bus_request {
+                self.z80_bus_request = req;
+            }
+            if let Some(reset) = bus_state.z80_reset {
+                self.z80_reset = reset;
+            }
+            if let Some(bank) = bus_state.z80_bank_addr {
+                self.z80_bank_addr = bank;
+            }
+            if let Some(vdp_state) = bus_state.vdp {
+                self.vdp.write_state(&vdp_state);
+            }
+            if let Some(io_state) = bus_state.io {
+                self.io.write_state(&io_state);
+            }
+            if let Some(apu_state) = bus_state.apu {
+                self.apu.write_state(&apu_state);
+            }
         }
-        if let Some(reset) = state["z80_reset"].as_bool() {
-            self.z80_reset = reset;
-        }
-        if let Some(bank) = state["z80_bank_addr"].as_u64() {
-            self.z80_bank_addr = bank as u32;
-        }
-        self.vdp.write_state(&state["vdp"]);
-        self.io.write_state(&state["io"]);
-        self.apu.write_state(&state["apu"]);
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_bus_state_serialization() {
+        let mut bus = Bus::new();
+
+        // Modify state
+        bus.z80_bus_request = true;
+        bus.z80_reset = false;
+        bus.z80_bank_addr = 0x12345;
+        // VDP state change
+        bus.vdp.write_state(&json!({
+            "status": 0x1234,
+            "h_counter": 0x56,
+            "v_counter": 0x78
+        }));
+
+        // Serialize
+        let state = bus.read_state();
+
+        // Create new bus
+        let mut bus2 = Bus::new();
+
+        // Deserialize
+        bus2.write_state(&state);
+
+        // Verify
+        assert_eq!(bus2.z80_bus_request, true);
+        assert_eq!(bus2.z80_reset, false);
+        assert_eq!(bus2.z80_bank_addr, 0x12345);
+
+        // Verify VDP state propagated
+        let vdp_state = bus2.vdp.read_state();
+        assert_eq!(vdp_state["status"].as_u64(), Some(0x1234));
+        assert_eq!(vdp_state["h_counter"].as_u64(), Some(0x56));
+        assert_eq!(vdp_state["v_counter"].as_u64(), Some(0x78));
+    }
+
+    #[test]
+    fn test_bus_state_partial_update() {
+        let mut bus = Bus::new();
+        bus.z80_bus_request = false;
+        bus.z80_bank_addr = 0;
+
+        // Partial update: only z80_bus_request
+        let partial = json!({
+            "z80_bus_request": true
+        });
+
+        bus.write_state(&partial);
+
+        assert_eq!(bus.z80_bus_request, true);
+        assert_eq!(bus.z80_bank_addr, 0); // Should remain unchanged
+    }
+
 }
