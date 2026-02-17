@@ -1,27 +1,36 @@
-# Development Scripts
+# Developer Scripts
 
-This directory contains utility scripts for the Genteel emulator project.
+This directory contains utility scripts for development, testing, and auditing of the Genteel codebase.
 
-## `audit_tool.py`
+## Scripts
 
-A security and code quality audit tool that scans the codebase for potential secrets, technical debt (TODO/FIXME), and unsafe code blocks.
+### `audit_tool.py` (or `audit.py`)
+
+A security and quality audit tool that scans the codebase for:
+*   Potential secrets (API keys, tokens, etc.)
+*   Technical debt markers (TODO, FIXME, XXX)
+*   Unsafe code blocks (`unsafe { ... }`)
 
 **Usage:**
-Run from the repository root:
+
+Run this script from the **repository root**:
+
 ```bash
 python3 scripts/audit_tool.py
 ```
 
-The script will generate reports in the `audit_reports/` directory:
-- `findings.json`: Detailed list of findings in JSON format.
-- `RISK_REGISTER.csv`: A CSV file suitable for tracking issues.
+The script will generate an `audit_reports/` directory in the root containing:
+*   `findings.json`: A JSON list of all findings.
+*   `RISK_REGISTER.csv`: A CSV file suitable for tracking issues.
 
-## `benchmark_regex.py`
+### `benchmark_audit_regex.py`
 
-A utility to benchmark the performance of regex pattern matching used in the audit tool. It generates a large test file and measures the time taken by different scanning approaches.
+A benchmarking script used to compare the performance of regex scanning methods (e.g., pre-compiled vs. ad-hoc regex). This script is useful for verifying the efficiency of patterns used in the audit tool.
 
 **Usage:**
-Run from the repository root:
+
+Run this script from the **repository root**:
+
 ```bash
-python3 scripts/benchmark_regex.py
+python3 scripts/benchmark_audit_regex.py
 ```

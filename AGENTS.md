@@ -10,6 +10,7 @@ This document provides AI-specific operational context for working on the `gente
 - **Run**: `cargo run`
 - **Check**: `cargo clippy`
 - **Format**: `cargo fmt`
+- **Audit**: `python3 scripts/audit_tool.py`
 
 ## Agent Operating Principles
 
@@ -79,6 +80,7 @@ cargo test test_name
 - Bounds-check all memory accesses (emulator runs untrusted ROM code)
 - Handle invalid/malformed instructions gracefully
 - The debugger interface uses local network sockets - restrict access appropriately
+- Run the audit tool (`python3 scripts/audit_tool.py`) periodically to detect secrets and unsafe patterns.
 
 ## Agent Capabilities
 
