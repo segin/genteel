@@ -299,17 +299,7 @@ impl Vdp {
                 }
                 let addr = (self.control_address & 0x7E) as usize;
 
-                // Extract 3-bit components (bits 1-3, 5-7, 9-11)
-                let r3 = (val >> 1) & 0x07;
-                let g3 = (val >> 5) & 0x07;
-                let b3 = (val >> 9) & 0x07;
-
-                // Scale to RGB565 using bit repetition
-                let r5 = (r3 << 2) | (r3 >> 1);
-                let g6 = (g3 << 3) | g3;
-                let b5 = (b3 << 2) | (b3 >> 1);
-
-                self.cram_cache[addr >> 1] = ((r5 as u16) << 11) | ((g6 as u16) << 5) | (b5 as u16);
+                self.cram_cache[addr >> 1] = Self::genesis_color_to_rgb565(val);
 
                 self.cram[addr] = (val & 0xFF) as u8;
                 self.cram[addr + 1] = (val >> 8) as u8;
@@ -409,6 +399,20 @@ impl Vdp {
     }
 
     // Helper methods
+    pub(crate) fn genesis_color_to_rgb565(val: u16) -> u16 {
+        // Extract 3-bit components (bits 1-3, 5-7, 9-11)
+        let r3 = (val >> 1) & 0x07;
+        let g3 = (val >> 5) & 0x07;
+        let b3 = (val >> 9) & 0x07;
+
+        // Scale to RGB565 using bit repetition
+        let r5 = (r3 << 2) | (r3 >> 1);
+        let g6 = (g3 << 3) | g3;
+        let b5 = (b3 << 2) | (b3 >> 1);
+
+        ((r5 as u16) << 11) | ((g6 as u16) << 5) | (b5 as u16)
+    }
+
     fn auto_increment(&self) -> u8 {
         self.registers[REG_AUTO_INC]
     }
@@ -1172,18 +1176,7 @@ impl Debuggable for Vdp {
                 let addr = i * 2;
                 if addr + 1 < self.cram.len() {
                     let val = ((self.cram[addr + 1] as u16) << 8) | (self.cram[addr] as u16);
-
-                    // Extract 3-bit components (bits 1-3, 5-7, 9-11)
-                    let r3 = (val >> 1) & 0x07;
-                    let g3 = (val >> 5) & 0x07;
-                    let b3 = (val >> 9) & 0x07;
-
-                    // Scale to RGB565 using bit repetition
-                    let r5 = (r3 << 2) | (r3 >> 1);
-                    let g6 = (g3 << 3) | g3;
-                    let b5 = (b3 << 2) | (b3 >> 1);
-
-                    self.cram_cache[i] = ((r5 as u16) << 11) | ((g6 as u16) << 5) | (b5 as u16);
+                    self.cram_cache[i] = Vdp::genesis_color_to_rgb565(val);
                 }
             }
         }
@@ -1305,6 +1298,20 @@ mod tests {
 
         // Verify CRAM Cache
         assert_eq!(vdp2.cram_cache[1], 0xFFFF);
+    }
+
+    #[test]
+    fn test_genesis_color_to_rgb565() {
+        // Test White (0x0EEE) -> 0xFFFF
+        assert_eq!(Vdp::genesis_color_to_rgb565(0x0EEE), 0xFFFF);
+        // Test Black (0x0000) -> 0x0000
+        assert_eq!(Vdp::genesis_color_to_rgb565(0x0000), 0x0000);
+        // Test Red (0x000E) -> R=7, G=0, B=0 -> R5=31, G6=0, B5=0 -> 0xF800
+        assert_eq!(Vdp::genesis_color_to_rgb565(0x000E), 0xF800);
+        // Test Green (0x00E0) -> R=0, G=7, B=0 -> R5=0, G6=63, B5=0 -> 0x07E0
+        assert_eq!(Vdp::genesis_color_to_rgb565(0x00E0), 0x07E0);
+        // Test Blue (0x0E00) -> R=0, G=0, B=7 -> R5=0, G6=0, B5=31 -> 0x001F
+        assert_eq!(Vdp::genesis_color_to_rgb565(0x0E00), 0x001F);
     }
 }
 
