@@ -808,3 +808,185 @@ fn fetch_postinc_operand<M: MemoryInterface>(
     cpu.a[reg as usize] = addr.wrapping_add(size.bytes());
     val
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cpu::flags;
+    use crate::memory::Memory;
+
+    fn create_test_cpu() -> (Cpu, Memory) {
+        let mut memory = Memory::new(0x10000);
+        memory.write_long(0, 0x1000); // SP
+        memory.write_long(4, 0x100); // PC
+        let cpu = Cpu::new(&mut memory);
+        (cpu, memory)
+    }
+
+    #[test]
+    fn test_exec_add_byte() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        cpu.d[0] = 0x10;
+        cpu.d[1] = 0x20;
+
+        // ADD.B D0, D1
+        let cycles = exec_add(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1], 0x30);
+        assert_eq!(cycles, 4); // Standard reg-reg ADD.B/W is 4 cycles
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+    }
+
+    #[test]
+    fn test_exec_add_word() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        cpu.d[0] = 0x1000;
+        cpu.d[1] = 0x2000;
+
+        // ADD.W D0, D1
+        let cycles = exec_add(
+            &mut cpu,
+            Size::Word,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1], 0x3000);
+        assert_eq!(cycles, 4);
+    }
+
+    #[test]
+    fn test_exec_add_long() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        cpu.d[0] = 0x10000000;
+        cpu.d[1] = 0x20000000;
+
+        // ADD.L D0, D1
+        let cycles = exec_add(
+            &mut cpu,
+            Size::Long,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1], 0x30000000);
+        assert_eq!(cycles, 8); // ADD.L reg-reg is 8 cycles
+    }
+
+    #[test]
+    fn test_exec_add_memory() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        let addr = 0x2000;
+        memory.write_word(addr, 0x1234);
+        cpu.d[0] = 0x1111;
+
+        // ADD.W (0x2000).W, D0
+        // Source is Absolute Short (0x2000)
+        // Destination is D0
+
+        // We need to set PC and put 0x2000 at PC for AbsoluteShort fetch
+        cpu.pc = 0x100;
+        memory.write_word(0x100, 0x2000);
+
+        let cycles = exec_add(
+            &mut cpu,
+            Size::Word,
+            AddressingMode::AbsoluteShort,
+            AddressingMode::DataRegister(0),
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[0] & 0xFFFF, 0x2345);
+        // calculate_ea(AbsoluteShort) = 4 cycles (fetch extension)
+        // cpu_read_ea(Memory) = 4 cycles (read operand)
+        // exec_add overhead = 4 cycles (add operation)
+        // Total = 12 cycles
+        assert_eq!(cycles, 12);
+    }
+
+    #[test]
+    fn test_exec_add_flags_zero() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        cpu.d[0] = 0;
+        cpu.d[1] = 0;
+
+        exec_add(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            &mut memory,
+        );
+
+        assert!(cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_exec_add_flags_negative() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        cpu.d[0] = 0x80;
+        cpu.d[1] = 0x00;
+
+        exec_add(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1] & 0xFF, 0x80);
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::ZERO));
+    }
+
+    #[test]
+    fn test_exec_add_flags_carry_overflow() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        cpu.d[0] = 0xFF;
+        cpu.d[1] = 0x01;
+
+        // 0xFF + 0x01 = 0x00 (Carry)
+        exec_add(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1] & 0xFF, 0x00);
+        assert!(cpu.get_flag(flags::CARRY));
+        assert!(cpu.get_flag(flags::EXTEND));
+        assert!(cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+
+        // Overflow case: 0x7F + 0x01 = 0x80 (-128)
+        cpu.d[0] = 0x7F;
+        cpu.d[1] = 0x01;
+        exec_add(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1] & 0xFF, 0x80);
+        assert!(cpu.get_flag(flags::OVERFLOW));
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::CARRY));
+    }
+}
