@@ -808,3 +808,112 @@ fn fetch_postinc_operand<M: MemoryInterface>(
     cpu.a[reg as usize] = addr.wrapping_add(size.bytes());
     val
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cpu::Cpu;
+    use crate::memory::Memory;
+    use crate::cpu::flags;
+
+    fn create_test_cpu() -> (Cpu, Memory) {
+        let mut memory = Memory::new(0x10000);
+        let mut cpu = Cpu::new(&mut memory);
+        // Reset state
+        cpu.d = [0; 8];
+        cpu.a = [0; 8];
+        cpu.pc = 0;
+        cpu.sr = 0;
+        (cpu, memory)
+    }
+
+    #[test]
+    fn test_exec_add_byte_reg_reg() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        cpu.d[0] = 0x10;
+        cpu.d[1] = 0x20;
+
+        // ADD.B D0, D1
+        exec_add(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1] & 0xFF, 0x30);
+        // Flags should be cleared (except maybe Z if result was 0, but here it's 0x30)
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert!(!cpu.get_flag(flags::EXTEND));
+    }
+
+    #[test]
+    fn test_exec_add_word_flags() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        // 0x7FFF + 0x0001 = 0x8000 (Overflow, Negative, no Carry)
+        cpu.d[0] = 0x0001;
+        cpu.d[1] = 0x7FFF;
+
+        exec_add(
+            &mut cpu,
+            Size::Word,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1] & 0xFFFF, 0x8000);
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert!(cpu.get_flag(flags::OVERFLOW));
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::EXTEND));
+        assert!(!cpu.get_flag(flags::ZERO));
+
+        // 0xFFFF + 0x0001 = 0x0000 (Carry, Extend, Zero, no Overflow)
+        cpu.d[0] = 0x0001;
+        cpu.d[1] = 0xFFFF;
+
+        exec_add(
+            &mut cpu,
+            Size::Word,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1] & 0xFFFF, 0x0000);
+        assert!(cpu.get_flag(flags::ZERO));
+        assert!(cpu.get_flag(flags::CARRY));
+        assert!(cpu.get_flag(flags::EXTEND));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_exec_add_long_memory() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        cpu.d[0] = 0x12345678;
+        let addr = 0x2000;
+        memory.write_long(addr, 0x11111111);
+
+        cpu.a[0] = addr;
+
+        // ADD.L D0, (A0)
+        exec_add(
+            &mut cpu,
+            Size::Long,
+            AddressingMode::DataRegister(0),
+            AddressingMode::AddressIndirect(0),
+            &mut memory,
+        );
+
+        let result = memory.read_long(addr);
+        assert_eq!(result, 0x23456789);
+        assert!(!cpu.get_flag(flags::ZERO));
+    }
+}
