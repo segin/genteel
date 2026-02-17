@@ -316,6 +316,7 @@ impl Bus {
         if addr <= 0x3FFFFF {
             let idx = addr as usize;
             if idx + 1 < self.rom.len() {
+                // Verified safe: Use checked indexing instead of unsafe get_unchecked
                 let high = self.rom[idx];
                 let low = self.rom[idx + 1];
                 return byte_utils::join_u16(high, low);
@@ -402,6 +403,7 @@ impl Bus {
         if addr <= 0x3FFFFF {
             let idx = addr as usize;
             if idx + 3 < self.rom.len() {
+                // Verified safe: Use checked indexing instead of unsafe get_unchecked
                 let b0 = self.rom[idx];
                 let b1 = self.rom[idx + 1];
                 let b2 = self.rom[idx + 2];
