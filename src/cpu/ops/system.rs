@@ -320,3 +320,93 @@ pub fn exec_eori_to_sr<M: MemoryInterface>(cpu: &mut Cpu, memory: &mut M) -> u32
     cpu.set_sr(cpu.sr ^ imm);
     20
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::memory::Memory;
+    use crate::cpu::Cpu;
+
+    fn create_test_cpu() -> (Cpu, Memory) {
+        let mut memory = Memory::new(0x10000);
+        // Initial SP and PC
+        memory.write_long(0, 0x1000); // SP
+        memory.write_long(4, 0x100); // PC
+        let cpu = Cpu::new(&mut memory);
+        (cpu, memory)
+    }
+
+    #[test]
+    fn test_exec_trap_vectors() {
+        // Iterate through all 16 vectors (0-15) for TRAP #n
+        for vector in 0..16u8 {
+            let (mut cpu, mut memory) = create_test_cpu();
+
+            // Setup
+            let initial_pc = 0x200;
+            cpu.pc = initial_pc;
+            cpu.sr = 0x0000; // User mode, no flags
+            let initial_sp = cpu.a[7];
+
+            // Set exception vector handler address
+            // TRAP #n uses vectors 32-47.
+            // Address = (32 + vector) * 4
+            let vector_num = 32 + vector as u32;
+            let handler_addr = 0x4000 + (vector as u32 * 0x10);
+            memory.write_long(vector_num * 4, handler_addr);
+
+            // Execute TRAP
+            let cycles = exec_trap(&mut cpu, vector, &mut memory);
+
+            // Verify Cycles: Standard exception processing takes 34 cycles
+            assert_eq!(cycles, 34, "TRAP #{} should take 34 cycles", vector);
+
+            // Verify PC Jump
+            assert_eq!(cpu.pc, handler_addr, "TRAP #{} should jump to handler", vector);
+
+            // Verify Stack Usage
+            // 6 bytes pushed: 4 bytes (PC) + 2 bytes (SR)
+            assert_eq!(cpu.a[7], initial_sp - 6, "SP should be decremented by 6");
+
+            // Check pushed SR (at SP)
+            let pushed_sr = memory.read_word(cpu.a[7]);
+            assert_eq!(pushed_sr, 0x0000, "Pushed SR should match old SR");
+
+            // Check pushed PC (at SP+2)
+            let pushed_pc = memory.read_long(cpu.a[7] + 2);
+            assert_eq!(pushed_pc, initial_pc, "Pushed PC should match old PC");
+
+            // Verify New SR
+            // Supervisor bit (0x2000) should be set
+            // Trace bit (0x8000) should be cleared
+            assert_eq!(cpu.sr & 0x2000, 0x2000, "Supervisor bit should be set");
+            assert_eq!(cpu.sr & 0x8000, 0x0000, "Trace bit should be cleared");
+        }
+    }
+
+    #[test]
+    fn test_exec_trap_trace_bit() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        let vector = 5;
+
+        cpu.pc = 0x200;
+        // Set Trace bit (bit 15) and verify it gets cleared in new SR but saved in old SR
+        cpu.sr = 0x8000;
+
+        // Set vector
+        let handler = 0x5000;
+        memory.write_long((32 + vector as u32) * 4, handler);
+
+        exec_trap(&mut cpu, vector, &mut memory);
+
+        // Old SR on stack should have Trace bit set
+        let pushed_sr = memory.read_word(cpu.a[7]);
+        assert_eq!(pushed_sr & 0x8000, 0x8000, "Pushed SR should preserve Trace bit");
+
+        // New SR should have Trace bit cleared
+        assert_eq!(cpu.sr & 0x8000, 0, "New SR should have Trace bit cleared");
+
+        // And Supervisor bit set
+        assert_eq!(cpu.sr & 0x2000, 0x2000, "Supervisor bit should be set");
+    }
+}
