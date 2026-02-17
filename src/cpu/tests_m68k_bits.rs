@@ -71,6 +71,60 @@ fn test_btst_all_32_bits() {
     }
 }
 
+#[test]
+fn test_btst_memory_immediate() {
+    let (mut cpu, mut memory) = create_cpu();
+    // BTST #bit, (A0)
+    // Opcode: 0000 100 0 00 010 000 (0x0810)
+    write_op(&mut memory, &[0x0810, 0x0007]);
+    cpu.a[0] = 0x2000;
+    memory.write_byte(0x2000, 0x80); // Bit 7 set
+    cpu.step_instruction(&mut memory);
+    assert!(!cpu.get_flag(flags::ZERO));
+}
+
+#[test]
+fn test_btst_memory_register() {
+    let (mut cpu, mut memory) = create_cpu();
+    // BTST D0, (A0)
+    // Opcode: 0000 000 1 00 010 000 (0x0110)
+    write_op(&mut memory, &[0x0110]);
+    cpu.a[0] = 0x2000;
+    memory.write_byte(0x2000, 0x01); // Bit 0 set
+    cpu.d[0] = 0; // Test bit 0
+    cpu.step_instruction(&mut memory);
+    assert!(!cpu.get_flag(flags::ZERO));
+}
+
+#[test]
+fn test_btst_memory_modulo_behavior() {
+    let (mut cpu, mut memory) = create_cpu();
+    // BTST D0, (A0)
+    // Opcode: 0000 000 1 00 010 000 (0x0110)
+    write_op(&mut memory, &[0x0110]);
+    cpu.a[0] = 0x2000;
+    memory.write_byte(0x2000, 0x01); // Bit 0 set
+
+    // Test bit 8 (should be 8 % 8 = 0, which is set)
+    cpu.d[0] = 8;
+    cpu.step_instruction(&mut memory);
+    assert!(!cpu.get_flag(flags::ZERO), "Bit 8 (mod 8 = 0) should test bit 0 which is set");
+
+    // Reset PC for next instruction
+    cpu.pc = 0x1000;
+    // Test bit 1 (should be 0)
+    cpu.d[0] = 1;
+    cpu.step_instruction(&mut memory);
+    assert!(cpu.get_flag(flags::ZERO), "Bit 1 should be clear");
+
+    // Reset PC
+    cpu.pc = 0x1000;
+    // Test bit 9 (should be 9 % 8 = 1, which is clear)
+    cpu.d[0] = 9;
+    cpu.step_instruction(&mut memory);
+    assert!(cpu.get_flag(flags::ZERO), "Bit 9 (mod 8 = 1) should test bit 1 which is clear");
+}
+
 // ============================================================================
 // BSET Tests
 // ============================================================================
