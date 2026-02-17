@@ -2,12 +2,13 @@ use super::*;
 use crate::memory::{Memory, MemoryInterface};
 use crate::z80::test_utils::TestIo;
 
-fn create_z80(program: &[u8]) -> Z80<Memory, TestIo> {
+fn create_z80(program: &[u8]) -> crate::z80::test_utils::TestZ80 {
     let mut memory = Memory::new(0x10000);
     for (i, &byte) in program.iter().enumerate() {
         memory.data[i] = byte;
     }
-    Z80::new(memory, TestIo::default())
+    let cpu = Z80::new();
+    crate::z80::test_utils::TestZ80::new(cpu, memory, TestIo::default())
 }
 
 #[test]

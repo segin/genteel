@@ -26,7 +26,7 @@ use serde_json::{json, Value};
 
 /// Z80 CPU
 #[derive(Debug)]
-pub struct Z80<M: MemoryInterface, I: IoInterface> {
+pub struct Z80 {
     // Main registers
     pub a: u8,
     pub f: u8,
@@ -75,12 +75,6 @@ pub struct Z80<M: MemoryInterface, I: IoInterface> {
     // Interrupt logic
     pub pending_ei: bool,
 
-    // Memory interface (Generic for static dispatch performance)
-    pub memory: M,
-
-    // I/O interface (Generic for static dispatch performance)
-    pub io: I,
-
     // Cycle counter for timing
     pub cycles: u64,
 
@@ -88,8 +82,8 @@ pub struct Z80<M: MemoryInterface, I: IoInterface> {
     pub debug: bool,
 }
 
-impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
-    pub fn new(memory: M, io: I) -> Self {
+impl Z80 {
+    pub fn new() -> Self {
         Self {
             a: 0xFF,
             f: 0xFF,
@@ -119,8 +113,6 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
             memptr: 0,
             halted: false,
             pending_ei: false,
-            memory,
-            io,
             cycles: 0,
             debug: false,
         }
@@ -210,8 +202,8 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
 
     // ========== Memory access helpers ==========
 
-    fn fetch_byte(&mut self) -> u8 {
-        let byte = self.memory.read_byte(self.pc as u32);
+    fn fetch_byte(&mut self, bus: &mut impl MemoryInterface) -> u8 {
+        let byte = bus.read_byte(self.pc as u32);
         self.pc = self.pc.wrapping_add(1);
 
         // Refresh register (R) increments on every instruction fetch
@@ -221,48 +213,48 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         byte
     }
 
-    fn fetch_word(&mut self) -> u16 {
-        let low = self.fetch_byte() as u16;
-        let high = self.fetch_byte() as u16;
+    fn fetch_word(&mut self, bus: &mut impl MemoryInterface) -> u16 {
+        let low = self.fetch_byte(bus) as u16;
+        let high = self.fetch_byte(bus) as u16;
         (high << 8) | low
     }
 
-    fn read_byte(&mut self, addr: u16) -> u8 {
-        self.memory.read_byte(addr as u32)
+    fn read_byte(&mut self, bus: &mut impl MemoryInterface, addr: u16) -> u8 {
+        bus.read_byte(addr as u32)
     }
 
-    fn write_byte(&mut self, addr: u16, value: u8) {
-        self.memory.write_byte(addr as u32, value);
+    fn write_byte(&mut self, bus: &mut impl MemoryInterface, addr: u16, value: u8) {
+        bus.write_byte(addr as u32, value);
     }
 
-    fn read_word(&mut self, addr: u16) -> u16 {
-        let low = self.read_byte(addr) as u16;
-        let high = self.read_byte(addr.wrapping_add(1)) as u16;
+    fn read_word(&mut self, bus: &mut impl MemoryInterface, addr: u16) -> u16 {
+        let low = self.read_byte(bus, addr) as u16;
+        let high = self.read_byte(bus, addr.wrapping_add(1)) as u16;
         (high << 8) | low
     }
 
-    fn write_word(&mut self, addr: u16, value: u16) {
-        self.write_byte(addr, value as u8);
-        self.write_byte(addr.wrapping_add(1), (value >> 8) as u8);
+    fn write_word(&mut self, bus: &mut impl MemoryInterface, addr: u16, value: u16) {
+        self.write_byte(bus, addr, value as u8);
+        self.write_byte(bus, addr.wrapping_add(1), (value >> 8) as u8);
     }
 
     // ========== I/O access helpers ==========
 
-    fn read_port(&mut self, port: u16) -> u8 {
-        self.io.read_port(port)
+    fn read_port(&mut self, io: &mut impl IoInterface, port: u16) -> u8 {
+        io.read_port(port)
     }
 
-    fn write_port(&mut self, port: u16, value: u8) {
-        self.io.write_port(port, value);
+    fn write_port(&mut self, io: &mut impl IoInterface, port: u16, value: u8) {
+        io.write_port(port, value);
     }
 
-    fn push(&mut self, value: u16) {
+    fn push(&mut self, bus: &mut impl MemoryInterface, value: u16) {
         self.sp = self.sp.wrapping_sub(2);
-        self.write_word(self.sp, value);
+        self.write_word(bus, self.sp, value);
     }
 
-    fn pop(&mut self) -> u16 {
-        let value = self.read_word(self.sp);
+    fn pop(&mut self, bus: &mut impl MemoryInterface) -> u16 {
+        let value = self.read_word(bus, self.sp);
         self.sp = self.sp.wrapping_add(2);
         value
     }
@@ -585,7 +577,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
 
     // ========== Helper to get/set register by index ==========
 
-    fn get_reg(&mut self, index: u8) -> u8 {
+    fn get_reg(&mut self, bus: &mut impl MemoryInterface, index: u8) -> u8 {
         match index {
             0 => self.b,
             1 => self.c,
@@ -593,13 +585,13 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
             3 => self.e,
             4 => self.h,
             5 => self.l,
-            6 => self.read_byte(self.hl()),
+            6 => self.read_byte(bus, self.hl()),
             7 => self.a,
             _ => 0,
         }
     }
 
-    fn set_reg(&mut self, index: u8, value: u8) {
+    fn set_reg(&mut self, bus: &mut impl MemoryInterface, index: u8, value: u8) {
         match index {
             0 => self.b = value,
             1 => self.c = value,
@@ -609,7 +601,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
             5 => self.l = value,
             6 => {
                 let addr = self.hl();
-                self.write_byte(addr, value);
+                self.write_byte(bus, addr, value);
             }
             7 => self.a = value,
             _ => {}
@@ -673,7 +665,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
     // ========== Main execution ==========
 
     /// Trigger a maskable interrupt
-    pub fn trigger_interrupt(&mut self, vector: u8) -> u8 {
+    pub fn trigger_interrupt(&mut self, bus: &mut impl MemoryInterface, vector: u8) -> u8 {
         if !self.iff1 || self.pending_ei {
             return 0;
         }
@@ -684,15 +676,15 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
 
         match self.im {
             0 | 1 => {
-                self.push(self.pc);
+                self.push(bus, self.pc);
                 self.pc = 0x0038;
                 13
             }
             2 => {
-                self.push(self.pc);
+                self.push(bus, self.pc);
                 let addr = ((self.i as u16) << 8) | vector as u16;
                 self.memptr = addr;
-                let handler = self.read_word(addr);
+                let handler = self.read_word(bus, addr);
                 self.pc = handler;
                 8
             }
@@ -701,17 +693,17 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
     }
 
     /// Trigger a non-maskable interrupt (NMI)
-    pub fn trigger_nmi(&mut self) -> u8 {
+    pub fn trigger_nmi(&mut self, bus: &mut impl MemoryInterface) -> u8 {
         self.halted = false;
         self.iff2 = self.iff1;
         self.iff1 = false;
-        self.push(self.pc);
+        self.push(bus, self.pc);
         self.pc = 0x0066;
         11
     }
 
     /// Execute one instruction, returns number of T-states used
-    pub fn step(&mut self) -> u8 {
+    pub fn step(&mut self, bus: &mut (impl MemoryInterface + IoInterface)) -> u8 {
         if self.halted {
             return 4;
         }
@@ -721,7 +713,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         self.pending_ei = false;
 
         let _pc_before = self.pc;
-        let opcode = self.fetch_byte();
+        let opcode = self.fetch_byte(bus);
 
         if self.debug {
             eprintln!("Z80 | PC:{:04X} OP:{:02X} | A:{:02X} F:{:02X} | BC:{:04X} DE:{:04X} HL:{:04X} SP:{:04X} | CYC:{}", 
@@ -735,10 +727,10 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         let q = y & 0x01;
 
         let t_states = match x {
-            0 => self.execute_x0(opcode, y, z, p, q),
-            1 => self.execute_x1(y, z),
-            2 => self.execute_x2(y, z),
-            3 => self.execute_x3(opcode, y, z, p, q),
+            0 => self.execute_x0(bus, opcode, y, z, p, q),
+            1 => self.execute_x1(bus, y, z),
+            2 => self.execute_x2(bus, y, z),
+            3 => self.execute_x3(bus, opcode, y, z, p, q),
             _ => 4,
         };
 
@@ -746,21 +738,21 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         t_states
     }
 
-    fn execute_x0(&mut self, _opcode: u8, y: u8, z: u8, p: u8, q: u8) -> u8 {
+    fn execute_x0(&mut self, bus: &mut impl MemoryInterface, _opcode: u8, y: u8, z: u8, p: u8, q: u8) -> u8 {
         match z {
-            0 => self.execute_x0_control_misc(y),
-            1 => self.execute_x0_load_add_hl(p, q),
-            2 => self.execute_x0_load_indirect(p, q),
+            0 => self.execute_x0_control_misc(bus, y),
+            1 => self.execute_x0_load_add_hl(bus, p, q),
+            2 => self.execute_x0_load_indirect(bus, p, q),
             3 => self.execute_x0_inc_dec_rp(p, q),
-            4 => self.execute_x0_inc_r(y),
-            5 => self.execute_x0_dec_r(y),
-            6 => self.execute_x0_ld_r_n(y),
+            4 => self.execute_x0_inc_r(bus, y),
+            5 => self.execute_x0_dec_r(bus, y),
+            6 => self.execute_x0_ld_r_n(bus, y),
             7 => self.execute_x0_rotate_accum_flags(y),
             _ => 4,
         }
     }
 
-    fn execute_x0_control_misc(&mut self, y: u8) -> u8 {
+    fn execute_x0_control_misc(&mut self, bus: &mut impl MemoryInterface, y: u8) -> u8 {
         match y {
             0 => 4, // NOP
             1 => {
@@ -771,7 +763,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
             }
             2 => {
                 // DJNZ d
-                let d = self.fetch_byte() as i8;
+                let d = self.fetch_byte(bus) as i8;
                 self.b = self.b.wrapping_sub(1);
                 if self.b != 0 {
                     self.pc = (self.pc as i32 + d as i32) as u16;
@@ -782,13 +774,13 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
             }
             3 => {
                 // JR d
-                let d = self.fetch_byte() as i8;
+                let d = self.fetch_byte(bus) as i8;
                 self.pc = (self.pc as i32 + d as i32) as u16;
                 12
             }
             4..=7 => {
                 // JR cc, d
-                let d = self.fetch_byte() as i8;
+                let d = self.fetch_byte(bus) as i8;
                 if self.check_condition(y - 4) {
                     self.pc = (self.pc as i32 + d as i32) as u16;
                     12
@@ -800,10 +792,10 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
     }
 
-    fn execute_x0_load_add_hl(&mut self, p: u8, q: u8) -> u8 {
+    fn execute_x0_load_add_hl(&mut self, bus: &mut impl MemoryInterface, p: u8, q: u8) -> u8 {
         if q == 0 {
             // LD rp, nn
-            let nn = self.fetch_word();
+            let nn = self.fetch_word(bus);
             self.set_rp(p, nn);
             10
         } else {
@@ -814,63 +806,63 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
     }
 
-    fn execute_x0_load_indirect(&mut self, p: u8, q: u8) -> u8 {
+    fn execute_x0_load_indirect(&mut self, bus: &mut impl MemoryInterface, p: u8, q: u8) -> u8 {
         match (p, q) {
             (0, 0) => {
                 // LD (BC), A
                 let addr = self.bc();
-                self.write_byte(addr, self.a);
+                self.write_byte(bus, addr, self.a);
                 self.memptr = ((self.a as u16) << 8) | (addr.wrapping_add(1) & 0xFF);
                 7
             }
             (0, 1) => {
                 // LD A, (BC)
                 let addr = self.bc();
-                self.a = self.read_byte(addr);
+                self.a = self.read_byte(bus, addr);
                 self.memptr = addr.wrapping_add(1);
                 7
             }
             (1, 0) => {
                 // LD (DE), A
                 let addr = self.de();
-                self.write_byte(addr, self.a);
+                self.write_byte(bus, addr, self.a);
                 self.memptr = ((self.a as u16) << 8) | (addr.wrapping_add(1) & 0xFF);
                 7
             }
             (1, 1) => {
                 // LD A, (DE)
                 let addr = self.de();
-                self.a = self.read_byte(addr);
+                self.a = self.read_byte(bus, addr);
                 self.memptr = addr.wrapping_add(1);
                 7
             }
             (2, 0) => {
                 // LD (nn), HL
-                let addr = self.fetch_word();
-                self.write_word(addr, self.hl());
+                let addr = self.fetch_word(bus);
+                self.write_word(bus, addr, self.hl());
                 self.memptr = addr.wrapping_add(1);
                 16
             }
             (2, 1) => {
                 // LD HL, (nn)
-                let addr = self.fetch_word();
-                let val = self.read_word(addr);
+                let addr = self.fetch_word(bus);
+                let val = self.read_word(bus, addr);
                 self.set_hl(val);
                 self.memptr = addr.wrapping_add(1);
                 16
             }
             (3, 0) => {
                 // LD (nn), A
-                let addr = self.fetch_word();
-                self.write_byte(addr, self.a);
+                let addr = self.fetch_word(bus);
+                self.write_byte(bus, addr, self.a);
                 self.memptr = (self.a as u16) << 8 | addr.wrapping_add(1) & 0xFF;
                 self.memptr = ((self.a as u16) << 8) | (addr.wrapping_add(1) & 0xFF);
                 13
             }
             (3, 1) => {
                 // LD A, (nn)
-                let addr = self.fetch_word();
-                self.a = self.read_byte(addr);
+                let addr = self.fetch_word(bus);
+                self.a = self.read_byte(bus, addr);
                 self.memptr = addr.wrapping_add(1);
                 13
             }
@@ -889,11 +881,11 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         6
     }
 
-    fn execute_x0_inc_r(&mut self, y: u8) -> u8 {
+    fn execute_x0_inc_r(&mut self, bus: &mut impl MemoryInterface, y: u8) -> u8 {
         // INC r
-        let val = self.get_reg(y);
+        let val = self.get_reg(bus, y);
         let result = self.inc(val);
-        self.set_reg(y, result);
+        self.set_reg(bus, y, result);
         if y == 6 {
             11
         } else {
@@ -901,11 +893,11 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
     }
 
-    fn execute_x0_dec_r(&mut self, y: u8) -> u8 {
+    fn execute_x0_dec_r(&mut self, bus: &mut impl MemoryInterface, y: u8) -> u8 {
         // DEC r
-        let val = self.get_reg(y);
+        let val = self.get_reg(bus, y);
         let result = self.dec(val);
-        self.set_reg(y, result);
+        self.set_reg(bus, y, result);
         if y == 6 {
             11
         } else {
@@ -913,10 +905,10 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
     }
 
-    fn execute_x0_ld_r_n(&mut self, y: u8) -> u8 {
+    fn execute_x0_ld_r_n(&mut self, bus: &mut impl MemoryInterface, y: u8) -> u8 {
         // LD r, n
-        let n = self.fetch_byte();
-        self.set_reg(y, n);
+        let n = self.fetch_byte(bus);
+        self.set_reg(bus, y, n);
         if y == 6 {
             10
         } else {
@@ -1007,15 +999,15 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
     }
 
-    fn execute_x1(&mut self, y: u8, z: u8) -> u8 {
+    fn execute_x1(&mut self, bus: &mut impl MemoryInterface, y: u8, z: u8) -> u8 {
         if y == 6 && z == 6 {
             // HALT
             self.halted = true;
             4
         } else {
             // LD r, r'
-            let val = self.get_reg(z);
-            self.set_reg(y, val);
+            let val = self.get_reg(bus, z);
+            self.set_reg(bus, y, val);
             if y == 6 || z == 6 {
                 7
             } else {
@@ -1024,9 +1016,9 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
     }
 
-    fn execute_x2(&mut self, y: u8, z: u8) -> u8 {
+    fn execute_x2(&mut self, bus: &mut impl MemoryInterface, y: u8, z: u8) -> u8 {
         // ALU operations
-        let val = self.get_reg(z);
+        let val = self.get_reg(bus, z);
         match y {
             0 => self.add_a(val, false),        // ADD A, r
             1 => self.add_a(val, true),         // ADC A, r
@@ -1045,41 +1037,41 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
     }
 
-    fn execute_x3(&mut self, _opcode: u8, y: u8, z: u8, p: u8, q: u8) -> u8 {
+    fn execute_x3(&mut self, bus: &mut (impl MemoryInterface + IoInterface), opcode: u8, y: u8, z: u8, p: u8, q: u8) -> u8 {
         match z {
-            0 => self.execute_x3_ret_cc(y),
-            1 => self.execute_x3_pop_ret_exx(p, q),
-            2 => self.execute_x3_jp_cc(y),
-            3 => self.execute_x3_jp_out_ex_di_ei(y),
-            4 => self.execute_x3_call_cc(y),
-            5 => self.execute_x3_push_call_prefixes(p, q),
-            6 => self.execute_x3_alu_n(y),
-            7 => self.execute_x3_rst(y),
+            0 => self.execute_x3_ret_cc(bus, y),
+            1 => self.execute_x3_pop_ret_exx(bus, p, q),
+            2 => self.execute_x3_jp_cc(bus, y),
+            3 => self.execute_x3_jp_out_ex_di_ei(bus, y),
+            4 => self.execute_x3_call_cc(bus, y),
+            5 => self.execute_x3_push_call_prefixes(bus, p, q),
+            6 => self.execute_x3_alu_n(bus, y),
+            7 => self.execute_x3_rst(bus, y),
             _ => 4,
         }
     }
 
-    fn execute_x3_ret_cc(&mut self, y: u8) -> u8 {
+    fn execute_x3_ret_cc(&mut self, bus: &mut impl MemoryInterface, y: u8) -> u8 {
         // RET cc
         if self.check_condition(y) {
-            self.pc = self.pop();
+            self.pc = self.pop(bus);
             11
         } else {
             5
         }
     }
 
-    fn execute_x3_pop_ret_exx(&mut self, p: u8, q: u8) -> u8 {
+    fn execute_x3_pop_ret_exx(&mut self, bus: &mut impl MemoryInterface, p: u8, q: u8) -> u8 {
         if q == 0 {
             // POP rp2
-            let val = self.pop();
+            let val = self.pop(bus);
             self.set_rp2(p, val);
             10
         } else {
             match p {
                 0 => {
                     // RET
-                    self.pc = self.pop();
+                    self.pc = self.pop(bus);
                     10
                 }
                 1 => {
@@ -1107,42 +1099,42 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
     }
 
-    fn execute_x3_jp_cc(&mut self, y: u8) -> u8 {
+    fn execute_x3_jp_cc(&mut self, bus: &mut impl MemoryInterface, y: u8) -> u8 {
         // JP cc, nn
-        let nn = self.fetch_word();
+        let nn = self.fetch_word(bus);
         if self.check_condition(y) {
             self.pc = nn;
         }
         10
     }
 
-    fn execute_x3_jp_out_ex_di_ei(&mut self, y: u8) -> u8 {
+    fn execute_x3_jp_out_ex_di_ei(&mut self, bus: &mut (impl MemoryInterface + IoInterface), y: u8) -> u8 {
         match y {
             0 => {
                 // JP nn
-                self.pc = self.fetch_word();
+                self.pc = self.fetch_word(bus);
                 10
             }
-            1 => self.execute_cb_prefix(),
+            1 => self.execute_cb_prefix(bus),
             2 => {
                 // OUT (n), A
-                let n = self.fetch_byte();
+                let n = self.fetch_byte(bus);
                 let port = (n as u16) | ((self.a as u16) << 8);
-                self.write_port(port, self.a);
+                self.write_port(bus, port, self.a);
                 11
             }
             3 => {
                 // IN A, (n)
-                let n = self.fetch_byte();
+                let n = self.fetch_byte(bus);
                 let port = (n as u16) | ((self.a as u16) << 8);
-                self.a = self.read_port(port);
+                self.a = self.read_port(bus, port);
                 11
             }
             4 => {
                 // EX (SP), HL
-                let val = self.read_word(self.sp);
+                let val = self.read_word(bus, self.sp);
                 self.memptr = val;
-                self.write_word(self.sp, self.hl());
+                self.write_word(bus, self.sp, self.hl());
                 self.memptr = val;
                 self.set_hl(val);
                 self.memptr = val;
@@ -1173,11 +1165,11 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
     }
 
-    fn execute_x3_call_cc(&mut self, y: u8) -> u8 {
+    fn execute_x3_call_cc(&mut self, bus: &mut impl MemoryInterface, y: u8) -> u8 {
         // CALL cc, nn
-        let nn = self.fetch_word();
+        let nn = self.fetch_word(bus);
         if self.check_condition(y) {
-            self.push(self.pc);
+            self.push(bus, self.pc);
             self.pc = nn;
             17
         } else {
@@ -1185,32 +1177,32 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
     }
 
-    fn execute_x3_push_call_prefixes(&mut self, p: u8, q: u8) -> u8 {
+    fn execute_x3_push_call_prefixes(&mut self, bus: &mut (impl MemoryInterface + IoInterface), p: u8, q: u8) -> u8 {
         if q == 0 {
             // PUSH rp2
             let val = self.get_rp2(p);
-            self.push(val);
+            self.push(bus, val);
             11
         } else {
             match p {
                 0 => {
                     // CALL nn
-                    let nn = self.fetch_word();
-                    self.push(self.pc);
+                    let nn = self.fetch_word(bus);
+                    self.push(bus, self.pc);
                     self.pc = nn;
                     17
                 }
-                1 => self.execute_dd_prefix(),
-                2 => self.execute_ed_prefix(),
-                3 => self.execute_fd_prefix(),
+                1 => self.execute_dd_prefix(bus),
+                2 => self.execute_ed_prefix(bus),
+                3 => self.execute_fd_prefix(bus),
                 _ => 4,
             }
         }
     }
 
-    fn execute_x3_alu_n(&mut self, y: u8) -> u8 {
+    fn execute_x3_alu_n(&mut self, bus: &mut impl MemoryInterface, y: u8) -> u8 {
         // ALU A, n
-        let n = self.fetch_byte();
+        let n = self.fetch_byte(bus);
         match y {
             0 => self.add_a(n, false),
             1 => self.add_a(n, true),
@@ -1225,9 +1217,9 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         7
     }
 
-    fn execute_x3_rst(&mut self, y: u8) -> u8 {
+    fn execute_x3_rst(&mut self, bus: &mut impl MemoryInterface, y: u8) -> u8 {
         // RST y*8
-        self.push(self.pc);
+        self.push(bus, self.pc);
         self.pc = (y as u16) * 8;
         11
     }
@@ -1310,19 +1302,19 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         val | (1 << bit)
     }
 
-    fn execute_cb_prefix(&mut self) -> u8 {
-        let opcode = self.fetch_byte();
+    fn execute_cb_prefix(&mut self, bus: &mut impl MemoryInterface) -> u8 {
+        let opcode = self.fetch_byte(bus);
         let x = (opcode >> 6) & 0x03;
         let y = (opcode >> 3) & 0x07;
         let z = opcode & 0x07;
 
-        let val = self.get_reg(z);
+        let val = self.get_reg(bus, z);
 
         match x {
             0 => {
                 // Rotate/shift
                 let result = self.cb_rotate_shift(val, y);
-                self.set_reg(z, result);
+                self.set_reg(bus, z, result);
                 if z == 6 {
                     15
                 } else {
@@ -1352,7 +1344,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
             2 => {
                 // RES y, r
                 let result = self.cb_res(val, y);
-                self.set_reg(z, result);
+                self.set_reg(bus, z, result);
                 if z == 6 {
                     15
                 } else {
@@ -1362,7 +1354,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
             3 => {
                 // SET y, r
                 let result = self.cb_set(val, y);
-                self.set_reg(z, result);
+                self.set_reg(bus, z, result);
                 if z == 6 {
                     15
                 } else {
@@ -1375,8 +1367,8 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
 
     // ========== ED Prefix (Extended) ==========
 
-    fn execute_ed_prefix(&mut self) -> u8 {
-        let opcode = self.fetch_byte();
+    fn execute_ed_prefix(&mut self, bus: &mut (impl MemoryInterface + IoInterface)) -> u8 {
+        let opcode = self.fetch_byte(bus);
         let x = (opcode >> 6) & 0x03;
         let y = (opcode >> 3) & 0x07;
         let z = opcode & 0x07;
@@ -1388,9 +1380,9 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 0 => {
                     // IN r, (C)
                     let port = self.bc();
-                    let val = self.read_port(port);
+                    let val = self.read_port(bus, port);
                     if y != 6 {
-                        self.set_reg(y, val);
+                        self.set_reg(bus, y, val);
                     }
                     self.set_sz_flags(val);
                     self.set_parity_flag(val);
@@ -1401,8 +1393,8 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 1 => {
                     // OUT (C), r
                     let port = self.bc();
-                    let val = if y == 6 { 0 } else { self.get_reg(y) };
-                    self.write_port(port, val);
+                    let val = if y == 6 { 0 } else { self.get_reg(bus, y) };
+                    self.write_port(bus, port, val);
                     12
                 }
                 2 => {
@@ -1458,13 +1450,13 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                     }
                 }
                 3 => {
-                    let nn = self.fetch_word();
+                    let nn = self.fetch_word(bus);
                     if q == 0 {
                         // LD (nn), rp
-                        self.write_word(nn, self.get_rp(p));
+                        self.write_word(bus, nn, self.get_rp(p));
                     } else {
                         // LD rp, (nn)
-                        let val = self.read_word(nn);
+                        let val = self.read_word(bus, nn);
                         self.set_rp(p, val);
                     }
                     self.memptr = nn.wrapping_add(1);
@@ -1481,11 +1473,11 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                     if q == 0 {
                         // RETN
                         self.iff1 = self.iff2;
-                        self.pc = self.pop();
+                        self.pc = self.pop(bus);
                         14
                     } else {
                         // RETI
-                        self.pc = self.pop();
+                        self.pc = self.pop(bus);
                         14
                     }
                 }
@@ -1531,10 +1523,10 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                     4 => {
                         // RRD
                         let hl = self.hl();
-                        let m = self.read_byte(hl);
+                        let m = self.read_byte(bus, hl);
                         let new_m = (self.a << 4) | (m >> 4);
                         self.a = (self.a & 0xF0) | (m & 0x0F);
-                        self.write_byte(hl, new_m);
+                        self.write_byte(bus, hl, new_m);
                         self.set_sz_flags(self.a);
                         self.set_parity_flag(self.a);
                         self.set_flag(flags::HALF_CARRY, false);
@@ -1544,10 +1536,10 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                     5 => {
                         // RLD
                         let hl = self.hl();
-                        let m = self.read_byte(hl);
+                        let m = self.read_byte(bus, hl);
                         let new_m = (m << 4) | (self.a & 0x0F);
                         self.a = (self.a & 0xF0) | (m >> 4);
-                        self.write_byte(hl, new_m);
+                        self.write_byte(bus, hl, new_m);
                         self.set_sz_flags(self.a);
                         self.set_parity_flag(self.a);
                         self.set_flag(flags::HALF_CARRY, false);
@@ -1562,10 +1554,10 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 // Block instructions
                 if y >= 4 {
                     match z {
-                        0 => self.execute_ldi_ldd(y),
-                        1 => self.execute_cpi_cpd(y),
-                        2 => self.execute_ini_ind(y),
-                        3 => self.execute_outi_outd(y),
+                        0 => self.execute_ldi_ldd(bus, y),
+                        1 => self.execute_cpi_cpd(bus, y),
+                        2 => self.execute_ini_ind(bus, y),
+                        3 => self.execute_outi_outd(bus, y),
                         _ => 8,
                     }
                 } else {
@@ -1576,11 +1568,11 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
     }
 
-    fn execute_ldi_ldd(&mut self, y: u8) -> u8 {
+    fn execute_ldi_ldd(&mut self, bus: &mut impl MemoryInterface, y: u8) -> u8 {
         let hl = self.hl();
         let de = self.de();
-        let val = self.read_byte(hl);
-        self.write_byte(de, val);
+        let val = self.read_byte(bus, hl);
+        self.write_byte(bus, de, val);
 
         let bc = self.bc().wrapping_sub(1);
         self.set_bc(bc);
@@ -1611,9 +1603,9 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
     }
 
-    fn execute_cpi_cpd(&mut self, y: u8) -> u8 {
+    fn execute_cpi_cpd(&mut self, bus: &mut impl MemoryInterface, y: u8) -> u8 {
         let hl = self.hl();
-        let val = self.read_byte(hl);
+        let val = self.read_byte(bus, hl);
         let result = self.a.wrapping_sub(val);
 
         let bc = self.bc().wrapping_sub(1);
@@ -1654,14 +1646,14 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
     }
 
-    fn execute_ini_ind(&mut self, y: u8) -> u8 {
+    fn execute_ini_ind(&mut self, bus: &mut (impl MemoryInterface + IoInterface), y: u8) -> u8 {
         // INI (y=4), IND (y=5), INIR (y=6), INDR (y=7)
 
         let port = self.bc();
         let hl = self.hl();
 
-        let io_val = self.read_port(port);
-        self.write_byte(hl, io_val);
+        let io_val = self.read_port(bus, port);
+        self.write_byte(bus, hl, io_val);
 
         let b = self.b.wrapping_sub(1);
         self.b = b;
@@ -1688,14 +1680,14 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
     }
 
-    fn execute_outi_outd(&mut self, y: u8) -> u8 {
+    fn execute_outi_outd(&mut self, bus: &mut (impl MemoryInterface + IoInterface), y: u8) -> u8 {
         // OUTI (y=4), OUTD (y=5), OTIR (y=6), OTDR (y=7)
 
         let hl = self.hl();
-        let val = self.read_byte(hl);
+        let val = self.read_byte(bus, hl);
 
         let port = self.bc();
-        self.write_port(port, val);
+        self.write_port(bus, port, val);
 
         let b = self.b.wrapping_sub(1);
         self.b = b;
@@ -1806,8 +1798,8 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
     }
 
-    fn execute_index_prefix(&mut self, is_ix: bool) -> u8 {
-        let opcode = self.fetch_byte();
+    fn execute_index_prefix(&mut self, bus: &mut impl MemoryInterface, is_ix: bool) -> u8 {
+        let opcode = self.fetch_byte(bus);
 
         match opcode {
             0x09 => {
@@ -1821,14 +1813,14 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 15
             }
             0x21 => {
-                let val = self.fetch_word();
+                let val = self.fetch_word(bus);
                 self.set_index_val(val, is_ix);
                 14
             }
             0x22 => {
-                let addr = self.fetch_word();
+                let addr = self.fetch_word(bus);
                 let val = self.get_index_val(is_ix);
-                self.write_word(addr, val);
+                self.write_word(bus, addr, val);
                 20
             }
             0x23 => {
@@ -1849,7 +1841,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 8
             }
             0x26 => {
-                let n = self.fetch_byte();
+                let n = self.fetch_byte(bus);
                 self.set_index_h(n, is_ix);
                 11
             }
@@ -1859,8 +1851,8 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 15
             }
             0x2A => {
-                let addr = self.fetch_word();
-                let val = self.read_word(addr);
+                let addr = self.fetch_word(bus);
+                let val = self.read_word(bus, addr);
                 self.set_index_val(val, is_ix);
                 20
             }
@@ -1882,31 +1874,31 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 8
             }
             0x2E => {
-                let n = self.fetch_byte();
+                let n = self.fetch_byte(bus);
                 self.set_index_l(n, is_ix);
                 11
             }
             0x34 => {
-                let d = self.fetch_byte() as i8;
+                let d = self.fetch_byte(bus) as i8;
                 let addr = self.calc_index_addr(d, is_ix);
-                let val = self.read_byte(addr);
+                let val = self.read_byte(bus, addr);
                 let result = self.inc(val);
-                self.write_byte(addr, result);
+                self.write_byte(bus, addr, result);
                 23
             }
             0x35 => {
-                let d = self.fetch_byte() as i8;
+                let d = self.fetch_byte(bus) as i8;
                 let addr = self.calc_index_addr(d, is_ix);
-                let val = self.read_byte(addr);
+                let val = self.read_byte(bus, addr);
                 let result = self.dec(val);
-                self.write_byte(addr, result);
+                self.write_byte(bus, addr, result);
                 23
             }
             0x36 => {
-                let d = self.fetch_byte() as i8;
+                let d = self.fetch_byte(bus) as i8;
                 let addr = self.calc_index_addr(d, is_ix);
-                let n = self.fetch_byte();
-                self.write_byte(addr, n);
+                let n = self.fetch_byte(bus);
+                self.write_byte(bus, addr, n);
                 19
             }
             0x39 => {
@@ -1916,9 +1908,9 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
 
             // Specific ALU ops
             0x86 | 0x8E | 0x96 | 0x9E | 0xA6 | 0xAE | 0xB6 | 0xBE => {
-                let d = self.fetch_byte() as i8;
+                let d = self.fetch_byte(bus) as i8;
                 let addr = self.calc_index_addr(d, is_ix);
-                let val = self.read_byte(addr);
+                let val = self.read_byte(bus, addr);
                 self.execute_index_alu((opcode >> 3) & 0x07, val);
                 19
             }
@@ -1926,19 +1918,19 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
             // LD r, (IX/IY+d) and LD (IX/IY+d), r
             // LD r, (IX/IY+d) and LD (IX/IY+d), r
             0x46 | 0x4E | 0x56 | 0x5E | 0x66 | 0x6E | 0x7E => {
-                let d = self.fetch_byte() as i8;
+                let d = self.fetch_byte(bus) as i8;
                 let addr = self.calc_index_addr(d, is_ix);
-                let val = self.read_byte(addr);
+                let val = self.read_byte(bus, addr);
                 let r = (opcode >> 3) & 0x07;
-                self.set_reg(r, val);
+                self.set_reg(bus, r, val);
                 19
             }
             0x70..=0x75 | 0x77 => {
-                let d = self.fetch_byte() as i8;
+                let d = self.fetch_byte(bus) as i8;
                 let addr = self.calc_index_addr(d, is_ix);
                 let r = opcode & 0x07;
-                let val = self.get_reg(r);
-                self.write_byte(addr, val);
+                let val = self.get_reg(bus, r);
+                self.write_byte(bus, addr, val);
                 19
             }
             0x76 => {
@@ -1967,15 +1959,15 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
             }
 
             0xE1 => {
-                let val = self.pop();
+                let val = self.pop(bus);
                 self.set_index_val(val, is_ix);
                 14
             }
             0xE3 => {
-                let val = self.read_word(self.sp);
+                let val = self.read_word(bus, self.sp);
                 let idx = self.get_index_val(is_ix);
                 self.memptr = val;
-                self.write_word(self.sp, idx);
+                self.write_word(bus, self.sp, idx);
                 self.memptr = val;
                 self.set_index_val(val, is_ix);
                 self.memptr = val;
@@ -1983,7 +1975,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
             }
             0xE5 => {
                 let idx = self.get_index_val(is_ix);
-                self.push(idx);
+                self.push(bus, idx);
                 15
             }
             0xE9 => {
@@ -1995,10 +1987,10 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 10
             }
             0xCB => {
-                let d = self.fetch_byte() as i8;
+                let d = self.fetch_byte(bus) as i8;
                 let addr = self.calc_index_addr(d, is_ix);
-                let opcode = self.fetch_byte();
-                self.execute_indexed_cb(opcode, addr)
+                let opcode = self.fetch_byte(bus);
+                self.execute_indexed_cb(bus, opcode, addr)
             }
             _ => 8, // Treat as NOP
         }
@@ -2006,29 +1998,29 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
 
     // ========== DD Prefix (IX) ==========
 
-    fn execute_dd_prefix(&mut self) -> u8 {
-        self.execute_index_prefix(true)
+    fn execute_dd_prefix(&mut self, bus: &mut impl MemoryInterface) -> u8 {
+        self.execute_index_prefix(bus, true)
     }
 
     // ========== FD Prefix (IY) ==========
 
-    fn execute_fd_prefix(&mut self) -> u8 {
-        self.execute_index_prefix(false)
+    fn execute_fd_prefix(&mut self, bus: &mut impl MemoryInterface) -> u8 {
+        self.execute_index_prefix(bus, false)
     }
 
-    fn execute_indexed_cb(&mut self, opcode: u8, addr: u16) -> u8 {
+    fn execute_indexed_cb(&mut self, bus: &mut impl MemoryInterface, opcode: u8, addr: u16) -> u8 {
         let x = (opcode >> 6) & 0x03;
         let y = (opcode >> 3) & 0x07;
         let z = opcode & 0x07;
-        let val = self.read_byte(addr);
+        let val = self.read_byte(bus, addr);
 
         match x {
             0 => {
                 // Rotate/shift
                 let result = self.cb_rotate_shift(val, y);
-                self.write_byte(addr, result);
+                self.write_byte(bus, addr, result);
                 if z != 6 {
-                    self.set_reg(z, result);
+                    self.set_reg(bus, z, result);
                 }
                 23
             }
@@ -2045,18 +2037,18 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
             2 => {
                 // RES y, (IX/IY+d)
                 let result = self.cb_res(val, y);
-                self.write_byte(addr, result);
+                self.write_byte(bus, addr, result);
                 if z != 6 {
-                    self.set_reg(z, result);
+                    self.set_reg(bus, z, result);
                 }
                 23
             }
             3 => {
                 // SET y, (IX/IY+d)
                 let result = self.cb_set(val, y);
-                self.write_byte(addr, result);
+                self.write_byte(bus, addr, result);
                 if z != 6 {
-                    self.set_reg(z, result);
+                    self.set_reg(bus, z, result);
                 }
                 23
             }
@@ -2065,7 +2057,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
     }
 }
 
-impl<M: MemoryInterface, I: IoInterface> Debuggable for Z80<M, I> {
+impl Debuggable for Z80 {
     fn read_state(&self) -> Value {
         json!({
             "a": self.a, "f": self.f,

@@ -7,7 +7,8 @@ use crate::z80::test_utils::TestIo;
 #[test]
 fn test_reset_behavior() {
     let memory = Memory::new(0x1000); // 4KB
-    let mut z80 = Z80::new(memory, TestIo::default());
+    let cpu = Z80::new();
+    let mut z80 = crate::z80::test_utils::TestZ80::new(cpu, memory, TestIo::default());
 
     // 1. Modify fields that SHOULD be reset
     z80.a = 0xAA;

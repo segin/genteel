@@ -11,15 +11,13 @@ use crate::z80::{flags, Z80};
 
 fn create_z80(
     program: &[u8],
-) -> Z80<Box<crate::memory::Memory>, Box<crate::z80::test_utils::TestIo>> {
+) -> crate::z80::test_utils::TestZ80 {
     let mut m = Memory::new(0x10000);
     for (i, &b) in program.iter().enumerate() {
         m.data[i] = b;
     }
-    Z80::new(
-        Box::new(m),
-        Box::new(crate::z80::test_utils::TestIo::default()),
-    )
+    let cpu = Z80::new();
+    crate::z80::test_utils::TestZ80::new(cpu, m, crate::z80::test_utils::TestIo::default())
 }
 
 // ============================================================================

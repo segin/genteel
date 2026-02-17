@@ -8,66 +8,30 @@
 //! - 8000h-FFFFh: Banked 68k Memory (32KB window)
 
 use super::bus::Bus;
-use super::{byte_utils, IoInterface, MemoryInterface, SharedBus};
+use super::{byte_utils, IoInterface, MemoryInterface};
 
 /// Z80 Bus adapter that routes memory accesses to Genesis components
-#[derive(Debug, Clone)]
-pub struct Z80Bus {
-    /// Reference to the main Genesis bus.
-    /// Used to ensure the `Rc<RefCell<Bus>>` remains alive.
-    #[allow(dead_code)]
-    bus: SharedBus,
-    /// Raw pointer to the bus for optimized access (avoids RefCell overhead)
-    raw_bus: *mut Bus,
+#[derive(Debug)]
+pub struct Z80Bus<'a> {
+    pub bus: &'a mut Bus,
 }
 
-impl Z80Bus {
+impl<'a> Z80Bus<'a> {
     /// Create a new Z80 bus adapter
-    pub fn new(bus: SharedBus) -> Self {
-        Self {
-            bus,
-            raw_bus: std::ptr::null_mut(),
-        }
-    }
-
-    /// Set the raw bus pointer for unchecked access.
-    ///
-    /// # Safety
-    /// The caller must ensure that the pointer is valid and that no conflicting
-    /// references exist while this pointer is used.
-    pub unsafe fn set_raw_bus(&mut self, bus: *mut Bus) {
-        self.raw_bus = bus;
-    }
-
-    /// Clear the raw bus pointer.
-    pub fn clear_raw_bus(&mut self) {
-        self.raw_bus = std::ptr::null_mut();
+    pub fn new(bus: &'a mut Bus) -> Self {
+        Self { bus }
     }
 
     /// Set the bank register (called on write to $6000)
     /// The value written becomes the upper bits of the 68k address
     pub fn set_bank(&mut self, value: u8) {
-        if !self.raw_bus.is_null() {
-            unsafe {
-                (*self.raw_bus).write_byte(0xA06000, value);
-            }
-        } else {
-            self.bus.bus.borrow_mut().write_byte(0xA06000, value);
-        }
+        self.bus.write_byte(0xA06000, value);
     }
 
     /// Reset bank register to 0
     pub fn reset_bank(&mut self) {
-        if !self.raw_bus.is_null() {
-            unsafe {
-                (*self.raw_bus).z80_bank_addr = 0;
-                (*self.raw_bus).z80_bank_bit = 0;
-            }
-        } else {
-            let mut bus = self.bus.bus.borrow_mut();
-            bus.z80_bank_addr = 0;
-            bus.z80_bank_bit = 0;
-        }
+        self.bus.z80_bank_addr = 0;
+        self.bus.z80_bank_bit = 0;
     }
 
     /// Internal helper to read byte from Bus (deduplicated logic)
@@ -149,25 +113,13 @@ impl Z80Bus {
     }
 }
 
-impl MemoryInterface for Z80Bus {
+impl<'a> MemoryInterface for Z80Bus<'a> {
     fn read_byte(&mut self, address: u32) -> u8 {
-        if !self.raw_bus.is_null() {
-            let bus = unsafe { &mut *self.raw_bus };
-            Self::read_byte_from_bus(bus, address)
-        } else {
-            let mut bus_guard = self.bus.bus.borrow_mut();
-            Self::read_byte_from_bus(&mut *bus_guard, address)
-        }
+        Self::read_byte_from_bus(self.bus, address)
     }
 
     fn write_byte(&mut self, address: u32, value: u8) {
-        if !self.raw_bus.is_null() {
-            let bus = unsafe { &mut *self.raw_bus };
-            Self::write_byte_to_bus(bus, address, value)
-        } else {
-            let mut bus_guard = self.bus.bus.borrow_mut();
-            Self::write_byte_to_bus(&mut *bus_guard, address, value)
-        }
+        Self::write_byte_to_bus(self.bus, address, value)
     }
 
     fn read_word(&mut self, address: u32) -> u16 {
@@ -211,7 +163,7 @@ impl MemoryInterface for Z80Bus {
     }
 }
 
-impl IoInterface for Z80Bus {
+impl<'a> IoInterface for Z80Bus<'a> {
     fn read_port(&mut self, _port: u16) -> u8 {
         // On a real Sega Genesis, the Z80 I/O space is not connected to any internal hardware.
         // Any IN instruction will result in 0xFF (due to bus pull-ups).
@@ -228,82 +180,68 @@ impl IoInterface for Z80Bus {
 mod tests {
     use super::*;
     use crate::memory::bus::Bus;
-    use std::cell::RefCell;
-    use std::rc::Rc;
 
-    fn create_test_z80_bus() -> Z80Bus {
-        let bus = Rc::new(RefCell::new(Bus::new()));
-        Z80Bus::new(SharedBus::new(bus))
+    // Helper to run tests with a Bus
+    fn with_z80_bus<F>(f: F)
+    where
+        F: FnOnce(&mut Z80Bus),
+    {
+        let mut bus = Bus::new();
+        let mut z80_bus = Z80Bus::new(&mut bus);
+        f(&mut z80_bus);
     }
 
     #[test]
     fn test_z80_ram_read_write() {
-        let mut z80_bus = create_test_z80_bus();
+        with_z80_bus(|z80_bus| {
+            z80_bus.write_byte(0x0000, 0x42);
+            assert_eq!(z80_bus.read_byte(0x0000), 0x42);
 
-        z80_bus.write_byte(0x0000, 0x42);
-        assert_eq!(z80_bus.read_byte(0x0000), 0x42);
-
-        z80_bus.write_byte(0x1FFF, 0xAB);
-        assert_eq!(z80_bus.read_byte(0x1FFF), 0xAB);
+            z80_bus.write_byte(0x1FFF, 0xAB);
+            assert_eq!(z80_bus.read_byte(0x1FFF), 0xAB);
+        });
     }
 
     #[test]
     fn test_bank_register() {
-        let mut z80_bus = create_test_z80_bus();
+        with_z80_bus(|z80_bus| {
+            // Initially bank is 0
+            assert_eq!(z80_bus.bus.z80_bank_addr, 0);
 
-        // Initially bank is 0
-        assert_eq!(z80_bus.bus.bus.borrow().z80_bank_addr, 0);
+            // Write to bank register (bit-by-bit shifting)
+            z80_bus.write_byte(0x6000, 0x01); // Shift in 1
 
-        // Write to bank register (bit-by-bit shifting)
-        z80_bus.write_byte(0x6000, 0x01); // Shift in 1
-
-        // Note: bank register implementation in Bus handles the bit shifting logic
-        // We just verify it changed
-        assert_ne!(z80_bus.bus.bus.borrow().z80_bank_addr, 0);
+            // Note: bank register implementation in Bus handles the bit shifting logic
+            // We just verify it changed
+            assert_ne!(z80_bus.bus.z80_bank_addr, 0);
+        });
     }
 
     #[test]
     fn test_reserved_reads_ff() {
-        let mut z80_bus = create_test_z80_bus();
+        with_z80_bus(|z80_bus| {
+            // Z80 RAM is mirrored at 0x2000-0x3FFF, so reading 0x2000 reads 0x0000 (initially 0)
+            assert_eq!(z80_bus.read_byte(0x2000), 0x00);
+            assert_eq!(z80_bus.read_byte(0x3FFF), 0x00);
 
-        // Z80 RAM is mirrored at 0x2000-0x3FFF, so reading 0x2000 reads 0x0000 (initially 0)
-        assert_eq!(z80_bus.read_byte(0x2000), 0x00);
-        assert_eq!(z80_bus.read_byte(0x3FFF), 0x00);
-
-        // Reserved areas (like PSG read) should return 0xFF
-        assert_eq!(z80_bus.read_byte(0x4004), 0xFF); // FM Mirror
-        assert_eq!(z80_bus.read_byte(0x6000), 0xFF); // Bank register is write-only
-        assert_eq!(z80_bus.read_byte(0x7F11), 0xFF); // PSG is write-only
+            // Reserved areas (like PSG read) should return 0xFF
+            assert_eq!(z80_bus.read_byte(0x4004), 0xFF); // FM Mirror
+            assert_eq!(z80_bus.read_byte(0x6000), 0xFF); // Bank register is write-only
+            assert_eq!(z80_bus.read_byte(0x7F11), 0xFF); // PSG is write-only
+        });
     }
 
     #[test]
     fn test_z80_io_ports() {
-        let mut z80_bus = create_test_z80_bus();
+        with_z80_bus(|z80_bus| {
+            // All I/O port reads should return 0xFF on Genesis
+            assert_eq!(z80_bus.read_port(0x0000), 0xFF);
+            assert_eq!(z80_bus.read_port(0x007F), 0xFF);
+            assert_eq!(z80_bus.read_port(0xFFFF), 0xFF);
 
-        // All I/O port reads should return 0xFF on Genesis
-        assert_eq!(z80_bus.read_port(0x0000), 0xFF);
-        assert_eq!(z80_bus.read_port(0x007F), 0xFF);
-        assert_eq!(z80_bus.read_port(0xFFFF), 0xFF);
-
-        // Writes should not panic
-        z80_bus.write_port(0x0000, 0x42);
-        z80_bus.write_port(0xFFFF, 0xAB);
-    }
-
-    #[test]
-    fn test_raw_bus_access() {
-        let bus = Rc::new(RefCell::new(Bus::new()));
-        let mut z80_bus = Z80Bus::new(SharedBus::new(bus.clone()));
-
-        // Unsafe setup of raw pointer
-        unsafe {
-            z80_bus.set_raw_bus(bus.as_ptr());
-        }
-
-        z80_bus.write_byte(0x0000, 0x99);
-        assert_eq!(z80_bus.read_byte(0x0000), 0x99);
-
-        // Verify via original bus to ensure they share state
-        assert_eq!(bus.borrow().z80_ram[0], 0x99);
+            // Writes should not panic
+            z80_bus.write_port(0x0000, 0x42);
+            z80_bus.write_port(0xFFFF, 0xAB);
+        });
     }
 }

@@ -48,6 +48,31 @@ impl IoInterface for SimpleIo {
     fn write_port(&mut self, _port: u16, _value: u8) {}
 }
 
+struct BenchContext<'a> {
+    mem: &'a mut SimpleMemory,
+    io: &'a mut SimpleIo,
+}
+
+impl<'a> MemoryInterface for BenchContext<'a> {
+    fn read_byte(&mut self, address: u32) -> u8 { self.mem.read_byte(address) }
+    fn write_byte(&mut self, address: u32, value: u8) { self.mem.write_byte(address, value) }
+    fn read_word(&mut self, address: u32) -> u16 { self.mem.read_word(address) }
+    fn write_word(&mut self, address: u32, value: u16) { self.mem.write_word(address, value) }
+    fn read_long(&mut self, address: u32) -> u32 { self.mem.read_long(address) }
+    fn write_long(&mut self, address: u32, value: u32) { self.mem.write_long(address, value) }
+}
+
+impl<'a> IoInterface for BenchContext<'a> {
+    fn read_port(&mut self, port: u16) -> u8 { self.io.read_port(port) }
+    fn write_port(&mut self, port: u16, value: u8) { self.io.write_port(port, value) }
+}
+
+impl std::fmt::Debug for BenchContext<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "BenchContext")
+    }
+}
+
 fn main() {
     let mut mem = SimpleMemory::new(65536);
     // Simple loop: DEC A; JP NZ, -1
@@ -61,12 +86,14 @@ fn main() {
     mem.write_byte(3, 0x00);
 
     // Optimized: Using concrete types
-    let mut z80 = Z80::new(mem, SimpleIo);
+    let mut z80 = Z80::new();
+    let mut io = SimpleIo;
     z80.a = 0xFF;
 
     // Warmup
     for _ in 0..1000 {
-        z80.step();
+        let mut ctx = BenchContext { mem: &mut mem, io: &mut io };
+        z80.step(&mut ctx);
         if z80.pc == 4 {
             z80.pc = 0;
         }
@@ -75,7 +102,8 @@ fn main() {
     let start = Instant::now();
     let iterations = 100_000_000;
     for _ in 0..iterations {
-        z80.step();
+        let mut ctx = BenchContext { mem: &mut mem, io: &mut io };
+        z80.step(&mut ctx);
         if z80.pc == 4 {
             z80.pc = 0;
         }

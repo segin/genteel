@@ -8,7 +8,7 @@ use super::*;
 use crate::memory::Memory;
 use crate::memory::{IoInterface, MemoryInterface};
 
-fn z80(program: &[u8]) -> Z80<crate::memory::Memory, crate::z80::test_utils::TestIo> {
+fn z80(program: &[u8]) -> crate::z80::test_utils::TestZ80 {
     let mut m = Memory::new(0x10000);
     for (i, &b) in program.iter().enumerate() {
         m.data[i] = b;

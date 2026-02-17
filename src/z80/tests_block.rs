@@ -30,18 +30,17 @@ impl Rng {
     }
 }
 
-fn z80(program: &[u8]) -> Z80<crate::memory::Memory, crate::z80::test_utils::TestIo> {
+fn z80(program: &[u8]) -> crate::z80::test_utils::TestZ80 {
     let mut m = Memory::new(0x10000);
     for (i, &b) in program.iter().enumerate() {
         m.data[i] = b;
     }
-    Z80::new(m, crate::z80::test_utils::TestIo::default())
+    let cpu = Z80::new();
+    crate::z80::test_utils::TestZ80::new(cpu, m, crate::z80::test_utils::TestIo::default())
 }
 
 /// Snapshot memory contents into a Vec for reference comparison
-fn snapshot_memory<M: MemoryInterface, I: crate::memory::IoInterface>(
-    z80: &mut Z80<M, I>,
-) -> Vec<u8> {
+fn snapshot_memory(z80: &mut crate::z80::test_utils::TestZ80) -> Vec<u8> {
     let mut snapshot = Vec::with_capacity(0x10000);
     for addr in 0..0x10000u32 {
         snapshot.push(z80.memory.read_byte(addr));

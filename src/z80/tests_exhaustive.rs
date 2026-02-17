@@ -32,9 +32,10 @@ impl XorShift64 {
     }
 }
 
-fn z80_setup() -> Z80<crate::memory::Memory, crate::z80::test_utils::TestIo> {
+fn z80_setup() -> crate::z80::test_utils::TestZ80 {
     let m = Memory::new(0x10000);
-    Z80::new(m, crate::z80::test_utils::TestIo::default())
+    let cpu = Z80::new();
+    crate::z80::test_utils::TestZ80::new(cpu, m, crate::z80::test_utils::TestIo::default())
 }
 
 // ============ Reference Models ============

@@ -5,12 +5,13 @@ use crate::memory::Memory;
 use crate::z80::test_utils::TestIo;
 use proptest::prelude::*;
 
-fn create_z80(program: &[u8]) -> Z80<Box<Memory>, Box<TestIo>> {
+fn create_z80(program: &[u8]) -> crate::z80::test_utils::TestZ80 {
     let mut memory = Memory::new(0x10000);
     for (i, &byte) in program.iter().enumerate() {
         memory.data[i] = byte;
     }
-    Z80::new(Box::new(memory), Box::new(TestIo::default()))
+    let cpu = Z80::new();
+    crate::z80::test_utils::TestZ80::new(cpu, memory, TestIo::default())
 }
 
 #[test]
