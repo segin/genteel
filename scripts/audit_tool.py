@@ -3,6 +3,7 @@ import os
 import re
 import json
 import csv
+import sys
 import subprocess
 from datetime import datetime
 
@@ -133,4 +134,7 @@ def run_audit():
     print(f"📄 Reports available in {REPORT_DIR}/")
 
 if __name__ == "__main__":
+    if not os.path.exists("Cargo.toml"):
+        print("Error: This script must be run from the repository root.")
+        sys.exit(1)
     run_audit()

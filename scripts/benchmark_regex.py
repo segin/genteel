@@ -1,6 +1,7 @@
 import time
 import re
 import os
+import sys
 import random
 import string
 
@@ -99,6 +100,10 @@ def scan_fast():
     return duration
 
 if __name__ == "__main__":
+    if not os.path.exists("Cargo.toml"):
+        print("Error: This script must be run from the repository root.")
+        sys.exit(1)
+
     if not os.path.exists(FILENAME):
         generate_data()
 

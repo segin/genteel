@@ -47,6 +47,15 @@ Genteel features a comprehensive test suite including unit tests, property-based
 cargo test
 ```
 
+## Development Tools
+
+Genteel includes a set of utility scripts in the `scripts/` directory to assist with development and auditing.
+
+*   `scripts/audit_tool.py`: Scans the codebase for security issues (secrets), technical debt (TODOs), and unsafe code usage.
+*   `scripts/benchmark_regex.py`: Utilities for benchmarking regex performance.
+
+See `scripts/README.md` for more details.
+
 ## Status
 
 Phase 4: System Integration is currently in progress.
