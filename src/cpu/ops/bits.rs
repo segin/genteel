@@ -640,4 +640,78 @@ mod tests {
         assert!(!cpu.get_flag(flags::ZERO));
         assert_eq!(cycles, 8); // 4 (base) + 0 (DataReg) + 4 (AddrIndirect)
     }
+
+    #[test]
+    fn test_exec_or_memory_to_register() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x1234000F;
+        cpu.a[0] = 0x2000;
+        memory.write_word(0x2000, 0xF0F0);
+
+        // OR.W (A0), D0
+        let cycles = exec_or(
+            &mut cpu,
+            Size::Word,
+            AddressingMode::AddressIndirect(0),
+            AddressingMode::DataRegister(0),
+            false,
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[0], 0x1234F0FF); // 0xF0F0 | 0x000F = 0xF0FF. Upper word preserved.
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert_eq!(cycles, 8); // 4 + 4 (AddrIndirect)
+    }
+
+    #[test]
+    fn test_exec_and_long() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0xFF00FF00;
+        cpu.d[1] = 0x0F0F0F0F;
+
+        let cycles = exec_and(
+            &mut cpu,
+            Size::Long,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            true,
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1], 0x0F000F00);
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert_eq!(cycles, 4);
+    }
+
+    #[test]
+    fn test_exec_and_memory() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x0F;
+        cpu.a[0] = 0x2000;
+        memory.write_byte(0x2000, 0xF0);
+
+        // AND.B D0, (A0)
+        let cycles = exec_and(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            AddressingMode::AddressIndirect(0),
+            true,
+            &mut memory,
+        );
+
+        // 0x0F & 0xF0 = 0x00
+        assert_eq!(memory.read_byte(0x2000), 0x00);
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert_eq!(cycles, 8);
+    }
 }
