@@ -67,6 +67,8 @@ pub struct Ym2612 {
 
     /// Phase accumulators for the 6 channels (simplified FM)
     phase: [f32; 6],
+    /// Cached phase increment for each channel
+    phase_inc: [f32; 6],
     /// DAC value (register 0x2A)
     dac_value: u8,
     /// DAC enabled (register 0x2B bit 7)
@@ -83,6 +85,7 @@ impl Ym2612 {
             timer_b_count: 0,
             busy_cycles: 0,
             phase: [0.0; 6],
+            phase_inc: [0.0; 6],
             dac_value: 0x80,
             dac_enabled: false,
         }
@@ -230,6 +233,27 @@ impl Ym2612 {
             self.registers[0][0x2B] = val;
         } else {
             self.registers[bank_idx][addr as usize] = val;
+
+            // Update frequency cache if needed
+            match addr {
+                0xA0..=0xA2 => {
+                    let channel = if bank == Bank::Bank0 {
+                        addr - 0xA0
+                    } else {
+                        addr - 0xA0 + 3
+                    };
+                    self.update_phase_inc(channel as usize);
+                }
+                0xA4..=0xA6 => {
+                    let channel = if bank == Bank::Bank0 {
+                        addr - 0xA4
+                    } else {
+                        addr - 0xA4 + 3
+                    };
+                    self.update_phase_inc(channel as usize);
+                }
+                _ => {}
+            }
         }
     }
 
@@ -260,13 +284,10 @@ impl Ym2612 {
                 continue;
             }
 
-            let (block, f_num) = self.get_frequency(ch);
-            if f_num == 0 {
+            let phase_inc = self.phase_inc[ch];
+            if phase_inc == 0.0 {
                 continue;
             }
-
-            let freq_mult = (1 << block) as f32;
-            let phase_inc = (f_num as f32 * freq_mult) / 200000.0;
 
             self.phase[ch] = (self.phase[ch] + phase_inc) % 1.0;
 
@@ -324,6 +345,17 @@ impl Ym2612 {
     }
 
     // === Helper Accessors ===
+
+    /// Update cached phase increment for a channel
+    fn update_phase_inc(&mut self, channel: usize) {
+        let (block, f_num) = self.get_frequency(channel);
+        if f_num == 0 {
+            self.phase_inc[channel] = 0.0;
+        } else {
+            let freq_mult = (1 << block) as f32;
+            self.phase_inc[channel] = (f_num as f32 * freq_mult) / 200000.0;
+        }
+    }
 
     /// Get frequency block and f-number for a channel (0-2 for Bank0, 3-5 for Bank1)
     pub fn get_frequency(&self, channel: usize) -> (u8, u16) {
