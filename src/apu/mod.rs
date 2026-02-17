@@ -154,4 +154,57 @@ mod tests {
         apu.write_fm_data(Bank::Bank0, 0xF0); // Key on Ch 1
         assert_eq!(apu.fm.registers[0][0x28], 0xF0);
     }
+
+    #[test]
+    fn test_debug_read_state() {
+        let mut apu = Apu::new();
+
+        // Set up specific state for PSG
+        apu.psg.tones[0].frequency = 123;
+        apu.psg.tones[0].volume = 5;
+        apu.psg.tones[1].frequency = 456;
+        apu.psg.tones[2].frequency = 789;
+
+        apu.psg.noise.white_noise = true;
+        apu.psg.noise.shift_rate = 2;
+
+        // Set up specific state for FM
+        apu.fm.status = 0xAA;
+
+        let state = apu.read_state();
+
+        // Verify PSG state dump
+        assert_eq!(state["psg"]["tone1_freq"], 123);
+        assert_eq!(state["psg"]["tone1_vol"], 5);
+        assert_eq!(state["psg"]["tone2_freq"], 456);
+        assert_eq!(state["psg"]["tone3_freq"], 789);
+        assert_eq!(state["psg"]["noise_white"], true);
+        assert_eq!(state["psg"]["noise_rate"], 2);
+
+        // Verify FM state dump
+        assert_eq!(state["fm"]["status"], 0xAA);
+    }
+
+    #[test]
+    fn test_debug_write_state_noop() {
+        let mut apu = Apu::new();
+        let original_state = apu.read_state();
+
+        // Create a dummy state to try and write
+        let new_state = json!({
+            "psg": {
+                "tone1_freq": 9999
+            }
+        });
+
+        // Write state (should be a no-op currently)
+        apu.write_state(&new_state);
+
+        // Verify state has not changed
+        let current_state = apu.read_state();
+        assert_eq!(original_state, current_state);
+
+        // Verify specific field didn't change (just to be sure)
+        assert_eq!(apu.psg.tones[0].frequency, 0); // Default is 0
+    }
 }
