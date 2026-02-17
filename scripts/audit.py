@@ -10,7 +10,10 @@ from datetime import datetime
 # Security & Quality Audit Tool for genteel
 # =============================================================================
 
-REPORT_DIR = "audit_reports"
+# Calculate repository root (assumes this script is in scripts/ directory)
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+REPORT_DIR = os.path.join(REPO_ROOT, "audit_reports")
 FINDINGS_JSON = os.path.join(REPORT_DIR, "findings.json")
 FINDINGS_MD = os.path.join(REPORT_DIR, "FINDINGS.md")
 METRICS_JSON = os.path.join(REPORT_DIR, "metrics.json")
@@ -43,32 +46,37 @@ def add_finding(title, severity, description, file_path, line_number=None):
 
 def get_tracked_files():
     try:
-        out = subprocess.check_output(["git", "ls-files"], stderr=subprocess.STDOUT).decode("utf-8")
+        # Run git ls-files from the repository root
+        out = subprocess.check_output(["git", "ls-files"], cwd=REPO_ROOT, stderr=subprocess.STDOUT).decode("utf-8")
         files = out.splitlines()
         # Filter out target directories and audit reports
         return [f for f in files if not f.startswith("audit_reports/") and "/target/" not in f and not f.startswith("target/")]
     except:
         # Fallback to manual scan if git fails
         files = []
-        for root, _, filenames in os.walk("."):
+        for root, _, filenames in os.walk(REPO_ROOT):
             if ".git" in root or "target" in root or "audit_reports" in root:
                 continue
             for f in filenames:
                 if f.endswith((".rs", ".py", ".md", ".sh", ".toml")):
-                    files.append(os.path.join(root, f))
+                    # Store path relative to REPO_ROOT for consistency
+                    full_path = os.path.join(root, f)
+                    rel_path = os.path.relpath(full_path, REPO_ROOT)
+                    files.append(rel_path)
         return files
 
 def scan_text_patterns():
     files = get_tracked_files()
 
     for f in files:
-        if not os.path.exists(f) or os.path.isdir(f):
+        full_path = os.path.join(REPO_ROOT, f)
+        if not os.path.exists(full_path) or os.path.isdir(full_path):
             continue
         if not f.endswith((".rs", ".py", ".md", ".sh", ".toml")):
             continue
 
         try:
-            with open(f, 'r', encoding='utf-8', errors='ignore') as fp:
+            with open(full_path, 'r', encoding='utf-8', errors='ignore') as fp:
                 for i, line_content in enumerate(fp):
                     # Secrets
                     for name, compiled_pattern in SECRET_PATTERNS.items():
@@ -104,7 +112,7 @@ def scan_text_patterns():
             print(f"Error scanning {f}: {e}")
 
 def run_audit():
-    print("🚀 Starting genteel security & quality audit...")
+    print(f"🚀 Starting genteel security & quality audit from {REPO_ROOT}...")
     
     if not os.path.exists(REPORT_DIR):
         os.makedirs(REPORT_DIR)
