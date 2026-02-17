@@ -341,3 +341,173 @@ pub fn exec_ext(cpu: &mut Cpu, size: Size, reg: u8) -> u32 {
 
     4
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::memory::Memory;
+
+    fn create_test_cpu() -> (Cpu, Memory) {
+        let mut memory = Memory::new(0x10000); // 64KB
+        memory.write_long(0, 0x1000); // SP
+        memory.write_long(4, 0x100); // PC
+        let cpu = Cpu::new(&mut memory);
+        (cpu, memory)
+    }
+
+    #[test]
+    fn test_move_reg_to_reg() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        cpu.d[0] = 0x12345678;
+        cpu.d[1] = 0x00000000;
+
+        // MOVE.L D0, D1
+        exec_move(
+            &mut cpu,
+            Size::Long,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1], 0x12345678);
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+    }
+
+    #[test]
+    fn test_move_mem_to_reg() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        let addr = 0x2000;
+        memory.write_long(addr, 0xCAFEBABE);
+
+        // MOVE.L (0x2000).W, D0
+        // Use AbsoluteShort which reads displacement from PC
+        memory.write_word(0x100, addr as u16);
+        cpu.pc = 0x100;
+
+        exec_move(
+            &mut cpu,
+            Size::Long,
+            AddressingMode::AbsoluteShort,
+            AddressingMode::DataRegister(0),
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[0], 0xCAFEBABE);
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(cpu.get_flag(flags::NEGATIVE)); // 0xC... is negative
+    }
+
+    #[test]
+    fn test_move_reg_to_mem() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        cpu.d[0] = 0xDEADBEEF;
+        let addr = 0x3000;
+
+        // Setup AbsoluteLong address at PC
+        memory.write_long(0x100, addr);
+        cpu.pc = 0x100;
+
+        // MOVE.L D0, (0x3000).L
+        exec_move(
+            &mut cpu,
+            Size::Long,
+            AddressingMode::DataRegister(0),
+            AddressingMode::AbsoluteLong,
+            &mut memory,
+        );
+
+        assert_eq!(memory.read_long(addr), 0xDEADBEEF);
+        assert!(cpu.get_flag(flags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_move_flags_negative() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        cpu.d[0] = 0xFFFFFFFF; // -1
+
+        exec_move(
+            &mut cpu,
+            Size::Long,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            &mut memory,
+        );
+
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+    }
+
+    #[test]
+    fn test_move_flags_zero() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        cpu.d[0] = 0;
+
+        exec_move(
+            &mut cpu,
+            Size::Long,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            &mut memory,
+        );
+
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+    }
+
+    #[test]
+    fn test_move_sizes() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        cpu.d[0] = 0xFFFFFFFF;
+        cpu.d[1] = 0x00000000;
+
+        // MOVE.B D0, D1
+        exec_move(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            &mut memory,
+        );
+        assert_eq!(cpu.d[1], 0x000000FF);
+
+        cpu.d[1] = 0x00000000;
+        // MOVE.W D0, D1
+        exec_move(
+            &mut cpu,
+            Size::Word,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            &mut memory,
+        );
+        assert_eq!(cpu.d[1], 0x0000FFFF);
+    }
+
+    #[test]
+    fn test_move_immediate() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        // Immediate value at PC: 0x1234
+        memory.write_word(0x100, 0x1234);
+        cpu.pc = 0x100;
+
+        // MOVE.W #$1234, D0
+        exec_move(
+            &mut cpu,
+            Size::Word,
+            AddressingMode::Immediate,
+            AddressingMode::DataRegister(0),
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[0] & 0xFFFF, 0x1234);
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::ZERO));
+    }
+}
