@@ -14,6 +14,7 @@
 //! | 0xC00004-0xC00007| Control Port (commands/status) |
 //! | 0xC00008-0xC0000F| H/V Counter                    |
 use crate::debugger::Debuggable;
+use serde::Deserialize;
 use serde_json::{json, Value};
 
 // VDP Control Codes (bits 0-3)
@@ -96,23 +97,27 @@ impl<'a> Iterator for SpriteIterator<'a> {
 
         let addr = self.sat_base + (self.next_idx as usize * 8);
 
-        let cur_v = (((self.vram[addr] as u16) << 8) | (self.vram[addr + 1] as u16)) & 0x03FF;
+        // Optimization: Read all 8 bytes at once
+        let chunk: [u8; 8] = self.vram[addr..addr + 8].try_into().unwrap();
+        let data = u64::from_be_bytes(chunk);
+
+        let cur_v = ((data >> 48) as u16) & 0x03FF;
         let v_pos = cur_v.wrapping_sub(128);
 
-        let size = self.vram[addr + 2];
+        let size = (data >> 40) as u8;
         let h_size = ((size >> 2) & 0x03) + 1;
         let v_size = (size & 0x03) + 1;
 
-        let link = self.vram[addr + 3] & 0x7F;
+        let link = (data >> 32) as u8 & 0x7F;
 
-        let attr_word = ((self.vram[addr + 4] as u16) << 8) | (self.vram[addr + 5] as u16);
+        let attr_word = (data >> 16) as u16;
         let priority = (attr_word & 0x8000) != 0;
         let palette = ((attr_word >> 13) & 0x03) as u8;
         let v_flip = (attr_word & 0x1000) != 0;
         let h_flip = (attr_word & 0x0800) != 0;
         let base_tile = attr_word & 0x07FF;
 
-        let cur_h = (((self.vram[addr + 6] as u16) << 8) | (self.vram[addr + 7] as u16)) & 0x03FF;
+        let cur_h = (data as u16) & 0x03FF;
         let h_pos = cur_h.wrapping_sub(128);
 
         let attr = SpriteAttributes {
@@ -299,17 +304,7 @@ impl Vdp {
                 }
                 let addr = (self.control_address & 0x7E) as usize;
 
-                // Extract 3-bit components (bits 1-3, 5-7, 9-11)
-                let r3 = (val >> 1) & 0x07;
-                let g3 = (val >> 5) & 0x07;
-                let b3 = (val >> 9) & 0x07;
-
-                // Scale to RGB565 using bit repetition
-                let r5 = (r3 << 2) | (r3 >> 1);
-                let g6 = (g3 << 3) | g3;
-                let b5 = (b3 << 2) | (b3 >> 1);
-
-                self.cram_cache[addr >> 1] = ((r5 as u16) << 11) | ((g6 as u16) << 5) | (b5 as u16);
+                self.cram_cache[addr >> 1] = Self::genesis_color_to_rgb565(val);
 
                 self.cram[addr] = (val & 0xFF) as u8;
                 self.cram[addr + 1] = (val >> 8) as u8;
@@ -395,6 +390,8 @@ impl Vdp {
 
     #[inline(always)]
     pub fn read_status(&mut self) -> u16 {
+        // Reading status clears the control pending flag (first word of command)
+        // This matches hardware behavior (verified against Genesis Plus GX)
         self.control_pending = false;
         let res = self.status;
         // Reading status clears the VInt pending bit
@@ -408,6 +405,20 @@ impl Vdp {
     }
 
     // Helper methods
+    pub(crate) fn genesis_color_to_rgb565(val: u16) -> u16 {
+        // Extract 3-bit components (bits 1-3, 5-7, 9-11)
+        let r3 = (val >> 1) & 0x07;
+        let g3 = (val >> 5) & 0x07;
+        let b3 = (val >> 9) & 0x07;
+
+        // Scale to RGB565 using bit repetition
+        let r5 = (r3 << 2) | (r3 >> 1);
+        let g6 = (g3 << 3) | g3;
+        let b5 = (b3 << 2) | (b3 >> 1);
+
+        ((r5 as u16) << 11) | ((g6 as u16) << 5) | (b5 as u16)
+    }
+
     fn auto_increment(&self) -> u8 {
         self.registers[REG_AUTO_INC]
     }
@@ -866,11 +877,20 @@ impl Vdp {
     fn fetch_tile_pattern(&self, tile_index: u16, pixel_v: u16, v_flip: bool) -> [u8; 4] {
         let row = if v_flip { 7 - pixel_v } else { pixel_v };
         let row_addr = (tile_index as usize * 32) + (row as usize * 4);
-        // Mask to 64KB boundary. Since each row fetch is 4 bytes and row_addr is a
-        // multiple of 4, masking with 0xFFFC ensures the slice never crosses
-        // the 64KB boundary.
-        let addr = row_addr & 0xFFFC;
-        self.vram[addr..addr + 4].try_into().unwrap()
+        // Mask to 64KB boundary and align to 4 bytes.
+        // We use (row_addr & 0xFFFF) to ensure we wrap within 64KB, and then mask with 0xFFFC
+        // to clear the bottom 2 bits for alignment. 0xFFFC effectively does both, but we make
+        // the wrapping explicit for clarity and safety against potential type width assumptions.
+        let addr = (row_addr & 0xFFFF) & 0xFFFC;
+
+        // SAFETY:
+        // 1. addr is explicitly masked to be <= 0xFFFC and 4-byte aligned.
+        // 2. self.vram is [u8; 0x10000].
+        // 3. Reading 4 bytes from addr <= 0xFFFC accesses bytes up to 0xFFFF, which is within bounds.
+        unsafe {
+            let ptr = self.vram.as_ptr().add(addr) as *const u32;
+            ptr.read_unaligned().to_ne_bytes()
+        }
     }
 
     fn draw_partial_tile_row(
@@ -917,98 +937,101 @@ impl Vdp {
         let tile_index = entry & 0x07FF;
 
         let patterns = self.fetch_tile_pattern(tile_index, pixel_v, v_flip);
-        let p0 = patterns[0];
-        let p1 = patterns[1];
-        let p2 = patterns[2];
-        let p3 = patterns[3];
+
+        let mut raw = u32::from_be_bytes(patterns);
+
+        if h_flip {
+            raw = raw.swap_bytes();
+            raw = ((raw & 0xF0F0F0F0) >> 4) | ((raw & 0x0F0F0F0F) << 4);
+        }
+
+        let [p0, p1, p2, p3] = raw.to_be_bytes();
+
         let palette_base = (palette as usize) * 16;
+
+        // Helper macro to draw two pixels from a byte
+        macro_rules! draw_byte {
+            ($byte:expr, $offset:expr) => {
+                let mut col = $byte >> 4;
+                if col != 0 {
+                    *self
+                        .framebuffer
+                        .get_unchecked_mut(dest_idx + $offset) = *self
+                        .cram_cache
+                        .get_unchecked(palette_base + col as usize);
+                }
+                col = $byte & 0x0F;
+                if col != 0 {
+                    *self
+                        .framebuffer
+                        .get_unchecked_mut(dest_idx + $offset + 1) = *self
+                        .cram_cache
+                        .get_unchecked(palette_base + col as usize);
+                }
+            };
+        }
 
         // SAFETY: Caller ensures dest_idx + 7 is within framebuffer bounds.
         // palette is 2 bits, so palette_base is max 48. col is 4 bits (0-15).
         // Max index is 63, which is within cram_cache bounds (64).
         unsafe {
-            if h_flip {
-                let mut col = p3 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p3 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 1) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p2 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 2) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p2 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 3) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p1 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 4) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p1 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 5) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p0 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 6) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p0 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 7) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
+            draw_byte!(p0, 0);
+            draw_byte!(p1, 2);
+            draw_byte!(p2, 4);
+            draw_byte!(p3, 6);
+        }
+    }
+
+    // Helper to calculate plane coordinates
+    fn calculate_plane_coords(
+        &self,
+        screen_x: u16,
+        h_scroll: u16,
+        fetch_line: u16,
+        is_plane_a: bool,
+        plane_size: (usize, usize),
+    ) -> (usize, usize, u16, u16) {
+        let (plane_w, plane_h) = plane_size;
+        let plane_w_mask = plane_w - 1;
+
+        // Horizontal position in plane
+        // The scroll value is subtracted from the horizontal position
+        let scrolled_h = screen_x.wrapping_sub(h_scroll);
+        let pixel_h = (scrolled_h & 0x07) as u16;
+        let tile_h = ((scrolled_h >> 3) as usize) & plane_w_mask;
+
+        // Fetch V-scroll for this specific column (per-column VS support)
+        let (v_scroll, _) =
+            self.get_scroll_values(is_plane_a, fetch_line, (screen_x >> 3) as usize);
+
+        // Vertical position in plane
+        let scrolled_v = fetch_line.wrapping_add(v_scroll);
+        let tile_v = (scrolled_v as usize / 8) % plane_h;
+        let pixel_v = scrolled_v % 8;
+
+        (tile_h, tile_v, pixel_h, pixel_v)
+    }
+
+    fn draw_plane_tile(
+        &mut self,
+        entry: u16,
+        pixel_v: u16,
+        pixel_h: u16,
+        dest_idx: usize,
+        priority_filter: bool,
+        pixels_to_process: u16,
+    ) {
+        let tile_index = entry & 0x07FF;
+        let priority = (entry & 0x8000) != 0;
+
+        if priority == priority_filter && tile_index != 0 {
+            if pixels_to_process == 8 && pixel_h == 0 {
+                // Fast path for full aligned tile
+                unsafe {
+                    self.draw_full_tile_row(entry, pixel_v, dest_idx);
                 }
             } else {
-                let mut col = p0 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p0 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 1) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p1 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 2) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p1 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 3) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p2 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 4) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p2 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 5) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p3 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 6) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p3 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 7) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
+                self.draw_partial_tile_row(entry, pixel_v, pixel_h, pixels_to_process, dest_idx);
             }
         }
     }
@@ -1020,7 +1043,8 @@ impl Vdp {
         draw_line: u16,
         priority_filter: bool,
     ) {
-        let (plane_w, plane_h) = self.plane_size();
+        let plane_size = self.plane_size();
+        let (plane_w, plane_h) = plane_size;
         let name_table_base = if is_plane_a {
             self.plane_a_address()
         } else {
@@ -1030,51 +1054,146 @@ impl Vdp {
         let screen_width = self.screen_width();
         let line_offset = (draw_line as usize) * 320;
         let plane_w_mask = plane_w - 1;
+        let plane_h_mask = plane_h - 1;
 
         // Fetch H-scroll once for the line (matching real hardware behavior for per-line/cell)
         let (_, h_scroll) = self.get_scroll_values(is_plane_a, fetch_line, 0);
 
+        // V-Scroll setup
+        let mode3 = self.registers[REG_MODE3];
+        let v_scroll_2cell = (mode3 & 0x04) != 0;
+        let vsram_offset = if is_plane_a { 0 } else { 2 };
+
+        // Pre-calc full screen v-scroll if applicable
+        let full_screen_v_scroll = if !v_scroll_2cell {
+            let vs_addr = vsram_offset;
+            (((self.vsram[vs_addr] as u16) << 8) | (self.vsram[vs_addr + 1] as u16)) & 0x03FF
+        } else {
+            0
+        };
+
         let mut screen_x: u16 = 0;
 
+        // Head Loop: Handle misalignment
         while screen_x < screen_width {
-            // Horizontal position in plane
-            // The scroll value is subtracted from the horizontal position
             let scrolled_h = screen_x.wrapping_sub(h_scroll);
-            let pixel_h = (scrolled_h & 0x07) as u16;
+            let pixel_h = scrolled_h & 0x07;
+
+            if pixel_h == 0 {
+                break;
+            }
+
             let tile_h = ((scrolled_h >> 3) as usize) & plane_w_mask;
 
-            // Fetch V-scroll for this specific column (per-column VS support)
-            let (v_scroll, _) =
-                self.get_scroll_values(is_plane_a, fetch_line, (screen_x >> 3) as usize);
+            // Fetch V-scroll
+            let v_scroll = if !v_scroll_2cell {
+                full_screen_v_scroll
+            } else {
+                let strip_idx = tile_h >> 1;
+                let vs_addr = (strip_idx * 4) + vsram_offset;
+                if vs_addr + 1 < 80 {
+                    (((self.vsram[vs_addr] as u16) << 8) | (self.vsram[vs_addr + 1] as u16))
+                        & 0x03FF
+                } else {
+                    0
+                }
+            };
 
-            // Vertical position in plane
             let scrolled_v = fetch_line.wrapping_add(v_scroll);
-            let tile_v = (scrolled_v as usize / 8) % plane_h;
-            let pixel_v = scrolled_v % 8;
+            let tile_v = (scrolled_v as usize >> 3) & plane_h_mask;
+            let pixel_v = scrolled_v & 7;
 
             let entry = self.fetch_nametable_entry(name_table_base, tile_v, tile_h, plane_w);
-            let tile_index = entry & 0x07FF;
-            let priority = (entry & 0x8000) != 0;
 
             let pixels_left_in_tile = 8 - pixel_h;
             let pixels_to_process = std::cmp::min(pixels_left_in_tile, screen_width - screen_x);
 
-            if priority == priority_filter && tile_index != 0 {
-                if pixels_to_process == 8 && pixel_h == 0 {
-                    // Fast path for full aligned tile
-                    unsafe {
-                        self.draw_full_tile_row(entry, pixel_v, line_offset + screen_x as usize);
-                    }
+            self.draw_plane_tile(
+                entry,
+                pixel_v,
+                pixel_h as u16,
+                line_offset + screen_x as usize,
+                priority_filter,
+                pixels_to_process,
+            );
+
+            screen_x += pixels_to_process;
+        }
+
+        // Body Loop: Process 8 pixels at a time (Aligned)
+        while screen_x + 8 <= screen_width {
+            let scrolled_h = screen_x.wrapping_sub(h_scroll);
+            // pixel_h is known to be 0 here
+            let tile_h = ((scrolled_h as usize) >> 3) & plane_w_mask;
+
+            // Fetch V-scroll
+            let v_scroll = if !v_scroll_2cell {
+                full_screen_v_scroll
+            } else {
+                let strip_idx = tile_h >> 1;
+                let vs_addr = (strip_idx * 4) + vsram_offset;
+                if vs_addr + 1 < 80 {
+                    (((self.vsram[vs_addr] as u16) << 8) | (self.vsram[vs_addr + 1] as u16))
+                        & 0x03FF
                 } else {
-                    self.draw_partial_tile_row(
-                        entry,
-                        pixel_v,
-                        pixel_h,
-                        pixels_to_process,
-                        line_offset + screen_x as usize,
-                    );
+                    0
                 }
-            }
+            };
+
+            let scrolled_v = fetch_line.wrapping_add(v_scroll);
+            let tile_v = (scrolled_v as usize >> 3) & plane_h_mask;
+            let pixel_v = scrolled_v & 7;
+
+            let entry = self.fetch_nametable_entry(name_table_base, tile_v, tile_h, plane_w);
+
+            self.draw_plane_tile(
+                entry,
+                pixel_v,
+                0,
+                line_offset + screen_x as usize,
+                priority_filter,
+                8,
+            );
+
+            screen_x += 8;
+        }
+
+        // Tail Loop: Handle remaining pixels
+        while screen_x < screen_width {
+            let scrolled_h = screen_x.wrapping_sub(h_scroll);
+            let pixel_h = scrolled_h & 0x07;
+            let tile_h = ((scrolled_h >> 3) as usize) & plane_w_mask;
+
+            let v_scroll = if !v_scroll_2cell {
+                full_screen_v_scroll
+            } else {
+                let strip_idx = tile_h >> 1;
+                let vs_addr = (strip_idx * 4) + vsram_offset;
+                if vs_addr + 1 < 80 {
+                    (((self.vsram[vs_addr] as u16) << 8) | (self.vsram[vs_addr + 1] as u16))
+                        & 0x03FF
+                } else {
+                    0
+                }
+            };
+
+            let scrolled_v = fetch_line.wrapping_add(v_scroll);
+            let tile_v = (scrolled_v as usize >> 3) & plane_h_mask;
+            let pixel_v = scrolled_v & 7;
+
+            let entry = self.fetch_nametable_entry(name_table_base, tile_v, tile_h, plane_w);
+
+            let pixels_left_in_tile = 8 - pixel_h;
+            let pixels_to_process = std::cmp::min(pixels_left_in_tile, screen_width - screen_x);
+
+            self.draw_plane_tile(
+                entry,
+                pixel_v,
+                pixel_h as u16,
+                line_offset + screen_x as usize,
+                priority_filter,
+                pixels_to_process,
+            );
 
             screen_x += pixels_to_process;
         }
@@ -1088,6 +1207,30 @@ impl Vdp {
             self.vram[addr ^ 1] = (value & 0xFF) as u8;
         }
     }
+}
+
+#[derive(Deserialize)]
+struct VdpControlJson {
+    pending: Option<bool>,
+    code: Option<u8>,
+    address: Option<u16>,
+}
+
+#[derive(Deserialize)]
+struct VdpJsonState {
+    status: Option<u16>,
+    h_counter: Option<u16>,
+    v_counter: Option<u16>,
+    dma_pending: Option<bool>,
+    registers: Option<Vec<u8>>,
+    control: Option<VdpControlJson>,
+    vram: Option<Vec<u8>>,
+    cram: Option<Vec<u8>>,
+    vsram: Option<Vec<u8>>,
+    line_counter: Option<u8>,
+    last_data_write: Option<u16>,
+    v30_offset: Option<u16>,
+    is_pal: Option<bool>,
 }
 
 impl Debuggable for Vdp {
@@ -1114,56 +1257,59 @@ impl Debuggable for Vdp {
     }
 
     fn write_state(&mut self, state: &Value) {
-        if let Some(status) = state["status"].as_u64() {
-            self.status = status as u16;
+        let state: VdpJsonState = match serde_json::from_value(state.clone()) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Failed to deserialize VDP state: {}", e);
+                return;
+            }
+        };
+
+        if let Some(status) = state.status {
+            self.status = status;
         }
-        if let Some(h_counter) = state["h_counter"].as_u64() {
-            self.h_counter = h_counter as u16;
+        if let Some(h_counter) = state.h_counter {
+            self.h_counter = h_counter;
         }
-        if let Some(v_counter) = state["v_counter"].as_u64() {
-            self.v_counter = v_counter as u16;
+        if let Some(v_counter) = state.v_counter {
+            self.v_counter = v_counter;
         }
-        if let Some(dma_pending) = state["dma_pending"].as_bool() {
+        if let Some(dma_pending) = state.dma_pending {
             self.dma_pending = dma_pending;
         }
 
-        if let Some(registers) = state["registers"].as_array() {
+        if let Some(registers) = state.registers {
             for (i, val) in registers.iter().enumerate() {
                 if i < 24 {
-                    if let Some(v) = val.as_u64() {
-                        self.registers[i] = v as u8;
-                    }
+                    self.registers[i] = *val;
                 }
             }
         }
 
-        let control = &state["control"];
-        if let Some(pending) = control["pending"].as_bool() {
-            self.control_pending = pending;
-        }
-        if let Some(code) = control["code"].as_u64() {
-            self.control_code = code as u8;
-        }
-        if let Some(address) = control["address"].as_u64() {
-            self.control_address = address as u16;
+        if let Some(control) = state.control {
+            if let Some(pending) = control.pending {
+                self.control_pending = pending;
+            }
+            if let Some(code) = control.code {
+                self.control_code = code;
+            }
+            if let Some(address) = control.address {
+                self.control_address = address;
+            }
         }
 
-        if let Some(vram) = state["vram"].as_array() {
+        if let Some(vram) = state.vram {
             for (i, val) in vram.iter().enumerate() {
                 if i < self.vram.len() {
-                    if let Some(v) = val.as_u64() {
-                        self.vram[i] = v as u8;
-                    }
+                    self.vram[i] = *val;
                 }
             }
         }
 
-        if let Some(cram) = state["cram"].as_array() {
+        if let Some(cram) = state.cram {
             for (i, val) in cram.iter().enumerate() {
                 if i < self.cram.len() {
-                    if let Some(v) = val.as_u64() {
-                        self.cram[i] = v as u8;
-                    }
+                    self.cram[i] = *val;
                 }
             }
             // Reconstruct CRAM Cache
@@ -1171,42 +1317,29 @@ impl Debuggable for Vdp {
                 let addr = i * 2;
                 if addr + 1 < self.cram.len() {
                     let val = ((self.cram[addr + 1] as u16) << 8) | (self.cram[addr] as u16);
-
-                    // Extract 3-bit components (bits 1-3, 5-7, 9-11)
-                    let r3 = (val >> 1) & 0x07;
-                    let g3 = (val >> 5) & 0x07;
-                    let b3 = (val >> 9) & 0x07;
-
-                    // Scale to RGB565 using bit repetition
-                    let r5 = (r3 << 2) | (r3 >> 1);
-                    let g6 = (g3 << 3) | g3;
-                    let b5 = (b3 << 2) | (b3 >> 1);
-
-                    self.cram_cache[i] = ((r5 as u16) << 11) | ((g6 as u16) << 5) | (b5 as u16);
+                    self.cram_cache[i] = Vdp::genesis_color_to_rgb565(val);
                 }
             }
         }
 
-        if let Some(vsram) = state["vsram"].as_array() {
+        if let Some(vsram) = state.vsram {
             for (i, val) in vsram.iter().enumerate() {
                 if i < self.vsram.len() {
-                    if let Some(v) = val.as_u64() {
-                        self.vsram[i] = v as u8;
-                    }
+                    self.vsram[i] = *val;
                 }
             }
         }
 
-        if let Some(line_counter) = state["line_counter"].as_u64() {
-            self.line_counter = line_counter as u8;
+        if let Some(line_counter) = state.line_counter {
+            self.line_counter = line_counter;
         }
-        if let Some(last_data_write) = state["last_data_write"].as_u64() {
-            self.last_data_write = last_data_write as u16;
+        if let Some(last_data_write) = state.last_data_write {
+            self.last_data_write = last_data_write;
         }
-        if let Some(v30_offset) = state["v30_offset"].as_u64() {
-            self.v30_offset = v30_offset as u16;
+        if let Some(v30_offset) = state.v30_offset {
+            self.v30_offset = v30_offset;
         }
-        if let Some(is_pal) = state["is_pal"].as_bool() {
+        if let Some(is_pal) = state.is_pal {
             self.is_pal = is_pal;
         }
     }
@@ -1304,6 +1437,20 @@ mod tests {
 
         // Verify CRAM Cache
         assert_eq!(vdp2.cram_cache[1], 0xFFFF);
+    }
+
+    #[test]
+    fn test_genesis_color_to_rgb565() {
+        // Test White (0x0EEE) -> 0xFFFF
+        assert_eq!(Vdp::genesis_color_to_rgb565(0x0EEE), 0xFFFF);
+        // Test Black (0x0000) -> 0x0000
+        assert_eq!(Vdp::genesis_color_to_rgb565(0x0000), 0x0000);
+        // Test Red (0x000E) -> R=7, G=0, B=0 -> R5=31, G6=0, B5=0 -> 0xF800
+        assert_eq!(Vdp::genesis_color_to_rgb565(0x000E), 0xF800);
+        // Test Green (0x00E0) -> R=0, G=7, B=0 -> R5=0, G6=63, B5=0 -> 0x07E0
+        assert_eq!(Vdp::genesis_color_to_rgb565(0x00E0), 0x07E0);
+        // Test Blue (0x0E00) -> R=0, G=0, B=7 -> R5=0, G6=0, B5=31 -> 0x001F
+        assert_eq!(Vdp::genesis_color_to_rgb565(0x0E00), 0x001F);
     }
 }
 
