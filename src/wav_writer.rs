@@ -4,8 +4,6 @@ use std::io::{BufWriter, Seek, SeekFrom, Write};
 pub struct WavWriter {
     file: BufWriter<File>,
     data_size: u32,
-    #[allow(dead_code)] // Stored for potential future use or debugging
-    channels: u16,
 }
 
 impl WavWriter {
@@ -39,7 +37,6 @@ impl WavWriter {
         Ok(Self {
             file: writer,
             data_size: 0,
-            channels,
         })
     }
 
@@ -79,5 +76,54 @@ impl WavWriter {
 impl Drop for WavWriter {
     fn drop(&mut self) {
         let _ = self.finalize();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Read;
+
+    struct TempFile(String);
+    impl Drop for TempFile {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    #[test]
+    fn test_wav_writer() {
+        let path = "test_wav_writer_output.wav";
+        let _temp_file = TempFile(path.to_string());
+
+        {
+            let mut writer = WavWriter::new(path, 44100, 2).unwrap();
+            let samples = vec![0, 100, -100, 0];
+            writer.write_samples(&samples).unwrap();
+        } // Drop writer to finalize
+
+        let mut file = File::open(path).unwrap();
+        let mut buffer = Vec::new();
+        file.read_to_end(&mut buffer).unwrap();
+
+        // Header Check
+        assert_eq!(&buffer[0..4], b"RIFF");
+        assert_eq!(&buffer[8..12], b"WAVE");
+        assert_eq!(&buffer[12..16], b"fmt ");
+
+        // Check channels (offset 22, 2 bytes)
+        let channels = u16::from_le_bytes([buffer[22], buffer[23]]);
+        assert_eq!(channels, 2);
+
+        // Check sample rate (offset 24, 4 bytes)
+        let sample_rate = u32::from_le_bytes([buffer[24], buffer[25], buffer[26], buffer[27]]);
+        assert_eq!(sample_rate, 44100);
+
+        // Check data chunk (offset 36)
+        assert_eq!(&buffer[36..40], b"data");
+
+        // Check data size (offset 40, 4 bytes)
+        let data_size = u32::from_le_bytes([buffer[40], buffer[41], buffer[42], buffer[43]]);
+        assert_eq!(data_size, 8); // 4 samples * 2 bytes/sample
     }
 }

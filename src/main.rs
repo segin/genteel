@@ -44,6 +44,7 @@ struct Framework {
     renderer: egui_wgpu::Renderer,
     gui_state: GuiState,
 }
+#[cfg(feature = "gui")]
 impl Framework {
     fn new(
         event_loop: &winit::event_loop::EventLoopWindowTarget<()>,
@@ -682,7 +683,6 @@ impl Emulator {
         }
         Ok(())
     }
-    #[cfg(feature = "gui")]
     fn log_debug(&self, frame_count: u64) {
         let bus = self.bus.borrow();
         let disp_en = if bus.vdp.display_enabled() {
