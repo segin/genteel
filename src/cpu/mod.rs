@@ -21,6 +21,8 @@ mod tests_m68k_control;
 #[cfg(test)]
 mod tests_m68k_extended;
 #[cfg(test)]
+mod tests_m68k_movep;
+#[cfg(test)]
 mod tests_m68k_shift;
 #[cfg(test)]
 mod tests_m68k_torture;
