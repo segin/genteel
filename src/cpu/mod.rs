@@ -87,7 +87,8 @@ impl Cpu {
             pending_interrupt: 0,
             pending_exception: false,
             interrupt_pending_mask: 0,
-            decode_cache: vec![DecodeCacheEntry::default(); 65536].into_boxed_slice(),
+            // 2M entries * 16 bytes = 32MB cache
+            decode_cache: vec![DecodeCacheEntry::default(); 2 * 1024 * 1024].into_boxed_slice(),
         };
 
         // At startup, the supervisor stack pointer is read from address 0x00000000
@@ -122,7 +123,7 @@ impl Cpu {
     }
 
     fn invalidate_cache_line(&mut self, addr: u32) {
-        let index = ((addr >> 1) & 0xFFFF) as usize;
+        let index = ((addr >> 1) & 0x1FFFFF) as usize;
         self.decode_cache[index].pc = u32::MAX;
     }
 
@@ -182,11 +183,11 @@ impl Cpu {
         // Optimized instruction fetch with cache
         if pc < 0x400000 {
             // ROM/Cartridge space - Cacheable
-            // Index: (PC / 2) & 0xFFFF. Maps 0-128KB repeating or just lower bits.
+            // Index: (PC / 2) & 0x1FFFFF. Maps 0-4MB repeating or just lower bits.
             // Since we check entry.pc == pc, aliasing is handled safely.
-            let cache_index = ((pc >> 1) & 0xFFFF) as usize;
+            let cache_index = ((pc >> 1) & 0x1FFFFF) as usize;
 
-            // Safety: cache size is 65536, index is masked to 0xFFFF.
+            // Safety: cache size is 2M, index is masked to 0x1FFFFF.
             let entry = unsafe { *self.decode_cache.get_unchecked(cache_index) };
 
             if entry.pc == pc {
