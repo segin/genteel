@@ -26,6 +26,8 @@ mod tests_m68k_shift;
 mod tests_m68k_torture;
 #[cfg(test)]
 mod tests_performance;
+#[cfg(test)]
+mod tests_security;
 
 use self::addressing::{read_ea, EffectiveAddress};
 use self::decoder::{decode, BitSource, Condition, DecodeCacheEntry, Instruction, Size};
@@ -180,14 +182,15 @@ impl Cpu {
         let instruction;
 
         // Optimized instruction fetch with cache
-        if pc < 0x400000 {
+        let cache_index = ((pc >> 1) & 0xFFFF) as usize;
+
+        if pc < 0x400000 && cache_index < self.decode_cache.len() {
             // ROM/Cartridge space - Cacheable
             // Index: (PC / 2) & 0xFFFF. Maps 0-128KB repeating or just lower bits.
             // Since we check entry.pc == pc, aliasing is handled safely.
-            let cache_index = ((pc >> 1) & 0xFFFF) as usize;
 
-            // Safety: cache size is 65536, index is masked to 0xFFFF.
-            let entry = unsafe { *self.decode_cache.get_unchecked(cache_index) };
+            // Safe access using checked index
+            let entry = self.decode_cache[cache_index];
 
             if entry.pc == pc {
                 // Cache Hit
@@ -206,13 +209,10 @@ impl Cpu {
                 instruction = decode(opcode);
 
                 // Update Cache
-                unsafe {
-                    *self.decode_cache.get_unchecked_mut(cache_index) =
-                        DecodeCacheEntry { pc, instruction };
-                }
+                self.decode_cache[cache_index] = DecodeCacheEntry { pc, instruction };
             }
         } else {
-            // Uncached (RAM, I/O, etc.)
+            // Uncached (RAM, I/O, etc.) or Cache unavailable
             let opcode = self.read_instruction_word(pc, memory);
             if self.pending_exception {
                 // Address Error during fetch
