@@ -73,6 +73,8 @@ cargo test test_name
 - Use `cargo clippy` to check for common issues
 - Prefer functional patterns where possible
 - Document public APIs with rustdoc comments
+- Use block comments `/* ... */` for multi-line comments.
+- Always reference Pull Requests by their number (e.g., PR #123), never by branch name.
 - Keep functions small and focused
 
 ## Security Considerations
