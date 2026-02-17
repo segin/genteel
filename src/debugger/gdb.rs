@@ -13,6 +13,21 @@ pub const DEFAULT_PORT: u16 = 1234;
 /// Maximum GDB packet size to prevent unbounded memory consumption
 pub const MAX_PACKET_SIZE: usize = 4096;
 
+/// Constant-time string comparison to prevent timing attacks
+fn constant_time_eq(a: &str, b: &str) -> bool {
+    let a_bytes = a.as_bytes();
+    let b_bytes = b.as_bytes();
+    if a_bytes.len() != b_bytes.len() {
+        return false;
+    }
+
+    a_bytes
+        .iter()
+        .zip(b_bytes)
+        .fold(0, |acc, (x, y)| acc | (x ^ y))
+        == 0
+}
+
 /// GDB stop reasons
 #[derive(Debug, Clone, Copy)]
 pub enum StopReason {
@@ -622,7 +637,7 @@ impl GdbServer {
         if let Some(stripped) = cmd.strip_prefix("auth ") {
             let provided_pass = stripped.trim();
             if let Some(ref correct_pass) = self.password {
-                if provided_pass == correct_pass {
+                if constant_time_eq(provided_pass, correct_pass) {
                     self.authenticated = true;
                     return "OK".to_string();
                 } else {
@@ -710,6 +725,17 @@ mod tests {
             password: None,
             authenticated: true,
         }
+    }
+
+    #[test]
+    fn test_constant_time_eq() {
+        assert!(constant_time_eq("secret", "secret"));
+        assert!(!constant_time_eq("secret", "secreT"));
+        assert!(!constant_time_eq("secret", "secre"));
+        assert!(!constant_time_eq("secret", "secret1"));
+        assert!(!constant_time_eq("", "secret"));
+        assert!(!constant_time_eq("secret", ""));
+        assert!(constant_time_eq("", ""));
     }
 
     #[test]
