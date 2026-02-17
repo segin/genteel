@@ -808,3 +808,126 @@ fn fetch_postinc_operand<M: MemoryInterface>(
     cpu.a[reg as usize] = addr.wrapping_add(size.bytes());
     val
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cpu::decoder::AddressingMode;
+    use crate::cpu::flags;
+    use crate::cpu::Cpu;
+    use crate::memory::Memory;
+
+    fn create_test_cpu() -> (Cpu, Memory) {
+        let mut memory = Memory::new(0x10000);
+        // Initialize memory with basic vector table
+        memory.write_long(0x0, 0x8000); // Stack pointer
+        memory.write_long(0x4, 0x1000); // PC
+
+        // Exception Vector 6 (CHK instruction)
+        memory.write_long(0x18, 0x2000); // Handler address
+
+        let cpu = Cpu::new(&mut memory);
+        (cpu, memory)
+    }
+
+    #[test]
+    fn test_exec_chk_within_bounds() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        cpu.d[0] = 10;
+        memory.write_word(0x100, 20); // Bound = 20
+
+        // We write the address of the bound (0x100) at PC (0x1000) for AbsoluteShort
+        memory.write_word(0x1000, 0x100);
+
+        let _cycles = exec_chk(
+            &mut cpu,
+            AddressingMode::AbsoluteShort,
+            0, // D0
+            &mut memory,
+        );
+
+        assert!(!cpu.pending_exception);
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        // Check Z flag is not set (10 != 0)
+        assert!(!cpu.get_flag(flags::ZERO));
+    }
+
+    #[test]
+    fn test_exec_chk_negative() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        cpu.d[0] = 0xFFFB; // -5 as i16
+        memory.write_word(0x100, 20); // Bound = 20
+
+        memory.write_word(0x1000, 0x100);
+
+        let _cycles = exec_chk(
+            &mut cpu,
+            AddressingMode::AbsoluteShort,
+            0, // D0
+            &mut memory,
+        );
+
+        assert!(cpu.pending_exception);
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert_eq!(cpu.pc, 0x2000);
+    }
+
+    #[test]
+    fn test_exec_chk_greater_than_bound() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        cpu.d[0] = 30;
+        memory.write_word(0x100, 20); // Bound = 20
+
+        memory.write_word(0x1000, 0x100);
+
+        let _cycles = exec_chk(
+            &mut cpu,
+            AddressingMode::AbsoluteShort,
+            0, // D0
+            &mut memory,
+        );
+
+        assert!(cpu.pending_exception);
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert_eq!(cpu.pc, 0x2000);
+    }
+
+    #[test]
+    fn test_exec_chk_zero() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        cpu.d[0] = 0;
+        memory.write_word(0x100, 20); // Bound = 20
+
+        memory.write_word(0x1000, 0x100);
+
+        let _cycles = exec_chk(
+            &mut cpu,
+            AddressingMode::AbsoluteShort,
+            0, // D0
+            &mut memory,
+        );
+
+        assert!(!cpu.pending_exception);
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(cpu.get_flag(flags::ZERO));
+    }
+
+    #[test]
+    fn test_exec_chk_equal_to_bound() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        cpu.d[0] = 20;
+        memory.write_word(0x100, 20); // Bound = 20
+
+        memory.write_word(0x1000, 0x100);
+
+        let _cycles = exec_chk(
+            &mut cpu,
+            AddressingMode::AbsoluteShort,
+            0, // D0
+            &mut memory,
+        );
+
+        assert!(!cpu.pending_exception);
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+    }
+}
