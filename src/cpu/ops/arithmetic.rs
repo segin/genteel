@@ -808,3 +808,99 @@ fn fetch_postinc_operand<M: MemoryInterface>(
     cpu.a[reg as usize] = addr.wrapping_add(size.bytes());
     val
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::memory::Memory;
+
+    fn create_test_cpu() -> (Cpu, Memory) {
+        let mut memory = Memory::new(0x10000);
+        // Initial SP and PC
+        memory.write_long(0, 0x1000); // SP
+        memory.write_long(4, 0x100); // PC
+        let cpu = Cpu::new(&mut memory);
+        (cpu, memory)
+    }
+
+    #[test]
+    fn test_exec_mulu_basic() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        // MULU D1, D0
+        // D1 = 20
+        // D0 = 10
+        cpu.d[0] = 10;
+        cpu.d[1] = 20;
+
+        // Set flags to true to verify they are cleared/updated
+        cpu.set_flag(flags::CARRY, true);
+        cpu.set_flag(flags::OVERFLOW, true);
+        cpu.set_flag(flags::ZERO, true);
+        cpu.set_flag(flags::NEGATIVE, true);
+
+        let cycles = exec_mulu(&mut cpu, AddressingMode::DataRegister(1), 0, &mut memory);
+
+        assert_eq!(cpu.d[0], 200);
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert!(cycles > 0);
+    }
+
+    #[test]
+    fn test_exec_mulu_zero() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        cpu.d[0] = 10;
+        cpu.d[1] = 0;
+
+        // Set flags to verify correct updates
+        cpu.set_flag(flags::CARRY, true);
+        cpu.set_flag(flags::OVERFLOW, true);
+        cpu.set_flag(flags::NEGATIVE, true);
+
+        exec_mulu(&mut cpu, AddressingMode::DataRegister(1), 0, &mut memory);
+
+        assert_eq!(cpu.d[0], 0);
+        assert!(cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+    }
+
+    #[test]
+    fn test_exec_mulu_large() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        cpu.d[0] = 0xFFFF;
+        cpu.d[1] = 0xFFFF;
+
+        // Set flags to verify correct updates
+        cpu.set_flag(flags::CARRY, true);
+        cpu.set_flag(flags::OVERFLOW, true);
+
+        exec_mulu(&mut cpu, AddressingMode::DataRegister(1), 0, &mut memory);
+
+        // 0xFFFF * 0xFFFF = 0xFFFE0001
+        assert_eq!(cpu.d[0], 0xFFFE0001);
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(cpu.get_flag(flags::NEGATIVE)); // MSB is set
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+    }
+
+    #[test]
+    fn test_exec_mulu_immediate() {
+         let (mut cpu, mut memory) = create_test_cpu();
+         cpu.d[0] = 10;
+
+         // Setup immediate value in memory at PC
+         cpu.pc = 0x200;
+         memory.write_word(0x200, 20); // Immediate value 20
+
+         exec_mulu(&mut cpu, AddressingMode::Immediate, 0, &mut memory);
+
+         assert_eq!(cpu.d[0], 200);
+         assert_eq!(cpu.pc, 0x202); // PC should advance by 2
+    }
+}
