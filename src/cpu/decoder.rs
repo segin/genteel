@@ -145,12 +145,17 @@ impl AddressingMode {
         }
     }
 
-    /// Returns true if this mode is valid as a destination
-    pub fn is_valid_destination(&self) -> bool {
+    /// Returns true if this mode is an Alterable addressing mode
+    pub fn is_alterable(&self) -> bool {
         !matches!(
             self,
             AddressingMode::PcDisplacement | AddressingMode::PcIndex | AddressingMode::Immediate
         )
+    }
+
+    /// Returns true if this mode is a Data Alterable addressing mode
+    pub fn is_data_alterable(&self) -> bool {
+        self.is_alterable() && !matches!(self, AddressingMode::AddressRegister(_))
     }
 
     /// Returns the number of extension words needed for this addressing mode
@@ -858,7 +863,7 @@ fn decode_move(opcode: u16, size: Size) -> Instruction {
         None => return Instruction::Unimplemented { opcode },
     };
 
-    if !dst.is_valid_destination() {
+    if !dst.is_alterable() {
         return Instruction::Unimplemented { opcode };
     }
 
@@ -1001,32 +1006,7 @@ fn decode_group_4_arithmetic(opcode: u16) -> Option<Instruction> {
     // NBCD
     if opcode & 0xFFC0 == 0x4800 {
         if let Some(dst) = AddressingMode::from_mode_reg(mode, reg) {
-            if dst.is_valid_destination()
-                && matches!(
-                    dst,
-                    AddressingMode::DataRegister(_)
-                        | AddressingMode::AddressPreDecrement(_)
-                        | AddressingMode::AddressDisplacement(_)
-                        | AddressingMode::AddressIndex(_)
-                        | AddressingMode::AbsoluteShort
-                        | AddressingMode::AbsoluteLong
-                )
-            {
-                return Some(Instruction::Nbcd { dst });
-            }
-            // Nbcd requires data alterable. is_valid_destination checks mostly immediate logic.
-            // Check manual: NBCD <ea>. <ea> is Data Alterable.
-            // DataRegister, (An), (An)+, -(An), d(An), d(An,xi), xxx.W, xxx.L.
-            // An direct is NOT data alterable.
-            // My AddressingMode check is approximate.
-            // I'll assume valid destination for now if not An.
-            if !matches!(
-                dst,
-                AddressingMode::AddressRegister(_)
-                    | AddressingMode::Immediate
-                    | AddressingMode::PcDisplacement
-                    | AddressingMode::PcIndex
-            ) {
+            if dst.is_data_alterable() {
                 return Some(Instruction::Nbcd { dst });
             }
         }
