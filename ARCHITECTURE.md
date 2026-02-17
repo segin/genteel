@@ -149,6 +149,7 @@ As an emulator, `genteel` runs code from untrusted sources (game ROMs). Care mus
 
 - **Memory Safety**: Bounds checking for all memory accesses
 - **Instruction Handling**: Correct handling of invalid instructions
+- **File Access**: ROM loading is restricted to whitelisted directories (or the directory of the initially loaded ROM) to prevent path traversal
 - **Network Security**: The debugger interface on local network sockets should be restricted to trusted users
 
 ## 8. Development & Testing Environment

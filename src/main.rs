@@ -28,6 +28,7 @@ use memory::{SharedBus, Z80Bus};
 #[cfg(feature = "gui")]
 use pixels::wgpu;
 use std::cell::RefCell;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use z80::Z80;
 #[cfg(feature = "gui")]
@@ -44,6 +45,7 @@ struct Framework {
     renderer: egui_wgpu::Renderer,
     gui_state: GuiState,
 }
+#[cfg(feature = "gui")]
 impl Framework {
     fn new(
         event_loop: &winit::event_loop::EventLoopWindowTarget<()>,
@@ -209,6 +211,7 @@ pub struct Emulator {
     pub z80_trace_count: u32,
     pub input_mapping: InputMapping,
     pub debug: bool,
+    pub allowed_paths: Vec<PathBuf>,
 }
 impl Default for Emulator {
     fn default() -> Self {
@@ -240,6 +243,7 @@ impl Emulator {
             z80_trace_count: 0,
             input_mapping: InputMapping::default(),
             debug: false,
+            allowed_paths: Vec::new(),
         };
         // Optimization: Use raw pointer for Z80 bus access to bypass RefCell
         // Safety: The bus is owned by Rc in Emulator, so it will remain valid.
@@ -256,12 +260,33 @@ impl Emulator {
         emulator.z80.reset();
         emulator
     }
+
+    pub fn add_allowed_path<P: AsRef<Path>>(&mut self, path: P) {
+        if let Ok(canonical) = path.as_ref().canonicalize() {
+            self.allowed_paths.push(canonical);
+        }
+    }
+
     pub fn load_rom(&mut self, path: &str) -> std::io::Result<()> {
-        let data = if path.to_lowercase().ends_with(".zip") {
+        let path = Path::new(path);
+        let canonical_path = path.canonicalize()?;
+
+        // Check whitelist
+        if !self.allowed_paths.iter().any(|allowed| canonical_path.starts_with(allowed)) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!("Access to path {:?} is denied", canonical_path),
+            ));
+        }
+
+        let data = if canonical_path
+            .extension()
+            .map_or(false, |ext| ext.to_string_lossy().to_lowercase() == "zip")
+        {
             // Extract ROM from zip file
-            Self::load_rom_from_zip(path)?
+            Self::load_rom_from_zip(&canonical_path)?
         } else {
-            let mut file = std::fs::File::open(path)?;
+            let mut file = std::fs::File::open(&canonical_path)?;
             let metadata = file.metadata()?;
             let size = metadata.len();
             Self::read_rom_with_limit(&mut file, size)?
@@ -303,7 +328,7 @@ impl Emulator {
         Ok(data)
     }
     /// Load ROM from a zip file (finds first .bin, .md, .gen, or .smd file)
-    fn load_rom_from_zip(path: &str) -> std::io::Result<Vec<u8>> {
+    fn load_rom_from_zip(path: &Path) -> std::io::Result<Vec<u8>> {
         let file = std::fs::File::open(path)?;
         let mut archive = zip::ZipArchive::new(file)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
@@ -682,7 +707,7 @@ impl Emulator {
         }
         Ok(())
     }
-    #[cfg(feature = "gui")]
+
     fn log_debug(&self, frame_count: u64) {
         let bus = self.bus.borrow();
         let disp_en = if bus.vdp.display_enabled() {
@@ -1074,6 +1099,20 @@ fn main() {
     // Load ROM if provided
     if let Some(ref path) = rom_path {
         println!("Loading ROM: {}", path);
+
+        // Security: Whitelist the ROM's directory
+        match Path::new(path).canonicalize() {
+            Ok(canon) => {
+                if let Some(parent) = canon.parent() {
+                    emulator.add_allowed_path(parent);
+                }
+            }
+            Err(e) => {
+                eprintln!("Error resolving ROM path '{}': {}", path, e);
+                return;
+            }
+        }
+
         if let Err(e) = emulator.load_rom(path) {
             eprintln!("Failed to load ROM: {}", e);
             return;
@@ -1133,7 +1172,7 @@ mod tests {
         }
         std::fs::write(path, &zip_data).unwrap();
         // Attempt to load
-        let result = Emulator::load_rom_from_zip(path);
+        let result = Emulator::load_rom_from_zip(Path::new(path));
         // Cleanup
         let _ = std::fs::remove_file(path);
         // Verify rejection
@@ -1274,10 +1313,56 @@ mod tests {
         let data = vec![0u8; size];
         std::fs::write(path, &data).unwrap();
         let mut emulator = Emulator::new();
+        emulator.add_allowed_path(".");
         let result = emulator.load_rom(path);
         // Cleanup
         let _ = std::fs::remove_file(path);
         // Verify rejection
         assert!(result.is_err(), "Should reject large ROM file (>32MB)");
+    }
+
+    #[test]
+    fn test_path_traversal_protection() {
+        let temp_dir = std::env::temp_dir();
+        let safe_dir = temp_dir.join("genteel_safe_roms");
+        let secret_file = temp_dir.join("genteel_secret.txt");
+        let safe_rom = safe_dir.join("game.bin");
+
+        std::fs::create_dir_all(&safe_dir).unwrap();
+        std::fs::write(&safe_rom, vec![0u8; 1024]).unwrap(); // Dummy ROM
+        std::fs::write(&secret_file, "secret data").unwrap();
+
+        let mut emulator = Emulator::new();
+        emulator.add_allowed_path(&safe_dir);
+
+        // 1. Loading safe ROM should succeed
+        assert!(
+            emulator.load_rom(safe_rom.to_str().unwrap()).is_ok(),
+            "Should allow safe ROM"
+        );
+
+        // 2. Loading secret file directly should fail
+        assert!(
+            emulator.load_rom(secret_file.to_str().unwrap()).is_err(),
+            "Should deny secret file"
+        );
+
+        // 3. Traversal attempt
+        // path: /tmp/test_dir/../genteel_secret.txt
+        let traversal_path = safe_dir.join("..").join("genteel_secret.txt");
+        // Canonicalizes to /tmp/genteel_secret.txt
+        // Allowed: /tmp/test_dir
+        // Starts with? No.
+        assert!(
+            emulator
+                .load_rom(traversal_path.to_str().unwrap())
+                .is_err(),
+            "Should deny traversal"
+        );
+
+        // Cleanup
+        let _ = std::fs::remove_file(safe_rom);
+        let _ = std::fs::remove_dir(safe_dir);
+        let _ = std::fs::remove_file(secret_file);
     }
 }
