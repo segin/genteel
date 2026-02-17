@@ -808,3 +808,210 @@ fn fetch_postinc_operand<M: MemoryInterface>(
     cpu.a[reg as usize] = addr.wrapping_add(size.bytes());
     val
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cpu::decoder::{AddressingMode, Size};
+    use crate::cpu::flags;
+    use crate::cpu::Cpu;
+    use crate::memory::Memory;
+
+    fn create_test_setup() -> (Cpu, Memory) {
+        let mut memory = Memory::new(0x10000);
+        // Initialize memory with basic vector table
+        memory.write_long(0x0, 0x8000); // Stack pointer
+        memory.write_long(0x4, 0x1000); // PC
+        let cpu = Cpu::new(&mut memory);
+        (cpu, memory)
+    }
+
+    #[test]
+    fn test_exec_sub_byte() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x10;
+        cpu.d[1] = 0x55;
+
+        // SUB.B D0, D1
+        let cycles = exec_sub(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1] & 0xFF, 0x45); // 0x55 - 0x10 = 0x45
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::EXTEND));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert_eq!(cycles, 4);
+    }
+
+    #[test]
+    fn test_exec_sub_word() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x1234;
+        cpu.d[1] = 0x5555;
+
+        // SUB.W D0, D1
+        let cycles = exec_sub(
+            &mut cpu,
+            Size::Word,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1] & 0xFFFF, 0x4321); // 0x5555 - 0x1234 = 0x4321
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert_eq!(cycles, 4);
+    }
+
+    #[test]
+    fn test_exec_sub_long() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x12345678;
+        cpu.d[1] = 0x87654321;
+
+        // SUB.L D0, D1
+        let cycles = exec_sub(
+            &mut cpu,
+            Size::Long,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1], 0x7530Eca9); // 0x87654321 - 0x12345678 = 0x7530Eca9
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert_eq!(cycles, 8);
+    }
+
+    #[test]
+    fn test_exec_sub_borrow() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x10;
+        cpu.d[1] = 0x05;
+
+        // SUB.B D0, D1 -> 0x05 - 0x10
+        exec_sub(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1] & 0xFF, 0xF5);
+        assert!(cpu.get_flag(flags::CARRY));
+        assert!(cpu.get_flag(flags::EXTEND));
+        assert!(cpu.get_flag(flags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_exec_sub_overflow() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x01;
+        cpu.d[1] = 0x80; // -128
+
+        // SUB.B D0, D1 -> -128 - 1 = -129 (Underflow/Overflow for signed 8-bit)
+        exec_sub(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1] & 0xFF, 0x7F); // 127
+        assert!(cpu.get_flag(flags::OVERFLOW));
+        assert!(!cpu.get_flag(flags::NEGATIVE)); // Result is positive (127)
+    }
+
+    #[test]
+    fn test_exec_sub_zero() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x42;
+        cpu.d[1] = 0x42;
+
+        // SUB.B D0, D1
+        exec_sub(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1] & 0xFF, 0x00);
+        assert!(cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::CARRY));
+    }
+
+    #[test]
+    fn test_exec_sub_negative() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x01;
+        cpu.d[1] = 0x00;
+
+        // SUB.B D0, D1 -> 0 - 1 = -1
+        exec_sub(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1] & 0xFF, 0xFF);
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(cpu.get_flag(flags::CARRY));
+    }
+
+    #[test]
+    fn test_exec_sub_memory_to_reg() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x20;
+        cpu.a[0] = 0x2000;
+        memory.write_byte(0x2000, 0x10);
+
+        // SUB.B (A0), D0
+        let cycles = exec_sub(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::AddressIndirect(0),
+            AddressingMode::DataRegister(0),
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[0] & 0xFF, 0x10); // 0x20 - 0x10 = 0x10
+        assert_eq!(cycles, 8); // 4 (base) + 4 (AddressIndirect) + 0 (DataRegister)
+    }
+
+    #[test]
+    fn test_exec_sub_reg_to_memory() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x10;
+        cpu.a[0] = 0x2000;
+        memory.write_byte(0x2000, 0x30);
+
+        // SUB.B D0, (A0)
+        let cycles = exec_sub(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            AddressingMode::AddressIndirect(0),
+            &mut memory,
+        );
+
+        assert_eq!(memory.read_byte(0x2000), 0x20); // 0x30 - 0x10 = 0x20
+        assert_eq!(cycles, 8); // 4 (base) + 0 (DataRegister) + 4 (AddressIndirect)
+    }
+}
