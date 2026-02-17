@@ -513,7 +513,7 @@ pub fn exec_tas<M: MemoryInterface>(cpu: &mut Cpu, dst: AddressingMode, memory: 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cpu::decoder::{AddressingMode, Size};
+    use crate::cpu::decoder::{AddressingMode, ShiftCount, Size};
     use crate::cpu::flags;
     use crate::cpu::Cpu;
     use crate::memory::Memory;
@@ -639,5 +639,159 @@ mod tests {
         assert!(cpu.get_flag(flags::NEGATIVE));
         assert!(!cpu.get_flag(flags::ZERO));
         assert_eq!(cycles, 8); // 4 (base) + 0 (DataReg) + 4 (AddrIndirect)
+    }
+
+    #[test]
+    fn test_rol_byte_immediate() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x81; // 1000 0001
+
+        let cycles = exec_rotate(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(1),
+            true, // left
+            false, // extend (ignored)
+            &mut memory,
+        );
+
+        // 1000 0001 -> 0000 0011 (0x03)
+        // MSB (1) rotated to LSB.
+        // Carry should be 1.
+        assert_eq!(cpu.d[0] & 0xFF, 0x03);
+        assert!(cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+
+        // Cycles: 6 + 0 (reg) + 2*1 = 8
+        assert_eq!(cycles, 8);
+    }
+
+    #[test]
+    fn test_ror_word_register() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x0001; // ... 0000 0000 0000 0001
+        cpu.d[1] = 1; // shift count
+
+        let cycles = exec_rotate(
+            &mut cpu,
+            Size::Word,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Register(1),
+            false, // right
+            false,
+            &mut memory,
+        );
+
+        // 0000 ... 0001 -> 1000 ... 0000 (0x8000)
+        // LSB (1) rotated to MSB.
+        // Carry should be 1.
+        assert_eq!(cpu.d[0] & 0xFFFF, 0x8000);
+        assert!(cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(cpu.get_flag(flags::NEGATIVE)); // Result is negative (0x8000)
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+
+        // Cycles: 6 + 0 + 2*1 = 8
+        assert_eq!(cycles, 8);
+    }
+
+    #[test]
+    fn test_rol_long_wrap() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0xF0000000;
+
+        // Rotate by 4
+        let cycles = exec_rotate(
+            &mut cpu,
+            Size::Long,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(4),
+            true, // left
+            false,
+            &mut memory,
+        );
+
+        // 1111 0000 ... -> 0000 ... 1111 (0x0000000F)
+        // Last bit shifted out: Bit 28 (which was 1).
+        assert_eq!(cpu.d[0], 0x0000000F);
+        assert!(cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+
+        // Cycles: 6 + 0 + 2*4 = 14
+        assert_eq!(cycles, 14);
+    }
+
+    #[test]
+    fn test_rotate_zero_count() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x1234;
+        cpu.set_flag(flags::CARRY, true); // Pre-set carry
+
+        // Count 0
+        let cycles = exec_rotate(
+            &mut cpu,
+            Size::Word,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(0), // Passed as 0 directly to exec_rotate via Immediate
+            true, // left
+            false,
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[0] & 0xFFFF, 0x1234);
+        assert!(!cpu.get_flag(flags::CARRY)); // Carry cleared for count 0
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+
+        // Cycles: 6 + 0 + 0 = 6
+        assert_eq!(cycles, 6);
+    }
+
+    #[test]
+    fn test_rotate_multiple_size() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x81; // 1000 0001
+
+        // Rotate Left Byte by 8 (Immediate 8)
+        // Note: Immediate 8 is passed as 8.
+        let cycles = exec_rotate(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(8),
+            true, // left
+            false,
+            &mut memory,
+        );
+
+        // Result unchanged
+        assert_eq!(cpu.d[0] & 0xFF, 0x81);
+        // Carry set to MSB (bit 7) -> 1
+        assert!(cpu.get_flag(flags::CARRY));
+        assert!(cpu.get_flag(flags::NEGATIVE));
+
+        // Cycles: 6 + 0 + 2*8 = 22
+        assert_eq!(cycles, 22);
+
+        // ROR Byte by 8
+        cpu.d[0] = 0x81;
+        exec_rotate(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(8),
+            false, // right
+            false,
+            &mut memory,
+        );
+         // Result unchanged
+        assert_eq!(cpu.d[0] & 0xFF, 0x81);
+        // Carry set to LSB (bit 0) -> 1
+        assert!(cpu.get_flag(flags::CARRY));
     }
 }
