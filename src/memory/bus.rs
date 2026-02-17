@@ -26,7 +26,8 @@ use crate::apu::Apu;
 use crate::debugger::Debuggable;
 use crate::io::Io;
 use crate::vdp::Vdp;
-use serde_json::{json, Value};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// Sega Genesis Memory Bus
 ///
@@ -497,30 +498,83 @@ impl MemoryInterface for Bus {
     }
 }
 
+#[derive(Serialize, Deserialize)]
+struct BusJsonState {
+    z80_bus_request: Option<bool>,
+    z80_reset: Option<bool>,
+    z80_bank_addr: Option<u32>,
+    vdp: Option<Value>,
+    io: Option<Value>,
+    apu: Option<Value>,
+}
+
 impl Debuggable for Bus {
     fn read_state(&self) -> Value {
-        json!({
-            "z80_bus_request": self.z80_bus_request,
-            "z80_reset": self.z80_reset,
-            "z80_bank_addr": self.z80_bank_addr,
-            "vdp": self.vdp.read_state(),
-            "io": self.io.read_state(),
-            "apu": self.apu.read_state(),
-        })
+        let state = BusJsonState {
+            z80_bus_request: Some(self.z80_bus_request),
+            z80_reset: Some(self.z80_reset),
+            z80_bank_addr: Some(self.z80_bank_addr),
+            vdp: Some(self.vdp.read_state()),
+            io: Some(self.io.read_state()),
+            apu: Some(self.apu.read_state()),
+        };
+        serde_json::to_value(state).expect("Failed to serialize Bus state")
     }
 
     fn write_state(&mut self, state: &Value) {
-        if let Some(req) = state["z80_bus_request"].as_bool() {
-            self.z80_bus_request = req;
+        if let Ok(bus_state) = serde_json::from_value::<BusJsonState>(state.clone()) {
+            if let Some(req) = bus_state.z80_bus_request {
+                self.z80_bus_request = req;
+            }
+            if let Some(reset) = bus_state.z80_reset {
+                self.z80_reset = reset;
+            }
+            if let Some(bank) = bus_state.z80_bank_addr {
+                self.z80_bank_addr = bank;
+            }
+            if let Some(vdp_state) = bus_state.vdp {
+                self.vdp.write_state(&vdp_state);
+            }
+            if let Some(io_state) = bus_state.io {
+                self.io.write_state(&io_state);
+            }
+            if let Some(apu_state) = bus_state.apu {
+                self.apu.write_state(&apu_state);
+            }
         }
-        if let Some(reset) = state["z80_reset"].as_bool() {
-            self.z80_reset = reset;
-        }
-        if let Some(bank) = state["z80_bank_addr"].as_u64() {
-            self.z80_bank_addr = bank as u32;
-        }
-        self.vdp.write_state(&state["vdp"]);
-        self.io.write_state(&state["io"]);
-        self.apu.write_state(&state["apu"]);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_bus_state_serialization() {
+        let mut bus = Bus::new();
+
+        // Modify state
+        bus.z80_bus_request = true;
+        bus.z80_reset = false;
+        bus.z80_bank_addr = 0x12345;
+
+        // Serialize
+        let state_value = bus.read_state();
+
+        // Create new bus
+        let mut new_bus = Bus::new();
+
+        // Deserialize
+        new_bus.write_state(&state_value);
+
+        // Assert equality
+        assert_eq!(new_bus.z80_bus_request, true);
+        assert_eq!(new_bus.z80_reset, false);
+        assert_eq!(new_bus.z80_bank_addr, 0x12345);
+
+        // Verify VDP/IO/APU keys exist in JSON
+        assert!(state_value.get("vdp").is_some());
+        assert!(state_value.get("io").is_some());
+        assert!(state_value.get("apu").is_some());
     }
 }
