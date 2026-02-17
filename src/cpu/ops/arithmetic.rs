@@ -579,12 +579,13 @@ pub fn exec_divs<M: MemoryInterface>(
     }
 
     let dividend = cpu.d[dst_reg as usize] as i32;
-    let quotient = dividend / (divisor as i32);
-    let remainder = dividend % (divisor as i32);
+    let divisor = divisor as i32;
+    let (quotient, overflow) = dividend.overflowing_div(divisor);
 
-    if !(-32768..=32767).contains(&quotient) {
+    if overflow || !(-32768..=32767).contains(&quotient) {
         cpu.set_flag(flags::OVERFLOW, true);
     } else {
+        let remainder = dividend % divisor;
         cpu.d[dst_reg as usize] = ((remainder as u32) << 16) | ((quotient as u32) & 0xFFFF);
         cpu.set_flag(flags::ZERO, (quotient as i16) == 0);
         cpu.set_flag(flags::NEGATIVE, (quotient as i16) < 0);
