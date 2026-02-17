@@ -14,6 +14,7 @@
 //! | 0xC00004-0xC00007| Control Port (commands/status) |
 //! | 0xC00008-0xC0000F| H/V Counter                    |
 use crate::debugger::Debuggable;
+use serde::Deserialize;
 use serde_json::{json, Value};
 
 // VDP Control Codes (bits 0-3)
@@ -1091,6 +1092,30 @@ impl Vdp {
     }
 }
 
+#[derive(Deserialize)]
+struct VdpControlJsonState {
+    pending: Option<bool>,
+    code: Option<u8>,
+    address: Option<u16>,
+}
+
+#[derive(Deserialize)]
+struct VdpJsonState {
+    status: Option<u16>,
+    h_counter: Option<u16>,
+    v_counter: Option<u16>,
+    dma_pending: Option<bool>,
+    registers: Option<Vec<u8>>,
+    control: Option<VdpControlJsonState>,
+    vram: Option<Vec<u8>>,
+    cram: Option<Vec<u8>>,
+    vsram: Option<Vec<u8>>,
+    line_counter: Option<u8>,
+    last_data_write: Option<u16>,
+    v30_offset: Option<u16>,
+    is_pal: Option<bool>,
+}
+
 impl Debuggable for Vdp {
     fn read_state(&self) -> Value {
         json!({
@@ -1115,56 +1140,59 @@ impl Debuggable for Vdp {
     }
 
     fn write_state(&mut self, state: &Value) {
-        if let Some(status) = state["status"].as_u64() {
-            self.status = status as u16;
+        let json_state: VdpJsonState = match VdpJsonState::deserialize(state) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Error deserializing VDP state: {}", e);
+                return;
+            }
+        };
+
+        if let Some(status) = json_state.status {
+            self.status = status;
         }
-        if let Some(h_counter) = state["h_counter"].as_u64() {
-            self.h_counter = h_counter as u16;
+        if let Some(h_counter) = json_state.h_counter {
+            self.h_counter = h_counter;
         }
-        if let Some(v_counter) = state["v_counter"].as_u64() {
-            self.v_counter = v_counter as u16;
+        if let Some(v_counter) = json_state.v_counter {
+            self.v_counter = v_counter;
         }
-        if let Some(dma_pending) = state["dma_pending"].as_bool() {
+        if let Some(dma_pending) = json_state.dma_pending {
             self.dma_pending = dma_pending;
         }
 
-        if let Some(registers) = state["registers"].as_array() {
+        if let Some(registers) = json_state.registers {
             for (i, val) in registers.iter().enumerate() {
                 if i < 24 {
-                    if let Some(v) = val.as_u64() {
-                        self.registers[i] = v as u8;
-                    }
+                    self.registers[i] = *val;
                 }
             }
         }
 
-        let control = &state["control"];
-        if let Some(pending) = control["pending"].as_bool() {
-            self.control_pending = pending;
-        }
-        if let Some(code) = control["code"].as_u64() {
-            self.control_code = code as u8;
-        }
-        if let Some(address) = control["address"].as_u64() {
-            self.control_address = address as u16;
+        if let Some(control) = json_state.control {
+            if let Some(pending) = control.pending {
+                self.control_pending = pending;
+            }
+            if let Some(code) = control.code {
+                self.control_code = code;
+            }
+            if let Some(address) = control.address {
+                self.control_address = address;
+            }
         }
 
-        if let Some(vram) = state["vram"].as_array() {
+        if let Some(vram) = json_state.vram {
             for (i, val) in vram.iter().enumerate() {
                 if i < self.vram.len() {
-                    if let Some(v) = val.as_u64() {
-                        self.vram[i] = v as u8;
-                    }
+                    self.vram[i] = *val;
                 }
             }
         }
 
-        if let Some(cram) = state["cram"].as_array() {
+        if let Some(cram) = json_state.cram {
             for (i, val) in cram.iter().enumerate() {
                 if i < self.cram.len() {
-                    if let Some(v) = val.as_u64() {
-                        self.cram[i] = v as u8;
-                    }
+                    self.cram[i] = *val;
                 }
             }
             // Reconstruct CRAM Cache
@@ -1188,26 +1216,24 @@ impl Debuggable for Vdp {
             }
         }
 
-        if let Some(vsram) = state["vsram"].as_array() {
+        if let Some(vsram) = json_state.vsram {
             for (i, val) in vsram.iter().enumerate() {
                 if i < self.vsram.len() {
-                    if let Some(v) = val.as_u64() {
-                        self.vsram[i] = v as u8;
-                    }
+                    self.vsram[i] = *val;
                 }
             }
         }
 
-        if let Some(line_counter) = state["line_counter"].as_u64() {
-            self.line_counter = line_counter as u8;
+        if let Some(line_counter) = json_state.line_counter {
+            self.line_counter = line_counter;
         }
-        if let Some(last_data_write) = state["last_data_write"].as_u64() {
-            self.last_data_write = last_data_write as u16;
+        if let Some(last_data_write) = json_state.last_data_write {
+            self.last_data_write = last_data_write;
         }
-        if let Some(v30_offset) = state["v30_offset"].as_u64() {
-            self.v30_offset = v30_offset as u16;
+        if let Some(v30_offset) = json_state.v30_offset {
+            self.v30_offset = v30_offset;
         }
-        if let Some(is_pal) = state["is_pal"].as_bool() {
+        if let Some(is_pal) = json_state.is_pal {
             self.is_pal = is_pal;
         }
     }
