@@ -513,7 +513,7 @@ pub fn exec_tas<M: MemoryInterface>(cpu: &mut Cpu, dst: AddressingMode, memory: 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cpu::decoder::{AddressingMode, Size};
+    use crate::cpu::decoder::{AddressingMode, BitSource, Size};
     use crate::cpu::flags;
     use crate::cpu::Cpu;
     use crate::memory::Memory;
@@ -639,5 +639,122 @@ mod tests {
         assert!(cpu.get_flag(flags::NEGATIVE));
         assert!(!cpu.get_flag(flags::ZERO));
         assert_eq!(cycles, 8); // 4 (base) + 0 (DataReg) + 4 (AddrIndirect)
+    }
+
+    #[test]
+    fn test_exec_btst_reg_long() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0b00000000_00000000_00000000_00000100; // Bit 2 is set
+
+        // Test bit 2 (should be 1 -> Z=0)
+        cpu.d[1] = 2;
+        let cycles = exec_btst(
+            &mut cpu,
+            BitSource::Register(1),
+            AddressingMode::DataRegister(0),
+            &mut memory,
+        );
+
+        // Bit is 1, so Z flag should be 0 (FALSE)
+        assert!(!cpu.get_flag(flags::ZERO));
+        // BTST on register takes 10 cycles: 4 base + 0 (DataReg EA) + 6 (Test reg)
+        assert_eq!(cycles, 10);
+
+        // Test bit 1 (should be 0 -> Z=1)
+        cpu.d[1] = 1; // Test bit 1
+        exec_btst(
+            &mut cpu,
+            BitSource::Register(1),
+            AddressingMode::DataRegister(0),
+            &mut memory,
+        );
+        assert!(cpu.get_flag(flags::ZERO));
+
+        // Test Modulo 32: Bit 34 (34 % 32 = 2) should test bit 2
+        cpu.d[1] = 34;
+        exec_btst(
+            &mut cpu,
+            BitSource::Register(1),
+            AddressingMode::DataRegister(0),
+            &mut memory,
+        );
+        assert!(!cpu.get_flag(flags::ZERO));
+    }
+
+    #[test]
+    fn test_exec_btst_mem_byte() {
+        let (mut cpu, mut memory) = create_test_setup();
+        memory.write_byte(0x2000, 0b00000100); // Bit 2 is set
+        cpu.a[0] = 0x2000;
+
+        // Test bit 2 (should be 1 -> Z=0)
+        cpu.d[1] = 2;
+        let cycles = exec_btst(
+            &mut cpu,
+            BitSource::Register(1),
+            AddressingMode::AddressIndirect(0),
+            &mut memory,
+        );
+
+        assert!(!cpu.get_flag(flags::ZERO));
+        // BTST on memory takes 12 cycles: 4 base + 4 (AddrIndirect EA) + 4 (Test mem)
+        assert_eq!(cycles, 12);
+
+        // Test bit 1 (should be 0 -> Z=1)
+        cpu.d[1] = 1;
+        exec_btst(
+            &mut cpu,
+            BitSource::Register(1),
+            AddressingMode::AddressIndirect(0),
+            &mut memory,
+        );
+        assert!(cpu.get_flag(flags::ZERO));
+
+        // Test Modulo 8: Bit 10 (10 % 8 = 2) should test bit 2
+        cpu.d[1] = 10;
+        exec_btst(
+            &mut cpu,
+            BitSource::Register(1),
+            AddressingMode::AddressIndirect(0),
+            &mut memory,
+        );
+        assert!(!cpu.get_flag(flags::ZERO));
+    }
+
+    #[test]
+    fn test_exec_btst_imm() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0b00000000_00000000_00000000_00000100; // Bit 2 is set
+
+        // Immediate bit number is read from PC.
+        // We need to set PC and write the immediate word to memory.
+        cpu.pc = 0x1000;
+        memory.write_word(0x1000, 0x0002); // Bit 2
+
+        let cycles = exec_btst(
+            &mut cpu,
+            BitSource::Immediate,
+            AddressingMode::DataRegister(0),
+            &mut memory,
+        );
+
+        // PC should advance by 2
+        assert_eq!(cpu.pc, 0x1002);
+        assert!(!cpu.get_flag(flags::ZERO));
+        // BTST Immediate Reg: 4 base + 0 EA + 6 Test + (fetch immediate?)
+        // Wait, exec_bit_instruction calls fetch_bit_num which reads memory.
+        // Does fetch_bit_num add cycles? No, it's just logic.
+        // The cycles for fetching immediate are usually included in instruction timing.
+        // Standard BTST #n, Dn is 10 cycles.
+        // My implementation starts with 4 base.
+        // fetch_bit_num reads word.
+        // Standard 68k: BTST #n, Dn -> 10(2/0). 2 words read (Instruction + Imm).
+        // My cycle count logic:
+        // exec_bit_instruction base = 4.
+        // calculate_ea(DataRegister) = 0.
+        // Test reg = 6.
+        // Total = 10.
+        // This matches.
+        assert_eq!(cycles, 10);
     }
 }
