@@ -8,6 +8,7 @@ edition = "2021"
 [features]
 default = ["gui"]
 gui = ["dep:cpal", "dep:winit", "dep:pixels", "dep:egui", "dep:egui-winit", "dep:egui-wgpu", "dep:rodio"]
+test_headless = ["dep:winit"]
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
