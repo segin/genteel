@@ -612,4 +612,56 @@ mod tests {
         assert_eq!(io.port1.controller_type, ControllerType::SixButton);
         assert_eq!(io.port2.controller_type, ControllerType::None);
     }
+
+    #[test]
+    fn test_6button_timeout_boundary() {
+        let mut port = ControllerPort::new(ControllerType::SixButton);
+
+        // Initial state
+        port.write_data(0x00); // TH low, increments counter to 1
+        assert_eq!(port.th_counter, 1);
+        assert_eq!(port.th_timer, 0);
+
+        // Case 1: Exact boundary (1500 cycles)
+        // Add 1500 cycles (exactly the threshold)
+        port.update(1500);
+        assert_eq!(port.th_timer, 1500);
+        assert_eq!(port.th_counter, 1, "Counter should NOT reset at exactly 1500 cycles");
+
+        // Case 2: Cross boundary (1501 cycles)
+        // Add 1 more cycle to exceed threshold
+        port.update(1);
+        assert_eq!(port.th_timer, 1501);
+        assert_eq!(port.th_counter, 0, "Counter SHOULD reset at 1501 cycles");
+
+        // Reset
+        port.write_data(0x40); // TH high
+        port.write_data(0x00); // TH low
+        assert_eq!(port.th_counter, 1);
+        assert_eq!(port.th_timer, 0);
+
+        // Case 3: Large update (2000 cycles at once)
+        port.update(2000);
+        assert_eq!(port.th_timer, 2000);
+        assert_eq!(port.th_counter, 0, "Counter SHOULD reset with single large update");
+    }
+
+    #[test]
+    fn test_non_6button_no_timeout() {
+        let mut port = ControllerPort::new(ControllerType::ThreeButton);
+
+        // Ensure initial state
+        assert_eq!(port.th_timer, 0);
+
+        // Attempt update with large cycle count
+        port.update(2000);
+
+        // Timer should not have incremented because it's not a 6-button controller
+        assert_eq!(port.th_timer, 0, "Timer should not increment for non-6-button controller");
+
+        // Verify same for None type
+        let mut port_none = ControllerPort::new(ControllerType::None);
+        port_none.update(2000);
+        assert_eq!(port_none.th_timer, 0, "Timer should not increment for None controller");
+    }
 }
