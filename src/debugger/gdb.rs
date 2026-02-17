@@ -6,12 +6,18 @@
 use std::collections::HashSet;
 use std::io::{BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::time::{Duration, Instant};
 
 /// Default GDB server port
 pub const DEFAULT_PORT: u16 = 1234;
 
 /// Maximum GDB packet size to prevent unbounded memory consumption
 pub const MAX_PACKET_SIZE: usize = 4096;
+
+/// Maximum failed authentication attempts before lockout
+const MAX_AUTH_ATTEMPTS: u32 = 3;
+/// Duration of authentication lockout
+const AUTH_LOCKOUT_DURATION: Duration = Duration::from_secs(60);
 
 /// GDB stop reasons
 #[derive(Debug, Clone, Copy)]
@@ -54,6 +60,10 @@ pub struct GdbServer {
     password: Option<String>,
     /// Whether the client is authenticated
     authenticated: bool,
+    /// Number of failed authentication attempts
+    auth_failed_attempts: u32,
+    /// Timestamp until which authentication is locked out
+    auth_lockout_until: Option<Instant>,
 }
 
 impl GdbServer {
@@ -92,6 +102,8 @@ impl GdbServer {
             no_ack_mode: false,
             password: final_password,
             authenticated,
+            auth_failed_attempts: 0,
+            auth_lockout_until: None,
         })
     }
 
@@ -620,12 +632,33 @@ impl GdbServer {
 
         let cmd = String::from_utf8_lossy(&bytes);
         if let Some(stripped) = cmd.strip_prefix("auth ") {
+            // Check for lockout
+            if let Some(lockout_time) = self.auth_lockout_until {
+                if Instant::now() < lockout_time {
+                    return "E01".to_string();
+                } else {
+                    // Lockout expired
+                    self.auth_lockout_until = None;
+                    self.auth_failed_attempts = 0;
+                }
+            }
+
             let provided_pass = stripped.trim();
             if let Some(ref correct_pass) = self.password {
                 if provided_pass == correct_pass {
                     self.authenticated = true;
+                    self.auth_failed_attempts = 0;
+                    self.auth_lockout_until = None;
                     return "OK".to_string();
                 } else {
+                    self.auth_failed_attempts += 1;
+                    if self.auth_failed_attempts >= MAX_AUTH_ATTEMPTS {
+                        self.auth_lockout_until = Some(Instant::now() + AUTH_LOCKOUT_DURATION);
+                        eprintln!(
+                            "⚠️  SECURITY ALERT: GDB authentication lockout active for {}s",
+                            AUTH_LOCKOUT_DURATION.as_secs()
+                        );
+                    }
                     return "E01".to_string(); // Invalid password
                 }
             } else {
@@ -709,6 +742,8 @@ mod tests {
             no_ack_mode: false,
             password: None,
             authenticated: true,
+            auth_failed_attempts: 0,
+            auth_lockout_until: None,
         }
     }
 
@@ -1155,5 +1190,37 @@ mod tests {
             "OK"
         );
         assert_eq!(server.process_command("Z1,1000,4", &mut regs, &mut mem), "");
+    }
+
+    #[test]
+    fn test_authentication_lockout() {
+        let password = "secret".to_string();
+        let mut server = GdbServer::new(0, Some(password)).unwrap();
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+
+        fn to_hex(s: &str) -> String {
+            s.bytes().map(|b| format!("{:02x}", b)).collect()
+        }
+
+        let wrong_packet = format!("qRcmd,{}", to_hex("auth wrong"));
+        let right_packet = format!("qRcmd,{}", to_hex("auth secret"));
+
+        // 1. Fail MAX_AUTH_ATTEMPTS times
+        for _ in 0..MAX_AUTH_ATTEMPTS {
+            assert_eq!(
+                server.process_command(&wrong_packet, &mut regs, &mut mem),
+                "E01"
+            );
+            assert!(!server.authenticated);
+        }
+
+        // 2. Lockout should be active now. Even correct password should fail.
+        assert!(server.auth_lockout_until.is_some());
+        assert_eq!(
+            server.process_command(&right_packet, &mut regs, &mut mem),
+            "E01"
+        );
+        assert!(!server.authenticated);
     }
 }
