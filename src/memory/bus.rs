@@ -329,17 +329,19 @@ impl Bus {
             }
         }
 
-        // VDP Data Port (Word access)
-        if (0xC00000..=0xC00003).contains(&addr) {
-            return self.vdp.read_data();
-        }
-        // VDP Control Port / Status
-        if (0xC00004..=0xC00007).contains(&addr) {
-            return self.vdp.read_status();
-        }
-        // VDP H/V Counter
-        if (0xC00008..=0xC0000F).contains(&addr) {
-            return self.vdp.read_hv_counter();
+        // VDP Ports
+        if (0xC00000..=0xC0001F).contains(&addr) {
+            let offset = addr & 0x1F;
+            if offset < 4 {
+                return self.vdp.read_data();
+            }
+            if offset < 8 {
+                return self.vdp.read_status();
+            }
+            if offset < 0x10 {
+                return self.vdp.read_hv_counter();
+            }
+            return 0xFFFF;
         }
 
         // Optimize Work RAM access (0xE00000-0xFFFFFF, 64KB mirrored)
@@ -359,20 +361,13 @@ impl Bus {
     pub fn write_word(&mut self, address: u32, value: u16) {
         let addr = address & 0xFFFFFF;
 
-        // VDP Data Port
-        if (0xC00000..=0xC00003).contains(&addr) {
-            self.vdp.write_data(value);
-            return;
-        }
-        // VDP Control Port
-        if (0xC00004..=0xC00007).contains(&addr) {
-            self.vdp.write_control(value);
-            if self.vdp.dma_pending {
-                if self.vdp.is_dma_transfer() {
-                    self.run_dma();
-                } else {
-                    self.vdp.execute_dma();
-                }
+        // VDP Ports
+        if (0xC00000..=0xC00007).contains(&addr) {
+            if (addr & 0x1F) < 4 {
+                self.vdp.write_data(value);
+            } else {
+                self.vdp.write_control(value);
+                self.handle_dma();
             }
             return;
         }
@@ -423,6 +418,33 @@ impl Bus {
             }
         }
 
+        // VDP Ports
+        if (0xC00000..=0xC0001F).contains(&addr) {
+            let offset = addr & 0x1F;
+            // VDP Data Port
+            if offset == 0 {
+                let high = self.vdp.read_data();
+                let low = self.vdp.read_data();
+                return ((high as u32) << 16) | (low as u32);
+            }
+            // VDP Control Port
+            if offset == 4 {
+                let high = self.vdp.read_status();
+                let low = self.vdp.read_status();
+                return ((high as u32) << 16) | (low as u32);
+            }
+            // VDP H/V Counter
+            if offset == 8 {
+                let high = self.vdp.read_hv_counter();
+                let low = self.vdp.read_hv_counter();
+                return ((high as u32) << 16) | (low as u32);
+            }
+            // Unaligned/Other VDP Access
+            let high = self.read_word(address);
+            let low = self.read_word(address.wrapping_add(2));
+            return ((high as u32) << 16) | (low as u32);
+        }
+
         let b0 = self.read_byte(address);
         let b1 = self.read_byte(address.wrapping_add(1));
         let b2 = self.read_byte(address.wrapping_add(2));
@@ -447,11 +469,45 @@ impl Bus {
             }
         }
 
+        // VDP Ports
+        if (0xC00000..=0xC00007).contains(&addr) {
+            let (high, low) = byte_utils::split_u32_to_u16(value);
+            let offset = addr & 0x1F;
+            // VDP Data Port
+            if offset == 0 {
+                self.vdp.write_data(high);
+                self.vdp.write_data(low);
+                return;
+            }
+            // VDP Control Port
+            if offset == 4 {
+                self.vdp.write_control(high);
+                self.handle_dma();
+                self.vdp.write_control(low);
+                self.handle_dma();
+                return;
+            }
+            // Unaligned/Mixed Access
+            self.write_word(address, high);
+            self.write_word(address.wrapping_add(2), low);
+            return;
+        }
+
         let (b0, b1, b2, b3) = byte_utils::split_u32(value);
         self.write_byte(address, b0);
         self.write_byte(address.wrapping_add(1), b1);
         self.write_byte(address.wrapping_add(2), b2);
         self.write_byte(address.wrapping_add(3), b3);
+    }
+
+    fn handle_dma(&mut self) {
+        if self.vdp.dma_pending {
+            if self.vdp.is_dma_transfer() {
+                self.run_dma();
+            } else {
+                self.vdp.execute_dma();
+            }
+        }
     }
 
     fn run_dma(&mut self) {
