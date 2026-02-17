@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod tests {
+    use crate::cpu::flags;
     use crate::cpu::Cpu;
     use crate::memory::{Memory, MemoryInterface};
 
@@ -92,5 +93,55 @@ mod tests {
                 cpu.pc
             );
         }
+    }
+
+    #[test]
+    fn test_rol_memory_decoding_bug() {
+        // ROL.W (A0)
+        // Opcode: 1110 011 1 11 010 000 = 0xE7D0
+        // Type 11 (ROL)
+        // Mode 010 -> Bits 4-3 are 01 -> Bug decodes as LSL
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        memory.write_word(0x100, 0xE7D0); // ROL.W (A0) at 0x100
+        cpu.a[0] = 0x2000;
+        memory.write_word(0x2000, 0x8000); // 1000...0000
+
+        cpu.step_instruction(&mut memory);
+
+        let result = memory.read_word(0x2000);
+
+        // If bug (LSL): 0x8000 << 1 = 0x0000
+        // If correct (ROL): 0x8000 rotated left = 0x0001
+
+        assert_eq!(
+            result, 0x0001,
+            "ROL.W (A0) decoded incorrectly (likely as LSL)"
+        );
+    }
+
+    #[test]
+    fn test_asl_memory_decoding_bug_v_flag() {
+        // ASL.W (A0)
+        // Opcode: 1110 000 1 11 010 000 = 0xE1D0
+        // Type 00 (ASL)
+        // Mode 010 -> Bits 4-3 are 01 -> Bug decodes as LSL
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        memory.write_word(0x100, 0xE1D0); // ASL.W (A0) at 0x100
+        cpu.a[0] = 0x2000;
+        memory.write_word(0x2000, 0x4000); // 0100... (Positive)
+                                           // Result 0x8000 (Negative) -> Overflow!
+
+        cpu.step_instruction(&mut memory);
+
+        let result = memory.read_word(0x2000);
+        assert_eq!(result, 0x8000);
+
+        // ASL sets V on overflow. LSL always clears V.
+        assert!(
+            cpu.get_flag(flags::OVERFLOW),
+            "ASL.W (A0) should set V flag on overflow, but LSL does not"
+        );
     }
 }
