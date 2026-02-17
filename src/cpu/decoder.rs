@@ -1477,6 +1477,8 @@ fn decode_shifts(opcode: u16) -> Instruction {
 
     // Memory shifts (size = 0b11)
     if size_bits == 0b11 {
+        // For memory shifts, the type is encoded in bits 10-9 (part of what is count/reg in register shifts)
+        let op_type = ((opcode >> 9) & 0x03) as u8;
         let ea_mode = ((opcode >> 3) & 0x07) as u8;
         let ea_reg = (opcode & 0x07) as u8;
         if let Some(dst) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
