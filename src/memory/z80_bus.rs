@@ -19,14 +19,24 @@ pub struct Z80Bus {
     bus: SharedBus,
     /// Raw pointer to the bus for optimized access (avoids RefCell overhead)
     raw_bus: *mut Bus,
+    /// Direct pointer to Z80 RAM for maximum performance (avoids bus structure access)
+    z80_ram: *mut u8,
 }
 
 impl Z80Bus {
     /// Create a new Z80 bus adapter
     pub fn new(bus: SharedBus) -> Self {
+        // Initialize direct pointer to Z80 RAM from the shared bus
+        // This is safe because Bus is stable in the heap (Rc<RefCell<Bus>>)
+        let z80_ram = unsafe {
+            let bus_ptr = bus.bus.as_ptr();
+            (*bus_ptr).z80_ram.as_mut_ptr()
+        };
+
         Self {
             bus,
             raw_bus: std::ptr::null_mut(),
+            z80_ram,
         }
     }
 
@@ -37,11 +47,17 @@ impl Z80Bus {
     /// references exist while this pointer is used.
     pub unsafe fn set_raw_bus(&mut self, bus: *mut Bus) {
         self.raw_bus = bus;
+        self.z80_ram = (*bus).z80_ram.as_mut_ptr();
     }
 
     /// Clear the raw bus pointer.
     pub fn clear_raw_bus(&mut self) {
         self.raw_bus = std::ptr::null_mut();
+        // Restore Z80 RAM pointer to the shared bus
+        unsafe {
+            let bus_ptr = self.bus.bus.as_ptr();
+            self.z80_ram = (*bus_ptr).z80_ram.as_mut_ptr();
+        }
     }
 
     /// Set the bank register (called on write to $6000)
@@ -151,6 +167,18 @@ impl Z80Bus {
 
 impl MemoryInterface for Z80Bus {
     fn read_byte(&mut self, address: u32) -> u8 {
+        let addr = address as u16;
+
+        // Optimization: Fast path for Z80 RAM
+        // We can assume z80_ram is always valid and non-null
+        if addr <= 0x1FFF {
+            return unsafe { *self.z80_ram.add(addr as usize) };
+        }
+        // Mirror 0x2000-0x3FFF
+        if (0x2000..=0x3FFF).contains(&addr) {
+            return unsafe { *self.z80_ram.add((addr & 0x1FFF) as usize) };
+        }
+
         if !self.raw_bus.is_null() {
             let bus = unsafe { &mut *self.raw_bus };
             Self::read_byte_from_bus(bus, address)
@@ -161,6 +189,19 @@ impl MemoryInterface for Z80Bus {
     }
 
     fn write_byte(&mut self, address: u32, value: u8) {
+        let addr = address as u16;
+
+        // Optimization: Fast path for Z80 RAM
+        if addr <= 0x1FFF {
+            unsafe { *self.z80_ram.add(addr as usize) = value };
+            return;
+        }
+        // Mirror 0x2000-0x3FFF
+        if (0x2000..=0x3FFF).contains(&addr) {
+            unsafe { *self.z80_ram.add((addr & 0x1FFF) as usize) = value };
+            return;
+        }
+
         if !self.raw_bus.is_null() {
             let bus = unsafe { &mut *self.raw_bus };
             Self::write_byte_to_bus(bus, address, value)
