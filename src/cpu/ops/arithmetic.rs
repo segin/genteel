@@ -808,3 +808,122 @@ fn fetch_postinc_operand<M: MemoryInterface>(
     cpu.a[reg as usize] = addr.wrapping_add(size.bytes());
     val
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cpu::decoder::AddressingMode;
+    use crate::cpu::flags;
+    use crate::cpu::Cpu;
+    use crate::memory::Memory;
+
+    fn create_test_setup() -> (Cpu, Memory) {
+        let mut memory = Memory::new(0x10000);
+        // Initialize memory with basic vector table
+        memory.write_long(0x0, 0x8000); // Stack pointer
+        memory.write_long(0x4, 0x1000); // PC
+        let cpu = Cpu::new(&mut memory);
+        (cpu, memory)
+    }
+
+    #[test]
+    fn test_exec_divu_basic() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // D0 = 200, D1 = 10
+        cpu.d[0] = 200;
+        cpu.d[1] = 10;
+
+        // DIVU D1, D0
+        let cycles = exec_divu(
+            &mut cpu,
+            AddressingMode::DataRegister(1), // src = D1
+            0, // dst = D0
+            &mut memory,
+        );
+
+        // Expected: Quotient 20, Remainder 0
+        // Result in D0: 0x00000014
+        assert_eq!(cpu.d[0], 20);
+        assert!(!cpu.get_flag(flags::ZERO)); // 20 != 0
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(cycles > 0);
+    }
+
+    #[test]
+    fn test_exec_divu_remainder() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // D0 = 205, D1 = 10
+        cpu.d[0] = 205;
+        cpu.d[1] = 10;
+
+        // DIVU D1, D0
+        exec_divu(
+            &mut cpu,
+            AddressingMode::DataRegister(1), // src = D1
+            0, // dst = D0
+            &mut memory,
+        );
+
+        // Expected: Quotient 20 (0x14), Remainder 5 (0x05)
+        // Result in D0: 0x00050014
+        assert_eq!(cpu.d[0], 0x00050014);
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert!(!cpu.get_flag(flags::CARRY));
+    }
+
+    #[test]
+    fn test_exec_divu_overflow() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // D0 = 0x20000 (131072), D1 = 2
+        // Quotient = 65536 (0x10000) which is > 0xFFFF
+        cpu.d[0] = 0x20000;
+        cpu.d[1] = 2;
+
+        // DIVU D1, D0
+        exec_divu(
+            &mut cpu,
+            AddressingMode::DataRegister(1), // src = D1
+            0, // dst = D0
+            &mut memory,
+        );
+
+        // Expected: Overflow set, register unchanged
+        assert!(cpu.get_flag(flags::OVERFLOW));
+        assert_eq!(cpu.d[0], 0x20000);
+    }
+
+    #[test]
+    fn test_exec_divu_zero() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // D0 = 100, D1 = 0
+        cpu.d[0] = 100;
+        cpu.d[1] = 0;
+
+        // Set up divide by zero vector (Vector 5)
+        // Address 0x14 -> Handler 0x2000
+        memory.write_long(0x14, 0x2000);
+
+        // DIVU D1, D0
+        exec_divu(
+            &mut cpu,
+            AddressingMode::DataRegister(1), // src = D1
+            0, // dst = D0
+            &mut memory,
+        );
+
+        // Expected: Exception processing
+        // PC should be 0x2000
+        assert_eq!(cpu.pc, 0x2000);
+
+        // Register should be unchanged
+        assert_eq!(cpu.d[0], 100);
+    }
+}
