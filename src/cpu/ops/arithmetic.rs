@@ -808,3 +808,80 @@ fn fetch_postinc_operand<M: MemoryInterface>(
     cpu.a[reg as usize] = addr.wrapping_add(size.bytes());
     val
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::memory::Memory;
+    use crate::cpu::{Cpu, flags};
+    use crate::cpu::decoder::AddressingMode;
+
+    fn create_test_cpu() -> (Cpu, Memory) {
+        let mut memory = Memory::new(0x10000);
+        // Initial SP and PC
+        memory.write_long(0, 0x1000); // SP
+        memory.write_long(4, 0x100); // PC
+        let cpu = Cpu::new(&mut memory);
+        (cpu, memory)
+    }
+
+    #[test]
+    fn test_divu_zero_unit() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        memory.write_long(0x14, 0x2000); // Zero Divide Vector
+
+        cpu.d[0] = 100;
+        cpu.d[1] = 0;
+
+        exec_divu(&mut cpu, AddressingMode::DataRegister(1), 0, &mut memory);
+
+        assert_eq!(cpu.pc, 0x2000);
+    }
+
+    #[test]
+    fn test_divu_overflow_unit() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        cpu.d[0] = 0xFFFFFFFF;
+        cpu.d[1] = 1;
+
+        cpu.sr = 0;
+        exec_divu(&mut cpu, AddressingMode::DataRegister(1), 0, &mut memory);
+
+        assert!(cpu.get_flag(flags::OVERFLOW));
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert_eq!(cpu.d[0], 0xFFFFFFFF);
+    }
+
+    #[test]
+    fn test_divu_normal_unit() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        cpu.d[0] = 20;
+        cpu.d[1] = 3;
+
+        exec_divu(&mut cpu, AddressingMode::DataRegister(1), 0, &mut memory);
+
+        assert_eq!(cpu.d[0], 0x00020006);
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert!(!cpu.get_flag(flags::CARRY));
+    }
+
+    #[test]
+    fn test_divu_flags_unit() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        // Zero case
+        cpu.d[0] = 0;
+        cpu.d[1] = 5;
+        exec_divu(&mut cpu, AddressingMode::DataRegister(1), 0, &mut memory);
+        assert!(cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+
+        // Negative case (MSB set)
+        cpu.d[0] = 0x8000;
+        cpu.d[1] = 1;
+        exec_divu(&mut cpu, AddressingMode::DataRegister(1), 0, &mut memory);
+        assert!(cpu.get_flag(flags::NEGATIVE));
+    }
+}
