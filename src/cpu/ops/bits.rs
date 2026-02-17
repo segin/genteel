@@ -640,4 +640,156 @@ mod tests {
         assert!(!cpu.get_flag(flags::ZERO));
         assert_eq!(cycles, 8); // 4 (base) + 0 (DataReg) + 4 (AddrIndirect)
     }
+
+    #[test]
+    fn test_exec_btst_reg_zero() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x0000_00FE; // Bit 0 is 0
+        let bit = BitSource::Register(1);
+        cpu.d[1] = 0; // Test bit 0
+
+        let cycles = exec_btst(
+            &mut cpu,
+            bit,
+            AddressingMode::DataRegister(0),
+            &mut memory,
+        );
+
+        assert!(cpu.get_flag(flags::ZERO)); // Bit is 0, so Z is 1
+        assert_eq!(cpu.d[0], 0x0000_00FE); // Destination not modified
+        assert_eq!(cycles, 10);
+    }
+
+    #[test]
+    fn test_exec_btst_reg_one() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x0000_0001; // Bit 0 is 1
+        let bit = BitSource::Register(1);
+        cpu.d[1] = 0; // Test bit 0
+
+        exec_btst(
+            &mut cpu,
+            bit,
+            AddressingMode::DataRegister(0),
+            &mut memory,
+        );
+
+        assert!(!cpu.get_flag(flags::ZERO)); // Bit is 1, so Z is 0
+    }
+
+    #[test]
+    fn test_exec_btst_imm_zero() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x7FFF_FFFF; // Bit 31 is 0
+        let bit = BitSource::Immediate;
+        // Write immediate bit number 31 to where PC points
+        memory.write_word(cpu.pc, 31);
+
+        let cycles = exec_btst(
+            &mut cpu,
+            bit,
+            AddressingMode::DataRegister(0),
+            &mut memory,
+        );
+
+        assert!(cpu.get_flag(flags::ZERO));
+        assert_eq!(cpu.pc, 0x1002); // PC advanced by 2
+        assert_eq!(cycles, 10);
+    }
+
+    #[test]
+    fn test_exec_btst_imm_one() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x8000_0000; // Bit 31 is 1
+        let bit = BitSource::Immediate;
+        memory.write_word(cpu.pc, 31);
+
+        exec_btst(
+            &mut cpu,
+            bit,
+            AddressingMode::DataRegister(0),
+            &mut memory,
+        );
+
+        assert!(!cpu.get_flag(flags::ZERO));
+    }
+
+    #[test]
+    fn test_exec_btst_mem_zero() {
+        let (mut cpu, mut memory) = create_test_setup();
+        let addr = 0x2000;
+        memory.write_byte(addr, 0xFE); // Bit 0 is 0
+        cpu.a[0] = addr;
+
+        let bit = BitSource::Register(1);
+        cpu.d[1] = 0; // Test bit 0
+
+        let cycles = exec_btst(
+            &mut cpu,
+            bit,
+            AddressingMode::AddressIndirect(0),
+            &mut memory,
+        );
+
+        assert!(cpu.get_flag(flags::ZERO));
+        assert_eq!(memory.read_byte(addr), 0xFE); // Not modified
+        assert_eq!(cycles, 12);
+    }
+
+    #[test]
+    fn test_exec_btst_mem_one() {
+        let (mut cpu, mut memory) = create_test_setup();
+        let addr = 0x2000;
+        memory.write_byte(addr, 0x01); // Bit 0 is 1
+        cpu.a[0] = addr;
+
+        let bit = BitSource::Register(1);
+        cpu.d[1] = 0; // Test bit 0
+
+        exec_btst(
+            &mut cpu,
+            bit,
+            AddressingMode::AddressIndirect(0),
+            &mut memory,
+        );
+
+        assert!(!cpu.get_flag(flags::ZERO));
+    }
+
+    #[test]
+    fn test_exec_btst_modulo_32() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x0000_0001; // Bit 0 is 1
+        let bit = BitSource::Register(1);
+        cpu.d[1] = 32; // 32 % 32 = 0. Should test bit 0.
+
+        exec_btst(
+            &mut cpu,
+            bit,
+            AddressingMode::DataRegister(0),
+            &mut memory,
+        );
+
+        assert!(!cpu.get_flag(flags::ZERO)); // Bit 0 is 1. Z=0.
+    }
+
+    #[test]
+    fn test_exec_btst_modulo_8() {
+        let (mut cpu, mut memory) = create_test_setup();
+        let addr = 0x2000;
+        memory.write_byte(addr, 0x01); // Bit 0 is 1
+        cpu.a[0] = addr;
+
+        let bit = BitSource::Register(1);
+        cpu.d[1] = 8; // 8 % 8 = 0. Should test bit 0.
+
+        exec_btst(
+            &mut cpu,
+            bit,
+            AddressingMode::AddressIndirect(0),
+            &mut memory,
+        );
+
+        assert!(!cpu.get_flag(flags::ZERO)); // Bit 0 is 1. Z=0.
+    }
 }
