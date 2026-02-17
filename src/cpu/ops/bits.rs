@@ -281,7 +281,7 @@ pub fn exec_rotate<M: MemoryInterface>(
         if effective_count == 0 {
             result = val;
             if count_val > 0 {
-                carry = (val & msb) != 0;
+                carry = (val & 1) != 0;
             }
         } else {
             result = ((val << effective_count) | (val >> (bits - effective_count))) & mask;
@@ -290,7 +290,7 @@ pub fn exec_rotate<M: MemoryInterface>(
     } else if effective_count == 0 {
         result = val;
         if count_val > 0 {
-            carry = (val & 1) != 0;
+            carry = (val & msb) != 0;
         }
     } else {
         result = ((val >> effective_count) | (val << (bits - effective_count))) & mask;
@@ -513,7 +513,7 @@ pub fn exec_tas<M: MemoryInterface>(cpu: &mut Cpu, dst: AddressingMode, memory: 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cpu::decoder::{AddressingMode, Size};
+    use crate::cpu::decoder::{AddressingMode, ShiftCount, Size};
     use crate::cpu::flags;
     use crate::cpu::Cpu;
     use crate::memory::Memory;
@@ -639,5 +639,168 @@ mod tests {
         assert!(cpu.get_flag(flags::NEGATIVE));
         assert!(!cpu.get_flag(flags::ZERO));
         assert_eq!(cycles, 8); // 4 (base) + 0 (DataReg) + 4 (AddrIndirect)
+    }
+
+    #[test]
+    fn test_exec_rotate_modulo_behavior() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // ROL.B #8, D0
+        // D0 = 0x01 (0000 0001).
+        // Rotate left 8 bits.
+        // Result: 0x01.
+        // Last bit shifted out should be bit 0 (1). C=1.
+        cpu.d[0] = 0x01;
+        cpu.set_flag(flags::CARRY, false);
+        exec_rotate(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(8),
+            true, // left
+            false,
+            &mut memory,
+        );
+        assert_eq!(cpu.d[0], 0x01, "ROL.B #8 should wrap around to original value");
+        assert!(cpu.get_flag(flags::CARRY), "ROL.B #8 of 0x01 should set Carry (last bit out was bit 0)");
+
+        // ROR.B #8, D0
+        // D0 = 0x80 (1000 0000).
+        // Rotate right 8 bits.
+        // Result: 0x80.
+        // Last bit shifted out should be bit 7 (1). C=1.
+        cpu.d[0] = 0x80;
+        cpu.set_flag(flags::CARRY, false);
+        exec_rotate(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(8),
+            false, // right
+            false,
+            &mut memory,
+        );
+        assert_eq!(cpu.d[0], 0x80, "ROR.B #8 should wrap around to original value");
+        assert!(cpu.get_flag(flags::CARRY), "ROR.B #8 of 0x80 should set Carry (last bit out was bit 7)");
+    }
+
+    #[test]
+    fn test_exec_rotate_left_standard() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // ROL.B #1, D0
+        // D0 = 0x80 (1000 0000)
+        // Result: 0x01 (0000 0001)
+        // Carry: 1 (bit 7 shifted out)
+        cpu.d[0] = 0x80;
+        cpu.set_flag(flags::CARRY, false);
+
+        exec_rotate(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(1),
+            true, // left
+            false,
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[0], 0x01);
+        assert!(cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_exec_rotate_right_standard() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // ROR.B #1, D0
+        // D0 = 0x01 (0000 0001)
+        // Result: 0x80 (1000 0000)
+        // Carry: 1 (bit 0 shifted out)
+        cpu.d[0] = 0x01;
+        cpu.set_flag(flags::CARRY, false);
+
+        exec_rotate(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(1),
+            false, // right
+            false,
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[0], 0x80);
+        assert!(cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(cpu.get_flag(flags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_exec_rotate_multi_bit() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // ROL.L #4, D0
+        // D0 = 0x12345678
+        // Result: 0x23456781
+        // Carry: 1 (last bit shifted out was from nibble 1, which is 0x1 = 0001, MSB 0. Wait.)
+        // 0x1 = 0001. Shift left 4.
+        // Shift 1: 0010 (out 0)
+        // Shift 2: 0100 (out 0)
+        // Shift 3: 1000 (out 0)
+        // Shift 4: 0001 (out 1) -> Wait.
+        // Let's trace ROL 4 on 0x12345678.
+        // The top nibble 0x1 is shifted out.
+        // 0x1 is 0001.
+        // Bit 31 is 0. Shift 1 -> C=0.
+        // Bit 30 is 0. Shift 2 -> C=0.
+        // Bit 29 is 0. Shift 3 -> C=0.
+        // Bit 28 is 1. Shift 4 -> C=1.
+        // So correct C=1.
+
+        cpu.d[0] = 0x12345678;
+        cpu.set_flag(flags::CARRY, false);
+
+        exec_rotate(
+            &mut cpu,
+            Size::Long,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(4),
+            true, // left
+            false,
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[0], 0x23456781);
+        assert!(cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_exec_rotate_zero_count() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // ROL.B #0, D0
+        // D0 = 0x80
+        // Result: Unchanged
+        // Carry: Cleared (0)
+        cpu.d[0] = 0x80;
+        cpu.set_flag(flags::CARRY, true); // Set to verify it gets cleared
+
+        exec_rotate(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(0),
+            true,
+            false,
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[0], 0x80);
+        assert!(!cpu.get_flag(flags::CARRY));
     }
 }
