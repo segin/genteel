@@ -47,6 +47,20 @@ Genteel features a comprehensive test suite including unit tests, property-based
 cargo test
 ```
 
+## Development Tools
+
+The repository includes a Python-based security and quality audit tool located in `scripts/audit_tool.py`. This tool scans the codebase for:
+*   **Potential Secrets:** API keys, passwords, tokens.
+*   **Technical Debt:** `TODO`, `FIXME`, `XXX` comments.
+*   **Unsafe Code:** Usage of `unsafe` blocks in Rust.
+
+To run the audit:
+```bash
+python3 scripts/audit_tool.py
+```
+
+The report will be generated in the `audit_reports/` directory.
+
 ## Status
 
 Phase 4: System Integration is currently in progress.

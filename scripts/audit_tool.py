@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 import os
+import sys
 import re
 import json
 import csv
 import subprocess
+import argparse
 from datetime import datetime
 
 # =============================================================================
@@ -67,6 +69,10 @@ def scan_text_patterns():
         if not f.endswith((".rs", ".py", ".md", ".sh", ".toml")):
             continue
 
+        # Skip this script and the benchmark script as they contain the patterns themselves
+        if f.endswith("audit_tool.py") or f.endswith("benchmark_regex.py"):
+            continue
+
         try:
             with open(f, 'r', encoding='utf-8', errors='ignore') as fp:
                 for i, line_content in enumerate(fp):
@@ -104,6 +110,14 @@ def scan_text_patterns():
             print(f"Error scanning {f}: {e}")
 
 def run_audit():
+    parser = argparse.ArgumentParser(description="Security & Quality Audit Tool for genteel")
+    parser.parse_args()
+
+    # Ensure we are in root
+    if not os.path.exists("Cargo.toml"):
+        print("Error: Must run from repository root containing Cargo.toml")
+        sys.exit(1)
+
     print("🚀 Starting genteel security & quality audit...")
     
     if not os.path.exists(REPORT_DIR):
