@@ -304,4 +304,39 @@ mod tests {
         assert_eq!(out2[0], 30);
         assert_eq!(buf.buffer[0], 30);
     }
+
+    #[test]
+    fn test_pop_f32_exhaustive() {
+        // Create a buffer large enough to hold all i16 values
+        // AudioBuffer::new(n) allocates space for n stereo pairs (2*n i16 samples)
+        // We need 65536 samples, so 32768 capacity is sufficient, but we use 65536
+        // to be explicit and avoid any potential off-by-one or interpretation issues.
+        let capacity = 65536;
+        let mut buf = AudioBuffer::new(capacity);
+
+        // Generate all possible i16 values
+        let all_samples: Vec<i16> = (i16::MIN..=i16::MAX).collect();
+        buf.push(&all_samples);
+
+        // Pop all as f32
+        let mut out = vec![0.0f32; all_samples.len()];
+        buf.pop_f32(&mut out);
+
+        // Verify conversion
+        for (i, &sample) in all_samples.iter().enumerate() {
+            let result = out[i];
+
+            // Expected conversion logic
+            let expected = sample as f32 / 32768.0;
+
+            assert_eq!(result, expected, "Mismatch for sample {}", sample);
+
+            // Verify bounds [-1.0, 1.0]
+            assert!(result >= -1.0, "Result {} < -1.0 for sample {}", result, sample);
+            assert!(result <= 1.0, "Result {} > 1.0 for sample {}", result, sample);
+        }
+
+        // Also verify buffer is empty
+        assert_eq!(buf.available(), 0);
+    }
 }
