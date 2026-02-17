@@ -16,6 +16,10 @@ use crate::cpu::decoder::Size;
 #[cfg(test)]
 mod tests_property;
 #[cfg(test)]
+mod tests_bus_refactor;
+#[cfg(test)]
+mod tests_bus_vdp;
+#[cfg(test)]
 mod tests_rom_access;
 
 pub trait MemoryInterface: std::fmt::Debug {
