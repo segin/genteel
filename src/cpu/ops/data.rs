@@ -341,3 +341,156 @@ pub fn exec_ext(cpu: &mut Cpu, size: Size, reg: u8) -> u32 {
 
     4
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cpu::Cpu;
+    use crate::memory::Memory;
+
+    fn create_test_setup() -> (Cpu, Memory) {
+        let mut memory = Memory::new(0x10000);
+        // Initialize memory with basic vector table
+        memory.write_long(0x0, 0x8000); // Stack pointer
+        memory.write_long(0x4, 0x1000); // PC
+        let cpu = Cpu::new(&mut memory);
+        (cpu, memory)
+    }
+
+    #[test]
+    fn test_movep_word_reg_to_mem() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // Setup D0 with value 0x12345678
+        cpu.d[0] = 0x12345678;
+        // Setup A0 with base address 0x2000
+        cpu.a[0] = 0x2000;
+
+        // Set PC to point to a word that will be read as displacement (let's say 4)
+        cpu.pc = 0x1000;
+        memory.write_word(0x1000, 4);
+
+        // Execute MOVEP.W D0, 4(A0)
+        // reg_to_mem = true, size = Word
+        exec_movep(&mut cpu, Size::Word, 0, 0, true, &mut memory);
+
+        // Expected behavior:
+        // Addr = 0x2000 + 4 = 0x2004
+        // Word at D0 low is 0x5678. High byte 0x56, Low byte 0x78.
+        // 0x2004 should be 0x56
+        // 0x2006 should be 0x78
+        // 0x2005 should be 0 (untouched)
+
+        assert_eq!(memory.read_byte(0x2004), 0x56, "High byte at addr");
+        assert_eq!(memory.read_byte(0x2006), 0x78, "Low byte at addr+2");
+        assert_eq!(memory.read_byte(0x2005), 0x00, "Interleaved byte touched");
+    }
+
+    #[test]
+    fn test_movep_word_mem_to_reg() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // Setup memory at 0x2000 + 4 = 0x2004
+        memory.write_byte(0x2004, 0xAA);
+        memory.write_byte(0x2006, 0xBB);
+
+        // Setup D0 with initial garbage
+        cpu.d[0] = 0xFFFFFFFF;
+        // Setup A0
+        cpu.a[0] = 0x2000;
+
+        // Set PC for displacement 4
+        cpu.pc = 0x1000;
+        memory.write_word(0x1000, 4);
+
+        // Execute MOVEP.W 4(A0), D0
+        // reg_to_mem = false, size = Word
+        exec_movep(&mut cpu, Size::Word, 0, 0, false, &mut memory);
+
+        // Expected behavior:
+        // D0 high word preserved (0xFFFF)
+        // D0 low word updated with 0xAABB
+        // Result: 0xFFFFAABB
+
+        assert_eq!(cpu.d[0], 0xFFFFAABB);
+    }
+
+    #[test]
+    fn test_movep_long_reg_to_mem() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // Setup D0
+        cpu.d[0] = 0x12345678;
+        // Setup A0
+        cpu.a[0] = 0x2000;
+
+        // Set PC for displacement 0
+        cpu.pc = 0x1000;
+        memory.write_word(0x1000, 0);
+
+        // Execute MOVEP.L D0, 0(A0)
+        exec_movep(&mut cpu, Size::Long, 0, 0, true, &mut memory);
+
+        // Expected behavior:
+        // 0x2000 = 0x12
+        // 0x2002 = 0x34
+        // 0x2004 = 0x56
+        // 0x2006 = 0x78
+
+        assert_eq!(memory.read_byte(0x2000), 0x12);
+        assert_eq!(memory.read_byte(0x2002), 0x34);
+        assert_eq!(memory.read_byte(0x2004), 0x56);
+        assert_eq!(memory.read_byte(0x2006), 0x78);
+    }
+
+    #[test]
+    fn test_movep_long_mem_to_reg() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // Setup memory
+        memory.write_byte(0x2000, 0x11);
+        memory.write_byte(0x2002, 0x22);
+        memory.write_byte(0x2004, 0x33);
+        memory.write_byte(0x2006, 0x44);
+
+        // Setup D0
+        cpu.d[0] = 0xFFFFFFFF;
+        // Setup A0
+        cpu.a[0] = 0x2000;
+
+        // Set PC for displacement 0
+        cpu.pc = 0x1000;
+        memory.write_word(0x1000, 0);
+
+        // Execute MOVEP.L 0(A0), D0
+        exec_movep(&mut cpu, Size::Long, 0, 0, false, &mut memory);
+
+        // Expected: D0 = 0x11223344
+        assert_eq!(cpu.d[0], 0x11223344);
+    }
+
+    #[test]
+    fn test_movep_displacement_signed() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // Setup D0
+        cpu.d[0] = 0x12345678;
+        // Setup A0
+        cpu.a[0] = 0x2010;
+
+        // Set PC for displacement -4 (0xFFFC)
+        cpu.pc = 0x1000;
+        memory.write_word(0x1000, 0xFFFC);
+
+        // Execute MOVEP.L D0, -4(A0)
+        exec_movep(&mut cpu, Size::Long, 0, 0, true, &mut memory);
+
+        // Addr = 0x2010 - 4 = 0x200C
+        // Writes to 200C, 200E, 2010, 2012
+
+        assert_eq!(memory.read_byte(0x200C), 0x12);
+        assert_eq!(memory.read_byte(0x200E), 0x34);
+        assert_eq!(memory.read_byte(0x2010), 0x56);
+        assert_eq!(memory.read_byte(0x2012), 0x78);
+    }
+}
