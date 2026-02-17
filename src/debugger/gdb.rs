@@ -38,6 +38,14 @@ impl StopReason {
     }
 }
 
+/// Constant-time comparison to prevent timing attacks
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b.iter()).fold(0, |acc, (&x, &y)| acc | (x ^ y)) == 0
+}
+
 /// GDB Server state
 pub struct GdbServer {
     /// TCP listener
@@ -622,7 +630,7 @@ impl GdbServer {
         if let Some(stripped) = cmd.strip_prefix("auth ") {
             let provided_pass = stripped.trim();
             if let Some(ref correct_pass) = self.password {
-                if provided_pass == correct_pass {
+                if constant_time_eq(provided_pass.as_bytes(), correct_pass.as_bytes()) {
                     self.authenticated = true;
                     return "OK".to_string();
                 } else {
@@ -710,6 +718,15 @@ mod tests {
             password: None,
             authenticated: true,
         }
+    }
+
+    #[test]
+    fn test_constant_time_eq_logic() {
+        assert!(constant_time_eq(b"password", b"password"));
+        assert!(!constant_time_eq(b"password", b"wordpass"));
+        assert!(!constant_time_eq(b"password", b"pass"));
+        assert!(!constant_time_eq(b"pass", b"password"));
+        assert!(constant_time_eq(b"", b""));
     }
 
     #[test]
