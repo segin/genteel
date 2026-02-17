@@ -113,9 +113,9 @@ pub struct ControllerPort {
     /// TH (bit 6) state from control writes
     pub th_state: bool,
     /// Counter for 6-button protocol
-    th_counter: u8,
+    pub(crate) th_counter: u8,
     /// Timer for 6-button reset (cycles since last TH transition)
-    th_timer: u32,
+    pub(crate) th_timer: u32,
 }
 
 impl ControllerPort {
@@ -675,5 +675,27 @@ mod tests {
         let mut port_none = ControllerPort::new(ControllerType::None);
         port_none.update(2000);
         assert_eq!(port_none.th_timer, 0, "Timer should not increment for None controller");
+    }
+
+    #[test]
+    fn test_io_update() {
+        let mut io = Io::new();
+        io.set_controller_type(1, ControllerType::SixButton);
+
+        // Initially 0
+        assert_eq!(io.port1.th_counter, 0);
+
+        // Toggle TH (write to control port).
+        // For port 1, data is at 0xA10003.
+        // th_state starts true (high).
+        // Writing 0x00 sets TH low -> falling edge -> increments counter.
+        io.write(0xA10003, 0x00);
+        assert_eq!(io.port1.th_counter, 1);
+
+        // Update IO with cycles > 1500
+        io.update(1501);
+
+        // Should be reset
+        assert_eq!(io.port1.th_counter, 0);
     }
 }
