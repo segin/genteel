@@ -640,4 +640,148 @@ mod tests {
         assert!(!cpu.get_flag(flags::ZERO));
         assert_eq!(cycles, 8); // 4 (base) + 0 (DataReg) + 4 (AddrIndirect)
     }
+
+    #[test]
+    fn test_exec_lsl() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0xFFFFFF80; // Byte: 0x80 (1000 0000)
+
+        // LSL.B #1, D0 -> 0x00, C=1, X=1, Z=1, N=0, V=0
+        let cycles = exec_shift(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(1),
+            true,  // left
+            false, // logical
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[0] & 0xFF, 0x00);
+        assert!(cpu.get_flag(flags::CARRY));
+        assert!(cpu.get_flag(flags::EXTEND));
+        assert!(cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert_eq!(cycles, 6 + 2 * 1); // 6 + 2n
+    }
+
+    #[test]
+    fn test_exec_lsr() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0xFFFFFF01; // Byte: 0x01
+
+        // LSR.B #1, D0 -> 0x00, C=1, X=1, Z=1, N=0
+        let cycles = exec_shift(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(1),
+            false, // right
+            false, // logical
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[0] & 0xFF, 0x00);
+        assert!(cpu.get_flag(flags::CARRY));
+        assert!(cpu.get_flag(flags::EXTEND));
+        assert!(cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert_eq!(cycles, 6 + 2 * 1);
+    }
+
+    #[test]
+    fn test_exec_asl_overflow() {
+        let (mut cpu, mut memory) = create_test_setup();
+        // ASL.B #1, D0
+        // 0x40 (0100 0000) << 1 = 0x80 (1000 0000).
+        // 64 * 2 = 128 (-128 in signed byte). Overflow. V=1.
+
+        cpu.d[0] = 0x40;
+        exec_shift(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(1),
+            true, // left
+            true, // arithmetic
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[0] & 0xFF, 0x80);
+        assert!(!cpu.get_flag(flags::CARRY)); // MSB was 0
+        assert!(cpu.get_flag(flags::OVERFLOW)); // Overflow set
+        assert!(cpu.get_flag(flags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_exec_asr() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x80; // -128
+        // ASR.B #1, D0 -> 0xC0 (-64)
+
+        exec_shift(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(1),
+            false, // right
+            true,  // arithmetic
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[0] & 0xFF, 0xC0);
+        assert!(!cpu.get_flag(flags::CARRY)); // shifted out 0
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+    }
+
+    #[test]
+    fn test_exec_shift_register_count() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x01;
+        cpu.d[1] = 66; // 64 + 2. Should use 2.
+
+        // LSL.B D1, D0
+        let cycles = exec_shift(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Register(1),
+            true,
+            false,
+            &mut memory,
+        );
+
+        // 1 << 2 = 4
+        assert_eq!(cpu.d[0] & 0xFF, 0x04);
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert_eq!(cycles, 6 + 2 * 2); // 6 + 2n
+    }
+
+    #[test]
+    fn test_exec_shift_zero_count() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0xFF;
+        cpu.set_flag(flags::CARRY, true);
+        cpu.set_flag(flags::OVERFLOW, true);
+        cpu.set_flag(flags::EXTEND, true);
+
+        let cycles = exec_shift(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(0),
+            true,
+            false,
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[0] & 0xFF, 0xFF);
+        assert!(!cpu.get_flag(flags::CARRY)); // Cleared
+        assert!(!cpu.get_flag(flags::OVERFLOW)); // Cleared
+        assert!(cpu.get_flag(flags::EXTEND)); // Unaffected
+        assert_eq!(cycles, 6);
+    }
 }
