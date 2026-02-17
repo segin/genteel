@@ -187,7 +187,7 @@ impl Cpu {
             let cache_index = ((pc >> 1) & 0xFFFF) as usize;
 
             // Safety: cache size is 65536, index is masked to 0xFFFF.
-            let entry = unsafe { *self.decode_cache.get_unchecked(cache_index) };
+            let entry = self.decode_cache[cache_index];
 
             if entry.pc == pc {
                 // Cache Hit
@@ -206,10 +206,7 @@ impl Cpu {
                 instruction = decode(opcode);
 
                 // Update Cache
-                unsafe {
-                    *self.decode_cache.get_unchecked_mut(cache_index) =
-                        DecodeCacheEntry { pc, instruction };
-                }
+                self.decode_cache[cache_index] = DecodeCacheEntry { pc, instruction };
             }
         } else {
             // Uncached (RAM, I/O, etc.)
