@@ -15,6 +15,8 @@ mod tests_m68k_alu;
 #[cfg(test)]
 mod tests_m68k_bits;
 #[cfg(test)]
+mod tests_m68k_data;
+#[cfg(test)]
 mod tests_m68k_comprehensive;
 #[cfg(test)]
 mod tests_m68k_control;
