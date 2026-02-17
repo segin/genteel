@@ -320,3 +320,103 @@ pub fn exec_eori_to_sr<M: MemoryInterface>(cpu: &mut Cpu, memory: &mut M) -> u32
     cpu.set_sr(cpu.sr ^ imm);
     20
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cpu::flags;
+    use crate::memory::Memory;
+
+    fn create_test_cpu() -> (Cpu, Memory) {
+        let mut memory = Memory::new(0x10000); // 64KB memory
+        let cpu = Cpu::new(&mut memory);
+        (cpu, memory)
+    }
+
+    #[test]
+    fn test_exec_trap_user_to_supervisor() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        // Setup User Mode
+        cpu.sr = 0x0000; // Clear Supervisor bit, Trace bit, etc.
+        cpu.pc = 0x1000;
+
+        // Setup distinct stack pointers
+        let initial_usp = 0x2000;
+        let initial_ssp = 0x4000;
+
+        // In User mode, A7 is USP.
+        cpu.a[7] = initial_usp;
+        // SSP is stored internally
+        cpu.ssp = initial_ssp;
+
+        // Setup Vector 34 (TRAP #2) -> 0x3000
+        memory.write_long(34 * 4, 0x3000);
+
+        // Execute TRAP #2
+        let cycles = exec_trap(&mut cpu, 2, &mut memory);
+
+        assert_eq!(cycles, 34);
+        assert_eq!(cpu.pc, 0x3000);
+
+        // Check SR: Supervisor set, Trace cleared.
+        assert_eq!(cpu.sr & flags::SUPERVISOR, flags::SUPERVISOR);
+        assert_eq!(cpu.sr & flags::TRACE, 0);
+
+        // Check Stacks
+        assert_eq!(cpu.usp, initial_usp); // Saved correctly
+        // SSP should be 0x4000 - 6 = 0x3FFA
+        assert_eq!(cpu.a[7], 0x3FFA);
+
+        // Check pushed values
+        // SR at 0x3FFA
+        let pushed_sr = memory.read_word(0x3FFA);
+        assert_eq!(pushed_sr, 0x0000); // Old SR
+
+        // PC at 0x3FFC
+        let pushed_pc = memory.read_long(0x3FFC);
+        assert_eq!(pushed_pc, 0x1000); // Old PC
+    }
+
+    #[test]
+    fn test_exec_trap_supervisor_to_supervisor() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        // Setup Supervisor Mode
+        cpu.sr = flags::SUPERVISOR;
+        cpu.pc = 0x1000;
+
+        let initial_ssp = 0x4000;
+        cpu.a[7] = initial_ssp; // A7 is SSP in Supervisor mode.
+        cpu.usp = 0x2000; // Just some value
+
+        // Setup Vector 35 (TRAP #3) -> 0x3004
+        memory.write_long(35 * 4, 0x3004);
+
+        // Execute TRAP #3
+        let cycles = exec_trap(&mut cpu, 3, &mut memory);
+
+        assert_eq!(cycles, 34);
+        assert_eq!(cpu.pc, 0x3004);
+
+        // Check SR
+        assert_eq!(cpu.sr & flags::SUPERVISOR, flags::SUPERVISOR);
+
+        // Check Stack
+        // Should not have swapped stacks.
+        // USP untouched.
+        assert_eq!(cpu.usp, 0x2000);
+
+        // SSP decremented by 6.
+        assert_eq!(cpu.a[7], 0x3FFA);
+
+        // Pushed values
+        // 0x3FFA is SR
+        // 0x3FFC is PC
+        let pushed_sr = memory.read_word(0x3FFA);
+        assert_eq!(pushed_sr, flags::SUPERVISOR);
+
+        let pushed_pc = memory.read_long(0x3FFC);
+        assert_eq!(pushed_pc, 0x1000);
+    }
+}
