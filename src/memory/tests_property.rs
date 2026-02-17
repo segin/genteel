@@ -20,6 +20,27 @@ proptest! {
         prop_assert_eq!(word, ((b0 as u16) << 8) | (b1 as u16));
     }
 
+    // Test that ROM reading is consistent for long words
+    #[test]
+    fn prop_rom_read_long_consistency(addr in 0..0x3FFF0u32) {
+        let mut bus = Bus::new();
+        // Create dummy ROM with some pattern
+        let mut rom = vec![0u8; 0x40000];
+        for i in 0..rom.len() {
+            rom[i] = (i & 0xFF) as u8;
+        }
+        bus.load_rom(&rom);
+
+        let b0 = bus.read_byte(addr);
+        let b1 = bus.read_byte(addr + 1);
+        let b2 = bus.read_byte(addr + 2);
+        let b3 = bus.read_byte(addr + 3);
+        let long_val = bus.read_long(addr);
+
+        let expected = ((b0 as u32) << 24) | ((b1 as u32) << 16) | ((b2 as u32) << 8) | (b3 as u32);
+        prop_assert_eq!(long_val, expected);
+    }
+
     // Test WRAM mirroring
     #[test]
     fn prop_wram_mirroring(addr in 0..0xFFFFu32, val in 0..=255u8) {
