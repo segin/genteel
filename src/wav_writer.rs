@@ -4,11 +4,14 @@ use std::io::{BufWriter, Seek, SeekFrom, Write};
 pub struct WavWriter {
     file: BufWriter<File>,
     data_size: u32,
-    #[allow(dead_code)] // Stored for potential future use or debugging
     channels: u16,
 }
 
 impl WavWriter {
+    pub fn channels(&self) -> u16 {
+        self.channels
+    }
+
     pub fn new(path: &str, sample_rate: u32, channels: u16) -> std::io::Result<Self> {
         let file = File::create(path)?;
         let mut writer = BufWriter::new(file);
@@ -44,6 +47,12 @@ impl WavWriter {
     }
 
     pub fn write_samples(&mut self, samples: &[i16]) -> std::io::Result<()> {
+        if samples.len() % (self.channels as usize) != 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Sample count not aligned with channel count",
+            ));
+        }
         for &sample in samples {
             self.file.write_all(&sample.to_le_bytes())?;
         }
@@ -79,5 +88,64 @@ impl WavWriter {
 impl Drop for WavWriter {
     fn drop(&mut self) {
         let _ = self.finalize();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Read;
+
+    #[test]
+    fn test_wav_writer_creation() {
+        let path = "test_output.wav";
+        let _ = std::fs::remove_file(path); // Cleanup before test
+
+        {
+            let mut writer = WavWriter::new(path, 44100, 2).expect("Failed to create WavWriter");
+            let samples = vec![0, 0, 100, -100];
+            writer.write_samples(&samples).expect("Failed to write samples");
+        } // writer is dropped here, finalizing the file
+
+        // Verify file content
+        let mut file = File::open(path).expect("Failed to open output file");
+        let mut content = Vec::new();
+        file.read_to_end(&mut content).expect("Failed to read file");
+
+        // RIFF header
+        assert_eq!(&content[0..4], b"RIFF");
+        assert_eq!(&content[8..12], b"WAVE");
+
+        // fmt chunk
+        assert_eq!(&content[12..16], b"fmt ");
+
+        // data chunk
+        // The position depends on fmt chunk size (16) and header size.
+        // 12 (RIFF) + 8 (fmt header) + 16 (fmt body) = 36
+        assert_eq!(&content[36..40], b"data");
+
+        // Cleanup
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_wav_writer_channels() {
+        let path = "test_channels.wav";
+        let _ = std::fs::remove_file(path);
+        let writer = WavWriter::new(path, 44100, 2).expect("Failed to create");
+        assert_eq!(writer.channels(), 2);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_write_samples_unaligned() {
+        let path = "test_unaligned.wav";
+        let _ = std::fs::remove_file(path);
+        let mut writer = WavWriter::new(path, 44100, 2).expect("Failed to create");
+        let samples = vec![0, 0, 100]; // 3 samples, 2 channels => unaligned
+        let result = writer.write_samples(&samples);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::InvalidInput);
+        let _ = std::fs::remove_file(path);
     }
 }
