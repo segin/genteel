@@ -13,6 +13,9 @@ pub const DEFAULT_PORT: u16 = 1234;
 /// Maximum GDB packet size to prevent unbounded memory consumption
 pub const MAX_PACKET_SIZE: usize = 4096;
 
+/// Maximum number of breakpoints allowed to prevent memory exhaustion
+pub const MAX_BREAKPOINTS: usize = 1024;
+
 /// GDB stop reasons
 #[derive(Debug, Clone, Copy)]
 pub enum StopReason {
@@ -554,6 +557,11 @@ impl GdbServer {
             Ok(a) => a,
             Err(_) => return "E01".to_string(),
         };
+
+        // Security: Prevent unbounded memory consumption by limiting the number of breakpoints
+        if self.breakpoints.len() >= MAX_BREAKPOINTS && !self.breakpoints.contains(&addr) {
+            return "E01".to_string();
+        }
 
         self.breakpoints.insert(addr);
         "OK".to_string()
@@ -1155,5 +1163,34 @@ mod tests {
             "OK"
         );
         assert_eq!(server.process_command("Z1,1000,4", &mut regs, &mut mem), "");
+    }
+
+    #[test]
+    fn test_breakpoint_limit() {
+        let mut server = create_test_server();
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+
+        // Fill up breakpoints
+        for i in 0..MAX_BREAKPOINTS {
+            let cmd = format!("Z0,{:x},4", i);
+            assert_eq!(server.process_command(&cmd, &mut regs, &mut mem), "OK");
+        }
+
+        // Try adding one more (should fail)
+        let cmd = format!("Z0,{:x},4", MAX_BREAKPOINTS);
+        assert_eq!(server.process_command(&cmd, &mut regs, &mut mem), "E01");
+
+        // Ensure count is capped
+        assert_eq!(server.breakpoints.len(), MAX_BREAKPOINTS);
+
+        // Verify we can still remove one and add another
+        let remove_cmd = "z0,0,4";
+        assert_eq!(server.process_command(remove_cmd, &mut regs, &mut mem), "OK");
+        assert_eq!(server.breakpoints.len(), MAX_BREAKPOINTS - 1);
+
+        let add_cmd = format!("Z0,{:x},4", MAX_BREAKPOINTS);
+        assert_eq!(server.process_command(&add_cmd, &mut regs, &mut mem), "OK");
+        assert_eq!(server.breakpoints.len(), MAX_BREAKPOINTS);
     }
 }
