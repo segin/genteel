@@ -640,4 +640,76 @@ mod tests {
         assert!(!cpu.get_flag(flags::ZERO));
         assert_eq!(cycles, 8); // 4 (base) + 0 (DataReg) + 4 (AddrIndirect)
     }
+
+    #[test]
+    fn test_exec_or_src_memory() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x00000000;
+        cpu.a[0] = 0x2000;
+        memory.write_byte(0x2000, 0xFF);
+
+        // OR.B (A0), D0
+        let cycles = exec_or(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::AddressIndirect(0),
+            AddressingMode::DataRegister(0),
+            true,
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[0] & 0xFF, 0xFF);
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert_eq!(cycles, 8); // 4 (base) + 4 (AddrIndirect) + 0 (DataReg)
+    }
+
+    #[test]
+    fn test_exec_or_post_increment() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x00000000;
+        cpu.a[0] = 0x2000;
+        memory.write_byte(0x2000, 0xAA);
+
+        // OR.B (A0)+, D0
+        let cycles = exec_or(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::AddressPostIncrement(0),
+            AddressingMode::DataRegister(0),
+            true,
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[0] & 0xFF, 0xAA);
+        assert_eq!(cpu.a[0], 0x2001); // Incremented by 1 (Byte)
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert_eq!(cycles, 8); // 4 (base) + 4 (PostInc) + 0 (DataReg)
+    }
+
+    #[test]
+    fn test_exec_or_immediate() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x00000000;
+        // PC points to immediate value
+        cpu.pc = 0x3000;
+        memory.write_word(0x3000, 0x00FF); // Word Immediate 0x00FF
+
+        // OR.B #$FF, D0
+        let cycles = exec_or(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::Immediate,
+            AddressingMode::DataRegister(0),
+            true,
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[0] & 0xFF, 0xFF);
+        assert_eq!(cpu.pc, 0x3002); // Advanced by 2 bytes
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert_eq!(cycles, 8); // 4 (base) + 4 (Immediate Word) + 0 (DataReg)
+    }
 }
