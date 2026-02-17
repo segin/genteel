@@ -145,12 +145,17 @@ impl AddressingMode {
         }
     }
 
-    /// Returns true if this mode is valid as a destination
-    pub fn is_valid_destination(&self) -> bool {
+    /// Returns true if this mode is Alterable (all except PC, Imm)
+    pub fn is_alterable(&self) -> bool {
         !matches!(
             self,
             AddressingMode::PcDisplacement | AddressingMode::PcIndex | AddressingMode::Immediate
         )
+    }
+
+    /// Returns true if this mode is Data Alterable (all except An, PC, Imm)
+    pub fn is_data_alterable(&self) -> bool {
+        self.is_alterable() && !matches!(self, AddressingMode::AddressRegister(_))
     }
 
     /// Returns the number of extension words needed for this addressing mode
@@ -654,39 +659,25 @@ pub fn decode(opcode: u16) -> Instruction {
 }
 
 fn decode_uncached(opcode: u16) -> Instruction {
-    let group = ((opcode >> 12) & 0x0F) as usize;
-    GROUP_DECODERS[group](opcode)
-}
-
-// === Group decoders ===
-
-type DecoderFn = fn(u16) -> Instruction;
-
-const GROUP_DECODERS: [DecoderFn; 16] = [
-    decode_group_0,
-    decode_move_byte,
-    decode_move_long,
-    decode_move_word,
-    decode_group_4,
-    decode_group_5,
-    decode_group_6,
-    decode_moveq,
-    decode_group_8,
-    decode_sub,
-    decode_line_a,
-    decode_group_b,
-    decode_group_c,
-    decode_add,
-    decode_shifts,
-    decode_line_f,
-];
-
-fn decode_line_a(opcode: u16) -> Instruction {
-    Instruction::LineA { opcode }
-}
-
-fn decode_line_f(opcode: u16) -> Instruction {
-    Instruction::LineF { opcode }
+    match (opcode >> 12) & 0x0F {
+        0x0 => decode_group_0(opcode),
+        0x1 => decode_move(opcode, Size::Byte),
+        0x2 => decode_move(opcode, Size::Long),
+        0x3 => decode_move(opcode, Size::Word),
+        0x4 => decode_group_4(opcode),
+        0x5 => decode_group_5(opcode),
+        0x6 => decode_group_6(opcode),
+        0x7 => decode_moveq(opcode),
+        0x8 => decode_group_8(opcode),
+        0x9 => decode_sub(opcode),
+        0xA => Instruction::LineA { opcode },
+        0xB => decode_group_b(opcode),
+        0xC => decode_group_c(opcode),
+        0xD => decode_add(opcode),
+        0xE => decode_shifts(opcode),
+        0xF => Instruction::LineF { opcode },
+        _ => unreachable!("4-bit value cannot exceed 15"),
+    }
 }
 
 fn decode_group_0(opcode: u16) -> Instruction {
@@ -814,17 +805,6 @@ fn decode_immediate_alu(opcode: u16) -> Option<Instruction> {
     None
 }
 
-fn decode_move_byte(opcode: u16) -> Instruction {
-    decode_move(opcode, Size::Byte)
-}
-
-fn decode_move_long(opcode: u16) -> Instruction {
-    decode_move(opcode, Size::Long)
-}
-
-fn decode_move_word(opcode: u16) -> Instruction {
-    decode_move(opcode, Size::Word)
-}
 
 fn decode_move(opcode: u16, size: Size) -> Instruction {
     // MOVE instruction format:
@@ -858,7 +838,7 @@ fn decode_move(opcode: u16, size: Size) -> Instruction {
         None => return Instruction::Unimplemented { opcode },
     };
 
-    if !dst.is_valid_destination() {
+    if !dst.is_alterable() {
         return Instruction::Unimplemented { opcode };
     }
 
@@ -1001,32 +981,7 @@ fn decode_group_4_arithmetic(opcode: u16) -> Option<Instruction> {
     // NBCD
     if opcode & 0xFFC0 == 0x4800 {
         if let Some(dst) = AddressingMode::from_mode_reg(mode, reg) {
-            if dst.is_valid_destination()
-                && matches!(
-                    dst,
-                    AddressingMode::DataRegister(_)
-                        | AddressingMode::AddressPreDecrement(_)
-                        | AddressingMode::AddressDisplacement(_)
-                        | AddressingMode::AddressIndex(_)
-                        | AddressingMode::AbsoluteShort
-                        | AddressingMode::AbsoluteLong
-                )
-            {
-                return Some(Instruction::Nbcd { dst });
-            }
-            // Nbcd requires data alterable. is_valid_destination checks mostly immediate logic.
-            // Check manual: NBCD <ea>. <ea> is Data Alterable.
-            // DataRegister, (An), (An)+, -(An), d(An), d(An,xi), xxx.W, xxx.L.
-            // An direct is NOT data alterable.
-            // My AddressingMode check is approximate.
-            // I'll assume valid destination for now if not An.
-            if !matches!(
-                dst,
-                AddressingMode::AddressRegister(_)
-                    | AddressingMode::Immediate
-                    | AddressingMode::PcDisplacement
-                    | AddressingMode::PcIndex
-            ) {
+            if dst.is_data_alterable() {
                 return Some(Instruction::Nbcd { dst });
             }
         }
@@ -1477,6 +1432,8 @@ fn decode_shifts(opcode: u16) -> Instruction {
 
     // Memory shifts (size = 0b11)
     if size_bits == 0b11 {
+        // For memory shifts, the type is encoded in bits 10-9 (part of what is count/reg in register shifts)
+        let op_type = ((opcode >> 9) & 0x03) as u8;
         let ea_mode = ((opcode >> 3) & 0x07) as u8;
         let ea_reg = (opcode & 0x07) as u8;
         if let Some(dst) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
