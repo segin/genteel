@@ -808,3 +808,86 @@ fn fetch_postinc_operand<M: MemoryInterface>(
     cpu.a[reg as usize] = addr.wrapping_add(size.bytes());
     val
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cpu::flags;
+    use crate::cpu::Cpu;
+    use crate::memory::Memory;
+
+    fn create_test_setup() -> (Cpu, Memory) {
+        let mut memory = Memory::new(0x10000);
+        let mut cpu = Cpu::new(&mut memory);
+        cpu.pc = 0x1000;
+        // Initialize SP to avoid double fault on exception
+        cpu.a[7] = 0x8000;
+        cpu.sr |= flags::SUPERVISOR;
+        (cpu, memory)
+    }
+
+    #[test]
+    fn test_chk_within_bounds() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // CHK.W D0, D1
+        // D1 (dst) = 5
+        // D0 (bound) = 10
+        cpu.d[1] = 5;
+        cpu.d[0] = 10;
+
+        exec_chk(&mut cpu, AddressingMode::DataRegister(0), 1, &mut memory);
+
+        // Should NOT trigger exception 6
+        assert!(!cpu.pending_exception);
+
+        // N flag should be cleared (val >= 0)
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_chk_less_than_zero() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // CHK.W D0, D1
+        // D1 (dst) = -5 (0xFFFB)
+        // D0 (bound) = 10
+        cpu.d[1] = 0xFFFFFFFB; // Sign-extended word -5
+        cpu.d[0] = 10;
+
+        // Set exception vector 6 to a known address
+        memory.write_long(6 * 4, 0x2000);
+
+        exec_chk(&mut cpu, AddressingMode::DataRegister(0), 1, &mut memory);
+
+        // Should trigger exception 6
+        assert!(cpu.pending_exception);
+        assert_eq!(cpu.pc, 0x2000);
+
+        // N flag should be SET (val < 0)
+        assert!(cpu.get_flag(flags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_chk_greater_than_bound() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // CHK.W D0, D1
+        // D1 (dst) = 15
+        // D0 (bound) = 10
+        cpu.d[1] = 15;
+        cpu.d[0] = 10;
+
+        // Set exception vector 6 to a known address
+        memory.write_long(6 * 4, 0x3000);
+
+        exec_chk(&mut cpu, AddressingMode::DataRegister(0), 1, &mut memory);
+
+        // Should trigger exception 6
+        assert!(cpu.pending_exception);
+        assert_eq!(cpu.pc, 0x3000);
+
+        // N flag should be CLEARED (val > bound)
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+    }
+}
