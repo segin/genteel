@@ -612,4 +612,91 @@ mod tests {
         assert_eq!(io.port1.controller_type, ControllerType::SixButton);
         assert_eq!(io.port2.controller_type, ControllerType::None);
     }
+
+    #[test]
+    fn test_6button_timeout_boundary_exhaustive() {
+        let mut port = ControllerPort::new(ControllerType::SixButton);
+
+        // Iterate through all possible counter states (1 to 7)
+        // Note: 0 is the initial state, so we test 1..8
+        for i in 1..8 {
+            // Reset port to clean state
+            port.reset();
+            // Reset sets th_timer=0, th_counter=0.
+
+            // Advance to state 'i'
+            for _ in 0..i {
+                // Toggle TH High -> Low -> High
+                port.write_data(0x00); // Low (increments counter)
+                port.write_data(0x40); // High
+            }
+            assert_eq!(port.th_counter, i % 8);
+
+            // Now test boundary
+            // 1. Accumulate exactly 1500 cycles
+            // We can do it in steps to verify accumulation
+            port.update(1000);
+            port.update(500);
+
+            // Should NOT have reset yet
+            assert_eq!(port.th_counter, i % 8, "Counter reset prematurely at 1500 cycles for state {}", i);
+
+            // 2. Add 1 more cycle -> 1501
+            port.update(1);
+
+            // Should HAVE reset
+            assert_eq!(port.th_counter, 0, "Counter failed to reset at 1501 cycles for state {}", i);
+        }
+    }
+
+    #[test]
+    fn test_6button_timeout_period() {
+        let mut port = ControllerPort::new(ControllerType::SixButton);
+
+        // Move to state 1
+        port.write_data(0x00); // Fall -> state 1, timer reset
+        assert_eq!(port.th_counter, 1);
+        assert_eq!(port.th_timer, 0);
+
+        // Wait 1000 cycles (Low)
+        port.update(1000);
+
+        // Rise (High) - verify timer NOT reset (based on current implementation)
+        port.write_data(0x40);
+        // Note: Implementation of write_data only resets timer on Fall.
+        assert_eq!(port.th_timer, 1000);
+
+        // Wait 400 cycles (High) -> Total 1400
+        port.update(400);
+        assert_eq!(port.th_timer, 1400);
+        assert_eq!(port.th_counter, 1); // No reset
+
+        // Wait 101 cycles (High) -> Total 1501
+        port.update(101);
+        assert_eq!(port.th_timer, 1501);
+        assert_eq!(port.th_counter, 0); // Reset!
+    }
+
+    #[test]
+    fn test_6button_rapid_toggling() {
+        let mut port = ControllerPort::new(ControllerType::SixButton);
+
+        // Cycle through states multiple times
+        for _ in 0..20 {
+            let current_counter = port.th_counter;
+            let next_counter = (current_counter + 1) % 8;
+
+            // Wait 1000 cycles (safe, < 1500)
+            port.update(1000);
+
+            // Toggle
+            port.write_data(0x00); // Fall
+            assert_eq!(port.th_counter, next_counter);
+            // Verify timer reset on fall
+            assert_eq!(port.th_timer, 0);
+
+            port.write_data(0x40); // Rise
+            assert_eq!(port.th_counter, next_counter);
+        }
+    }
 }
