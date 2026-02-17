@@ -281,7 +281,7 @@ pub fn exec_rotate<M: MemoryInterface>(
         if effective_count == 0 {
             result = val;
             if count_val > 0 {
-                carry = (val & msb) != 0;
+                carry = (val & 1) != 0;
             }
         } else {
             result = ((val << effective_count) | (val >> (bits - effective_count))) & mask;
@@ -290,7 +290,7 @@ pub fn exec_rotate<M: MemoryInterface>(
     } else if effective_count == 0 {
         result = val;
         if count_val > 0 {
-            carry = (val & 1) != 0;
+            carry = (val & msb) != 0;
         }
     } else {
         result = ((val >> effective_count) | (val << (bits - effective_count))) & mask;
@@ -513,7 +513,7 @@ pub fn exec_tas<M: MemoryInterface>(cpu: &mut Cpu, dst: AddressingMode, memory: 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cpu::decoder::{AddressingMode, Size};
+    use crate::cpu::decoder::{AddressingMode, ShiftCount, Size};
     use crate::cpu::flags;
     use crate::cpu::Cpu;
     use crate::memory::Memory;
@@ -639,5 +639,243 @@ mod tests {
         assert!(cpu.get_flag(flags::NEGATIVE));
         assert!(!cpu.get_flag(flags::ZERO));
         assert_eq!(cycles, 8); // 4 (base) + 0 (DataReg) + 4 (AddrIndirect)
+    }
+
+    #[test]
+    fn test_exec_rol_byte_1() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x80; // 1000 0000
+        // ROL.B #1, D0
+        let cycles = exec_rotate(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(1),
+            true, // left
+            false,
+            &mut memory,
+        );
+
+        // 0x80 (1000 0000) ROL 1 -> 0x01 (0000 0001).
+        // C = 1 (bit 7)
+        assert_eq!(cpu.d[0], 0x01);
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(cpu.get_flag(flags::CARRY));
+        assert_eq!(cycles, 6 + 2 * 1);
+    }
+
+    #[test]
+    fn test_exec_ror_byte_1() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x01; // 0000 0001
+        // ROR.B #1, D0
+        let cycles = exec_rotate(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(1),
+            false, // right
+            false,
+            &mut memory,
+        );
+
+        // 0x01 (0000 0001) ROR 1 -> 0x80 (1000 0000).
+        // C = 1 (bit 0)
+        assert_eq!(cpu.d[0], 0x80);
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert!(cpu.get_flag(flags::CARRY));
+        assert_eq!(cycles, 6 + 2 * 1);
+    }
+
+    #[test]
+    fn test_exec_rol_long_4() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0xF0000000;
+        // ROL.L #4, D0
+        let cycles = exec_rotate(
+            &mut cpu,
+            Size::Long,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(4),
+            true, // left
+            false,
+            &mut memory,
+        );
+
+        // 0xF0000000 ROL 4 -> 0x0000000F.
+        // Last bit out?
+        // 1111 0000 ...
+        // Shift 1: 1110 0000 ... C=1
+        // Shift 2: 1100 0000 ... C=1
+        // Shift 3: 1000 0000 ... C=1
+        // Shift 4: 0000 0000 ... C=1
+        assert_eq!(cpu.d[0], 0x0000000F);
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(cpu.get_flag(flags::CARRY));
+        assert_eq!(cycles, 6 + 2 * 4);
+    }
+
+    #[test]
+    fn test_exec_rol_byte_modulo_8() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x80; // 1000 0000
+        // ROL.B #8, D0
+        let cycles = exec_rotate(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(8),
+            true, // left
+            false,
+            &mut memory,
+        );
+
+        // 0x80 ROL 8 -> 0x80.
+        // Last bit out?
+        // Shift 7: 0x40 (0100 0000).
+        // Shift 8: 0x80. Last bit out was bit 7 of 0x40 (0). C=0.
+
+        assert_eq!(cpu.d[0], 0x80);
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::CARRY), "Carry should be clear for ROL 8 on 0x80");
+        assert_eq!(cycles, 6 + 2 * 8);
+    }
+
+    #[test]
+    fn test_exec_ror_byte_modulo_8() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x01; // 0000 0001
+        // ROR.B #8, D0
+        let cycles = exec_rotate(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(8),
+            false, // right
+            false,
+            &mut memory,
+        );
+
+        // 0x01 ROR 8 -> 0x01.
+        // Last bit out?
+        // Shift 7: 0x02 (0000 0010).
+        // Shift 8: 0x01. Last bit out was bit 0 of 0x02 (0). C=0.
+
+        assert_eq!(cpu.d[0], 0x01);
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::CARRY), "Carry should be clear for ROR 8 on 0x01");
+        assert_eq!(cycles, 6 + 2 * 8);
+    }
+
+    #[test]
+    fn test_exec_rol_byte_modulo_8_carry_set() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x40; // 0100 0000
+        // ROL.B #8, D0
+        exec_rotate(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(8),
+            true, // left
+            false,
+            &mut memory,
+        );
+
+        // 0x40 (0100 0000).
+        // Shift 7: 0000 0010? No.
+        // 0x40 << 7 = 0000 0000 (top bit shifted out)
+        // Wait, rotate 7: 0x02 (0000 0010)?
+        // 0100 0000 -> 1000 0000 -> 0000 0001 -> 0000 0010.
+        // 1->2->3->4->5->6->7.
+        // 0x40 is bit 6.
+        // Shift 1 (left): bit 7 (0x80).
+        // Shift 2 (left): bit 0 (0x01).
+        // Shift 3: 0x02.
+        // ...
+        // Shift 7: bit 5 (0x20).
+        // Wait.
+        // Pos 6 -> 7 -> 0 -> 1 -> 2 -> 3 -> 4 -> 5.
+        // Yes, after 7 shifts, bit is at pos 5 (0x20).
+        // Next shift (8): 0x20 << 1 = 0x40.
+        // MSB of 0x20 is 0. C=0.
+
+        // Is there any value that sets C for ROL 8?
+        // We need MSB of intermediate value (after 7 shifts) to be 1.
+        // Intermediate value is original value ROL 7.
+        // MSB of (x ROL 7) == 1.
+        // (x ROL 7) & 0x80 != 0.
+        // x ROL 7 means bit 0 moved to 7?
+        // Bit 0 at start -> 1 -> 2 ... -> 7.
+        // Yes.
+        // So if Bit 0 of original is 1, then after 7 shifts, it is at Bit 7.
+        // Then shift 8 moves it to Carry.
+        // So if x = 0x01.
+        // ROL 8 should set Carry.
+
+        cpu.d[0] = 0x01;
+        exec_rotate(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(8),
+            true, // left
+            false,
+            &mut memory,
+        );
+        // Original 0x01. Bit 0 is 1. C should be 1.
+        assert!(cpu.get_flag(flags::CARRY), "Carry should be set for ROL 8 on 0x01");
+    }
+
+    #[test]
+    fn test_exec_ror_byte_modulo_8_carry_set() {
+        let (mut cpu, mut memory) = create_test_setup();
+        // We need LSB of (x ROR 7) to be 1.
+        // x ROR 7 means Bit 7 moved to 0?
+        // Bit 7 -> 6 -> ... -> 0. Yes.
+        // So if Bit 7 of original is 1.
+        // Then after 7 ROR, it is at Bit 0.
+        // Then shift 8 moves it to Carry.
+
+        cpu.d[0] = 0x80; // 1000 0000
+        // ROR.B #8, D0
+        exec_rotate(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(8),
+            false, // right
+            false,
+            &mut memory,
+        );
+
+        assert!(cpu.get_flag(flags::CARRY), "Carry should be set for ROR 8 on 0x80");
+    }
+
+    #[test]
+    fn test_exec_rotate_zero_count() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0xFFFFFFFF;
+        cpu.set_flag(flags::CARRY, true);
+
+        // ROL.L #0, D0
+        let cycles = exec_rotate(
+            &mut cpu,
+            Size::Long,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(0),
+            true, // left
+            false,
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[0], 0xFFFFFFFF);
+        assert!(!cpu.get_flag(flags::CARRY)); // Cleared
+        assert_eq!(cycles, 6);
     }
 }
