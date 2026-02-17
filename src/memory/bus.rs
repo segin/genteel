@@ -165,11 +165,15 @@ impl Bus {
                 // VDP data port
                 (self.vdp.read_data() >> 8) as u8 // Placeholder: usually word-only
             }
-            0xC00004..=0xC00005 => {
-                // VDP status
-                (self.vdp.read_status() >> 8) as u8
+            0xC00004..=0xC00007 => {
+                // VDP status (mirrored)
+                let val = self.vdp.read_status();
+                if (addr & 1) == 0 {
+                    (val >> 8) as u8
+                } else {
+                    (val & 0xFF) as u8
+                }
             }
-            0xC00006..=0xC00007 => (self.vdp.read_status() & 0xFF) as u8,
             0xC00008..=0xC0000F => {
                 // HV counter
                 (self.vdp.read_hv_counter() >> 8) as u8 // Just a stub for byte read
