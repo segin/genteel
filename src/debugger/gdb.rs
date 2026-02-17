@@ -622,7 +622,7 @@ impl GdbServer {
         if let Some(stripped) = cmd.strip_prefix("auth ") {
             let provided_pass = stripped.trim();
             if let Some(ref correct_pass) = self.password {
-                if provided_pass == correct_pass {
+                if constant_time_eq(provided_pass.as_bytes(), correct_pass.as_bytes()) {
                     self.authenticated = true;
                     return "OK".to_string();
                 } else {
@@ -657,6 +657,16 @@ impl GdbServer {
     pub fn is_breakpoint(&self, addr: u32) -> bool {
         self.breakpoints.contains(&addr)
     }
+}
+
+/// Constant-time comparison for byte slices.
+/// Returns true if slices are equal, false otherwise.
+/// For slices of equal length, the comparison time is independent of the values.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b).fold(0, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 /// M68k register state for GDB
@@ -1155,5 +1165,15 @@ mod tests {
             "OK"
         );
         assert_eq!(server.process_command("Z1,1000,4", &mut regs, &mut mem), "");
+    }
+
+    #[test]
+    fn test_constant_time_eq_logic() {
+        assert!(constant_time_eq(b"password", b"password"));
+        assert!(!constant_time_eq(b"password", b"passworx"));
+        assert!(!constant_time_eq(b"password", b"pass"));
+        assert!(!constant_time_eq(b"password", b"password123"));
+        assert!(constant_time_eq(b"", b""));
+        assert!(!constant_time_eq(b"a", b"b"));
     }
 }
