@@ -205,6 +205,11 @@ impl ControllerPort {
 
     /// Read 6-button controller data
     fn read_6button(&self) -> u8 {
+        // If TH=1, standard 3-button logic applies
+        if self.th_state {
+            return self.read_3button();
+        }
+
         match self.th_counter {
             3 => self.read_cycle3(),
             5 => self.read_extra_buttons(),
@@ -215,11 +220,6 @@ impl ControllerPort {
 
     /// Read data for cycle 3 (controller identification)
     fn read_cycle3(&self) -> u8 {
-        // If TH=1, standard 3-button logic applies
-        if self.th_state {
-            return self.read_3button();
-        }
-
         // Fourth cycle: TH=0 returns controller ID in low nibble
         // Note: Original implementation returns Active High (1=Pressed) for Up/Down
         // and sets bits 2-3 to 1. This behavior is preserved here.
@@ -235,11 +235,6 @@ impl ControllerPort {
 
     /// Read data for cycle 5 (extra buttons X, Y, Z, Mode)
     fn read_extra_buttons(&self) -> u8 {
-        // If TH=1, standard 3-button logic applies
-        if self.th_state {
-            return self.read_3button();
-        }
-
         // Sixth cycle: TH=0 returns X, Y, Z, Mode
         // Note: Original implementation returns Active High (1=Pressed) for these buttons.
         // This behavior is preserved here.
