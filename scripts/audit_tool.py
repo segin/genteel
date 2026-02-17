@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import sys
 import re
 import json
 import csv
@@ -9,6 +10,11 @@ from datetime import datetime
 # =============================================================================
 # Security & Quality Audit Tool for genteel
 # =============================================================================
+
+# Ensure script is run from repository root
+if not os.path.exists("Cargo.toml"):
+    print("Error: This script must be run from the repository root (e.g., `python3 scripts/audit_tool.py`).")
+    sys.exit(1)
 
 REPORT_DIR = "audit_reports"
 FINDINGS_JSON = os.path.join(REPORT_DIR, "findings.json")
