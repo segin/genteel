@@ -259,10 +259,9 @@ impl Condition {
     }
 }
 
-/// Decoded M68k instruction
+/// Data Movement Instructions
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Instruction {
-    // Data Movement
+pub enum DataInstruction {
     Move {
         size: Size,
         src: AddressingMode,
@@ -299,8 +298,24 @@ pub enum Instruction {
         an: u8,
         direction: bool,
     },
+    Swap {
+        reg: u8,
+    },
+    Ext {
+        size: Size,
+        reg: u8,
+    },
+    Movem {
+        size: Size,
+        direction: bool,
+        mask: u16,
+        ea: AddressingMode,
+    },
+}
 
-    // Arithmetic
+/// Arithmetic Instructions
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArithmeticInstruction {
     Add {
         size: Size,
         src: AddressingMode,
@@ -361,10 +376,6 @@ pub enum Instruction {
         size: Size,
         dst: AddressingMode,
     },
-    Ext {
-        size: Size,
-        reg: u8,
-    },
     Abcd {
         src_reg: u8,
         dst_reg: u8,
@@ -398,17 +409,34 @@ pub enum Instruction {
         src: AddressingMode,
         dst_reg: u8,
     },
-    Tas {
+    Cmp {
+        size: Size,
+        src: AddressingMode,
+        dst_reg: u8,
+    },
+    CmpA {
+        size: Size,
+        src: AddressingMode,
+        dst_reg: u8,
+    },
+    CmpI {
+        size: Size,
         dst: AddressingMode,
     },
-    Movem {
+    CmpM {
         size: Size,
-        direction: bool,
-        mask: u16,
-        ea: AddressingMode,
+        ax: u8,
+        ay: u8,
     },
+    Tst {
+        size: Size,
+        dst: AddressingMode,
+    },
+}
 
-    // Logical
+/// Bit Manipulation and Logical Instructions
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BitsInstruction {
     And {
         size: Size,
         src: AddressingMode,
@@ -442,8 +470,6 @@ pub enum Instruction {
         size: Size,
         dst: AddressingMode,
     },
-
-    // Shifts and Rotates
     Lsl {
         size: Size,
         dst: AddressingMode,
@@ -484,8 +510,6 @@ pub enum Instruction {
         dst: AddressingMode,
         count: ShiftCount,
     },
-
-    // Bit Manipulation
     Btst {
         bit: BitSource,
         dst: AddressingMode,
@@ -502,33 +526,14 @@ pub enum Instruction {
         bit: BitSource,
         dst: AddressingMode,
     },
-
-    // Compare and Test
-    Cmp {
-        size: Size,
-        src: AddressingMode,
-        dst_reg: u8,
-    },
-    CmpA {
-        size: Size,
-        src: AddressingMode,
-        dst_reg: u8,
-    },
-    CmpI {
-        size: Size,
+    Tas {
         dst: AddressingMode,
     },
-    CmpM {
-        size: Size,
-        ax: u8,
-        ay: u8,
-    },
-    Tst {
-        size: Size,
-        dst: AddressingMode,
-    },
+}
 
-    // Branch and Jump
+/// System, Branch, and Control Instructions
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SystemInstruction {
     Bra {
         displacement: i16,
     },
@@ -556,8 +561,6 @@ pub enum Instruction {
     Rts,
     Rte,
     Rtr,
-
-    // Misc
     Nop,
     Reset,
     Stop,
@@ -575,11 +578,6 @@ pub enum Instruction {
     Unlk {
         reg: u8,
     },
-    Swap {
-        reg: u8,
-    },
-
-    // Status Register
     MoveToSr {
         src: AddressingMode,
     },
@@ -595,18 +593,19 @@ pub enum Instruction {
     OriToSr,
     EoriToCcr,
     EoriToSr,
+}
 
-    // Illegal/Unimplemented
+/// Decoded M68k instruction
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Instruction {
+    Data(DataInstruction),
+    Arithmetic(ArithmeticInstruction),
+    Bits(BitsInstruction),
+    System(SystemInstruction),
     Illegal,
-    LineA {
-        opcode: u16,
-    },
-    LineF {
-        opcode: u16,
-    },
-    Unimplemented {
-        opcode: u16,
-    },
+    LineA { opcode: u16 },
+    LineF { opcode: u16 },
+    Unimplemented { opcode: u16 },
 }
 
 /// Shift count source for shift instructions
@@ -635,7 +634,7 @@ impl Default for DecodeCacheEntry {
     fn default() -> Self {
         Self {
             pc: u32::MAX, // Invalid PC
-            instruction: Instruction::Nop,
+            instruction: Instruction::System(SystemInstruction::Nop),
         }
     }
 }
@@ -715,12 +714,12 @@ fn decode_movep(opcode: u16) -> Option<Instruction> {
                 Size::Word
             };
             let direction = (op & 0x02) != 0; // 0 = mem to reg, 1 = reg to mem
-            return Some(Instruction::Movep {
+            return Some(Instruction::Data(DataInstruction::Movep {
                 size,
                 reg,
                 an,
                 direction,
-            });
+            }));
         }
     }
     None
@@ -738,10 +737,10 @@ fn decode_bit_dynamic(opcode: u16) -> Option<Instruction> {
             let bit = BitSource::Register(reg);
 
             return Some(match op {
-                0b00 => Instruction::Btst { bit, dst },
-                0b01 => Instruction::Bchg { bit, dst },
-                0b10 => Instruction::Bclr { bit, dst },
-                0b11 => Instruction::Bset { bit, dst },
+                0b00 => Instruction::Bits(BitsInstruction::Btst { bit, dst }),
+                0b01 => Instruction::Bits(BitsInstruction::Bchg { bit, dst }),
+                0b10 => Instruction::Bits(BitsInstruction::Bclr { bit, dst }),
+                0b11 => Instruction::Bits(BitsInstruction::Bset { bit, dst }),
                 _ => unreachable!(),
             });
         }
@@ -759,10 +758,10 @@ fn decode_static_bit(opcode: u16) -> Option<Instruction> {
             let bit_op = (opcode >> 6) & 0x03;
             let bit = BitSource::Immediate;
             return Some(match bit_op {
-                0b00 => Instruction::Btst { bit, dst },
-                0b01 => Instruction::Bchg { bit, dst },
-                0b10 => Instruction::Bclr { bit, dst },
-                0b11 => Instruction::Bset { bit, dst },
+                0b00 => Instruction::Bits(BitsInstruction::Btst { bit, dst }),
+                0b01 => Instruction::Bits(BitsInstruction::Bchg { bit, dst }),
+                0b10 => Instruction::Bits(BitsInstruction::Bclr { bit, dst }),
+                0b11 => Instruction::Bits(BitsInstruction::Bset { bit, dst }),
                 _ => unreachable!(),
             });
         }
@@ -779,12 +778,12 @@ fn decode_ccr_sr_immediate(opcode: u16) -> Option<Instruction> {
         let op = (opcode >> 9) & 0x07;
         let size_bits = ((opcode >> 6) & 0x03) as u8;
         return Some(match (op, size_bits) {
-            (0b000, 0b00) => Instruction::OriToCcr,
-            (0b000, 0b01) => Instruction::OriToSr,
-            (0b001, 0b00) => Instruction::AndiToCcr,
-            (0b001, 0b01) => Instruction::AndiToSr,
-            (0b101, 0b00) => Instruction::EoriToCcr,
-            (0b101, 0b01) => Instruction::EoriToSr,
+            (0b000, 0b00) => Instruction::System(SystemInstruction::OriToCcr),
+            (0b000, 0b01) => Instruction::System(SystemInstruction::OriToSr),
+            (0b001, 0b00) => Instruction::System(SystemInstruction::AndiToCcr),
+            (0b001, 0b01) => Instruction::System(SystemInstruction::AndiToSr),
+            (0b101, 0b00) => Instruction::System(SystemInstruction::EoriToCcr),
+            (0b101, 0b01) => Instruction::System(SystemInstruction::EoriToSr),
             _ => Instruction::Unimplemented { opcode },
         });
     }
@@ -800,13 +799,13 @@ fn decode_immediate_alu(opcode: u16) -> Option<Instruction> {
         let reg = (opcode & 0x07) as u8;
         if let Some(dst) = AddressingMode::from_mode_reg(mode, reg) {
             return Some(match op {
-                0b000 => Instruction::OrI { size, dst },
-                0b001 => Instruction::AndI { size, dst },
-                0b010 => Instruction::SubI { size, dst },
-                0b011 => Instruction::AddI { size, dst },
+                0b000 => Instruction::Bits(BitsInstruction::OrI { size, dst }),
+                0b001 => Instruction::Bits(BitsInstruction::AndI { size, dst }),
+                0b010 => Instruction::Arithmetic(ArithmeticInstruction::SubI { size, dst }),
+                0b011 => Instruction::Arithmetic(ArithmeticInstruction::AddI { size, dst }),
                 // 0b100 is bit/CCR ops, handled elsewhere
-                0b101 => Instruction::EorI { size, dst },
-                0b110 => Instruction::CmpI { size, dst },
+                0b101 => Instruction::Bits(BitsInstruction::EorI { size, dst }),
+                0b110 => Instruction::Arithmetic(ArithmeticInstruction::CmpI { size, dst }),
                 _ => return None,
             });
         }
@@ -850,7 +849,7 @@ fn decode_move(opcode: u16, size: Size) -> Instruction {
         if size == Size::Byte {
             return Instruction::Unimplemented { opcode };
         }
-        return Instruction::MoveA { size, src, dst_reg };
+        return Instruction::Data(DataInstruction::MoveA { size, src, dst_reg });
     }
 
     let dst = match AddressingMode::from_mode_reg(dst_mode, dst_reg) {
@@ -862,7 +861,7 @@ fn decode_move(opcode: u16, size: Size) -> Instruction {
         return Instruction::Unimplemented { opcode };
     }
 
-    Instruction::Move { size, src, dst }
+    Instruction::Data(DataInstruction::Move { size, src, dst })
 }
 
 fn decode_group_4(opcode: u16) -> Instruction {
@@ -880,32 +879,42 @@ fn decode_group_4_misc(opcode: u16) -> Option<Instruction> {
     match opcode & 0xFFF8 {
         0x4E70 => {
             return Some(match reg {
-                0 => Instruction::Reset,
-                1 => Instruction::Nop,
-                2 => Instruction::Stop,
-                3 => Instruction::Rte,
-                5 => Instruction::Rts,
-                6 => Instruction::TrapV,
-                7 => Instruction::Rtr,
+                0 => Instruction::System(SystemInstruction::Reset),
+                1 => Instruction::System(SystemInstruction::Nop),
+                2 => Instruction::System(SystemInstruction::Stop),
+                3 => Instruction::System(SystemInstruction::Rte),
+                5 => Instruction::System(SystemInstruction::Rts),
+                6 => Instruction::System(SystemInstruction::TrapV),
+                7 => Instruction::System(SystemInstruction::Rtr),
                 _ => return None,
             })
         }
-        0x4E50 => return Some(Instruction::Link { reg }),
-        0x4E58 => return Some(Instruction::Unlk { reg }),
-        0x4E60 => return Some(Instruction::MoveUsp { reg, to_usp: true }),
-        0x4E68 => return Some(Instruction::MoveUsp { reg, to_usp: false }),
-        0x4840 => return Some(Instruction::Swap { reg }),
+        0x4E50 => return Some(Instruction::System(SystemInstruction::Link { reg })),
+        0x4E58 => return Some(Instruction::System(SystemInstruction::Unlk { reg })),
+        0x4E60 => {
+            return Some(Instruction::System(SystemInstruction::MoveUsp {
+                reg,
+                to_usp: true,
+            }))
+        }
+        0x4E68 => {
+            return Some(Instruction::System(SystemInstruction::MoveUsp {
+                reg,
+                to_usp: false,
+            }))
+        }
+        0x4840 => return Some(Instruction::Data(DataInstruction::Swap { reg })),
         0x4880 => {
-            return Some(Instruction::Ext {
+            return Some(Instruction::Data(DataInstruction::Ext {
                 size: Size::Word,
                 reg,
-            })
+            }))
         }
         0x48C0 => {
-            return Some(Instruction::Ext {
+            return Some(Instruction::Data(DataInstruction::Ext {
                 size: Size::Long,
                 reg,
-            })
+            }))
         }
 
         _ => {}
@@ -913,9 +922,9 @@ fn decode_group_4_misc(opcode: u16) -> Option<Instruction> {
 
     // TRAP
     if opcode & 0xFFF0 == 0x4E40 {
-        return Some(Instruction::Trap {
+        return Some(Instruction::System(SystemInstruction::Trap {
             vector: (opcode & 0x0F) as u8,
-        });
+        }));
     }
 
     // ILLEGAL - 4AFC
@@ -933,28 +942,28 @@ fn decode_group_4_control(opcode: u16) -> Option<Instruction> {
     if opcode & 0xF1C0 == 0x41C0 {
         let dst_reg = ((opcode >> 9) & 0x07) as u8;
         if let Some(src) = AddressingMode::from_mode_reg(mode, reg) {
-            return Some(Instruction::Lea { src, dst_reg });
+            return Some(Instruction::Data(DataInstruction::Lea { src, dst_reg }));
         }
     }
 
     // PEA
     if opcode & 0xFFC0 == 0x4840 && mode != 0 {
         if let Some(src) = AddressingMode::from_mode_reg(mode, reg) {
-            return Some(Instruction::Pea { src });
+            return Some(Instruction::Data(DataInstruction::Pea { src }));
         }
     }
 
     // JMP
     if opcode & 0xFFC0 == 0x4EC0 {
         if let Some(dst) = AddressingMode::from_mode_reg(mode, reg) {
-            return Some(Instruction::Jmp { dst });
+            return Some(Instruction::System(SystemInstruction::Jmp { dst }));
         }
     }
 
     // JSR
     if opcode & 0xFFC0 == 0x4E80 {
         if let Some(dst) = AddressingMode::from_mode_reg(mode, reg) {
-            return Some(Instruction::Jsr { dst });
+            return Some(Instruction::System(SystemInstruction::Jsr { dst }));
         }
     }
 
@@ -963,7 +972,10 @@ fn decode_group_4_control(opcode: u16) -> Option<Instruction> {
     if opcode & 0xF1C0 == 0x4180 {
         let dst_reg = ((opcode >> 9) & 0x07) as u8;
         if let Some(src) = AddressingMode::from_mode_reg(mode, reg) {
-            return Some(Instruction::Chk { src, dst_reg });
+            return Some(Instruction::Arithmetic(ArithmeticInstruction::Chk {
+                src,
+                dst_reg,
+            }));
         }
     }
     None
@@ -983,12 +995,12 @@ fn decode_group_4_movem(opcode: u16) -> Option<Instruction> {
         let reg = (opcode & 0x07) as u8;
         if let Some(ea) = AddressingMode::from_mode_reg(mode, reg) {
             // Mask is in extension word, but we'll read it during execution
-            return Some(Instruction::Movem {
+            return Some(Instruction::Data(DataInstruction::Movem {
                 size,
                 direction: to_memory,
                 mask: 0,
                 ea,
-            });
+            }));
         }
     }
     None
@@ -1012,7 +1024,7 @@ fn decode_group_4_arithmetic(opcode: u16) -> Option<Instruction> {
                         | AddressingMode::AbsoluteLong
                 )
             {
-                return Some(Instruction::Nbcd { dst });
+                return Some(Instruction::Arithmetic(ArithmeticInstruction::Nbcd { dst }));
             }
             // Nbcd requires data alterable. is_valid_destination checks mostly immediate logic.
             // Check manual: NBCD <ea>. <ea> is Data Alterable.
@@ -1027,7 +1039,7 @@ fn decode_group_4_arithmetic(opcode: u16) -> Option<Instruction> {
                     | AddressingMode::PcDisplacement
                     | AddressingMode::PcIndex
             ) {
-                return Some(Instruction::Nbcd { dst });
+                return Some(Instruction::Arithmetic(ArithmeticInstruction::Nbcd { dst }));
             }
         }
     }
@@ -1035,7 +1047,7 @@ fn decode_group_4_arithmetic(opcode: u16) -> Option<Instruction> {
     // TAS - 0100 1010 11 mmm rrr (4AC0)
     if opcode & 0xFFC0 == 0x4AC0 {
         if let Some(dst) = AddressingMode::from_mode_reg(mode, reg) {
-            return Some(Instruction::Tas { dst });
+            return Some(Instruction::Bits(BitsInstruction::Tas { dst }));
         }
     }
 
@@ -1045,11 +1057,26 @@ fn decode_group_4_arithmetic(opcode: u16) -> Option<Instruction> {
     if let Some(size) = Size::from_bits(bits_7_6 as u8) {
         if let Some(dst) = AddressingMode::from_mode_reg(mode, reg) {
             match bits_11_8 {
-                0x0 => return Some(Instruction::NegX { size, dst }),
-                0x2 => return Some(Instruction::Clr { size, dst }),
-                0x4 => return Some(Instruction::Neg { size, dst }),
-                0x6 => return Some(Instruction::Not { size, dst }),
-                0xA => return Some(Instruction::Tst { size, dst }),
+                0x0 => {
+                    return Some(Instruction::Arithmetic(ArithmeticInstruction::NegX {
+                        size,
+                        dst,
+                    }))
+                }
+                0x2 => return Some(Instruction::Data(DataInstruction::Clr { size, dst })),
+                0x4 => {
+                    return Some(Instruction::Arithmetic(ArithmeticInstruction::Neg {
+                        size,
+                        dst,
+                    }))
+                }
+                0x6 => return Some(Instruction::Bits(BitsInstruction::Not { size, dst })),
+                0xA => {
+                    return Some(Instruction::Arithmetic(ArithmeticInstruction::Tst {
+                        size,
+                        dst,
+                    }))
+                }
                 _ => {}
             };
         }
@@ -1058,21 +1085,21 @@ fn decode_group_4_arithmetic(opcode: u16) -> Option<Instruction> {
     // MOVE from SR
     if opcode & 0xFFC0 == 0x40C0 {
         if let Some(dst) = AddressingMode::from_mode_reg(mode, reg) {
-            return Some(Instruction::MoveFromSr { dst });
+            return Some(Instruction::System(SystemInstruction::MoveFromSr { dst }));
         }
     }
 
     // MOVE to CCR
     if opcode & 0xFFC0 == 0x44C0 {
         if let Some(src) = AddressingMode::from_mode_reg(mode, reg) {
-            return Some(Instruction::MoveToCcr { src });
+            return Some(Instruction::System(SystemInstruction::MoveToCcr { src }));
         }
     }
 
     // MOVE to SR
     if opcode & 0xFFC0 == 0x46C0 {
         if let Some(src) = AddressingMode::from_mode_reg(mode, reg) {
-            return Some(Instruction::MoveToSr { src });
+            return Some(Instruction::System(SystemInstruction::MoveToSr { src }));
         }
     }
     None
@@ -1090,14 +1117,14 @@ fn decode_group_5(opcode: u16) -> Instruction {
     // DBcc
     if size_bits == 0b11 && mode == 0b001 {
         let condition = Condition::from_bits(((opcode >> 8) & 0x0F) as u8);
-        return Instruction::DBcc { condition, reg };
+        return Instruction::System(SystemInstruction::DBcc { condition, reg });
     }
 
     // Scc
     if size_bits == 0b11 && mode != 0b001 {
         let condition = Condition::from_bits(((opcode >> 8) & 0x0F) as u8);
         if let Some(dst) = AddressingMode::from_mode_reg(mode, reg) {
-            return Instruction::Scc { condition, dst };
+            return Instruction::System(SystemInstruction::Scc { condition, dst });
         }
     }
 
@@ -1110,9 +1137,9 @@ fn decode_group_5(opcode: u16) -> Instruction {
 
             let is_sub = (opcode >> 8) & 0x01 != 0;
             if is_sub {
-                return Instruction::SubQ { size, dst, data };
+                return Instruction::Arithmetic(ArithmeticInstruction::SubQ { size, dst, data });
             } else {
-                return Instruction::AddQ { size, dst, data };
+                return Instruction::Arithmetic(ArithmeticInstruction::AddQ { size, dst, data });
             }
         }
     }
@@ -1131,14 +1158,14 @@ fn decode_group_6(opcode: u16) -> Instruction {
     let displacement = displacement_byte as i16;
 
     match condition_bits {
-        0x0 => Instruction::Bra { displacement },
-        0x1 => Instruction::Bsr { displacement },
+        0x0 => Instruction::System(SystemInstruction::Bra { displacement }),
+        0x1 => Instruction::System(SystemInstruction::Bsr { displacement }),
         _ => {
             let condition = Condition::from_bits(condition_bits);
-            Instruction::Bcc {
+            Instruction::System(SystemInstruction::Bcc {
                 condition,
                 displacement,
-            }
+            })
         }
     }
 }
@@ -1155,7 +1182,7 @@ fn decode_moveq(opcode: u16) -> Instruction {
     let dst_reg = ((opcode >> 9) & 0x07) as u8;
     let data = (opcode & 0xFF) as i8;
 
-    Instruction::MoveQ { dst_reg, data }
+    Instruction::Data(DataInstruction::MoveQ { dst_reg, data })
 }
 
 fn decode_group_8(opcode: u16) -> Instruction {
@@ -1171,24 +1198,30 @@ fn decode_group_8(opcode: u16) -> Instruction {
     // 1000 Rx 1 0000 m Ry
     if opcode & 0xF1F0 == 0x8100 {
         let memory_mode = (opcode & 0x0008) != 0;
-        return Instruction::Sbcd {
+        return Instruction::Arithmetic(ArithmeticInstruction::Sbcd {
             src_reg: ea_reg,
             dst_reg: reg,
             memory_mode,
-        };
+        });
     }
 
     // DIVU
     if size_bits == 0b11 && !direction {
         if let Some(src) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
-            return Instruction::DivU { src, dst_reg: reg };
+            return Instruction::Arithmetic(ArithmeticInstruction::DivU {
+                src,
+                dst_reg: reg,
+            });
         }
     }
 
     // DIVS
     if size_bits == 0b11 && direction {
         if let Some(src) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
-            return Instruction::DivS { src, dst_reg: reg };
+            return Instruction::Arithmetic(ArithmeticInstruction::DivS {
+                src,
+                dst_reg: reg,
+            });
         }
     }
 
@@ -1200,12 +1233,12 @@ fn decode_group_8(opcode: u16) -> Instruction {
             } else {
                 (ea, AddressingMode::DataRegister(reg))
             };
-            return Instruction::Or {
+            return Instruction::Bits(BitsInstruction::Or {
                 size,
                 src,
                 dst,
                 direction,
-            };
+            });
         }
     }
 
@@ -1223,12 +1256,12 @@ fn decode_sub(opcode: u16) -> Instruction {
     if direction && (opcode & 0x30) == 0 {
         if let Some(size) = Size::from_bits(size_bits) {
             let memory_mode = (opcode & 0x08) != 0;
-            return Instruction::SubX {
+            return Instruction::Arithmetic(ArithmeticInstruction::SubX {
                 size,
                 src_reg: ea_reg,
                 dst_reg: reg,
                 memory_mode,
-            };
+            });
         }
     }
 
@@ -1236,11 +1269,11 @@ fn decode_sub(opcode: u16) -> Instruction {
     if size_bits == 0b11 {
         let size = if direction { Size::Long } else { Size::Word };
         if let Some(src) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
-            return Instruction::SubA {
+            return Instruction::Arithmetic(ArithmeticInstruction::SubA {
                 size,
                 src,
                 dst_reg: reg,
-            };
+            });
         }
     }
 
@@ -1252,12 +1285,12 @@ fn decode_sub(opcode: u16) -> Instruction {
             } else {
                 (ea, AddressingMode::DataRegister(reg))
             };
-            return Instruction::Sub {
+            return Instruction::Arithmetic(ArithmeticInstruction::Sub {
                 size,
                 src,
                 dst,
                 direction,
-            };
+            });
         }
     }
 
@@ -1276,11 +1309,11 @@ fn decode_group_b(opcode: u16) -> Instruction {
     if (opcode & 0x0138) == 0x0108 {
         let size_bits = ((opcode >> 6) & 0x03) as u8;
         if let Some(size) = Size::from_bits(size_bits) {
-            return Instruction::CmpM {
+            return Instruction::Arithmetic(ArithmeticInstruction::CmpM {
                 size,
                 ax: reg,
                 ay: ea_reg,
-            };
+            });
         }
     }
 
@@ -1292,11 +1325,11 @@ fn decode_group_b(opcode: u16) -> Instruction {
             Size::Long
         };
         if let Some(src) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
-            return Instruction::CmpA {
+            return Instruction::Arithmetic(ArithmeticInstruction::CmpA {
                 size,
                 src,
                 dst_reg: reg,
-            };
+            });
         }
     }
 
@@ -1305,11 +1338,11 @@ fn decode_group_b(opcode: u16) -> Instruction {
         let size_bits = (opmode & 0x03) as u8;
         if let Some(size) = Size::from_bits(size_bits) {
             if let Some(dst) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
-                return Instruction::Eor {
+                return Instruction::Bits(BitsInstruction::Eor {
                     size,
                     src_reg: reg,
                     dst,
-                };
+                });
             }
         }
     }
@@ -1318,11 +1351,11 @@ fn decode_group_b(opcode: u16) -> Instruction {
     let size_bits = (opmode & 0x03) as u8;
     if let Some(size) = Size::from_bits(size_bits) {
         if let Some(src) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
-            return Instruction::Cmp {
+            return Instruction::Arithmetic(ArithmeticInstruction::Cmp {
                 size,
                 src,
                 dst_reg: reg,
-            };
+            });
         }
     }
 
@@ -1342,35 +1375,41 @@ fn decode_group_c(opcode: u16) -> Instruction {
     // 1100 Rx 1 0000 m Ry
     if opcode & 0xF1F0 == 0xC100 {
         let memory_mode = (opcode & 0x0008) != 0;
-        return Instruction::Abcd {
+        return Instruction::Arithmetic(ArithmeticInstruction::Abcd {
             src_reg: ea_reg,
             dst_reg: reg,
             memory_mode,
-        };
+        });
     }
 
     // MULU
     if size_bits == 0b11 && !direction {
         if let Some(src) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
-            return Instruction::MulU { src, dst_reg: reg };
+            return Instruction::Arithmetic(ArithmeticInstruction::MulU {
+                src,
+                dst_reg: reg,
+            });
         }
     }
 
     // MULS
     if size_bits == 0b11 && direction {
         if let Some(src) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
-            return Instruction::MulS { src, dst_reg: reg };
+            return Instruction::Arithmetic(ArithmeticInstruction::MulS {
+                src,
+                dst_reg: reg,
+            });
         }
     }
 
     // EXG
     if opcode & 0x0130 == 0x0100 {
         let mode = ((opcode >> 3) & 0x1F) as u8;
-        return Instruction::Exg {
+        return Instruction::Data(DataInstruction::Exg {
             rx: reg,
             ry: ea_reg,
             mode,
-        };
+        });
     }
 
     // AND
@@ -1381,12 +1420,12 @@ fn decode_group_c(opcode: u16) -> Instruction {
             } else {
                 (ea, AddressingMode::DataRegister(reg))
             };
-            return Instruction::And {
+            return Instruction::Bits(BitsInstruction::And {
                 size,
                 src,
                 dst,
                 direction,
-            };
+            });
         }
     }
 
@@ -1404,12 +1443,12 @@ fn decode_add(opcode: u16) -> Instruction {
     if direction && (opcode & 0x30) == 0 {
         if let Some(size) = Size::from_bits(size_bits) {
             let memory_mode = (opcode & 0x08) != 0;
-            return Instruction::AddX {
+            return Instruction::Arithmetic(ArithmeticInstruction::AddX {
                 size,
                 src_reg: ea_reg,
                 dst_reg: reg,
                 memory_mode,
-            };
+            });
         }
     }
 
@@ -1417,11 +1456,11 @@ fn decode_add(opcode: u16) -> Instruction {
     if size_bits == 0b11 {
         let size = if direction { Size::Long } else { Size::Word };
         if let Some(src) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
-            return Instruction::AddA {
+            return Instruction::Arithmetic(ArithmeticInstruction::AddA {
                 size,
                 src,
                 dst_reg: reg,
-            };
+            });
         }
     }
 
@@ -1433,12 +1472,12 @@ fn decode_add(opcode: u16) -> Instruction {
             } else {
                 (ea, AddressingMode::DataRegister(reg))
             };
-            return Instruction::Add {
+            return Instruction::Arithmetic(ArithmeticInstruction::Add {
                 size,
                 src,
                 dst,
                 direction,
-            };
+            });
         }
     }
 
@@ -1453,14 +1492,14 @@ fn make_shift_instruction(
     count: ShiftCount,
 ) -> Instruction {
     match (op_type, direction) {
-        (0b00, false) => Instruction::Asr { size, dst, count },
-        (0b00, true) => Instruction::Asl { size, dst, count },
-        (0b01, false) => Instruction::Lsr { size, dst, count },
-        (0b01, true) => Instruction::Lsl { size, dst, count },
-        (0b10, false) => Instruction::Roxr { size, dst, count },
-        (0b10, true) => Instruction::Roxl { size, dst, count },
-        (0b11, false) => Instruction::Ror { size, dst, count },
-        (0b11, true) => Instruction::Rol { size, dst, count },
+        (0b00, false) => Instruction::Bits(BitsInstruction::Asr { size, dst, count }),
+        (0b00, true) => Instruction::Bits(BitsInstruction::Asl { size, dst, count }),
+        (0b01, false) => Instruction::Bits(BitsInstruction::Lsr { size, dst, count }),
+        (0b01, true) => Instruction::Bits(BitsInstruction::Lsl { size, dst, count }),
+        (0b10, false) => Instruction::Bits(BitsInstruction::Roxr { size, dst, count }),
+        (0b10, true) => Instruction::Bits(BitsInstruction::Roxl { size, dst, count }),
+        (0b11, false) => Instruction::Bits(BitsInstruction::Ror { size, dst, count }),
+        (0b11, true) => Instruction::Bits(BitsInstruction::Rol { size, dst, count }),
         _ => unreachable!(), // op_type is 2 bits
     }
 }
@@ -1507,12 +1546,12 @@ mod tests {
 
     #[test]
     fn test_decode_nop() {
-        assert_eq!(decode(0x4E71), Instruction::Nop);
+        assert_eq!(decode(0x4E71), Instruction::System(SystemInstruction::Nop));
     }
 
     #[test]
     fn test_decode_rts() {
-        assert_eq!(decode(0x4E75), Instruction::Rts);
+        assert_eq!(decode(0x4E75), Instruction::System(SystemInstruction::Rts));
     }
 
     #[test]
@@ -1521,11 +1560,11 @@ mod tests {
         let instr = decode(0x2001);
         assert_eq!(
             instr,
-            Instruction::Move {
+            Instruction::Data(DataInstruction::Move {
                 size: Size::Long,
                 src: AddressingMode::DataRegister(1),
                 dst: AddressingMode::DataRegister(0),
-            }
+            })
         );
     }
 
@@ -1535,10 +1574,10 @@ mod tests {
         let instr = decode(0x762A);
         assert_eq!(
             instr,
-            Instruction::MoveQ {
+            Instruction::Data(DataInstruction::MoveQ {
                 dst_reg: 3,
                 data: 42,
-            }
+            })
         );
     }
 
@@ -1546,7 +1585,10 @@ mod tests {
     fn test_decode_bra() {
         // BRA with 8-bit displacement
         let instr = decode(0x6010);
-        assert_eq!(instr, Instruction::Bra { displacement: 16 });
+        assert_eq!(
+            instr,
+            Instruction::System(SystemInstruction::Bra { displacement: 16 })
+        );
     }
 
     #[test]
@@ -1555,10 +1597,10 @@ mod tests {
         let instr = decode(0x6708);
         assert_eq!(
             instr,
-            Instruction::Bcc {
+            Instruction::System(SystemInstruction::Bcc {
                 condition: Condition::Equal,
                 displacement: 8,
-            }
+            })
         );
     }
 
@@ -1568,11 +1610,11 @@ mod tests {
         let instr = decode(0x5080);
         assert_eq!(
             instr,
-            Instruction::AddQ {
+            Instruction::Arithmetic(ArithmeticInstruction::AddQ {
                 size: Size::Long,
                 dst: AddressingMode::DataRegister(0),
                 data: 8,
-            }
+            })
         );
     }
 
@@ -1596,20 +1638,20 @@ mod tests {
         let instr_divu = decode(0x80C1);
         assert_eq!(
             instr_divu,
-            Instruction::DivU {
+            Instruction::Arithmetic(ArithmeticInstruction::DivU {
                 src: AddressingMode::DataRegister(1),
                 dst_reg: 0,
-            }
+            })
         );
 
         // DIVS.W D1, D0
         let instr_divs = decode(0x81C1);
         assert_eq!(
             instr_divs,
-            Instruction::DivS {
+            Instruction::Arithmetic(ArithmeticInstruction::DivS {
                 src: AddressingMode::DataRegister(1),
                 dst_reg: 0,
-            }
+            })
         );
     }
 
@@ -1618,51 +1660,51 @@ mod tests {
         // Valid NBCD modes
         assert_eq!(
             decode(0x4800),
-            Instruction::Nbcd {
+            Instruction::Arithmetic(ArithmeticInstruction::Nbcd {
                 dst: AddressingMode::DataRegister(0)
-            }
+            })
         );
         assert_eq!(
             decode(0x4810),
-            Instruction::Nbcd {
+            Instruction::Arithmetic(ArithmeticInstruction::Nbcd {
                 dst: AddressingMode::AddressIndirect(0)
-            }
+            })
         );
         assert_eq!(
             decode(0x4818),
-            Instruction::Nbcd {
+            Instruction::Arithmetic(ArithmeticInstruction::Nbcd {
                 dst: AddressingMode::AddressPostIncrement(0)
-            }
+            })
         );
         assert_eq!(
             decode(0x4820),
-            Instruction::Nbcd {
+            Instruction::Arithmetic(ArithmeticInstruction::Nbcd {
                 dst: AddressingMode::AddressPreDecrement(0)
-            }
+            })
         );
         assert_eq!(
             decode(0x4828),
-            Instruction::Nbcd {
+            Instruction::Arithmetic(ArithmeticInstruction::Nbcd {
                 dst: AddressingMode::AddressDisplacement(0)
-            }
+            })
         );
         assert_eq!(
             decode(0x4830),
-            Instruction::Nbcd {
+            Instruction::Arithmetic(ArithmeticInstruction::Nbcd {
                 dst: AddressingMode::AddressIndex(0)
-            }
+            })
         );
         assert_eq!(
             decode(0x4838),
-            Instruction::Nbcd {
+            Instruction::Arithmetic(ArithmeticInstruction::Nbcd {
                 dst: AddressingMode::AbsoluteShort
-            }
+            })
         );
         assert_eq!(
             decode(0x4839),
-            Instruction::Nbcd {
+            Instruction::Arithmetic(ArithmeticInstruction::Nbcd {
                 dst: AddressingMode::AbsoluteLong
-            }
+            })
         );
 
         // Invalid NBCD modes
