@@ -911,7 +911,7 @@ impl Vdp {
     }
 
     #[inline(always)]
-    unsafe fn draw_full_tile_row(&mut self, entry: u16, pixel_v: u16, dest_idx: usize) {
+    fn draw_full_tile_row(&mut self, entry: u16, pixel_v: u16, dest_idx: usize) {
         let palette = ((entry >> 13) & 0x03) as u8;
         let v_flip = (entry & 0x1000) != 0;
         let h_flip = (entry & 0x0800) != 0;
@@ -924,92 +924,74 @@ impl Vdp {
         let p3 = patterns[3];
         let palette_base = (palette as usize) * 16;
 
-        // SAFETY: Caller ensures dest_idx + 7 is within framebuffer bounds.
-        // palette is 2 bits, so palette_base is max 48. col is 4 bits (0-15).
-        // Max index is 63, which is within cram_cache bounds (64).
-        unsafe {
-            if h_flip {
-                let mut col = p3 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p3 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 1) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p2 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 2) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p2 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 3) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p1 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 4) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p1 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 5) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p0 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 6) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p0 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 7) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-            } else {
-                let mut col = p0 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p0 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 1) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p1 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 2) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p1 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 3) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p2 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 4) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p2 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 5) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p3 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 6) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p3 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 7) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
+        let cram_cache = &self.cram_cache;
+        let dest_slice = &mut self.framebuffer[dest_idx..dest_idx + 8];
+
+        if h_flip {
+            let mut col = p3 & 0x0F;
+            if col != 0 {
+                dest_slice[0] = cram_cache[palette_base + col as usize];
+            }
+            col = p3 >> 4;
+            if col != 0 {
+                dest_slice[1] = cram_cache[palette_base + col as usize];
+            }
+            col = p2 & 0x0F;
+            if col != 0 {
+                dest_slice[2] = cram_cache[palette_base + col as usize];
+            }
+            col = p2 >> 4;
+            if col != 0 {
+                dest_slice[3] = cram_cache[palette_base + col as usize];
+            }
+            col = p1 & 0x0F;
+            if col != 0 {
+                dest_slice[4] = cram_cache[palette_base + col as usize];
+            }
+            col = p1 >> 4;
+            if col != 0 {
+                dest_slice[5] = cram_cache[palette_base + col as usize];
+            }
+            col = p0 & 0x0F;
+            if col != 0 {
+                dest_slice[6] = cram_cache[palette_base + col as usize];
+            }
+            col = p0 >> 4;
+            if col != 0 {
+                dest_slice[7] = cram_cache[palette_base + col as usize];
+            }
+        } else {
+            let mut col = p0 >> 4;
+            if col != 0 {
+                dest_slice[0] = cram_cache[palette_base + col as usize];
+            }
+            col = p0 & 0x0F;
+            if col != 0 {
+                dest_slice[1] = cram_cache[palette_base + col as usize];
+            }
+            col = p1 >> 4;
+            if col != 0 {
+                dest_slice[2] = cram_cache[palette_base + col as usize];
+            }
+            col = p1 & 0x0F;
+            if col != 0 {
+                dest_slice[3] = cram_cache[palette_base + col as usize];
+            }
+            col = p2 >> 4;
+            if col != 0 {
+                dest_slice[4] = cram_cache[palette_base + col as usize];
+            }
+            col = p2 & 0x0F;
+            if col != 0 {
+                dest_slice[5] = cram_cache[palette_base + col as usize];
+            }
+            col = p3 >> 4;
+            if col != 0 {
+                dest_slice[6] = cram_cache[palette_base + col as usize];
+            }
+            col = p3 & 0x0F;
+            if col != 0 {
+                dest_slice[7] = cram_cache[palette_base + col as usize];
             }
         }
     }
@@ -1063,9 +1045,7 @@ impl Vdp {
             if priority == priority_filter && tile_index != 0 {
                 if pixels_to_process == 8 && pixel_h == 0 {
                     // Fast path for full aligned tile
-                    unsafe {
-                        self.draw_full_tile_row(entry, pixel_v, line_offset + screen_x as usize);
-                    }
+                    self.draw_full_tile_row(entry, pixel_v, line_offset + screen_x as usize);
                 } else {
                     self.draw_partial_tile_row(
                         entry,
