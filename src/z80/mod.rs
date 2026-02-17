@@ -1806,9 +1806,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
     }
 
-    fn execute_index_prefix(&mut self, is_ix: bool) -> u8 {
-        let opcode = self.fetch_byte();
-
+    fn execute_index_add_16(&mut self, opcode: u8, is_ix: bool) -> u8 {
         match opcode {
             0x09 => {
                 let val = self.bc();
@@ -1820,6 +1818,21 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 self.add_index(val, is_ix);
                 15
             }
+            0x29 => {
+                let val = self.get_index_val(is_ix);
+                self.add_index(val, is_ix);
+                15
+            }
+            0x39 => {
+                self.add_index(self.sp, is_ix);
+                15
+            }
+            _ => 8,
+        }
+    }
+
+    fn execute_index_load_store_16(&mut self, opcode: u8, is_ix: bool) -> u8 {
+        match opcode {
             0x21 => {
                 let val = self.fetch_word();
                 self.set_index_val(val, is_ix);
@@ -1831,11 +1844,34 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 self.write_word(addr, val);
                 20
             }
+            0x2A => {
+                let addr = self.fetch_word();
+                let val = self.read_word(addr);
+                self.set_index_val(val, is_ix);
+                20
+            }
+            _ => 8,
+        }
+    }
+
+    fn execute_index_inc_dec_16(&mut self, opcode: u8, is_ix: bool) -> u8 {
+        match opcode {
             0x23 => {
                 let val = self.get_index_val(is_ix);
                 self.set_index_val(val.wrapping_add(1), is_ix);
                 10
             }
+            0x2B => {
+                let val = self.get_index_val(is_ix);
+                self.set_index_val(val.wrapping_sub(1), is_ix);
+                10
+            }
+            _ => 8,
+        }
+    }
+
+    fn execute_index_8bit_halves(&mut self, opcode: u8, is_ix: bool) -> u8 {
+        match opcode {
             0x24 => {
                 let val = self.get_index_h(is_ix);
                 let res = self.inc(val);
@@ -1852,22 +1888,6 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 let n = self.fetch_byte();
                 self.set_index_h(n, is_ix);
                 11
-            }
-            0x29 => {
-                let val = self.get_index_val(is_ix);
-                self.add_index(val, is_ix);
-                15
-            }
-            0x2A => {
-                let addr = self.fetch_word();
-                let val = self.read_word(addr);
-                self.set_index_val(val, is_ix);
-                20
-            }
-            0x2B => {
-                let val = self.get_index_val(is_ix);
-                self.set_index_val(val.wrapping_sub(1), is_ix);
-                10
             }
             0x2C => {
                 let val = self.get_index_l(is_ix);
@@ -1886,86 +1906,63 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 self.set_index_l(n, is_ix);
                 11
             }
+            _ => 8,
+        }
+    }
+
+    fn execute_index_mem_8bit(&mut self, opcode: u8, is_ix: bool) -> u8 {
+        let d = self.fetch_byte() as i8;
+        let addr = self.calc_index_addr(d, is_ix);
+        match opcode {
             0x34 => {
-                let d = self.fetch_byte() as i8;
-                let addr = self.calc_index_addr(d, is_ix);
                 let val = self.read_byte(addr);
                 let result = self.inc(val);
                 self.write_byte(addr, result);
                 23
             }
             0x35 => {
-                let d = self.fetch_byte() as i8;
-                let addr = self.calc_index_addr(d, is_ix);
                 let val = self.read_byte(addr);
                 let result = self.dec(val);
                 self.write_byte(addr, result);
                 23
             }
             0x36 => {
-                let d = self.fetch_byte() as i8;
-                let addr = self.calc_index_addr(d, is_ix);
                 let n = self.fetch_byte();
                 self.write_byte(addr, n);
                 19
             }
-            0x39 => {
-                self.add_index(self.sp, is_ix);
-                15
-            }
+            _ => 8,
+        }
+    }
 
-            // Specific ALU ops
-            0x86 | 0x8E | 0x96 | 0x9E | 0xA6 | 0xAE | 0xB6 | 0xBE => {
-                let d = self.fetch_byte() as i8;
-                let addr = self.calc_index_addr(d, is_ix);
-                let val = self.read_byte(addr);
-                self.execute_index_alu((opcode >> 3) & 0x07, val);
-                19
-            }
+    fn execute_index_alu_mem(&mut self, opcode: u8, is_ix: bool) -> u8 {
+        let d = self.fetch_byte() as i8;
+        let addr = self.calc_index_addr(d, is_ix);
+        let val = self.read_byte(addr);
+        self.execute_index_alu((opcode >> 3) & 0x07, val);
+        19
+    }
 
-            // LD r, (IX/IY+d) and LD (IX/IY+d), r
-            // LD r, (IX/IY+d) and LD (IX/IY+d), r
-            0x46 | 0x4E | 0x56 | 0x5E | 0x66 | 0x6E | 0x7E => {
-                let d = self.fetch_byte() as i8;
-                let addr = self.calc_index_addr(d, is_ix);
-                let val = self.read_byte(addr);
-                let r = (opcode >> 3) & 0x07;
-                self.set_reg(r, val);
-                19
-            }
-            0x70..=0x75 | 0x77 => {
-                let d = self.fetch_byte() as i8;
-                let addr = self.calc_index_addr(d, is_ix);
-                let r = opcode & 0x07;
-                let val = self.get_reg(r);
-                self.write_byte(addr, val);
-                19
-            }
-            0x76 => {
-                self.halted = true;
-                8
-            }
+    fn execute_index_load_r_mem(&mut self, opcode: u8, is_ix: bool) -> u8 {
+        let d = self.fetch_byte() as i8;
+        let addr = self.calc_index_addr(d, is_ix);
+        let val = self.read_byte(addr);
+        let r = (opcode >> 3) & 0x07;
+        self.set_reg(r, val);
+        19
+    }
 
-            // Generic Undocumented (using index halves)
-            0x40..=0x7F => {
-                if opcode == 0x76 {
-                    self.halted = true;
-                    return 8;
-                }
-                let r_src = opcode & 0x07;
-                let r_dest = (opcode >> 3) & 0x07;
-                let val = self.get_index_byte(r_src, is_ix);
-                self.set_index_byte(r_dest, val, is_ix);
-                8
-            }
+    fn execute_index_load_mem_r(&mut self, opcode: u8, is_ix: bool) -> u8 {
+        let d = self.fetch_byte() as i8;
+        let addr = self.calc_index_addr(d, is_ix);
+        let r = opcode & 0x07;
+        let val = self.get_reg(r);
+        self.write_byte(addr, val);
+        19
+    }
 
-            // Generic Undocumented ALU
-            0x80..=0xBF => {
-                let val = self.get_index_byte(opcode & 0x07, is_ix);
-                self.execute_index_alu((opcode >> 3) & 0x07, val);
-                8
-            }
-
+    fn execute_index_stack_control(&mut self, opcode: u8, is_ix: bool) -> u8 {
+        match opcode {
             0xE1 => {
                 let val = self.pop();
                 self.set_index_val(val, is_ix);
@@ -1994,6 +1991,62 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 self.sp = self.get_index_val(is_ix);
                 10
             }
+            _ => 8,
+        }
+    }
+
+    fn execute_index_undoc_load(&mut self, opcode: u8, is_ix: bool) -> u8 {
+        // Opcode 0x76 (HALT) is handled by caller
+        let r_src = opcode & 0x07;
+        let r_dest = (opcode >> 3) & 0x07;
+        let val = self.get_index_byte(r_src, is_ix);
+        self.set_index_byte(r_dest, val, is_ix);
+        8
+    }
+
+    fn execute_index_undoc_alu(&mut self, opcode: u8, is_ix: bool) -> u8 {
+        let val = self.get_index_byte(opcode & 0x07, is_ix);
+        self.execute_index_alu((opcode >> 3) & 0x07, val);
+        8
+    }
+
+    fn execute_index_prefix(&mut self, is_ix: bool) -> u8 {
+        let opcode = self.fetch_byte();
+
+        match opcode {
+            0x09 | 0x19 | 0x29 | 0x39 => self.execute_index_add_16(opcode, is_ix),
+            0x21 | 0x22 | 0x2A => self.execute_index_load_store_16(opcode, is_ix),
+            0x23 | 0x2B => self.execute_index_inc_dec_16(opcode, is_ix),
+            0x24 | 0x25 | 0x26 | 0x2C | 0x2D | 0x2E => self.execute_index_8bit_halves(opcode, is_ix),
+            0x34 | 0x35 | 0x36 => self.execute_index_mem_8bit(opcode, is_ix),
+
+            // Specific ALU ops
+            0x86 | 0x8E | 0x96 | 0x9E | 0xA6 | 0xAE | 0xB6 | 0xBE => {
+                self.execute_index_alu_mem(opcode, is_ix)
+            }
+
+            // LD r, (IX/IY+d)
+            0x46 | 0x4E | 0x56 | 0x5E | 0x66 | 0x6E | 0x7E => {
+                self.execute_index_load_r_mem(opcode, is_ix)
+            }
+            // LD (IX/IY+d), r
+            0x70..=0x75 | 0x77 => self.execute_index_load_mem_r(opcode, is_ix),
+
+            0x76 => {
+                self.halted = true;
+                8
+            }
+
+            // Generic Undocumented (using index halves)
+            // Note: 0x76 HALT is handled above, and specific LDs are also handled above.
+            0x40..=0x7F => self.execute_index_undoc_load(opcode, is_ix),
+
+            // Generic Undocumented ALU
+            // Note: Specific ALU ops (IX+d) are handled above.
+            0x80..=0xBF => self.execute_index_undoc_alu(opcode, is_ix),
+
+            0xE1 | 0xE3 | 0xE5 | 0xE9 | 0xF9 => self.execute_index_stack_control(opcode, is_ix),
+
             0xCB => {
                 let d = self.fetch_byte() as i8;
                 let addr = self.calc_index_addr(d, is_ix);
