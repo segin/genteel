@@ -1119,8 +1119,8 @@ mod tests {
         // Opcode: 1000 001 1 0000 0 000 = 0x8300
         cpu.pc = 0x102;
         memory.write_word(0x102, 0x8300);
-        cpu.d[0] = 33;
-        cpu.d[1] = 78;
+        cpu.d[0] = 0x33;
+        cpu.d[1] = 0x78;
         cpu.set_flag(flags::ZERO, true);
 
         cpu.step_instruction(&mut memory);
