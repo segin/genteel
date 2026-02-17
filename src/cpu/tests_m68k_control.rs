@@ -490,3 +490,68 @@ fn test_stop_supervisor_behavior() {
     assert_eq!(cpu.sr, 0x2200);
     assert!(cpu.halted);
 }
+
+// ============================================================================
+// RTE Tests
+// ============================================================================
+
+#[test]
+fn test_rte_privilege_violation() {
+    let (mut cpu, mut memory) = create_cpu();
+
+    // RTE opcode: 0x4E73
+    write_op(&mut memory, &[0x4E73]);
+
+    // Setup Stacks
+    cpu.ssp = 0x8000;
+    cpu.usp = 0xA000;
+
+    // Set User Mode
+    cpu.sr &= !flags::SUPERVISOR;
+    cpu.a[7] = cpu.usp; // Active stack is now USP
+
+    // Set Vector 8 (Privilege Violation)
+    memory.write_long(32, 0x4000); // 8 * 4 = 32
+
+    cpu.step_instruction(&mut memory);
+
+    assert_eq!(cpu.pc, 0x4000);
+    // Exception should set supervisor bit
+    assert!(cpu.sr & flags::SUPERVISOR != 0);
+    // Should NOT be halted
+    assert!(!cpu.halted);
+}
+
+#[test]
+fn test_rte_supervisor() {
+    let (mut cpu, mut memory) = create_cpu();
+
+    // RTE opcode: 0x4E73
+    write_op(&mut memory, &[0x4E73]);
+
+    // Setup Stacks
+    cpu.ssp = 0x8000;
+    cpu.usp = 0xA000;
+    cpu.a[7] = cpu.ssp; // Active stack is SSP (Supervisor)
+
+    // Prepare Stack Frame for RTE
+    // Pushes: SR (word), PC (long)
+    // We need to write them to memory where SP points.
+    // Stack grows down, Pop increments.
+    // RTE pops SR from (SP), then PC from (SP+2).
+
+    let return_pc = 0x2000;
+    let return_sr = 0x0000; // User mode (cleared Supervisor bit)
+
+    memory.write_word(0x8000, return_sr);
+    memory.write_long(0x8002, return_pc);
+
+    cpu.step_instruction(&mut memory);
+
+    assert_eq!(cpu.pc, return_pc);
+    assert_eq!(cpu.sr, return_sr);
+    // Switched to User Mode, so A7 should be USP
+    assert_eq!(cpu.a[7], cpu.usp);
+    // SSP should be updated to where we popped from (0x8006)
+    assert_eq!(cpu.ssp, 0x8006);
+}
