@@ -470,6 +470,12 @@ impl Bus {
     }
 }
 
+impl Default for Bus {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MemoryInterface for Bus {
     #[inline(always)]
     fn read_byte(&mut self, address: u32) -> u8 {
