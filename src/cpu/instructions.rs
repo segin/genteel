@@ -498,10 +498,16 @@ pub enum BitsInstruction {
         dst: AddressingMode,
         count: ShiftCount,
     },
+    AslM {
+        dst: AddressingMode,
+    },
     Asr {
         size: Size,
         dst: AddressingMode,
         count: ShiftCount,
+    },
+    AsrM {
+        dst: AddressingMode,
     },
     Rol {
         size: Size,

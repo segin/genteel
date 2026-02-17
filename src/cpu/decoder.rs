@@ -191,12 +191,12 @@ fn decode_move_byte(opcode: u16) -> Instruction {
     decode_move(opcode, Size::Byte)
 }
 
-fn decode_move_long(opcode: u16) -> Instruction {
-    decode_move(opcode, Size::Long)
-}
-
 fn decode_move_word(opcode: u16) -> Instruction {
     decode_move(opcode, Size::Word)
+}
+
+fn decode_move_long(opcode: u16) -> Instruction {
+    decode_move(opcode, Size::Long)
 }
 
 fn decode_move(opcode: u16, size: Size) -> Instruction {
@@ -397,25 +397,7 @@ fn decode_group_4_arithmetic(opcode: u16) -> Option<Instruction> {
     // NBCD
     if opcode & 0xFFC0 == 0x4800 {
         if let Some(dst) = AddressingMode::from_mode_reg(mode, reg) {
-            if dst.is_valid_destination()
-                && matches!(
-                    dst,
-                    AddressingMode::DataRegister(_)
-                        | AddressingMode::AddressPreDecrement(_)
-                        | AddressingMode::AddressDisplacement(_)
-                        | AddressingMode::AddressIndex(_)
-                        | AddressingMode::AbsoluteShort
-                        | AddressingMode::AbsoluteLong
-                )
-            {
-                return Some(Instruction::Arithmetic(ArithmeticInstruction::Nbcd { dst }));
-            }
-            // Nbcd requires data alterable. is_valid_destination checks mostly immediate logic.
-            // Check manual: NBCD <ea>. <ea> is Data Alterable.
-            // DataRegister, (An), (An)+, -(An), d(An), d(An,xi), xxx.W, xxx.L.
-            // An direct is NOT data alterable.
-            // My AddressingMode check is approximate.
-            // I'll assume valid destination for now if not An.
+            // NBCD <ea>. <ea> must be Data Alterable.
             if !matches!(
                 dst,
                 AddressingMode::AddressRegister(_)
@@ -888,11 +870,20 @@ fn decode_shifts(opcode: u16) -> Instruction {
 
     // Memory shifts (size = 0b11)
     if size_bits == 0b11 {
+        // For memory shifts, the type is encoded in bits 10-9 (part of what is count/reg in register shifts)
+        let op_type = ((opcode >> 9) & 0x03) as u8;
         let ea_mode = ((opcode >> 3) & 0x07) as u8;
         let ea_reg = (opcode & 0x07) as u8;
         if let Some(dst) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
-            let count = ShiftCount::Immediate(1); // Memory shifts are always by 1
-            return make_shift_instruction(op_type, direction, Size::Word, dst, count);
+            // Memory shifts are always by 1.
+            match (op_type, direction) {
+                (0b00, true) => return Instruction::Bits(BitsInstruction::AslM { dst }),
+                (0b00, false) => return Instruction::Bits(BitsInstruction::AsrM { dst }),
+                _ => {
+                    let count = ShiftCount::Immediate(1);
+                    return make_shift_instruction(op_type, direction, Size::Word, dst, count);
+                }
+            }
         }
     }
 

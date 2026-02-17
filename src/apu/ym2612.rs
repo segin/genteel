@@ -67,6 +67,8 @@ pub struct Ym2612 {
 
     /// Phase accumulators for the 6 channels (simplified FM)
     phase: [f32; 6],
+    /// Phase increment for the 6 channels (cached)
+    phase_inc: [f32; 6],
     /// DAC value (register 0x2A)
     dac_value: u8,
     /// DAC enabled (register 0x2B bit 7)
@@ -83,6 +85,7 @@ impl Ym2612 {
             timer_b_count: 0,
             busy_cycles: 0,
             phase: [0.0; 6],
+            phase_inc: [0.0; 6],
             dac_value: 0x80,
             dac_enabled: false,
         }
@@ -192,45 +195,66 @@ impl Ym2612 {
         let bank_idx = bank as usize;
         let addr = self.address[bank_idx];
 
-        if bank == Bank::Bank0 && addr == 0x27 {
-            let old_val = self.registers[0][0x27];
-
-            // Handle Reset Flags
-            // Bit 4: Reset A (Clear Timer A Overflow)
-            if (val & 0x10) != 0 {
-                self.status &= !0x01;
+        match (bank, addr) {
+            (Bank::Bank0, 0x27) => self.handle_timer_control(val),
+            (Bank::Bank0, 0x2A) => self.handle_dac_data(val),
+            (Bank::Bank0, 0x2B) => self.handle_dac_enable(val),
+            _ => {
+                self.registers[bank_idx][addr as usize] = val;
+                // Update cached phase increment if frequency registers are written
+                if (addr >= 0xA0 && addr <= 0xA2) || (addr >= 0xA4 && addr <= 0xA6) {
+                    let ch_offset = (addr & 0x03) as usize;
+                    let ch = if bank == Bank::Bank0 {
+                        ch_offset
+                    } else {
+                        ch_offset + 3
+                    };
+                    self.update_phase_inc(ch);
+                }
             }
-            // Bit 5: Reset B (Clear Timer B Overflow)
-            if (val & 0x20) != 0 {
-                self.status &= !0x02;
-            }
-
-            // Handle Load Transitions (Reload Counters)
-            // Load A (Bit 0) 0->1
-            if (val & 0x01) != 0 && (old_val & 0x01) == 0 {
-                let n = ((self.registers[0][0x24] as u32) << 2)
-                    | (self.registers[0][0x25] as u32 & 0x03);
-                let period = (1024 - n as i32) * 144;
-                self.timer_a_count = if period < 144 { 144 } else { period };
-            }
-
-            // Load B (Bit 1) 0->1
-            if (val & 0x02) != 0 && (old_val & 0x02) == 0 {
-                let n = self.registers[0][0x26] as u32;
-                let period = (256 - n as i32) * 2304;
-                self.timer_b_count = if period < 2304 { 2304 } else { period };
-            }
-
-            self.registers[0][0x27] = val;
-        } else if bank == Bank::Bank0 && addr == 0x2A {
-            self.dac_value = val;
-            self.registers[0][0x2A] = val;
-        } else if bank == Bank::Bank0 && addr == 0x2B {
-            self.dac_enabled = (val & 0x80) != 0;
-            self.registers[0][0x2B] = val;
-        } else {
-            self.registers[bank_idx][addr as usize] = val;
         }
+    }
+
+    fn handle_timer_control(&mut self, val: u8) {
+        let old_val = self.registers[0][0x27];
+
+        // Handle Reset Flags
+        // Bit 4: Reset A (Clear Timer A Overflow)
+        if (val & 0x10) != 0 {
+            self.status &= !0x01;
+        }
+        // Bit 5: Reset B (Clear Timer B Overflow)
+        if (val & 0x20) != 0 {
+            self.status &= !0x02;
+        }
+
+        // Handle Load Transitions (Reload Counters)
+        // Load A (Bit 0) 0->1
+        if (val & 0x01) != 0 && (old_val & 0x01) == 0 {
+            let n = ((self.registers[0][0x24] as u32) << 2)
+                | (self.registers[0][0x25] as u32 & 0x03);
+            let period = (1024 - n as i32) * 144;
+            self.timer_a_count = if period < 144 { 144 } else { period };
+        }
+
+        // Load B (Bit 1) 0->1
+        if (val & 0x02) != 0 && (old_val & 0x02) == 0 {
+            let n = self.registers[0][0x26] as u32;
+            let period = (256 - n as i32) * 2304;
+            self.timer_b_count = if period < 2304 { 2304 } else { period };
+        }
+
+        self.registers[0][0x27] = val;
+    }
+
+    fn handle_dac_data(&mut self, val: u8) {
+        self.dac_value = val;
+        self.registers[0][0x2A] = val;
+    }
+
+    fn handle_dac_enable(&mut self, val: u8) {
+        self.dac_enabled = (val & 0x80) != 0;
+        self.registers[0][0x2B] = val;
     }
 
     /// Generate one stereo sample pair
@@ -260,15 +284,12 @@ impl Ym2612 {
                 continue;
             }
 
-            let (block, f_num) = self.get_frequency(ch);
-            if f_num == 0 {
+            let inc = self.phase_inc[ch];
+            if inc == 0.0 {
                 continue;
             }
 
-            let freq_mult = (1 << block) as f32;
-            let phase_inc = (f_num as f32 * freq_mult) / 200000.0;
-
-            self.phase[ch] = (self.phase[ch] + phase_inc) % 1.0;
+            self.phase[ch] = (self.phase[ch] + inc) % 1.0;
 
             // Table-based sine wave lookup
             let table_idx =
@@ -297,30 +318,6 @@ impl Ym2612 {
             (left.clamp(-1.0, 1.0) * 16384.0) as i16,
             (right.clamp(-1.0, 1.0) * 16384.0) as i16,
         )
-    }
-
-    /// Deprecated: Use [`write_addr`] with [`Bank::Bank0`]
-    #[deprecated(note = "Use write_addr(Bank::Bank0, val)")]
-    pub fn write_addr0(&mut self, val: u8) {
-        self.write_addr(Bank::Bank0, val);
-    }
-
-    /// Deprecated: Use [`write_data_bank`] with [`Bank::Bank0`]
-    #[deprecated(note = "Use write_data_bank(Bank::Bank0, val)")]
-    pub fn write_data0(&mut self, val: u8) {
-        self.write_data_bank(Bank::Bank0, val);
-    }
-
-    /// Deprecated: Use [`write_addr`] with [`Bank::Bank1`]
-    #[deprecated(note = "Use write_addr(Bank::Bank1, val)")]
-    pub fn write_addr1(&mut self, val: u8) {
-        self.write_addr(Bank::Bank1, val);
-    }
-
-    /// Deprecated: Use [`write_data_bank`] with [`Bank::Bank1`]
-    #[deprecated(note = "Use write_data_bank(Bank::Bank1, val)")]
-    pub fn write_data1(&mut self, val: u8) {
-        self.write_data_bank(Bank::Bank1, val);
     }
 
     // === Helper Accessors ===
@@ -353,6 +350,16 @@ impl Ym2612 {
         // For this skeletal implementation, we'll just check if we stored the last write.
         // But 0x28 is in Bank 0 and applies to all channels based on bits 0-2 (channel) and 4-7 (slots).
         self.registers[0][0x28]
+    }
+
+    fn update_phase_inc(&mut self, ch: usize) {
+        let (block, f_num) = self.get_frequency(ch);
+        if f_num == 0 {
+            self.phase_inc[ch] = 0.0;
+        } else {
+            let freq_mult = (1 << block) as f32;
+            self.phase_inc[ch] = (f_num as f32 * freq_mult) / 200000.0;
+        }
     }
 }
 
@@ -391,7 +398,7 @@ mod tests {
 
         // Set Ch4 Frequency (Bank 1, Channel 0)
         // This corresponds to channel index 3 in get_frequency.
-        // Bank 1 registers are accessed via port 1 (write_addr1/write_data1).
+        // Bank 1 registers are accessed via port 1.
         // F-Num low = 0x55 (Reg 0xA0)
         // Block/F-Num high = 0x22 (Reg 0xA4) -> Block 4, F-Num high 2
         ym.write_addr(Bank::Bank1, 0xA0);
