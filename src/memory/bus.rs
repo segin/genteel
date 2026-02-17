@@ -113,19 +113,44 @@ impl Bus {
         let addr = address & 0xFFFFFF; // 24-bit address bus
 
         match addr {
-            // ROM: 0x000000-0x3FFFFF
-            0x000000..=0x3FFFFF => {
-                let rom_addr = addr as usize;
-                if rom_addr < self.rom.len() {
-                    self.rom[rom_addr]
-                } else {
-                    0xFF // Unmapped ROM area
-                }
-            }
+            0x000000..=0x3FFFFF => self.read_rom(addr),
+            0xA00000..=0xA0FFFF => self.read_z80_area(addr),
+            0xA10000..=0xA1FFFF => self.read_io_area(addr),
+            0xC00000..=0xC0FFFF => self.read_vdp_area(addr),
+            0xE00000..=0xFFFFFF => self.read_ram(addr),
+            _ => 0xFF,
+        }
+    }
 
-            // Z80 Address Space: 0xA00000-0xA0FFFF
+    /// Write a byte to the memory map
+    pub fn write_byte(&mut self, address: u32, value: u8) {
+        let addr = address & 0xFFFFFF;
+
+        match addr {
+            0x000000..=0x3FFFFF => {} // ROM is read-only
+            0xA00000..=0xA0FFFF => self.write_z80_area(addr, value),
+            0xA10000..=0xA1FFFF => self.write_io_area(addr, value),
+            0xC00000..=0xC0FFFF => self.write_vdp_area(addr, value),
+            0xE00000..=0xFFFFFF => self.write_ram(addr, value),
+            _ => {}
+        }
+    }
+
+    // Helper methods for memory access
+
+    fn read_rom(&self, addr: u32) -> u8 {
+        let rom_addr = addr as usize;
+        if rom_addr < self.rom.len() {
+            self.rom[rom_addr]
+        } else {
+            0xFF // Unmapped ROM area
+        }
+    }
+
+    fn read_z80_area(&mut self, addr: u32) -> u8 {
+        match addr {
+            // Z80 RAM (8KB) - Only accessible if Z80 bus is requested (Z80 stopped)
             0xA00000..=0xA01FFF => {
-                // Z80 RAM (8KB) - Only accessible if Z80 bus is requested (Z80 stopped)
                 if self.z80_bus_request {
                     self.z80_ram[(addr & 0x1FFF) as usize]
                 } else {
@@ -134,11 +159,12 @@ impl Bus {
             }
             // YM2612 from 68k: 0xA04000-0xA04003
             0xA04000..=0xA04003 => self.apu.fm.read((addr & 3) as u8),
-            0xA02000..=0xA0FFFF => {
-                // Z80 area bank registers and other hardware
-                0xFF
-            }
+            _ => 0xFF,
+        }
+    }
 
+    fn read_io_area(&mut self, addr: u32) -> u8 {
+        match addr {
             // I/O Ports: 0xA10000-0xA1001F
             0xA10000..=0xA1001F => self.io.read(addr),
 
@@ -159,7 +185,12 @@ impl Bus {
                     0x01
                 }
             }
+            _ => 0xFF,
+        }
+    }
 
+    fn read_vdp_area(&mut self, addr: u32) -> u8 {
+        match addr {
             // VDP Ports: 0xC00000-0xC0001F
             0xC00000..=0xC00003 => {
                 // VDP data port
@@ -176,27 +207,16 @@ impl Bus {
             }
             // PSG: 0xC00010-0xC00011 (write-only, reads return FF)
             0xC00010..=0xC00011 => 0xFF,
-            0xC00012..=0xC0001F => {
-                // Reserved
-                0xFF
-            }
-
-            // Work RAM: 0xE00000-0xFFFFFF (64KB mirrored)
-            0xE00000..=0xFFFFFF => self.work_ram[(addr & 0xFFFF) as usize],
-
-            // Unmapped regions
             _ => 0xFF,
         }
     }
 
-    /// Write a byte to the memory map
-    pub fn write_byte(&mut self, address: u32, value: u8) {
-        let addr = address & 0xFFFFFF;
+    fn read_ram(&self, addr: u32) -> u8 {
+        self.work_ram[(addr & 0xFFFF) as usize]
+    }
 
+    fn write_z80_area(&mut self, addr: u32, value: u8) {
         match addr {
-            // ROM is read-only (writes are ignored)
-            0x000000..=0x3FFFFF => {}
-
             // Z80 RAM
             0xA00000..=0xA01FFF => {
                 // Only accessible if Z80 bus is requested (Z80 stopped)
@@ -224,7 +244,12 @@ impl Bus {
                 self.z80_bank_addr = (self.z80_bank_addr & !mask) | bit;
                 self.z80_bank_bit = (self.z80_bank_bit + 1) % 9;
             }
+            _ => {}
+        }
+    }
 
+    fn write_io_area(&mut self, addr: u32, value: u8) {
+        match addr {
             // I/O Ports
             0xA10000..=0xA1001F => {
                 self.io.write(addr, value);
@@ -246,7 +271,12 @@ impl Bus {
                 }
             }
             0xA11201 => {}
+            _ => {}
+        }
+    }
 
+    fn write_vdp_area(&mut self, addr: u32, value: u8) {
+        match addr {
             // VDP Ports
             0xC00000..=0xC00003 => {
                 // VDP data port - placeholder (writes are usually words)
@@ -258,16 +288,13 @@ impl Bus {
             0xC00011 => {
                 self.apu.psg.write(value);
             }
-
-            // Work RAM
-            0xE00000..=0xFFFFFF => {
-                let ram_addr = addr & 0xFFFF;
-                self.work_ram[ram_addr as usize] = value;
-            }
-
-            // Unmapped regions (writes ignored)
             _ => {}
         }
+    }
+
+    fn write_ram(&mut self, addr: u32, value: u8) {
+        let ram_addr = addr & 0xFFFF;
+        self.work_ram[ram_addr as usize] = value;
     }
 
     /// Sync audio generation with CPU cycles
