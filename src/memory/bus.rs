@@ -315,15 +315,11 @@ impl Bus {
         // ROM Fast Path
         if addr <= 0x3FFFFF {
             let idx = addr as usize;
-            if idx + 1 < self.rom.len() {
-                let high = self.rom[idx];
-                let low = self.rom[idx + 1];
+            if let Some(&[high, low]) = self.rom.get(idx..=idx + 1) {
                 return byte_utils::join_u16(high, low);
-            } else if idx < self.rom.len() {
+            } else if let Some(&high) = self.rom.get(idx) {
                 // Partial read at end of ROM
-                let high = self.rom[idx];
-                let low = 0xFF; // Unmapped
-                return byte_utils::join_u16(high, low);
+                return byte_utils::join_u16(high, 0xFF);
             } else {
                 return 0xFFFF; // Unmapped
             }
@@ -401,11 +397,7 @@ impl Bus {
         // ROM Fast Path
         if addr <= 0x3FFFFF {
             let idx = addr as usize;
-            if idx + 3 < self.rom.len() {
-                let b0 = self.rom[idx];
-                let b1 = self.rom[idx + 1];
-                let b2 = self.rom[idx + 2];
-                let b3 = self.rom[idx + 3];
+            if let Some(&[b0, b1, b2, b3]) = self.rom.get(idx..=idx + 3) {
                 return byte_utils::join_u32(b0, b1, b2, b3);
             }
         }
