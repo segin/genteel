@@ -26,6 +26,8 @@ mod tests_m68k_shift;
 mod tests_m68k_torture;
 #[cfg(test)]
 mod tests_performance;
+#[cfg(test)]
+mod tests_security;
 
 use self::addressing::{read_ea, EffectiveAddress};
 use self::decoder::{decode, BitSource, Condition, DecodeCacheEntry, Instruction, Size};
@@ -186,8 +188,9 @@ impl Cpu {
             // Since we check entry.pc == pc, aliasing is handled safely.
             let cache_index = ((pc >> 1) & 0xFFFF) as usize;
 
-            // Safety: cache size is 65536, index is masked to 0xFFFF.
-            let entry = unsafe { *self.decode_cache.get_unchecked(cache_index) };
+            // Safety: Use get() to prevent OOB access if cache is resized/invalid
+            // If OOB, returns None -> default() -> pc mismatch -> cache miss logic.
+            let entry = self.decode_cache.get(cache_index).copied().unwrap_or_default();
 
             if entry.pc == pc {
                 // Cache Hit
@@ -205,10 +208,9 @@ impl Cpu {
                 self.pc = self.pc.wrapping_add(2);
                 instruction = decode(opcode);
 
-                // Update Cache
-                unsafe {
-                    *self.decode_cache.get_unchecked_mut(cache_index) =
-                        DecodeCacheEntry { pc, instruction };
+                // Update Cache if index is valid
+                if let Some(entry_mut) = self.decode_cache.get_mut(cache_index) {
+                    *entry_mut = DecodeCacheEntry { pc, instruction };
                 }
             }
         } else {
