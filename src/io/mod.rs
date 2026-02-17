@@ -557,7 +557,9 @@ mod tests {
         assert_eq!(port.th_counter, 1);
         assert_eq!(port.th_timer, 1000);
 
-        port.update(500);
+        // Multiple small updates summing to 1500
+        port.update(250);
+        port.update(250);
         assert_eq!(port.th_counter, 1);
         assert_eq!(port.th_timer, 1500);
 
@@ -566,11 +568,35 @@ mod tests {
         assert_eq!(port.th_counter, 0);
         assert_eq!(port.th_timer, 1501);
 
-        // Verify write_data resets th_timer
+        // Verify write_data resets th_timer on falling edge
         port.write_data(0x40); // TH high
-        port.write_data(0x00); // TH low
+        port.write_data(0x00); // TH low (Cnt=1)
         assert_eq!(port.th_counter, 1);
         assert_eq!(port.th_timer, 0);
+
+        port.update(1000);
+        port.write_data(0x00); // Falling edge again (TH was already 0, but this shouldn't reset timer)
+        // Wait, write_data check: if self.th_state && !new_th
+        // Current th_state is false. new_th is false. So no reset.
+        assert_eq!(port.th_timer, 1000);
+
+        port.write_data(0x40); // TH high
+        port.write_data(0x00); // Falling edge - SHOULD reset
+        assert_eq!(port.th_counter, 2);
+        assert_eq!(port.th_timer, 0);
+
+        // Verify timeout even if TH is high
+        port.update(1501);
+        assert_eq!(port.th_counter, 0);
+    }
+
+    #[test]
+    fn test_non_6button_no_timeout() {
+        let mut port = ControllerPort::new(ControllerType::ThreeButton);
+        // Manually set counter to verify it doesn't change
+        port.th_counter = 5;
+        port.update(2000);
+        assert_eq!(port.th_counter, 5);
     }
 
     #[test]
