@@ -911,104 +911,41 @@ impl Vdp {
     }
 
     #[inline(always)]
-    unsafe fn draw_full_tile_row(&mut self, entry: u16, pixel_v: u16, dest_idx: usize) {
+    unsafe fn draw_tile_segment(&mut self, entry: u16, pixel_v: u16, dest_idx: usize) {
         let palette = ((entry >> 13) & 0x03) as u8;
         let v_flip = (entry & 0x1000) != 0;
         let h_flip = (entry & 0x0800) != 0;
         let tile_index = entry & 0x07FF;
 
         let patterns = self.fetch_tile_pattern(tile_index, pixel_v, v_flip);
-        let p0 = patterns[0];
-        let p1 = patterns[1];
-        let p2 = patterns[2];
-        let p3 = patterns[3];
         let palette_base = (palette as usize) * 16;
 
         // SAFETY: Caller ensures dest_idx + 7 is within framebuffer bounds.
         // palette is 2 bits, so palette_base is max 48. col is 4 bits (0-15).
         // Max index is 63, which is within cram_cache bounds (64).
         unsafe {
-            if h_flip {
-                let mut col = p3 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
+            for i in 0..4 {
+                let (byte, swap) = if h_flip {
+                    (patterns[3 - i], true)
+                } else {
+                    (patterns[i], false)
+                };
+
+                let (c1, c2) = if swap {
+                    (byte & 0x0F, byte >> 4)
+                } else {
+                    (byte >> 4, byte & 0x0F)
+                };
+
+                let offset = i * 2;
+
+                if c1 != 0 {
+                    *self.framebuffer.get_unchecked_mut(dest_idx + offset) =
+                        *self.cram_cache.get_unchecked(palette_base + c1 as usize);
                 }
-                col = p3 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 1) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p2 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 2) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p2 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 3) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p1 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 4) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p1 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 5) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p0 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 6) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p0 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 7) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-            } else {
-                let mut col = p0 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p0 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 1) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p1 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 2) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p1 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 3) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p2 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 4) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p2 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 5) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p3 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 6) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p3 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 7) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
+                if c2 != 0 {
+                    *self.framebuffer.get_unchecked_mut(dest_idx + offset + 1) =
+                        *self.cram_cache.get_unchecked(palette_base + c2 as usize);
                 }
             }
         }
@@ -1064,7 +1001,7 @@ impl Vdp {
                 if pixels_to_process == 8 && pixel_h == 0 {
                     // Fast path for full aligned tile
                     unsafe {
-                        self.draw_full_tile_row(entry, pixel_v, line_offset + screen_x as usize);
+                        self.draw_tile_segment(entry, pixel_v, line_offset + screen_x as usize);
                     }
                 } else {
                     self.draw_partial_tile_row(
