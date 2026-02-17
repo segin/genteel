@@ -45,47 +45,6 @@ mod performance_tests {
         );
     }
 
-    #[test]
-    fn benchmark_z80_bus_access_raw() {
-        let bus = Rc::new(RefCell::new(Bus::new()));
-        let mut z80_bus = Z80Bus::new(SharedBus::new(bus.clone()));
-
-        // Ensure Z80 bus request is active so we can access RAM
-        bus.borrow_mut().z80_bus_request = true;
-
-        // Unsafe setup
-        unsafe {
-            z80_bus.set_raw_bus(bus.as_ptr());
-        }
-
-        let iterations = 10_000_000;
-        let start = Instant::now();
-
-        // Pre-load some data in ROM
-        bus.borrow_mut().load_rom(&vec![0xAA; 1024]);
-
-        let mut sum: u32 = 0;
-
-        for i in 0..iterations {
-            // Write to Z80 RAM
-            z80_bus.write_byte((i as u32) & 0x1FFF, (i & 0xFF) as u8);
-
-            // Read from Z80 RAM
-            sum = sum.wrapping_add(z80_bus.read_byte((i as u32) & 0x1FFF) as u32);
-
-            // Read from Banked Memory (ROM)
-            sum = sum.wrapping_add(z80_bus.read_byte(0x8000 + ((i as u32) & 0xFF)) as u32);
-        }
-
-        let duration = start.elapsed();
-        println!(
-            "Z80 Bus Benchmark (Raw): {:?} for {} iterations. Sum: {}",
-            duration, iterations, sum
-        );
-
-        // Clear raw pointer
-        z80_bus.clear_raw_bus();
-    }
 
     #[test]
     fn benchmark_dma_transfer() {

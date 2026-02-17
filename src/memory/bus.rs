@@ -270,43 +270,6 @@ impl Bus {
         }
     }
 
-    /// Sync audio generation with CPU cycles
-    pub fn sync_audio(
-        &mut self,
-        m68k_cycles: u32,
-        z80: &mut crate::z80::Z80<crate::memory::Z80Bus, crate::memory::Z80Bus>,
-        z80_cycle_debt: &mut f32,
-    ) {
-        const Z80_CYCLES_PER_M68K_CYCLE: f32 = 3.58 / 7.67;
-        let z80_can_run = !self.z80_reset && !self.z80_bus_request;
-
-        // M68k Clock = 7,670,453 Hz
-        let cycles_per_sample = 7670453.0 / (self.sample_rate as f32);
-
-        self.audio_accumulator += m68k_cycles as f32;
-
-        while self.audio_accumulator >= cycles_per_sample {
-            self.audio_accumulator -= cycles_per_sample;
-
-            // Catch up Z80 before generating sample
-            if z80_can_run {
-                *z80_cycle_debt += cycles_per_sample * Z80_CYCLES_PER_M68K_CYCLE;
-                while *z80_cycle_debt >= 1.0 {
-                    let z80_cycles = z80.step();
-                    *z80_cycle_debt -= z80_cycles as f32;
-                }
-            }
-
-            let (l, r) = self.apu.step();
-
-            // Limit buffer size to ~20 frames
-            if self.audio_buffer.len() < 32768 {
-                self.audio_buffer.push(l);
-                self.audio_buffer.push(r);
-            }
-        }
-    }
-
     /// Read a word (16-bit, big-endian) from the memory map
     #[inline]
     pub fn read_word(&mut self, address: u32) -> u16 {
