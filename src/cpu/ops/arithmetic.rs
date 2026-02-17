@@ -808,3 +808,147 @@ fn fetch_postinc_operand<M: MemoryInterface>(
     cpu.a[reg as usize] = addr.wrapping_add(size.bytes());
     val
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cpu::decoder::AddressingMode;
+    use crate::cpu::flags;
+    use crate::cpu::Cpu;
+    use crate::memory::{Memory, MemoryInterface};
+
+    fn create_test_cpu() -> (Cpu, Memory) {
+        let mut memory = Memory::new(0x10000); // 64KB
+        let mut cpu = Cpu::new(&mut memory);
+        cpu.pc = 0x1000;
+        cpu.a[7] = 0x8000; // Initialize Stack Pointer
+
+        // Setup Exception Vector 6 (CHK instruction) at address 0x18
+        // We set the handler address to 0x3000
+        memory.write_long(0x18, 0x3000);
+
+        (cpu, memory)
+    }
+
+    #[test]
+    fn test_chk_within_bounds() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        // Setup:
+        // D0 = 50 (Value to check)
+        // Bound = 100 (at address 0x2000)
+        // Addressing Mode: Absolute Short (points to 0x2000)
+
+        cpu.d[0] = 50;
+        memory.write_word(0x2000, 100);
+
+        // For AbsoluteShort, calculate_ea reads the address from PC
+        // So we place the address 0x2000 at cpu.pc (0x1000)
+        memory.write_word(0x1000, 0x2000);
+
+        // Execute CHK
+        let _ = exec_chk(&mut cpu, AddressingMode::AbsoluteShort, 0, &mut memory);
+
+        // Verification:
+        // 1. PC should have advanced past the extension word (0x1000 -> 0x1002)
+        //    It should NOT have jumped to exception handler (0x3000)
+        assert_eq!(cpu.pc, 0x1002);
+
+        // 2. N flag should be false (50 >= 0)
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_chk_less_than_zero() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        // Setup:
+        // D0 = -1 (0xFFFF)
+        // Bound = 100
+
+        cpu.d[0] = 0xFFFF; // -1 as word
+        memory.write_word(0x2000, 100);
+        memory.write_word(0x1000, 0x2000); // Extension word for AbsoluteShort
+
+        // Execute CHK
+        let _ = exec_chk(&mut cpu, AddressingMode::AbsoluteShort, 0, &mut memory);
+
+        // Verification:
+        // 1. Exception triggered -> PC should be at handler 0x3000
+        assert_eq!(cpu.pc, 0x3000);
+
+        // 2. N flag should be set (Value < 0)
+        assert!(cpu.get_flag(flags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_chk_greater_than_bound() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        // Setup:
+        // D0 = 101
+        // Bound = 100
+
+        cpu.d[0] = 101;
+        memory.write_word(0x2000, 100);
+        memory.write_word(0x1000, 0x2000); // Extension word for AbsoluteShort
+
+        // Execute CHK
+        let _ = exec_chk(&mut cpu, AddressingMode::AbsoluteShort, 0, &mut memory);
+
+        // Verification:
+        // 1. Exception triggered -> PC should be at handler 0x3000
+        assert_eq!(cpu.pc, 0x3000);
+
+        // 2. N flag should be cleared (Value > Bound)
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_chk_equal_to_bound() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        // Setup:
+        // D0 = 100
+        // Bound = 100
+
+        cpu.d[0] = 100;
+        memory.write_word(0x2000, 100);
+        memory.write_word(0x1000, 0x2000);
+
+        // Execute CHK
+        let _ = exec_chk(&mut cpu, AddressingMode::AbsoluteShort, 0, &mut memory);
+
+        // Verification:
+        // 1. No Exception -> PC at 0x1002
+        assert_eq!(cpu.pc, 0x1002);
+
+        // 2. N flag should be cleared (100 >= 0)
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_chk_zero() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        // Setup:
+        // D0 = 0
+        // Bound = 100
+
+        cpu.d[0] = 0;
+        memory.write_word(0x2000, 100);
+        memory.write_word(0x1000, 0x2000);
+
+        // Execute CHK
+        let _ = exec_chk(&mut cpu, AddressingMode::AbsoluteShort, 0, &mut memory);
+
+        // Verification:
+        // 1. No Exception
+        assert_eq!(cpu.pc, 0x1002);
+
+        // 2. N flag should be cleared
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        // 3. Z flag should be set (Value == 0)
+        assert!(cpu.get_flag(flags::ZERO));
+    }
+}
