@@ -4,8 +4,6 @@ use std::io::{BufWriter, Seek, SeekFrom, Write};
 pub struct WavWriter {
     file: BufWriter<File>,
     data_size: u32,
-    #[allow(dead_code)] // Stored for potential future use or debugging
-    channels: u16,
 }
 
 impl WavWriter {
@@ -39,7 +37,6 @@ impl WavWriter {
         Ok(Self {
             file: writer,
             data_size: 0,
-            channels,
         })
     }
 
