@@ -192,45 +192,56 @@ impl Ym2612 {
         let bank_idx = bank as usize;
         let addr = self.address[bank_idx];
 
-        if bank == Bank::Bank0 && addr == 0x27 {
-            let old_val = self.registers[0][0x27];
-
-            // Handle Reset Flags
-            // Bit 4: Reset A (Clear Timer A Overflow)
-            if (val & 0x10) != 0 {
-                self.status &= !0x01;
+        match (bank, addr) {
+            (Bank::Bank0, 0x27) => self.handle_timer_control(val),
+            (Bank::Bank0, 0x2A) => self.handle_dac_data(val),
+            (Bank::Bank0, 0x2B) => self.handle_dac_enable(val),
+            _ => {
+                self.registers[bank_idx][addr as usize] = val;
             }
-            // Bit 5: Reset B (Clear Timer B Overflow)
-            if (val & 0x20) != 0 {
-                self.status &= !0x02;
-            }
-
-            // Handle Load Transitions (Reload Counters)
-            // Load A (Bit 0) 0->1
-            if (val & 0x01) != 0 && (old_val & 0x01) == 0 {
-                let n = ((self.registers[0][0x24] as u32) << 2)
-                    | (self.registers[0][0x25] as u32 & 0x03);
-                let period = (1024 - n as i32) * 144;
-                self.timer_a_count = if period < 144 { 144 } else { period };
-            }
-
-            // Load B (Bit 1) 0->1
-            if (val & 0x02) != 0 && (old_val & 0x02) == 0 {
-                let n = self.registers[0][0x26] as u32;
-                let period = (256 - n as i32) * 2304;
-                self.timer_b_count = if period < 2304 { 2304 } else { period };
-            }
-
-            self.registers[0][0x27] = val;
-        } else if bank == Bank::Bank0 && addr == 0x2A {
-            self.dac_value = val;
-            self.registers[0][0x2A] = val;
-        } else if bank == Bank::Bank0 && addr == 0x2B {
-            self.dac_enabled = (val & 0x80) != 0;
-            self.registers[0][0x2B] = val;
-        } else {
-            self.registers[bank_idx][addr as usize] = val;
         }
+    }
+
+    fn handle_timer_control(&mut self, val: u8) {
+        let old_val = self.registers[0][0x27];
+
+        // Handle Reset Flags
+        // Bit 4: Reset A (Clear Timer A Overflow)
+        if (val & 0x10) != 0 {
+            self.status &= !0x01;
+        }
+        // Bit 5: Reset B (Clear Timer B Overflow)
+        if (val & 0x20) != 0 {
+            self.status &= !0x02;
+        }
+
+        // Handle Load Transitions (Reload Counters)
+        // Load A (Bit 0) 0->1
+        if (val & 0x01) != 0 && (old_val & 0x01) == 0 {
+            let n = ((self.registers[0][0x24] as u32) << 2)
+                | (self.registers[0][0x25] as u32 & 0x03);
+            let period = (1024 - n as i32) * 144;
+            self.timer_a_count = if period < 144 { 144 } else { period };
+        }
+
+        // Load B (Bit 1) 0->1
+        if (val & 0x02) != 0 && (old_val & 0x02) == 0 {
+            let n = self.registers[0][0x26] as u32;
+            let period = (256 - n as i32) * 2304;
+            self.timer_b_count = if period < 2304 { 2304 } else { period };
+        }
+
+        self.registers[0][0x27] = val;
+    }
+
+    fn handle_dac_data(&mut self, val: u8) {
+        self.dac_value = val;
+        self.registers[0][0x2A] = val;
+    }
+
+    fn handle_dac_enable(&mut self, val: u8) {
+        self.dac_enabled = (val & 0x80) != 0;
+        self.registers[0][0x2B] = val;
     }
 
     /// Generate one stereo sample pair
@@ -299,29 +310,6 @@ impl Ym2612 {
         )
     }
 
-    /// Deprecated: Use [`write_addr`] with [`Bank::Bank0`]
-    #[deprecated(note = "Use write_addr(Bank::Bank0, val)")]
-    pub fn write_addr0(&mut self, val: u8) {
-        self.write_addr(Bank::Bank0, val);
-    }
-
-    /// Deprecated: Use [`write_data_bank`] with [`Bank::Bank0`]
-    #[deprecated(note = "Use write_data_bank(Bank::Bank0, val)")]
-    pub fn write_data0(&mut self, val: u8) {
-        self.write_data_bank(Bank::Bank0, val);
-    }
-
-    /// Deprecated: Use [`write_addr`] with [`Bank::Bank1`]
-    #[deprecated(note = "Use write_addr(Bank::Bank1, val)")]
-    pub fn write_addr1(&mut self, val: u8) {
-        self.write_addr(Bank::Bank1, val);
-    }
-
-    /// Deprecated: Use [`write_data_bank`] with [`Bank::Bank1`]
-    #[deprecated(note = "Use write_data_bank(Bank::Bank1, val)")]
-    pub fn write_data1(&mut self, val: u8) {
-        self.write_data_bank(Bank::Bank1, val);
-    }
 
     // === Helper Accessors ===
 
