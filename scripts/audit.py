@@ -1,22 +1,8 @@
 #!/usr/bin/env python3
-"""
-Security & Quality Audit Tool for genteel.
-
-This script scans the repository for potential secrets, TODO items, and unsafe code blocks.
-It generates a JSON report and a CSV risk register.
-
-Usage:
-    Run from the repository root:
-    $ python3 scripts/audit_tool.py
-
-    The report will be generated in the `audit_reports/` directory.
-"""
-
 import os
 import re
 import json
 import csv
-import sys
 import subprocess
 from datetime import datetime
 
@@ -24,7 +10,10 @@ from datetime import datetime
 # Security & Quality Audit Tool for genteel
 # =============================================================================
 
-REPORT_DIR = "audit_reports"
+# Calculate repository root (assumes this script is in scripts/ directory)
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+REPORT_DIR = os.path.join(REPO_ROOT, "audit_reports")
 FINDINGS_JSON = os.path.join(REPORT_DIR, "findings.json")
 FINDINGS_MD = os.path.join(REPORT_DIR, "FINDINGS.md")
 METRICS_JSON = os.path.join(REPORT_DIR, "metrics.json")
@@ -32,19 +21,18 @@ RISK_CSV = os.path.join(REPORT_DIR, "RISK_REGISTER.csv")
 
 findings = []
 
-# Pre-compiled regex patterns at global scope for performance.
-# Note: String concatenation is used to prevent this script from detecting itself as a false positive.
+# Pre-compiled regex patterns at global scope for performance
 SECRET_PATTERNS = {
-    "Generic Secret": re.compile(r"(?i)secret" + r"\s*[:=]\s*['\"]"),
-    "API Key": re.compile(r"(?i)api" + r"[_-]?key\s*[:=]\s*['\"]"),
-    "Password": re.compile(r"(?i)password" + r"\s*[:=]\s*['\"]"),
-    "AWS Key": re.compile(r"AKIA" + r"[0-9A-Z]{16}"),
-    "Private Key": re.compile(r"-----BEGIN .* PRIVATE " + r"KEY-----"),
-    "Generic Token": re.compile(r"token" + r"\s*=\s*['\"][a-zA-Z0-9]{20,}['\"]")
+    "Generic Secret": re.compile(r"(?i)secret\s*[:=]\s*['\"]"),
+    "API Key": re.compile(r"(?i)api[_-]?key\s*[:=]\s*['\"]"),
+    "Password": re.compile(r"(?i)password\s*[:=]\s*['\"]"),
+    "AWS Key": re.compile(r"AKIA[0-9A-Z]{16}"),
+    "Private Key": re.compile(r"-----BEGIN .* PRIVATE KEY-----"),
+    "Generic Token": re.compile(r"token\s*=\s*['\"][a-zA-Z0-9]{20,}['\"]")
 }
 
-TODO_PATTERN = re.compile(r"(TODO|FIXME|XXX)" + r":")
-UNSAFE_PATTERN = re.compile(r"unsafe" + r"\s*\{")
+TODO_PATTERN = re.compile(r"(TODO|FIXME|XXX):")
+UNSAFE_PATTERN = re.compile(r"unsafe\s*\{")
 
 def add_finding(title, severity, description, file_path, line_number=None):
     findings.append({
@@ -58,33 +46,37 @@ def add_finding(title, severity, description, file_path, line_number=None):
 
 def get_tracked_files():
     try:
-        # Check if run from root or scripts dir, but prefer running git from CWD
-        out = subprocess.check_output(["git", "ls-files"], stderr=subprocess.STDOUT).decode("utf-8")
+        # Run git ls-files from the repository root
+        out = subprocess.check_output(["git", "ls-files"], cwd=REPO_ROOT, stderr=subprocess.STDOUT).decode("utf-8")
         files = out.splitlines()
         # Filter out target directories and audit reports
         return [f for f in files if not f.startswith("audit_reports/") and "/target/" not in f and not f.startswith("target/")]
     except:
         # Fallback to manual scan if git fails
         files = []
-        for root, _, filenames in os.walk("."):
+        for root, _, filenames in os.walk(REPO_ROOT):
             if ".git" in root or "target" in root or "audit_reports" in root:
                 continue
             for f in filenames:
                 if f.endswith((".rs", ".py", ".md", ".sh", ".toml")):
-                    files.append(os.path.join(root, f))
+                    # Store path relative to REPO_ROOT for consistency
+                    full_path = os.path.join(root, f)
+                    rel_path = os.path.relpath(full_path, REPO_ROOT)
+                    files.append(rel_path)
         return files
 
 def scan_text_patterns():
     files = get_tracked_files()
 
     for f in files:
-        if not os.path.exists(f) or os.path.isdir(f):
+        full_path = os.path.join(REPO_ROOT, f)
+        if not os.path.exists(full_path) or os.path.isdir(full_path):
             continue
         if not f.endswith((".rs", ".py", ".md", ".sh", ".toml")):
             continue
 
         try:
-            with open(f, 'r', encoding='utf-8', errors='ignore') as fp:
+            with open(full_path, 'r', encoding='utf-8', errors='ignore') as fp:
                 for i, line_content in enumerate(fp):
                     # Secrets
                     for name, compiled_pattern in SECRET_PATTERNS.items():
@@ -120,11 +112,8 @@ def scan_text_patterns():
             print(f"Error scanning {f}: {e}")
 
 def run_audit():
-    print("🚀 Starting genteel security & quality audit...")
+    print(f"🚀 Starting genteel security & quality audit from {REPO_ROOT}...")
     
-    # Ensure we are running from the root directory or adjust
-    # For now, assume CWD is root.
-
     if not os.path.exists(REPORT_DIR):
         os.makedirs(REPORT_DIR)
 
@@ -152,7 +141,4 @@ def run_audit():
     print(f"📄 Reports available in {REPORT_DIR}/")
 
 if __name__ == "__main__":
-    if not os.path.exists("Cargo.toml"):
-        print("Error: This script must be run from the repository root.")
-        sys.exit(1)
     run_audit()

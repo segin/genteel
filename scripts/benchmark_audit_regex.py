@@ -5,11 +5,13 @@ import sys
 import random
 import string
 
-FILENAME = "benchmark_data.txt"
+# Calculate repository root
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+FILENAME = os.path.join(REPO_ROOT, "benchmark_data.txt")
 FILE_SIZE_MB = 50
 
 def generate_data():
-    print(f"[*] Generating {FILE_SIZE_MB}MB test file...")
+    print(f"[*] Generating {FILE_SIZE_MB}MB test file at {FILENAME}...")
     chunk_size = 1024 * 1024 # 1MB
     chars = string.ascii_letters + string.digits + " \n\t"
 
