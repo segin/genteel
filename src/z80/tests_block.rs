@@ -6,6 +6,7 @@
 
 use super::*;
 use crate::memory::{IoInterface, Memory, MemoryInterface};
+use crate::z80::test_utils::create_z80;
 
 // Simple deterministic RNG to avoid dependencies
 struct Rng {
@@ -28,14 +29,6 @@ impl Rng {
     fn _range(&mut self, min: u16, max: u16) -> u16 {
         min + (self.next_u16() % (max - min))
     }
-}
-
-fn z80(program: &[u8]) -> Z80<crate::memory::Memory, crate::z80::test_utils::TestIo> {
-    let mut m = Memory::new(0x10000);
-    for (i, &b) in program.iter().enumerate() {
-        m.data[i] = b;
-    }
-    Z80::new(m, crate::z80::test_utils::TestIo::default())
 }
 
 /// Snapshot memory contents into a Vec for reference comparison
@@ -114,7 +107,7 @@ fn test_ldir_exhaustive() {
         // assuming src/dst don't overwrite it immediately.
         // To be safe, we execute until PC indicates completion.
 
-        let mut cpu = z80(&[]);
+        let mut cpu = create_z80(&[]);
         // Put Opcode at 0x100 avoids conflict usually?
         // Let's randomize PC placement too? No, keep simple.
         let _code_base = 0x0000;
@@ -219,7 +212,7 @@ fn test_lddr_exhaustive() {
         let dst = rng.next_u16();
         let bc = (rng.next() % 0x100) as u16; // Limit size for speed, cover 256
 
-        let mut cpu = z80(&[0xED, 0xB8]); // LDDR at 0x0000
+        let mut cpu = create_z80(&[0xED, 0xB8]); // LDDR at 0x0000
         cpu.set_hl(src);
         cpu.set_de(dst);
         cpu.set_bc(bc);
@@ -278,7 +271,7 @@ fn test_cpir_validation() {
         let bc = (rng.next() % 256) as u16 + 1; // 1..256
         let target = rng.next_u8();
 
-        let mut cpu = z80(&[0xED, 0xB1]);
+        let mut cpu = create_z80(&[0xED, 0xB1]);
         cpu.set_hl(hl);
         cpu.set_bc(bc);
         cpu.a = target;
@@ -338,7 +331,7 @@ fn test_cpir_validation() {
 #[test]
 fn test_inir_simulation() {
     // Tests register logic for INIR (mock IO)
-    let mut c = z80(&[0xED, 0xB2]); // INIR
+    let mut c = create_z80(&[0xED, 0xB2]); // INIR
     c.set_hl(0x2000);
     c.set_bc(0x0500); // B=5, C=0 implies port 0
 

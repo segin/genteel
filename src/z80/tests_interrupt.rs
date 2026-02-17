@@ -9,34 +9,27 @@
 use super::*;
 use crate::memory::Memory;
 use crate::memory::{IoInterface, MemoryInterface};
-
-fn z80(program: &[u8]) -> Z80<crate::memory::Memory, crate::z80::test_utils::TestIo> {
-    let mut m = Memory::new(0x10000);
-    for (i, &b) in program.iter().enumerate() {
-        m.data[i] = b;
-    }
-    Z80::new(m, crate::z80::test_utils::TestIo::default())
-}
+use crate::z80::test_utils::create_z80;
 
 // ============ DI (Disable Interrupts) ============
 
 #[test]
 fn di_clears_iff1() {
-    let mut c = z80(&[0xF3]);
+    let mut c = create_z80(&[0xF3]);
     c.iff1 = true;
     c.step();
     assert!(!c.iff1);
 }
 #[test]
 fn di_clears_iff2() {
-    let mut c = z80(&[0xF3]);
+    let mut c = create_z80(&[0xF3]);
     c.iff2 = true;
     c.step();
     assert!(!c.iff2);
 }
 #[test]
 fn di_both() {
-    let mut c = z80(&[0xF3]);
+    let mut c = create_z80(&[0xF3]);
     c.iff1 = true;
     c.iff2 = true;
     c.step();
@@ -45,7 +38,7 @@ fn di_both() {
 }
 #[test]
 fn di_already_clear() {
-    let mut c = z80(&[0xF3]);
+    let mut c = create_z80(&[0xF3]);
     c.iff1 = false;
     c.iff2 = false;
     c.step();
@@ -54,7 +47,7 @@ fn di_already_clear() {
 }
 #[test]
 fn di_pc() {
-    let mut c = z80(&[0xF3]);
+    let mut c = create_z80(&[0xF3]);
     c.step();
     assert_eq!(c.pc, 1);
 }
@@ -63,21 +56,21 @@ fn di_pc() {
 
 #[test]
 fn ei_sets_iff1() {
-    let mut c = z80(&[0xFB]);
+    let mut c = create_z80(&[0xFB]);
     c.iff1 = false;
     c.step();
     assert!(c.iff1);
 }
 #[test]
 fn ei_sets_iff2() {
-    let mut c = z80(&[0xFB]);
+    let mut c = create_z80(&[0xFB]);
     c.iff2 = false;
     c.step();
     assert!(c.iff2);
 }
 #[test]
 fn ei_both() {
-    let mut c = z80(&[0xFB]);
+    let mut c = create_z80(&[0xFB]);
     c.iff1 = false;
     c.iff2 = false;
     c.step();
@@ -86,7 +79,7 @@ fn ei_both() {
 }
 #[test]
 fn ei_already_set() {
-    let mut c = z80(&[0xFB]);
+    let mut c = create_z80(&[0xFB]);
     c.iff1 = true;
     c.iff2 = true;
     c.step();
@@ -95,7 +88,7 @@ fn ei_already_set() {
 }
 #[test]
 fn ei_pc() {
-    let mut c = z80(&[0xFB]);
+    let mut c = create_z80(&[0xFB]);
     c.step();
     assert_eq!(c.pc, 1);
 }
@@ -104,7 +97,7 @@ fn ei_pc() {
 
 #[test]
 fn di_ei_sequence() {
-    let mut c = z80(&[0xF3, 0xFB]); // DI; EI
+    let mut c = create_z80(&[0xF3, 0xFB]); // DI; EI
     c.iff1 = true;
     c.iff2 = true;
     c.step(); // DI
@@ -117,7 +110,7 @@ fn di_ei_sequence() {
 
 #[test]
 fn ei_di_sequence() {
-    let mut c = z80(&[0xFB, 0xF3]); // EI; DI
+    let mut c = create_z80(&[0xFB, 0xF3]); // EI; DI
     c.iff1 = false;
     c.iff2 = false;
     c.step(); // EI
@@ -132,49 +125,49 @@ fn ei_di_sequence() {
 
 #[test]
 fn im0_from_1() {
-    let mut c = z80(&[0xED, 0x46]);
+    let mut c = create_z80(&[0xED, 0x46]);
     c.im = 1;
     c.step();
     assert_eq!(c.im, 0);
 }
 #[test]
 fn im0_from_2() {
-    let mut c = z80(&[0xED, 0x46]);
+    let mut c = create_z80(&[0xED, 0x46]);
     c.im = 2;
     c.step();
     assert_eq!(c.im, 0);
 }
 #[test]
 fn im1_from_0() {
-    let mut c = z80(&[0xED, 0x56]);
+    let mut c = create_z80(&[0xED, 0x56]);
     c.im = 0;
     c.step();
     assert_eq!(c.im, 1);
 }
 #[test]
 fn im1_from_2() {
-    let mut c = z80(&[0xED, 0x56]);
+    let mut c = create_z80(&[0xED, 0x56]);
     c.im = 2;
     c.step();
     assert_eq!(c.im, 1);
 }
 #[test]
 fn im2_from_0() {
-    let mut c = z80(&[0xED, 0x5E]);
+    let mut c = create_z80(&[0xED, 0x5E]);
     c.im = 0;
     c.step();
     assert_eq!(c.im, 2);
 }
 #[test]
 fn im2_from_1() {
-    let mut c = z80(&[0xED, 0x5E]);
+    let mut c = create_z80(&[0xED, 0x5E]);
     c.im = 1;
     c.step();
     assert_eq!(c.im, 2);
 }
 #[test]
 fn im_pc() {
-    let mut c = z80(&[0xED, 0x46]);
+    let mut c = create_z80(&[0xED, 0x46]);
     c.step();
     assert_eq!(c.pc, 2);
 }
@@ -183,7 +176,7 @@ fn im_pc() {
 
 #[test]
 fn retn_returns() {
-    let mut c = z80(&[0xED, 0x45]);
+    let mut c = create_z80(&[0xED, 0x45]);
     c.sp = 0x1FFE;
     c.memory.write_byte(0x1FFE as u32, 0x34);
     c.memory.write_byte(0x1FFF as u32, 0x12);
@@ -194,7 +187,7 @@ fn retn_returns() {
 
 #[test]
 fn retn_restores_iff1_from_iff2_true() {
-    let mut c = z80(&[0xED, 0x45]);
+    let mut c = create_z80(&[0xED, 0x45]);
     c.sp = 0x1FFE;
     c.memory.write_byte(0x1FFE as u32, 0x00);
     c.memory.write_byte(0x1FFF as u32, 0x00);
@@ -207,7 +200,7 @@ fn retn_restores_iff1_from_iff2_true() {
 
 #[test]
 fn retn_restores_iff1_from_iff2_false() {
-    let mut c = z80(&[0xED, 0x45]);
+    let mut c = create_z80(&[0xED, 0x45]);
     c.sp = 0x1FFE;
     c.memory.write_byte(0x1FFE as u32, 0x00);
     c.memory.write_byte(0x1FFF as u32, 0x00);
@@ -222,7 +215,7 @@ fn retn_restores_iff1_from_iff2_false() {
 
 #[test]
 fn reti_returns() {
-    let mut c = z80(&[0xED, 0x4D]);
+    let mut c = create_z80(&[0xED, 0x4D]);
     c.sp = 0x1FFE;
     c.memory.write_byte(0x1FFE as u32, 0x78);
     c.memory.write_byte(0x1FFF as u32, 0x56);
@@ -234,7 +227,7 @@ fn reti_returns() {
 #[test]
 fn reti_does_not_modify_iff() {
     // RETI doesn't modify IFF flags (unlike RETN)
-    let mut c = z80(&[0xED, 0x4D]);
+    let mut c = create_z80(&[0xED, 0x4D]);
     c.sp = 0x1FFE;
     c.memory.write_byte(0x1FFE as u32, 0x00);
     c.memory.write_byte(0x1FFF as u32, 0x00);
@@ -250,7 +243,7 @@ fn reti_does_not_modify_iff() {
 
 #[test]
 fn ld_a_i_sets_parity_from_iff2_true() {
-    let mut c = z80(&[0xED, 0x57]);
+    let mut c = create_z80(&[0xED, 0x57]);
     c.i = 0x42;
     c.iff2 = true;
     c.step();
@@ -260,7 +253,7 @@ fn ld_a_i_sets_parity_from_iff2_true() {
 
 #[test]
 fn ld_a_i_sets_parity_from_iff2_false() {
-    let mut c = z80(&[0xED, 0x57]);
+    let mut c = create_z80(&[0xED, 0x57]);
     c.i = 0x42;
     c.iff2 = false;
     c.step();
@@ -270,7 +263,7 @@ fn ld_a_i_sets_parity_from_iff2_false() {
 
 #[test]
 fn ld_a_r_sets_parity_from_iff2_true() {
-    let mut c = z80(&[0xED, 0x5F]);
+    let mut c = create_z80(&[0xED, 0x5F]);
     c.r = 0x00; // Will become 0x01 after fetch
     c.iff2 = true;
     c.step();
@@ -279,7 +272,7 @@ fn ld_a_r_sets_parity_from_iff2_true() {
 
 #[test]
 fn ld_a_r_sets_parity_from_iff2_false() {
-    let mut c = z80(&[0xED, 0x5F]);
+    let mut c = create_z80(&[0xED, 0x5F]);
     c.r = 0x00;
     c.iff2 = false;
     c.step();
@@ -290,7 +283,7 @@ fn ld_a_r_sets_parity_from_iff2_false() {
 
 #[test]
 fn halt_sets_flag() {
-    let mut c = z80(&[0x76]);
+    let mut c = create_z80(&[0x76]);
     assert!(!c.halted);
     c.step();
     assert!(c.halted);
@@ -298,7 +291,7 @@ fn halt_sets_flag() {
 
 #[test]
 fn halt_stays_halted() {
-    let mut c = z80(&[0x76]);
+    let mut c = create_z80(&[0x76]);
     c.step();
     assert!(c.halted);
     let cycles = c.step();
@@ -308,7 +301,7 @@ fn halt_stays_halted() {
 
 #[test]
 fn halt_pc_stops() {
-    let mut c = z80(&[0x76]);
+    let mut c = create_z80(&[0x76]);
     c.step();
     assert_eq!(c.pc, 1);
     c.step();

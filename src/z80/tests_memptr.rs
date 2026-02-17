@@ -1,14 +1,6 @@
 use super::*;
 use crate::memory::{Memory, MemoryInterface};
-use crate::z80::test_utils::TestIo;
-
-fn create_z80(program: &[u8]) -> Z80<Memory, TestIo> {
-    let mut memory = Memory::new(0x10000);
-    for (i, &byte) in program.iter().enumerate() {
-        memory.data[i] = byte;
-    }
-    Z80::new(memory, TestIo::default())
-}
+use crate::z80::test_utils::create_z80;
 
 #[test]
 fn test_memptr_ld_bc_nn() {

@@ -6,14 +6,7 @@
 use super::*;
 use crate::memory::Memory;
 use crate::memory::{IoInterface, MemoryInterface};
-
-fn z80(program: &[u8]) -> Z80<crate::memory::Memory, crate::z80::test_utils::TestIo> {
-    let mut m = Memory::new(0x10000);
-    for (i, &b) in program.iter().enumerate() {
-        m.data[i] = b;
-    }
-    Z80::new(m, crate::z80::test_utils::TestIo::default())
-}
+use crate::z80::test_utils::create_z80;
 
 // ============ RRD: Rotate Right Decimal ============
 // (HL) low nibble -> (HL) high nibble -> A low nibble -> (HL) low nibble
@@ -22,7 +15,7 @@ fn z80(program: &[u8]) -> Z80<crate::memory::Memory, crate::z80::test_utils::Tes
 fn rrd_basic() {
     // A = 0x12, (HL) = 0x34
     // After RRD: A = 0x14, (HL) = 0x23
-    let mut c = z80(&[0xED, 0x67]);
+    let mut c = create_z80(&[0xED, 0x67]);
     c.a = 0x12;
     c.set_hl(0x1000);
     c.memory.write_byte(0x1000 as u32, 0x34);
@@ -33,7 +26,7 @@ fn rrd_basic() {
 
 #[test]
 fn rrd_zeros() {
-    let mut c = z80(&[0xED, 0x67]);
+    let mut c = create_z80(&[0xED, 0x67]);
     c.a = 0x00;
     c.set_hl(0x1000);
     c.memory.write_byte(0x1000 as u32, 0x00);
@@ -44,7 +37,7 @@ fn rrd_zeros() {
 
 #[test]
 fn rrd_all_ones() {
-    let mut c = z80(&[0xED, 0x67]);
+    let mut c = create_z80(&[0xED, 0x67]);
     c.a = 0xFF;
     c.set_hl(0x1000);
     c.memory.write_byte(0x1000 as u32, 0xFF);
@@ -56,7 +49,7 @@ fn rrd_all_ones() {
 #[test]
 fn rrd_a_high_nibble_preserved() {
     // A's high nibble should be preserved
-    let mut c = z80(&[0xED, 0x67]);
+    let mut c = create_z80(&[0xED, 0x67]);
     c.a = 0xF0;
     c.set_hl(0x1000);
     c.memory.write_byte(0x1000 as u32, 0x12);
@@ -67,7 +60,7 @@ fn rrd_a_high_nibble_preserved() {
 
 #[test]
 fn rrd_flags_zero() {
-    let mut c = z80(&[0xED, 0x67]);
+    let mut c = create_z80(&[0xED, 0x67]);
     c.a = 0x00;
     c.set_hl(0x1000);
     c.memory.write_byte(0x1000 as u32, 0x00);
@@ -77,7 +70,7 @@ fn rrd_flags_zero() {
 
 #[test]
 fn rrd_flags_sign() {
-    let mut c = z80(&[0xED, 0x67]);
+    let mut c = create_z80(&[0xED, 0x67]);
     c.a = 0x80;
     c.set_hl(0x1000);
     c.memory.write_byte(0x1000 as u32, 0x00);
@@ -87,7 +80,7 @@ fn rrd_flags_sign() {
 
 #[test]
 fn rrd_clears_n_h() {
-    let mut c = z80(&[0xED, 0x67]);
+    let mut c = create_z80(&[0xED, 0x67]);
     c.a = 0x12;
     c.set_hl(0x1000);
     c.memory.write_byte(0x1000 as u32, 0x34);
@@ -100,7 +93,7 @@ fn rrd_clears_n_h() {
 
 #[test]
 fn rrd_pc() {
-    let mut c = z80(&[0xED, 0x67]);
+    let mut c = create_z80(&[0xED, 0x67]);
     c.set_hl(0x1000);
     c.step();
     assert_eq!(c.pc, 2);
@@ -113,7 +106,7 @@ fn rrd_pc() {
 fn rld_basic() {
     // A = 0x12, (HL) = 0x34
     // After RLD: A = 0x13, (HL) = 0x42
-    let mut c = z80(&[0xED, 0x6F]);
+    let mut c = create_z80(&[0xED, 0x6F]);
     c.a = 0x12;
     c.set_hl(0x1000);
     c.memory.write_byte(0x1000 as u32, 0x34);
@@ -124,7 +117,7 @@ fn rld_basic() {
 
 #[test]
 fn rld_zeros() {
-    let mut c = z80(&[0xED, 0x6F]);
+    let mut c = create_z80(&[0xED, 0x6F]);
     c.a = 0x00;
     c.set_hl(0x1000);
     c.memory.write_byte(0x1000 as u32, 0x00);
@@ -135,7 +128,7 @@ fn rld_zeros() {
 
 #[test]
 fn rld_all_ones() {
-    let mut c = z80(&[0xED, 0x6F]);
+    let mut c = create_z80(&[0xED, 0x6F]);
     c.a = 0xFF;
     c.set_hl(0x1000);
     c.memory.write_byte(0x1000 as u32, 0xFF);
@@ -146,7 +139,7 @@ fn rld_all_ones() {
 
 #[test]
 fn rld_a_high_nibble_preserved() {
-    let mut c = z80(&[0xED, 0x6F]);
+    let mut c = create_z80(&[0xED, 0x6F]);
     c.a = 0xF0;
     c.set_hl(0x1000);
     c.memory.write_byte(0x1000 as u32, 0x12);
@@ -157,7 +150,7 @@ fn rld_a_high_nibble_preserved() {
 
 #[test]
 fn rld_flags_zero() {
-    let mut c = z80(&[0xED, 0x6F]);
+    let mut c = create_z80(&[0xED, 0x6F]);
     c.a = 0x00;
     c.set_hl(0x1000);
     c.memory.write_byte(0x1000 as u32, 0x00);
@@ -167,7 +160,7 @@ fn rld_flags_zero() {
 
 #[test]
 fn rld_flags_sign() {
-    let mut c = z80(&[0xED, 0x6F]);
+    let mut c = create_z80(&[0xED, 0x6F]);
     c.a = 0x80;
     c.set_hl(0x1000);
     c.memory.write_byte(0x1000 as u32, 0x00);
@@ -177,7 +170,7 @@ fn rld_flags_sign() {
 
 #[test]
 fn rld_clears_n_h() {
-    let mut c = z80(&[0xED, 0x6F]);
+    let mut c = create_z80(&[0xED, 0x6F]);
     c.a = 0x12;
     c.set_hl(0x1000);
     c.memory.write_byte(0x1000 as u32, 0x34);
@@ -190,7 +183,7 @@ fn rld_clears_n_h() {
 
 #[test]
 fn rld_pc() {
-    let mut c = z80(&[0xED, 0x6F]);
+    let mut c = create_z80(&[0xED, 0x6F]);
     c.set_hl(0x1000);
     c.step();
     assert_eq!(c.pc, 2);
@@ -201,7 +194,7 @@ fn rld_pc() {
 #[test]
 fn rrd_rld_roundtrip() {
     // Applying RRD then RLD should give original values
-    let mut c = z80(&[0xED, 0x67, 0xED, 0x6F]); // RRD, RLD
+    let mut c = create_z80(&[0xED, 0x67, 0xED, 0x6F]); // RRD, RLD
     c.a = 0x12;
     c.set_hl(0x1000);
     c.memory.write_byte(0x1000 as u32, 0x34);
@@ -220,7 +213,7 @@ fn rrd_rld_roundtrip() {
 #[test]
 fn rld_rrd_roundtrip() {
     // Applying RLD then RRD should give original values
-    let mut c = z80(&[0xED, 0x6F, 0xED, 0x67]); // RLD, RRD
+    let mut c = create_z80(&[0xED, 0x6F, 0xED, 0x67]); // RLD, RRD
     c.a = 0x56;
     c.set_hl(0x1000);
     c.memory.write_byte(0x1000 as u32, 0x78);
@@ -239,7 +232,7 @@ fn rld_rrd_roundtrip() {
 
 #[test]
 fn rrd_parity_even() {
-    let mut c = z80(&[0xED, 0x67]);
+    let mut c = create_z80(&[0xED, 0x67]);
     c.a = 0x00; // Result will have even parity
     c.set_hl(0x1000);
     c.memory.write_byte(0x1000 as u32, 0x00);
@@ -249,7 +242,7 @@ fn rrd_parity_even() {
 
 #[test]
 fn rrd_parity_odd() {
-    let mut c = z80(&[0xED, 0x67]);
+    let mut c = create_z80(&[0xED, 0x67]);
     c.a = 0x00;
     c.set_hl(0x1000);
     c.memory.write_byte(0x1000 as u32, 0x10); // A becomes 0x00, (HL) becomes 0x01, A's low = 0

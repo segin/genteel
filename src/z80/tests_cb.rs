@@ -4,19 +4,12 @@
 use super::*;
 use crate::memory::Memory;
 use crate::memory::{IoInterface, MemoryInterface};
-
-fn z80(program: &[u8]) -> Z80<crate::memory::Memory, crate::z80::test_utils::TestIo> {
-    let mut m = Memory::new(0x10000);
-    for (i, &b) in program.iter().enumerate() {
-        m.data[i] = b;
-    }
-    Z80::new(m, crate::z80::test_utils::TestIo::default())
-}
+use crate::z80::test_utils::create_z80;
 
 // ============ RLC r ============
 #[test]
 fn test_rlc_b_00() {
-    let mut c = z80(&[0xCB, 0x00]);
+    let mut c = create_z80(&[0xCB, 0x00]);
     c.b = 0x00;
     c.step();
     assert_eq!(c.b, 0x00);
@@ -24,7 +17,7 @@ fn test_rlc_b_00() {
 }
 #[test]
 fn test_rlc_b_01() {
-    let mut c = z80(&[0xCB, 0x00]);
+    let mut c = create_z80(&[0xCB, 0x00]);
     c.b = 0x01;
     c.step();
     assert_eq!(c.b, 0x02);
@@ -32,7 +25,7 @@ fn test_rlc_b_01() {
 }
 #[test]
 fn test_rlc_b_80() {
-    let mut c = z80(&[0xCB, 0x00]);
+    let mut c = create_z80(&[0xCB, 0x00]);
     c.b = 0x80;
     c.step();
     assert_eq!(c.b, 0x01);
@@ -40,7 +33,7 @@ fn test_rlc_b_80() {
 }
 #[test]
 fn test_rlc_b_ff() {
-    let mut c = z80(&[0xCB, 0x00]);
+    let mut c = create_z80(&[0xCB, 0x00]);
     c.b = 0xFF;
     c.step();
     assert_eq!(c.b, 0xFF);
@@ -48,7 +41,7 @@ fn test_rlc_b_ff() {
 }
 #[test]
 fn test_rlc_b_85() {
-    let mut c = z80(&[0xCB, 0x00]);
+    let mut c = create_z80(&[0xCB, 0x00]);
     c.b = 0x85;
     c.step();
     assert_eq!(c.b, 0x0B);
@@ -56,14 +49,14 @@ fn test_rlc_b_85() {
 }
 #[test]
 fn test_rlc_c() {
-    let mut c = z80(&[0xCB, 0x01]);
+    let mut c = create_z80(&[0xCB, 0x01]);
     c.c = 0x40;
     c.step();
     assert_eq!(c.c, 0x80);
 }
 #[test]
 fn test_rlc_d() {
-    let mut c = z80(&[0xCB, 0x02]);
+    let mut c = create_z80(&[0xCB, 0x02]);
     c.d = 0x81;
     c.step();
     assert_eq!(c.d, 0x03);
@@ -71,14 +64,14 @@ fn test_rlc_d() {
 }
 #[test]
 fn test_rlc_e() {
-    let mut c = z80(&[0xCB, 0x03]);
+    let mut c = create_z80(&[0xCB, 0x03]);
     c.e = 0x55;
     c.step();
     assert_eq!(c.e, 0xAA);
 }
 #[test]
 fn test_rlc_h() {
-    let mut c = z80(&[0xCB, 0x04]);
+    let mut c = create_z80(&[0xCB, 0x04]);
     c.h = 0xAA;
     c.step();
     assert_eq!(c.h, 0x55);
@@ -86,14 +79,14 @@ fn test_rlc_h() {
 }
 #[test]
 fn test_rlc_l() {
-    let mut c = z80(&[0xCB, 0x05]);
+    let mut c = create_z80(&[0xCB, 0x05]);
     c.l = 0x01;
     c.step();
     assert_eq!(c.l, 0x02);
 }
 #[test]
 fn test_rlc_a() {
-    let mut c = z80(&[0xCB, 0x07]);
+    let mut c = create_z80(&[0xCB, 0x07]);
     c.a = 0x80;
     c.step();
     assert_eq!(c.a, 0x01);
@@ -103,7 +96,7 @@ fn test_rlc_a() {
 // ============ RRC r ============
 #[test]
 fn test_rrc_b_00() {
-    let mut c = z80(&[0xCB, 0x08]);
+    let mut c = create_z80(&[0xCB, 0x08]);
     c.b = 0x00;
     c.step();
     assert_eq!(c.b, 0x00);
@@ -111,7 +104,7 @@ fn test_rrc_b_00() {
 }
 #[test]
 fn test_rrc_b_01() {
-    let mut c = z80(&[0xCB, 0x08]);
+    let mut c = create_z80(&[0xCB, 0x08]);
     c.b = 0x01;
     c.step();
     assert_eq!(c.b, 0x80);
@@ -119,7 +112,7 @@ fn test_rrc_b_01() {
 }
 #[test]
 fn test_rrc_b_80() {
-    let mut c = z80(&[0xCB, 0x08]);
+    let mut c = create_z80(&[0xCB, 0x08]);
     c.b = 0x80;
     c.step();
     assert_eq!(c.b, 0x40);
@@ -127,7 +120,7 @@ fn test_rrc_b_80() {
 }
 #[test]
 fn test_rrc_b_81() {
-    let mut c = z80(&[0xCB, 0x08]);
+    let mut c = create_z80(&[0xCB, 0x08]);
     c.b = 0x81;
     c.step();
     assert_eq!(c.b, 0xC0);
@@ -135,14 +128,14 @@ fn test_rrc_b_81() {
 }
 #[test]
 fn test_rrc_c() {
-    let mut c = z80(&[0xCB, 0x09]);
+    let mut c = create_z80(&[0xCB, 0x09]);
     c.c = 0x02;
     c.step();
     assert_eq!(c.c, 0x01);
 }
 #[test]
 fn test_rrc_a() {
-    let mut c = z80(&[0xCB, 0x0F]);
+    let mut c = create_z80(&[0xCB, 0x0F]);
     c.a = 0x01;
     c.step();
     assert_eq!(c.a, 0x80);
@@ -152,7 +145,7 @@ fn test_rrc_a() {
 // ============ RL r ============
 #[test]
 fn test_rl_b_nc() {
-    let mut c = z80(&[0xCB, 0x10]);
+    let mut c = create_z80(&[0xCB, 0x10]);
     c.b = 0x80;
     c.f = 0;
     c.step();
@@ -161,7 +154,7 @@ fn test_rl_b_nc() {
 }
 #[test]
 fn test_rl_b_c() {
-    let mut c = z80(&[0xCB, 0x10]);
+    let mut c = create_z80(&[0xCB, 0x10]);
     c.b = 0x80;
     c.set_flag(flags::CARRY, true);
     c.step();
@@ -170,7 +163,7 @@ fn test_rl_b_c() {
 }
 #[test]
 fn test_rl_b_00_c() {
-    let mut c = z80(&[0xCB, 0x10]);
+    let mut c = create_z80(&[0xCB, 0x10]);
     c.b = 0x00;
     c.set_flag(flags::CARRY, true);
     c.step();
@@ -179,7 +172,7 @@ fn test_rl_b_00_c() {
 }
 #[test]
 fn test_rl_c() {
-    let mut c = z80(&[0xCB, 0x11]);
+    let mut c = create_z80(&[0xCB, 0x11]);
     c.c = 0x40;
     c.f = 0;
     c.step();
@@ -187,7 +180,7 @@ fn test_rl_c() {
 }
 #[test]
 fn test_rl_a() {
-    let mut c = z80(&[0xCB, 0x17]);
+    let mut c = create_z80(&[0xCB, 0x17]);
     c.a = 0x7F;
     c.set_flag(flags::CARRY, true);
     c.step();
@@ -197,7 +190,7 @@ fn test_rl_a() {
 // ============ RR r ============
 #[test]
 fn test_rr_b_nc() {
-    let mut c = z80(&[0xCB, 0x18]);
+    let mut c = create_z80(&[0xCB, 0x18]);
     c.b = 0x01;
     c.f = 0;
     c.step();
@@ -206,7 +199,7 @@ fn test_rr_b_nc() {
 }
 #[test]
 fn test_rr_b_c() {
-    let mut c = z80(&[0xCB, 0x18]);
+    let mut c = create_z80(&[0xCB, 0x18]);
     c.b = 0x01;
     c.set_flag(flags::CARRY, true);
     c.step();
@@ -215,7 +208,7 @@ fn test_rr_b_c() {
 }
 #[test]
 fn test_rr_b_00_c() {
-    let mut c = z80(&[0xCB, 0x18]);
+    let mut c = create_z80(&[0xCB, 0x18]);
     c.b = 0x00;
     c.set_flag(flags::CARRY, true);
     c.step();
@@ -224,7 +217,7 @@ fn test_rr_b_00_c() {
 }
 #[test]
 fn test_rr_a() {
-    let mut c = z80(&[0xCB, 0x1F]);
+    let mut c = create_z80(&[0xCB, 0x1F]);
     c.a = 0xFE;
     c.set_flag(flags::CARRY, true);
     c.step();
@@ -234,21 +227,21 @@ fn test_rr_a() {
 // ============ SLA r ============
 #[test]
 fn test_sla_b_00() {
-    let mut c = z80(&[0xCB, 0x20]);
+    let mut c = create_z80(&[0xCB, 0x20]);
     c.b = 0x00;
     c.step();
     assert_eq!(c.b, 0x00);
 }
 #[test]
 fn test_sla_b_01() {
-    let mut c = z80(&[0xCB, 0x20]);
+    let mut c = create_z80(&[0xCB, 0x20]);
     c.b = 0x01;
     c.step();
     assert_eq!(c.b, 0x02);
 }
 #[test]
 fn test_sla_b_80() {
-    let mut c = z80(&[0xCB, 0x20]);
+    let mut c = create_z80(&[0xCB, 0x20]);
     c.b = 0x80;
     c.step();
     assert_eq!(c.b, 0x00);
@@ -256,7 +249,7 @@ fn test_sla_b_80() {
 }
 #[test]
 fn test_sla_b_ff() {
-    let mut c = z80(&[0xCB, 0x20]);
+    let mut c = create_z80(&[0xCB, 0x20]);
     c.b = 0xFF;
     c.step();
     assert_eq!(c.b, 0xFE);
@@ -264,14 +257,14 @@ fn test_sla_b_ff() {
 }
 #[test]
 fn test_sla_c() {
-    let mut c = z80(&[0xCB, 0x21]);
+    let mut c = create_z80(&[0xCB, 0x21]);
     c.c = 0x40;
     c.step();
     assert_eq!(c.c, 0x80);
 }
 #[test]
 fn test_sla_a() {
-    let mut c = z80(&[0xCB, 0x27]);
+    let mut c = create_z80(&[0xCB, 0x27]);
     c.a = 0x55;
     c.step();
     assert_eq!(c.a, 0xAA);
@@ -280,14 +273,14 @@ fn test_sla_a() {
 // ============ SRA r ============
 #[test]
 fn test_sra_b_00() {
-    let mut c = z80(&[0xCB, 0x28]);
+    let mut c = create_z80(&[0xCB, 0x28]);
     c.b = 0x00;
     c.step();
     assert_eq!(c.b, 0x00);
 }
 #[test]
 fn test_sra_b_01() {
-    let mut c = z80(&[0xCB, 0x28]);
+    let mut c = create_z80(&[0xCB, 0x28]);
     c.b = 0x01;
     c.step();
     assert_eq!(c.b, 0x00);
@@ -295,14 +288,14 @@ fn test_sra_b_01() {
 }
 #[test]
 fn test_sra_b_80() {
-    let mut c = z80(&[0xCB, 0x28]);
+    let mut c = create_z80(&[0xCB, 0x28]);
     c.b = 0x80;
     c.step();
     assert_eq!(c.b, 0xC0);
 } // Sign preserved
 #[test]
 fn test_sra_b_81() {
-    let mut c = z80(&[0xCB, 0x28]);
+    let mut c = create_z80(&[0xCB, 0x28]);
     c.b = 0x81;
     c.step();
     assert_eq!(c.b, 0xC0);
@@ -310,7 +303,7 @@ fn test_sra_b_81() {
 }
 #[test]
 fn test_sra_b_ff() {
-    let mut c = z80(&[0xCB, 0x28]);
+    let mut c = create_z80(&[0xCB, 0x28]);
     c.b = 0xFF;
     c.step();
     assert_eq!(c.b, 0xFF);
@@ -318,7 +311,7 @@ fn test_sra_b_ff() {
 }
 #[test]
 fn test_sra_a() {
-    let mut c = z80(&[0xCB, 0x2F]);
+    let mut c = create_z80(&[0xCB, 0x2F]);
     c.a = 0xAA;
     c.step();
     assert_eq!(c.a, 0xD5);
@@ -327,14 +320,14 @@ fn test_sra_a() {
 // ============ SRL r ============
 #[test]
 fn test_srl_b_00() {
-    let mut c = z80(&[0xCB, 0x38]);
+    let mut c = create_z80(&[0xCB, 0x38]);
     c.b = 0x00;
     c.step();
     assert_eq!(c.b, 0x00);
 }
 #[test]
 fn test_srl_b_01() {
-    let mut c = z80(&[0xCB, 0x38]);
+    let mut c = create_z80(&[0xCB, 0x38]);
     c.b = 0x01;
     c.step();
     assert_eq!(c.b, 0x00);
@@ -342,14 +335,14 @@ fn test_srl_b_01() {
 }
 #[test]
 fn test_srl_b_80() {
-    let mut c = z80(&[0xCB, 0x38]);
+    let mut c = create_z80(&[0xCB, 0x38]);
     c.b = 0x80;
     c.step();
     assert_eq!(c.b, 0x40);
 }
 #[test]
 fn test_srl_b_81() {
-    let mut c = z80(&[0xCB, 0x38]);
+    let mut c = create_z80(&[0xCB, 0x38]);
     c.b = 0x81;
     c.step();
     assert_eq!(c.b, 0x40);
@@ -357,7 +350,7 @@ fn test_srl_b_81() {
 }
 #[test]
 fn test_srl_b_ff() {
-    let mut c = z80(&[0xCB, 0x38]);
+    let mut c = create_z80(&[0xCB, 0x38]);
     c.b = 0xFF;
     c.step();
     assert_eq!(c.b, 0x7F);
@@ -365,7 +358,7 @@ fn test_srl_b_ff() {
 }
 #[test]
 fn test_srl_a() {
-    let mut c = z80(&[0xCB, 0x3F]);
+    let mut c = create_z80(&[0xCB, 0x3F]);
     c.a = 0xAA;
     c.step();
     assert_eq!(c.a, 0x55);
@@ -375,21 +368,21 @@ fn test_srl_a() {
 // BIT 0
 #[test]
 fn test_bit_0_b_0() {
-    let mut c = z80(&[0xCB, 0x40]);
+    let mut c = create_z80(&[0xCB, 0x40]);
     c.b = 0x00;
     c.step();
     assert!(c.get_flag(flags::ZERO));
 }
 #[test]
 fn test_bit_0_b_1() {
-    let mut c = z80(&[0xCB, 0x40]);
+    let mut c = create_z80(&[0xCB, 0x40]);
     c.b = 0x01;
     c.step();
     assert!(!c.get_flag(flags::ZERO));
 }
 #[test]
 fn test_bit_0_b_fe() {
-    let mut c = z80(&[0xCB, 0x40]);
+    let mut c = create_z80(&[0xCB, 0x40]);
     c.b = 0xFE;
     c.step();
     assert!(c.get_flag(flags::ZERO));
@@ -397,14 +390,14 @@ fn test_bit_0_b_fe() {
 // BIT 1
 #[test]
 fn test_bit_1_c_0() {
-    let mut c = z80(&[0xCB, 0x49]);
+    let mut c = create_z80(&[0xCB, 0x49]);
     c.c = 0x00;
     c.step();
     assert!(c.get_flag(flags::ZERO));
 }
 #[test]
 fn test_bit_1_c_2() {
-    let mut c = z80(&[0xCB, 0x49]);
+    let mut c = create_z80(&[0xCB, 0x49]);
     c.c = 0x02;
     c.step();
     assert!(!c.get_flag(flags::ZERO));
@@ -412,21 +405,21 @@ fn test_bit_1_c_2() {
 // BIT 7
 #[test]
 fn test_bit_7_a_0() {
-    let mut c = z80(&[0xCB, 0x7F]);
+    let mut c = create_z80(&[0xCB, 0x7F]);
     c.a = 0x00;
     c.step();
     assert!(c.get_flag(flags::ZERO));
 }
 #[test]
 fn test_bit_7_a_80() {
-    let mut c = z80(&[0xCB, 0x7F]);
+    let mut c = create_z80(&[0xCB, 0x7F]);
     c.a = 0x80;
     c.step();
     assert!(!c.get_flag(flags::ZERO));
 }
 #[test]
 fn test_bit_7_a_7f() {
-    let mut c = z80(&[0xCB, 0x7F]);
+    let mut c = create_z80(&[0xCB, 0x7F]);
     c.a = 0x7F;
     c.step();
     assert!(c.get_flag(flags::ZERO));
@@ -434,28 +427,28 @@ fn test_bit_7_a_7f() {
 // Various bits
 #[test]
 fn test_bit_3_d() {
-    let mut c = z80(&[0xCB, 0x5A]);
+    let mut c = create_z80(&[0xCB, 0x5A]);
     c.d = 0x08;
     c.step();
     assert!(!c.get_flag(flags::ZERO));
 }
 #[test]
 fn test_bit_4_e() {
-    let mut c = z80(&[0xCB, 0x63]);
+    let mut c = create_z80(&[0xCB, 0x63]);
     c.e = 0x10;
     c.step();
     assert!(!c.get_flag(flags::ZERO));
 }
 #[test]
 fn test_bit_5_h() {
-    let mut c = z80(&[0xCB, 0x6C]);
+    let mut c = create_z80(&[0xCB, 0x6C]);
     c.h = 0x20;
     c.step();
     assert!(!c.get_flag(flags::ZERO));
 }
 #[test]
 fn test_bit_6_l() {
-    let mut c = z80(&[0xCB, 0x75]);
+    let mut c = create_z80(&[0xCB, 0x75]);
     c.l = 0x40;
     c.step();
     assert!(!c.get_flag(flags::ZERO));
@@ -464,63 +457,63 @@ fn test_bit_6_l() {
 // ============ RES b, r ============
 #[test]
 fn test_res_0_b() {
-    let mut c = z80(&[0xCB, 0x80]);
+    let mut c = create_z80(&[0xCB, 0x80]);
     c.b = 0xFF;
     c.step();
     assert_eq!(c.b, 0xFE);
 }
 #[test]
 fn test_res_1_c() {
-    let mut c = z80(&[0xCB, 0x89]);
+    let mut c = create_z80(&[0xCB, 0x89]);
     c.c = 0xFF;
     c.step();
     assert_eq!(c.c, 0xFD);
 }
 #[test]
 fn test_res_2_d() {
-    let mut c = z80(&[0xCB, 0x92]);
+    let mut c = create_z80(&[0xCB, 0x92]);
     c.d = 0xFF;
     c.step();
     assert_eq!(c.d, 0xFB);
 }
 #[test]
 fn test_res_3_e() {
-    let mut c = z80(&[0xCB, 0x9B]);
+    let mut c = create_z80(&[0xCB, 0x9B]);
     c.e = 0xFF;
     c.step();
     assert_eq!(c.e, 0xF7);
 }
 #[test]
 fn test_res_4_h() {
-    let mut c = z80(&[0xCB, 0xA4]);
+    let mut c = create_z80(&[0xCB, 0xA4]);
     c.h = 0xFF;
     c.step();
     assert_eq!(c.h, 0xEF);
 }
 #[test]
 fn test_res_5_l() {
-    let mut c = z80(&[0xCB, 0xAD]);
+    let mut c = create_z80(&[0xCB, 0xAD]);
     c.l = 0xFF;
     c.step();
     assert_eq!(c.l, 0xDF);
 }
 #[test]
 fn test_res_6_a() {
-    let mut c = z80(&[0xCB, 0xB7]);
+    let mut c = create_z80(&[0xCB, 0xB7]);
     c.a = 0xFF;
     c.step();
     assert_eq!(c.a, 0xBF);
 }
 #[test]
 fn test_res_7_b() {
-    let mut c = z80(&[0xCB, 0xB8]);
+    let mut c = create_z80(&[0xCB, 0xB8]);
     c.b = 0xFF;
     c.step();
     assert_eq!(c.b, 0x7F);
 }
 #[test]
 fn test_res_0_already() {
-    let mut c = z80(&[0xCB, 0x80]);
+    let mut c = create_z80(&[0xCB, 0x80]);
     c.b = 0x00;
     c.step();
     assert_eq!(c.b, 0x00);
@@ -529,63 +522,63 @@ fn test_res_0_already() {
 // ============ SET b, r ============
 #[test]
 fn test_set_0_b() {
-    let mut c = z80(&[0xCB, 0xC0]);
+    let mut c = create_z80(&[0xCB, 0xC0]);
     c.b = 0x00;
     c.step();
     assert_eq!(c.b, 0x01);
 }
 #[test]
 fn test_set_1_c() {
-    let mut c = z80(&[0xCB, 0xC9]);
+    let mut c = create_z80(&[0xCB, 0xC9]);
     c.c = 0x00;
     c.step();
     assert_eq!(c.c, 0x02);
 }
 #[test]
 fn test_set_2_d() {
-    let mut c = z80(&[0xCB, 0xD2]);
+    let mut c = create_z80(&[0xCB, 0xD2]);
     c.d = 0x00;
     c.step();
     assert_eq!(c.d, 0x04);
 }
 #[test]
 fn test_set_3_e() {
-    let mut c = z80(&[0xCB, 0xDB]);
+    let mut c = create_z80(&[0xCB, 0xDB]);
     c.e = 0x00;
     c.step();
     assert_eq!(c.e, 0x08);
 }
 #[test]
 fn test_set_4_h() {
-    let mut c = z80(&[0xCB, 0xE4]);
+    let mut c = create_z80(&[0xCB, 0xE4]);
     c.h = 0x00;
     c.step();
     assert_eq!(c.h, 0x10);
 }
 #[test]
 fn test_set_5_l() {
-    let mut c = z80(&[0xCB, 0xED]);
+    let mut c = create_z80(&[0xCB, 0xED]);
     c.l = 0x00;
     c.step();
     assert_eq!(c.l, 0x20);
 }
 #[test]
 fn test_set_6_a() {
-    let mut c = z80(&[0xCB, 0xF7]);
+    let mut c = create_z80(&[0xCB, 0xF7]);
     c.a = 0x00;
     c.step();
     assert_eq!(c.a, 0x40);
 }
 #[test]
 fn test_set_7_b() {
-    let mut c = z80(&[0xCB, 0xF8]);
+    let mut c = create_z80(&[0xCB, 0xF8]);
     c.b = 0x00;
     c.step();
     assert_eq!(c.b, 0x80);
 }
 #[test]
 fn test_set_7_already() {
-    let mut c = z80(&[0xCB, 0xF8]);
+    let mut c = create_z80(&[0xCB, 0xF8]);
     c.b = 0xFF;
     c.step();
     assert_eq!(c.b, 0xFF);
