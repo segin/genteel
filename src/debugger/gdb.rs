@@ -13,6 +13,9 @@ pub const DEFAULT_PORT: u16 = 1234;
 /// Maximum GDB packet size to prevent unbounded memory consumption
 pub const MAX_PACKET_SIZE: usize = 4096;
 
+/// Maximum number of breakpoints allowed to prevent memory exhaustion
+pub const MAX_BREAKPOINTS: usize = 1024;
+
 /// GDB stop reasons
 #[derive(Debug, Clone, Copy)]
 pub enum StopReason {
@@ -554,6 +557,14 @@ impl GdbServer {
             Ok(a) => a,
             Err(_) => return "E01".to_string(),
         };
+
+        if self.breakpoints.len() >= MAX_BREAKPOINTS && !self.breakpoints.contains(&addr) {
+            eprintln!(
+                "⚠️  SECURITY ALERT: Maximum number of breakpoints ({}) reached.",
+                MAX_BREAKPOINTS
+            );
+            return "E01".to_string();
+        }
 
         self.breakpoints.insert(addr);
         "OK".to_string()
@@ -1132,6 +1143,36 @@ mod tests {
         assert_eq!(
             server.process_command("qAttached", &mut regs, &mut mem),
             "1"
+        );
+    }
+
+    #[test]
+    fn test_breakpoint_limit() {
+        let mut server = create_test_server();
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+
+        // Fill up breakpoints
+        for i in 0..MAX_BREAKPOINTS {
+            let cmd = format!("Z0,{:x},4", i);
+            assert_eq!(server.process_command(&cmd, &mut regs, &mut mem), "OK");
+        }
+
+        // Verify full
+        assert_eq!(server.breakpoints.len(), MAX_BREAKPOINTS);
+
+        // Try adding one more (new)
+        let cmd_overflow = format!("Z0,{:x},4", MAX_BREAKPOINTS);
+        assert_eq!(
+            server.process_command(&cmd_overflow, &mut regs, &mut mem),
+            "E01"
+        );
+
+        // Verify existing one still works (idempotent)
+        let cmd_existing = "Z0,0,4";
+        assert_eq!(
+            server.process_command(cmd_existing, &mut regs, &mut mem),
+            "OK"
         );
     }
 
