@@ -96,23 +96,30 @@ impl<'a> Iterator for SpriteIterator<'a> {
 
         let addr = self.sat_base + (self.next_idx as usize * 8);
 
-        let cur_v = (((self.vram[addr] as u16) << 8) | (self.vram[addr + 1] as u16)) & 0x03FF;
+        // SAFETY: The bounds check `if self.sat_base + (self.next_idx as usize * 8) + 8 > 0x10000`
+        // was already done at the start of the function.
+        let data = unsafe {
+            let ptr = self.vram.as_ptr().add(addr) as *const u64;
+            u64::from_be(std::ptr::read_unaligned(ptr))
+        };
+
+        let cur_v = ((data >> 48) as u16) & 0x03FF;
         let v_pos = cur_v.wrapping_sub(128);
 
-        let size = self.vram[addr + 2];
+        let size = (data >> 40) as u8;
         let h_size = ((size >> 2) & 0x03) + 1;
         let v_size = (size & 0x03) + 1;
 
-        let link = self.vram[addr + 3] & 0x7F;
+        let link = ((data >> 32) as u8) & 0x7F;
 
-        let attr_word = ((self.vram[addr + 4] as u16) << 8) | (self.vram[addr + 5] as u16);
+        let attr_word = (data >> 16) as u16;
         let priority = (attr_word & 0x8000) != 0;
         let palette = ((attr_word >> 13) & 0x03) as u8;
         let v_flip = (attr_word & 0x1000) != 0;
         let h_flip = (attr_word & 0x0800) != 0;
         let base_tile = attr_word & 0x07FF;
 
-        let cur_h = (((self.vram[addr + 6] as u16) << 8) | (self.vram[addr + 7] as u16)) & 0x03FF;
+        let cur_h = (data as u16) & 0x03FF;
         let h_pos = cur_h.wrapping_sub(128);
 
         let attr = SpriteAttributes {
