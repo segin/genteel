@@ -386,6 +386,8 @@ impl Vdp {
 
     #[inline(always)]
     pub fn read_status(&mut self) -> u16 {
+        // Reading status clears the control pending flag (first word of command)
+        // This matches hardware behavior (verified against Genesis Plus GX)
         self.control_pending = false;
         let res = self.status;
         // Reading status clears the VInt pending bit
