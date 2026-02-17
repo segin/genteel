@@ -808,3 +808,128 @@ fn fetch_postinc_operand<M: MemoryInterface>(
     cpu.a[reg as usize] = addr.wrapping_add(size.bytes());
     val
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cpu::decoder::AddressingMode;
+    use crate::cpu::flags;
+    use crate::cpu::Cpu;
+    use crate::memory::Memory;
+
+    fn create_test_setup() -> (Cpu, Memory) {
+        let mut memory = Memory::new(0x10000);
+        // Initialize memory with basic vector table
+        memory.write_long(0x0, 0x8000); // Stack pointer
+        memory.write_long(0x4, 0x1000); // PC
+        let cpu = Cpu::new(&mut memory);
+        (cpu, memory)
+    }
+
+    #[test]
+    fn test_exec_muls_pos_pos() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 10;
+        cpu.d[1] = 20;
+
+        let cycles = exec_muls(
+            &mut cpu,
+            AddressingMode::DataRegister(0),
+            1, // D1
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1], 200);
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert_eq!(cycles, 70); // 70 + 0 (DataReg)
+    }
+
+    #[test]
+    fn test_exec_muls_pos_neg() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 20;
+        cpu.d[1] = 0xFFF6; // -10 as i16
+
+        let cycles = exec_muls(
+            &mut cpu,
+            AddressingMode::DataRegister(0),
+            1, // D1
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1] as i32, -200);
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert_eq!(cycles, 70);
+    }
+
+    #[test]
+    fn test_exec_muls_neg_pos() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0xFFF6; // -10 as i16
+        cpu.d[1] = 20;
+
+        let cycles = exec_muls(
+            &mut cpu,
+            AddressingMode::DataRegister(0),
+            1, // D1
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1] as i32, -200);
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert_eq!(cycles, 70);
+    }
+
+    #[test]
+    fn test_exec_muls_neg_neg() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0xFFF6; // -10 as i16
+        cpu.d[1] = 0xFFEC; // -20 as i16
+
+        let cycles = exec_muls(
+            &mut cpu,
+            AddressingMode::DataRegister(0),
+            1, // D1
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1], 200);
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert_eq!(cycles, 70);
+    }
+
+    #[test]
+    fn test_exec_muls_zero() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0;
+        cpu.d[1] = 12345;
+        cpu.set_flag(flags::CARRY, true);
+        cpu.set_flag(flags::OVERFLOW, true);
+
+        let cycles = exec_muls(
+            &mut cpu,
+            AddressingMode::DataRegister(0),
+            1, // D1
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1], 0);
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert_eq!(cycles, 70);
+    }
+}
