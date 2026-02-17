@@ -13,6 +13,28 @@ pub const DEFAULT_PORT: u16 = 1234;
 /// Maximum GDB packet size to prevent unbounded memory consumption
 pub const MAX_PACKET_SIZE: usize = 4096;
 
+<<<<<<< HEAD
+/// Maximum number of breakpoints allowed to prevent memory exhaustion
+pub const MAX_BREAKPOINTS: usize = 1024;
+=======
+/// Constant-time string comparison to prevent timing attacks
+fn secure_compare(a: &str, b: &str) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+
+    let a_bytes = a.as_bytes();
+    let b_bytes = b.as_bytes();
+    let mut result = 0;
+
+    for i in 0..a.len() {
+        result |= a_bytes[i] ^ b_bytes[i];
+    }
+
+    result == 0
+}
+>>>>>>> main
+
 /// GDB stop reasons
 #[derive(Debug, Clone, Copy)]
 pub enum StopReason {
@@ -555,6 +577,14 @@ impl GdbServer {
             Err(_) => return "E01".to_string(),
         };
 
+        if self.breakpoints.len() >= MAX_BREAKPOINTS && !self.breakpoints.contains(&addr) {
+            eprintln!(
+                "⚠️  SECURITY ALERT: Maximum number of breakpoints ({}) reached.",
+                MAX_BREAKPOINTS
+            );
+            return "E01".to_string();
+        }
+
         self.breakpoints.insert(addr);
         "OK".to_string()
     }
@@ -622,7 +652,7 @@ impl GdbServer {
         if let Some(stripped) = cmd.strip_prefix("auth ") {
             let provided_pass = stripped.trim();
             if let Some(ref correct_pass) = self.password {
-                if provided_pass == correct_pass {
+                if secure_compare(provided_pass, correct_pass) {
                     self.authenticated = true;
                     return "OK".to_string();
                 } else {
@@ -1136,6 +1166,36 @@ mod tests {
     }
 
     #[test]
+    fn test_breakpoint_limit() {
+        let mut server = create_test_server();
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+
+        // Fill up breakpoints
+        for i in 0..MAX_BREAKPOINTS {
+            let cmd = format!("Z0,{:x},4", i);
+            assert_eq!(server.process_command(&cmd, &mut regs, &mut mem), "OK");
+        }
+
+        // Verify full
+        assert_eq!(server.breakpoints.len(), MAX_BREAKPOINTS);
+
+        // Try adding one more (new)
+        let cmd_overflow = format!("Z0,{:x},4", MAX_BREAKPOINTS);
+        assert_eq!(
+            server.process_command(&cmd_overflow, &mut regs, &mut mem),
+            "E01"
+        );
+
+        // Verify existing one still works (idempotent)
+        let cmd_existing = "Z0,0,4";
+        assert_eq!(
+            server.process_command(cmd_existing, &mut regs, &mut mem),
+            "OK"
+        );
+    }
+
+    #[test]
     fn test_breakpoint_edge_cases() {
         let mut server = create_test_server();
         let mut regs = GdbRegisters::default();
@@ -1155,5 +1215,16 @@ mod tests {
             "OK"
         );
         assert_eq!(server.process_command("Z1,1000,4", &mut regs, &mut mem), "");
+    }
+
+    #[test]
+    fn test_secure_compare() {
+        assert!(secure_compare("password", "password"));
+        assert!(!secure_compare("password", "passwor"));
+        assert!(!secure_compare("password", "passworf"));
+        assert!(!secure_compare("password", "longpassword"));
+        assert!(!secure_compare("short", "password"));
+        assert!(secure_compare("", ""));
+        assert!(!secure_compare("", "a"));
     }
 }
