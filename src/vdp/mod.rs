@@ -911,7 +911,7 @@ impl Vdp {
     }
 
     #[inline(always)]
-    unsafe fn draw_full_tile_row(&mut self, entry: u16, pixel_v: u16, dest_idx: usize) {
+    fn draw_full_tile_row(&mut self, entry: u16, pixel_v: u16, dest_idx: usize) {
         let palette = ((entry >> 13) & 0x03) as u8;
         let v_flip = (entry & 0x1000) != 0;
         let h_flip = (entry & 0x0800) != 0;
@@ -924,92 +924,79 @@ impl Vdp {
         let p3 = patterns[3];
         let palette_base = (palette as usize) * 16;
 
-        // SAFETY: Caller ensures dest_idx + 7 is within framebuffer bounds.
-        // palette is 2 bits, so palette_base is max 48. col is 4 bits (0-15).
-        // Max index is 63, which is within cram_cache bounds (64).
-        unsafe {
-            if h_flip {
-                let mut col = p3 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p3 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 1) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p2 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 2) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p2 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 3) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p1 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 4) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p1 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 5) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p0 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 6) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p0 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 7) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-            } else {
-                let mut col = p0 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p0 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 1) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p1 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 2) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p1 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 3) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p2 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 4) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p2 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 5) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p3 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 6) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p3 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 7) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
+        // Perform bounds check implicitly via slicing
+        if dest_idx + 8 > self.framebuffer.len() {
+            // Should not happen if caller logic is correct, but safe to return
+            return;
+        }
+
+        let row = &mut self.framebuffer[dest_idx..dest_idx + 8];
+
+        if h_flip {
+            let mut col = p3 & 0x0F;
+            if col != 0 {
+                row[0] = self.cram_cache[palette_base + col as usize];
+            }
+            col = p3 >> 4;
+            if col != 0 {
+                row[1] = self.cram_cache[palette_base + col as usize];
+            }
+            col = p2 & 0x0F;
+            if col != 0 {
+                row[2] = self.cram_cache[palette_base + col as usize];
+            }
+            col = p2 >> 4;
+            if col != 0 {
+                row[3] = self.cram_cache[palette_base + col as usize];
+            }
+            col = p1 & 0x0F;
+            if col != 0 {
+                row[4] = self.cram_cache[palette_base + col as usize];
+            }
+            col = p1 >> 4;
+            if col != 0 {
+                row[5] = self.cram_cache[palette_base + col as usize];
+            }
+            col = p0 & 0x0F;
+            if col != 0 {
+                row[6] = self.cram_cache[palette_base + col as usize];
+            }
+            col = p0 >> 4;
+            if col != 0 {
+                row[7] = self.cram_cache[palette_base + col as usize];
+            }
+        } else {
+            let mut col = p0 >> 4;
+            if col != 0 {
+                row[0] = self.cram_cache[palette_base + col as usize];
+            }
+            col = p0 & 0x0F;
+            if col != 0 {
+                row[1] = self.cram_cache[palette_base + col as usize];
+            }
+            col = p1 >> 4;
+            if col != 0 {
+                row[2] = self.cram_cache[palette_base + col as usize];
+            }
+            col = p1 & 0x0F;
+            if col != 0 {
+                row[3] = self.cram_cache[palette_base + col as usize];
+            }
+            col = p2 >> 4;
+            if col != 0 {
+                row[4] = self.cram_cache[palette_base + col as usize];
+            }
+            col = p2 & 0x0F;
+            if col != 0 {
+                row[5] = self.cram_cache[palette_base + col as usize];
+            }
+            col = p3 >> 4;
+            if col != 0 {
+                row[6] = self.cram_cache[palette_base + col as usize];
+            }
+            col = p3 & 0x0F;
+            if col != 0 {
+                row[7] = self.cram_cache[palette_base + col as usize];
             }
         }
     }
@@ -1063,9 +1050,7 @@ impl Vdp {
             if priority == priority_filter && tile_index != 0 {
                 if pixels_to_process == 8 && pixel_h == 0 {
                     // Fast path for full aligned tile
-                    unsafe {
-                        self.draw_full_tile_row(entry, pixel_v, line_offset + screen_x as usize);
-                    }
+                    self.draw_full_tile_row(entry, pixel_v, line_offset + screen_x as usize);
                 } else {
                     self.draw_partial_tile_row(
                         entry,
@@ -1305,6 +1290,23 @@ mod tests {
 
         // Verify CRAM Cache
         assert_eq!(vdp2.cram_cache[1], 0xFFFF);
+    }
+
+    #[test]
+    fn test_draw_full_tile_row_oob() {
+        let mut vdp = Vdp::new();
+        // Simulate a call with dest_idx that is out of bounds.
+        // Framebuffer size is 320 * 240 = 76800.
+        // Calling with an index such that `dest_idx + 8` exceeds the buffer length
+        // should return safely without panic (due to the explicit check)
+        // or potentially panic if the check was missing but safe slicing was used.
+        // Crucially, it must NOT cause Undefined Behavior.
+
+        let oob_index = vdp.framebuffer.len() - 4; // +8 will overflow
+        vdp.draw_full_tile_row(0, 0, oob_index);
+
+        // If we reach here without panic/crash, the test passes.
+        // This confirms the bounds check is working and preventing OOB access.
     }
 }
 
