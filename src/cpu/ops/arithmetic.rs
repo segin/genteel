@@ -552,6 +552,7 @@ pub fn exec_divu<M: MemoryInterface>(
 
     if quotient > 0xFFFF {
         cpu.set_flag(flags::OVERFLOW, true);
+        cpu.set_flag(flags::CARRY, false);
     } else {
         cpu.d[dst_reg as usize] = (remainder << 16) | (quotient & 0xFFFF);
         cpu.set_flag(flags::ZERO, (quotient & 0xFFFF) == 0);
@@ -584,6 +585,7 @@ pub fn exec_divs<M: MemoryInterface>(
 
     if !(-32768..=32767).contains(&quotient) {
         cpu.set_flag(flags::OVERFLOW, true);
+        cpu.set_flag(flags::CARRY, false);
     } else {
         cpu.d[dst_reg as usize] = ((remainder as u32) << 16) | ((quotient as u32) & 0xFFFF);
         cpu.set_flag(flags::ZERO, (quotient as i16) == 0);
