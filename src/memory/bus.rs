@@ -32,16 +32,17 @@ use serde_json::Value;
 /// Sega Genesis Memory Bus
 ///
 /// Routes memory accesses to the appropriate component based on address.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Bus {
     /// ROM data (up to 4MB)
+    #[serde(skip)]
     pub rom: Vec<u8>,
 
     /// Work RAM (64KB at 0xFF0000-0xFFFFFF, mirrored in 0xE00000-0xFFFFFF)
-    pub work_ram: [u8; 0x10000],
+    pub work_ram: Box<[u8]>,
 
     /// Z80 RAM (8KB at 0xA00000-0xA01FFF)
-    pub z80_ram: [u8; 0x2000],
+    pub z80_ram: Box<[u8]>,
 
     /// VDP Port access
     pub vdp: Vdp,
@@ -65,6 +66,7 @@ pub struct Bus {
 
     /// Audio synchronization
     pub audio_accumulator: f32,
+    #[serde(skip)]
     pub audio_buffer: Vec<i16>,
     pub sample_rate: u32,
 }
@@ -74,8 +76,8 @@ impl Bus {
     pub fn new() -> Self {
         Self {
             rom: Vec::new(),
-            work_ram: [0; 0x10000],
-            z80_ram: [0; 0x2000],
+            work_ram: vec![0; 0x10000].into_boxed_slice(),
+            z80_ram: vec![0; 0x2000].into_boxed_slice(),
             vdp: Vdp::new(),
             io: Io::new(),
             apu: Apu::new(),
@@ -203,25 +205,6 @@ impl Bus {
             0x000000..=0x3FFFFF => {}
 
             // Z80 Area: 0xA00000-0xA0FFFF
-            0xA00000..=0xA0FFFF => self.write_z80_area(addr, value),
-
-            // I/O & Z80 Control: 0xA10000-0xA1FFFF
-            0xA10000..=0xA1FFFF => self.write_io_area(addr, value),
-
-            // VDP Ports: 0xC00000-0xC0FFFF
-            0xC00000..=0xC0FFFF => self.write_vdp_area(addr, value),
-
-            // Work RAM: 0xE00000-0xFFFFFF
-            0xE00000..=0xFFFFFF => self.write_ram(addr, value),
-
-            // Unmapped regions
-            _ => {}
-        }
-    }
-
-    fn write_z80_area(&mut self, addr: u32, value: u8) {
-        match addr {
-            // Z80 RAM
             0xA00000..=0xA01FFF => {
                 // Only accessible if Z80 bus is requested (Z80 stopped)
                 if self.z80_bus_request {
@@ -246,27 +229,28 @@ impl Bus {
                 self.z80_bank_addr = (self.z80_bank_addr & !mask) | bit;
                 self.z80_bank_bit = (self.z80_bank_bit + 1) % 9;
             }
-            _ => {}
-        }
-    }
 
-    fn write_io_area(&mut self, addr: u32, value: u8) {
-        match addr {
-            // I/O Ports
+            // I/O & Z80 Control: 0xA10000-0xA1FFFF
             0xA10000..=0xA1001F => {
                 self.io.write(addr, value);
             }
-            // Z80 Bus Request
             0xA11100 => {
                 self.z80_bus_request = (value & 0x01) != 0;
             }
-            // Z80 Reset
             0xA11200 => {
                 self.z80_reset = (value & 0x01) == 0;
                 if self.z80_reset {
                     self.z80_bank_bit = 0; // Hardware resets shift pointer
                 }
             }
+
+            // VDP Ports: 0xC00000-0xC0FFFF
+            0xC00000..=0xC0FFFF => self.write_vdp_area(addr, value),
+
+            // Work RAM: 0xE00000-0xFFFFFF
+            0xE00000..=0xFFFFFF => self.write_ram(addr, value),
+
+            // Unmapped regions
             _ => {}
         }
     }
@@ -531,49 +515,19 @@ impl MemoryInterface for Bus {
     }
 }
 
-#[derive(Serialize, Deserialize)]
-struct BusJsonState {
-    z80_bus_request: Option<bool>,
-    z80_reset: Option<bool>,
-    z80_bank_addr: Option<u32>,
-    vdp: Option<Value>,
-    io: Option<Value>,
-    apu: Option<Value>,
-}
-
 impl Debuggable for Bus {
     fn read_state(&self) -> Value {
-        let state = BusJsonState {
-            z80_bus_request: Some(self.z80_bus_request),
-            z80_reset: Some(self.z80_reset),
-            z80_bank_addr: Some(self.z80_bank_addr),
-            vdp: Some(self.vdp.read_state()),
-            io: Some(self.io.read_state()),
-            apu: Some(self.apu.read_state()),
-        };
-        serde_json::to_value(state).expect("Failed to serialize Bus state")
+        serde_json::to_value(self).unwrap()
     }
 
     fn write_state(&mut self, state: &Value) {
-        if let Ok(bus_state) = serde_json::from_value::<BusJsonState>(state.clone()) {
-            if let Some(req) = bus_state.z80_bus_request {
-                self.z80_bus_request = req;
+        if let Ok(mut new_bus) = serde_json::from_value::<Bus>(state.clone()) {
+            new_bus.rom = std::mem::take(&mut self.rom);
+            if new_bus.vdp.framebuffer.len() != 320 * 240 {
+                new_bus.vdp.framebuffer.resize(320 * 240, 0);
             }
-            if let Some(reset) = bus_state.z80_reset {
-                self.z80_reset = reset;
-            }
-            if let Some(bank) = bus_state.z80_bank_addr {
-                self.z80_bank_addr = bank;
-            }
-            if let Some(vdp_state) = bus_state.vdp {
-                self.vdp.write_state(&vdp_state);
-            }
-            if let Some(io_state) = bus_state.io {
-                self.io.write_state(&io_state);
-            }
-            if let Some(apu_state) = bus_state.apu {
-                self.apu.write_state(&apu_state);
-            }
+            new_bus.vdp.reconstruct_cram_cache();
+            *self = new_bus;
         }
     }
 }
@@ -584,30 +538,37 @@ mod tests {
 
     #[test]
     fn test_bus_state_serialization() {
-        let mut bus = Bus::new();
+        std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024) // 16MB
+            .spawn(|| {
+                let mut bus = Bus::new();
 
-        // Modify state
-        bus.z80_bus_request = true;
-        bus.z80_reset = false;
-        bus.z80_bank_addr = 0x12345;
+                // Modify state
+                bus.z80_bus_request = true;
+                bus.z80_reset = false;
+                bus.z80_bank_addr = 0x12345;
 
-        // Serialize
-        let state_value = bus.read_state();
+                // Serialize
+                let state_value = bus.read_state();
 
-        // Create new bus
-        let mut new_bus = Bus::new();
+                // Create new bus
+                let mut new_bus = Bus::new();
 
-        // Deserialize
-        new_bus.write_state(&state_value);
+                // Deserialize
+                new_bus.write_state(&state_value);
 
-        // Assert equality
-        assert_eq!(new_bus.z80_bus_request, true);
-        assert_eq!(new_bus.z80_reset, false);
-        assert_eq!(new_bus.z80_bank_addr, 0x12345);
+                // Assert equality
+                assert_eq!(new_bus.z80_bus_request, true);
+                assert_eq!(new_bus.z80_reset, false);
+                assert_eq!(new_bus.z80_bank_addr, 0x12345);
 
-        // Verify VDP/IO/APU keys exist in JSON
-        assert!(state_value.get("vdp").is_some());
-        assert!(state_value.get("io").is_some());
-        assert!(state_value.get("apu").is_some());
+                // Verify VDP/IO/APU keys exist in JSON
+                assert!(state_value.get("vdp").is_some());
+                assert!(state_value.get("io").is_some());
+                assert!(state_value.get("apu").is_some());
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }

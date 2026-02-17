@@ -16,6 +16,7 @@
 //! - Feedback/Algorithm
 //!
 
+use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 
 /// Sine table size (must be power of 2 for masking)
@@ -34,18 +35,51 @@ fn get_sine_table() -> &'static [f32; SINE_TABLE_SIZE] {
     })
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+mod register_array {
+    use crate::memory::byte_utils::big_array;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S>(data: &[[u8; 256]; 2], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeTuple;
+        let mut s = serializer.serialize_tuple(2)?;
+        // We can't use big_array::serialize directly because it expects serializer, not reference.
+        // We define a wrapper struct locally and serialize that.
+        #[derive(Serialize)]
+        struct Wrapper<'a>(#[serde(with = "big_array")] &'a [u8; 256]);
+
+        s.serialize_element(&Wrapper(&data[0]))?;
+        s.serialize_element(&Wrapper(&data[1]))?;
+        s.end()
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<[[u8; 256]; 2], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Wrapper(#[serde(with = "big_array")] [u8; 256]);
+
+        let arr: [Wrapper; 2] = Deserialize::deserialize(deserializer)?;
+        Ok([arr[0].0, arr[1].0])
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum Bank {
     Bank0 = 0,
     Bank1 = 1,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Ym2612 {
     /// Internal registers (split into two banks of 256 bytes for simplicity,
     /// though many are unused).
     /// Bank 0: [0][addr]
     /// Bank 1: [1][addr]
+    #[serde(with = "register_array")]
     pub registers: [[u8; 256]; 2],
 
     /// Current register addresses for each bank

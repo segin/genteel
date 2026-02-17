@@ -25,10 +25,11 @@
 //! | 0xA1001F  | Expansion serial control           |
 
 use crate::debugger::Debuggable;
-use serde_json::{json, Value};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// Button state for a Genesis controller
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct ControllerState {
     /// D-pad Up
     pub up: bool,
@@ -90,7 +91,7 @@ impl ControllerState {
 }
 
 /// Controller type
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum ControllerType {
     /// No controller connected
     None,
@@ -102,7 +103,7 @@ pub enum ControllerType {
 }
 
 /// A controller port
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ControllerPort {
     /// Type of controller connected
     pub controller_type: ControllerType,
@@ -289,7 +290,7 @@ impl Default for ControllerPort {
 }
 
 /// I/O subsystem managing all controller ports
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Io {
     /// Controller port 1
     pub port1: ControllerPort,
@@ -374,16 +375,13 @@ impl Io {
 
 impl Debuggable for Io {
     fn read_state(&self) -> Value {
-        json!({
-            "version": self.version,
-            "port1_control": self.port1.control,
-            "port2_control": self.port2.control,
-            "expansion_control": self.expansion.control,
-        })
+        serde_json::to_value(self).unwrap()
     }
 
-    fn write_state(&mut self, _state: &Value) {
-        // Simple stub for now
+    fn write_state(&mut self, state: &Value) {
+        if let Ok(new_io) = serde_json::from_value(state.clone()) {
+            *self = new_io;
+        }
     }
 }
 
