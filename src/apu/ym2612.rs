@@ -299,30 +299,6 @@ impl Ym2612 {
         )
     }
 
-    /// Deprecated: Use [`write_addr`] with [`Bank::Bank0`]
-    #[deprecated(note = "Use write_addr(Bank::Bank0, val)")]
-    pub fn write_addr0(&mut self, val: u8) {
-        self.write_addr(Bank::Bank0, val);
-    }
-
-    /// Deprecated: Use [`write_data_bank`] with [`Bank::Bank0`]
-    #[deprecated(note = "Use write_data_bank(Bank::Bank0, val)")]
-    pub fn write_data0(&mut self, val: u8) {
-        self.write_data_bank(Bank::Bank0, val);
-    }
-
-    /// Deprecated: Use [`write_addr`] with [`Bank::Bank1`]
-    #[deprecated(note = "Use write_addr(Bank::Bank1, val)")]
-    pub fn write_addr1(&mut self, val: u8) {
-        self.write_addr(Bank::Bank1, val);
-    }
-
-    /// Deprecated: Use [`write_data_bank`] with [`Bank::Bank1`]
-    #[deprecated(note = "Use write_data_bank(Bank::Bank1, val)")]
-    pub fn write_data1(&mut self, val: u8) {
-        self.write_data_bank(Bank::Bank1, val);
-    }
-
     // === Helper Accessors ===
 
     /// Get frequency block and f-number for a channel (0-2 for Bank0, 3-5 for Bank1)
