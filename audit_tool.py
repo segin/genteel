@@ -28,6 +28,26 @@ SECRET_PATTERNS = {
     "Generic Token": re.compile(r"token\s*=\s*['\"][a-zA-Z0-9]{20,}['\"]")
 }
 
+# Compile a combined pattern for optimization
+_secret_pattern_parts = []
+SECRET_PATTERN_NAMES = {}
+
+for i, (name, pattern) in enumerate(SECRET_PATTERNS.items()):
+    group_name = f"GROUP_{i}"
+    SECRET_PATTERN_NAMES[group_name] = name
+
+    pat = pattern.pattern
+    # Handle inline flags like (?i) at start or flag set on compiled object
+    if pat.startswith("(?i)"):
+        pat = pat[4:]
+        pat = f"(?i:{pat})"
+    elif pattern.flags & re.IGNORECASE:
+        pat = f"(?i:{pat})"
+
+    _secret_pattern_parts.append(f"(?P<{group_name}>{pat})")
+
+COMBINED_SECRET_PATTERN = re.compile("|".join(_secret_pattern_parts))
+
 TODO_PATTERN = re.compile(r"(TODO|FIXME|XXX):")
 UNSAFE_PATTERN = re.compile(r"unsafe\s*\{")
 
