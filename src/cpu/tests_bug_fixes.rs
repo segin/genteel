@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::cpu::Cpu;
+    use crate::cpu::decoder::{decode, AddressingMode, BitsInstruction, Instruction, ShiftCount, Size};
     use crate::memory::{Memory, MemoryInterface};
 
     fn create_test_cpu() -> (Cpu, Memory) {
@@ -96,16 +97,12 @@ mod tests {
 
     #[test]
     fn test_decode_memory_shift_bug() {
-        use crate::cpu::decoder::{decode, Instruction, Size, AddressingMode, ShiftCount};
-
         // ASL.W (A0)
         // Opcode: 1110 000 1 11 010 000 = E1D0
         let instr_asl = decode(0xE1D0);
         match instr_asl {
-            Instruction::Asl { size, dst, count } => {
-                assert_eq!(size, Size::Word);
+            Instruction::Bits(BitsInstruction::AslM { dst }) => {
                 assert_eq!(dst, AddressingMode::AddressIndirect(0));
-                assert_eq!(count, ShiftCount::Immediate(1));
             },
             _ => panic!("Expected ASL, got {:?}", instr_asl),
         }
@@ -114,7 +111,7 @@ mod tests {
         // Opcode: 1110 001 0 11 010 000 = E2D0
         let instr_lsr = decode(0xE2D0);
         match instr_lsr {
-            Instruction::Lsr { size, dst, count } => {
+            Instruction::Bits(BitsInstruction::Lsr { size, dst, count }) => {
                 assert_eq!(size, Size::Word);
                 assert_eq!(dst, AddressingMode::AddressIndirect(0));
                 assert_eq!(count, ShiftCount::Immediate(1));
