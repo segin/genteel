@@ -107,3 +107,26 @@ fn test_control_state_machine() {
         "Next write should be treated as first word of new command"
     );
 }
+
+#[test]
+fn test_read_status_side_effects() {
+    let mut vdp = Vdp::new();
+
+    // 1. Verify read_status clears control_pending
+    vdp.write_control(0x4000); // 1st word of VRAM write
+    assert!(vdp.is_control_pending(), "Control pending should be set");
+
+    let _ = vdp.read_status();
+    assert!(!vdp.is_control_pending(), "read_status should clear control pending");
+
+    // 2. Verify read_status clears STATUS_VINT_PENDING
+    vdp.trigger_vint();
+
+    // Read status once: it should have the VInt pending bit set (bit 7, 0x0080)
+    let status1 = vdp.read_status();
+    assert_eq!(status1 & 0x0080, 0x0080, "VInt pending bit should be set in first read");
+
+    // Read status again: it should be cleared now
+    let status2 = vdp.read_status();
+    assert_eq!(status2 & 0x0080, 0x0000, "VInt pending bit should be cleared in second read");
+}
