@@ -120,4 +120,39 @@ mod tests {
         apu.write_fm_data(Bank::Bank0, 0xF0); // Key on Ch 1
         assert_eq!(apu.fm.registers[0][0x28], 0xF0);
     }
+
+    #[test]
+    fn test_debuggable_roundtrip() {
+        let mut apu = Apu::new();
+
+        // Modify PSG state
+        // Set Channel 0 Frequency to 0x3F5 (1013)
+        // 1. Latch Channel 0 (00), Freq (0), Data (0101) -> 1000 0101 -> 0x85
+        apu.write_psg(0x85);
+        // 2. Data Byte: High 6 bits (0011 11) -> 0011 1111 -> 0x3F
+        apu.write_psg(0x3F);
+
+        // Set Channel 1 Volume to 8
+        // Channel 1 (01), Volume (1), Data (1000) -> 1011 1000 -> 0xB8
+        apu.write_psg(0xB8);
+
+        // Modify FM state
+        // Bank 0, Register 0x22 (LFO) = 0x08 (Enabled)
+        apu.write_fm_addr(Bank::Bank0, 0x22);
+        apu.write_fm_data(Bank::Bank0, 0x08);
+
+        // Serialize state
+        let state = apu.read_state();
+
+        // Deserialize into new APU
+        let mut restored_apu = Apu::new();
+        restored_apu.write_state(&state);
+
+        // Verify PSG state restoration
+        assert_eq!(restored_apu.psg.tones[0].frequency, 0x3F5);
+        assert_eq!(restored_apu.psg.tones[1].volume, 8);
+
+        // Verify FM state restoration
+        assert_eq!(restored_apu.fm.registers[0][0x22], 0x08);
+    }
 }
