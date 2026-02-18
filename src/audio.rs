@@ -82,13 +82,29 @@ impl AudioBuffer {
 
     /// Push samples into the buffer
     pub fn push(&mut self, samples: &[i16]) {
-        for &sample in samples {
-            if self.available < self.buffer.len() {
-                self.buffer[self.write_pos] = sample;
-                self.write_pos = (self.write_pos + 1) % self.buffer.len();
-                self.available += 1;
-            }
+        // Calculate how many samples we can actually store
+        let capacity = self.buffer.len();
+        let space_available = capacity - self.available;
+        let count = std::cmp::min(samples.len(), space_available);
+
+        if count == 0 {
+            return;
         }
+
+        // Split write into two parts if wrapping around the end of the buffer
+        let first_chunk_len = std::cmp::min(count, capacity - self.write_pos);
+
+        self.buffer[self.write_pos..self.write_pos + first_chunk_len]
+            .copy_from_slice(&samples[..first_chunk_len]);
+
+        if first_chunk_len < count {
+            let second_chunk_len = count - first_chunk_len;
+            self.buffer[0..second_chunk_len]
+                .copy_from_slice(&samples[first_chunk_len..count]);
+        }
+
+        self.write_pos = (self.write_pos + count) % capacity;
+        self.available += count;
     }
 
     /// Pop samples from the buffer into destination
