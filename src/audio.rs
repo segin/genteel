@@ -369,4 +369,29 @@ mod tests {
             assert_eq!(buf.available(), 0);
         }
     }
+
+    #[test]
+    fn test_pop_f32_wrap() {
+        let mut buf = AudioBuffer::new(4); // 8 samples total (stereo)
+
+        // Fill most of it
+        buf.push(&[1i16, 2, 3, 4, 5, 6]);
+
+        // Pop some to advance read_pos
+        let mut out = [0.0f32; 4];
+        buf.pop_f32(&mut out);
+
+        // Push more (should wrap write_pos)
+        buf.push(&[7i16, 8, 9, 10]);
+
+        // Pop all (should wrap read_pos)
+        let mut out2 = [0.0f32; 6];
+        buf.pop_f32(&mut out2);
+
+        let expected_samples = [5i16, 6, 7, 8, 9, 10];
+        for (i, &sample) in expected_samples.iter().enumerate() {
+            let expected = sample as f32 / 32768.0;
+            assert!((out2[i] - expected).abs() < f32::EPSILON, "Failed wrap check at index {}", i);
+        }
+    }
 }
