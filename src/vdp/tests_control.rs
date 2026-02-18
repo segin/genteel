@@ -93,11 +93,11 @@ fn test_control_state_machine() {
     vdp.reset();
     vdp.write_control(0x4000);
     assert!(vdp.is_control_pending());
-    // Read status should clear control pending. This is confirmed correct behavior.
+    // Read status clears control pending
     vdp.read_status();
     assert!(
         !vdp.is_control_pending(),
-        "Read status should clear control pending"
+        "Read status must clear control pending"
     );
 
     // Verify next write starts a new command
