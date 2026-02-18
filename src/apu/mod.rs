@@ -12,10 +12,11 @@ pub mod ym2612;
 
 use crate::debugger::Debuggable;
 use psg::Psg;
-use serde_json::{json, Value};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use ym2612::{Bank, Ym2612};
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Apu {
     pub psg: Psg,
     pub fm: Ym2612,
@@ -52,30 +53,6 @@ impl Apu {
         self.fm.write_data_bank(bank, data);
     }
 
-    /// Deprecated: Use [`write_fm_addr`] with [`Bank::Bank0`]
-    #[deprecated(note = "Use write_fm_addr(Bank::Bank0, data)")]
-    pub fn write_fm_addr0(&mut self, data: u8) {
-        self.write_fm_addr(Bank::Bank0, data);
-    }
-
-    /// Deprecated: Use [`write_fm_data`] with [`Bank::Bank0`]
-    #[deprecated(note = "Use write_fm_data(Bank::Bank0, data)")]
-    pub fn write_fm_data0(&mut self, data: u8) {
-        self.write_fm_data(Bank::Bank0, data);
-    }
-
-    /// Deprecated: Use [`write_fm_addr`] with [`Bank::Bank1`]
-    #[deprecated(note = "Use write_fm_addr(Bank::Bank1, data)")]
-    pub fn write_fm_addr1(&mut self, data: u8) {
-        self.write_fm_addr(Bank::Bank1, data);
-    }
-
-    /// Deprecated: Use [`write_fm_data`] with [`Bank::Bank1`]
-    #[deprecated(note = "Use write_fm_data(Bank::Bank1, data)")]
-    pub fn write_fm_data1(&mut self, data: u8) {
-        self.write_fm_data(Bank::Bank1, data);
-    }
-
     /// Run one sample cycle (at ~44100Hz or system clock)
     /// Returns a stereo mixed sample pair.
     pub fn step(&mut self) -> (i16, i16) {
@@ -99,24 +76,13 @@ impl Apu {
 
 impl Debuggable for Apu {
     fn read_state(&self) -> Value {
-        json!({
-            "psg": {
-                "tone1_freq": self.psg.tones[0].frequency,
-                "tone1_vol": self.psg.tones[0].volume,
-                "tone2_freq": self.psg.tones[1].frequency,
-                "tone3_freq": self.psg.tones[2].frequency,
-                "noise_white": self.psg.noise.white_noise,
-                "noise_rate": self.psg.noise.shift_rate,
-            },
-            "fm": {
-                "status": self.fm.status,
-                // Dumping all registers is too heavy, maybe just status
-            }
-        })
+        serde_json::to_value(self).unwrap()
     }
 
-    fn write_state(&mut self, _state: &Value) {
-        // Read-only for now
+    fn write_state(&mut self, state: &Value) {
+        if let Ok(new_apu) = serde_json::from_value(state.clone()) {
+            *self = new_apu;
+        }
     }
 }
 

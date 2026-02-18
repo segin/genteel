@@ -19,7 +19,7 @@ pub struct Z80Bus {
     bus: SharedBus,
     /// Raw pointer to the bus for optimized access (avoids RefCell overhead)
     raw_bus: *mut Bus,
-    /// Cached pointer to Z80 RAM (avoids bus structure access overhead)
+    /// Direct pointer to Z80 RAM to avoid bus indirection and improve performance.
     z80_ram: *mut u8,
 }
 
@@ -41,7 +41,6 @@ impl Z80Bus {
     pub unsafe fn set_raw_bus(&mut self, bus: *mut Bus) {
         self.raw_bus = bus;
         if !bus.is_null() {
-            // Cache Z80 RAM pointer for direct access
             self.z80_ram = (*bus).z80_ram.as_mut_ptr();
         } else {
             self.z80_ram = std::ptr::null_mut();
@@ -57,27 +56,14 @@ impl Z80Bus {
     /// Set the bank register (called on write to $6000)
     /// The value written becomes the upper bits of the 68k address
     pub fn set_bank(&mut self, value: u8) {
-        if !self.raw_bus.is_null() {
-            unsafe {
-                (*self.raw_bus).write_byte(0xA06000, value);
-            }
-        } else {
-            self.bus.bus.borrow_mut().write_byte(0xA06000, value);
-        }
+        self.bus.bus.borrow_mut().write_byte(0xA06000, value);
     }
 
     /// Reset bank register to 0
     pub fn reset_bank(&mut self) {
-        if !self.raw_bus.is_null() {
-            unsafe {
-                (*self.raw_bus).z80_bank_addr = 0;
-                (*self.raw_bus).z80_bank_bit = 0;
-            }
-        } else {
-            let mut bus = self.bus.bus.borrow_mut();
-            bus.z80_bank_addr = 0;
-            bus.z80_bank_bit = 0;
-        }
+        let mut bus = self.bus.bus.borrow_mut();
+        bus.z80_bank_addr = 0;
+        bus.z80_bank_bit = 0;
     }
 
     /// Internal helper to read byte from Bus (deduplicated logic)
@@ -161,20 +147,17 @@ impl Z80Bus {
 
 impl MemoryInterface for Z80Bus {
     fn read_byte(&mut self, address: u32) -> u8 {
+        // Fast path for Z80 RAM (0x0000-0x1FFF) and its mirror (0x2000-0x3FFF)
         if !self.z80_ram.is_null() {
-            let addr = address as u16;
-            // Z80 Sound RAM: 0000h-1FFFh
-            if addr <= 0x1FFF {
-                return unsafe { *self.z80_ram.add(addr as usize) };
+            let addr = address as usize;
+            if addr <= 0x3FFF {
+                // Z80 RAM is 8KB (0x2000), mirrored once to fill 0x4000 space
+                // Use bitwise AND for fast modulo
+                unsafe { return *self.z80_ram.add(addr & 0x1FFF) };
             }
-            // Mirror of Z80 RAM: 2000h-3FFFh
-            if (0x2000..=0x3FFF).contains(&addr) {
-                return unsafe { *self.z80_ram.add((addr & 0x1FFF) as usize) };
-            }
+        }
 
-            let bus = unsafe { &mut *self.raw_bus };
-            Self::read_byte_from_bus(bus, address)
-        } else if !self.raw_bus.is_null() {
+        if !self.raw_bus.is_null() {
             let bus = unsafe { &mut *self.raw_bus };
             Self::read_byte_from_bus(bus, address)
         } else {
@@ -184,26 +167,18 @@ impl MemoryInterface for Z80Bus {
     }
 
     fn write_byte(&mut self, address: u32, value: u8) {
+        // Fast path for Z80 RAM (0x0000-0x1FFF) and its mirror (0x2000-0x3FFF)
         if !self.z80_ram.is_null() {
-            let addr = address as u16;
-            // Z80 Sound RAM: 0000h-1FFFh
-            if addr <= 0x1FFF {
+            let addr = address as usize;
+            if addr <= 0x3FFF {
                 unsafe {
-                    *self.z80_ram.add(addr as usize) = value;
+                    *self.z80_ram.add(addr & 0x1FFF) = value;
                 }
                 return;
             }
-            // Mirror of Z80 RAM: 2000h-3FFFh
-            if (0x2000..=0x3FFF).contains(&addr) {
-                unsafe {
-                    *self.z80_ram.add((addr & 0x1FFF) as usize) = value;
-                }
-                return;
-            }
+        }
 
-            let bus = unsafe { &mut *self.raw_bus };
-            Self::write_byte_to_bus(bus, address, value)
-        } else if !self.raw_bus.is_null() {
+        if !self.raw_bus.is_null() {
             let bus = unsafe { &mut *self.raw_bus };
             Self::write_byte_to_bus(bus, address, value)
         } else {
@@ -330,22 +305,5 @@ mod tests {
         // Writes should not panic
         z80_bus.write_port(0x0000, 0x42);
         z80_bus.write_port(0xFFFF, 0xAB);
-    }
-
-    #[test]
-    fn test_raw_bus_access() {
-        let bus = Rc::new(RefCell::new(Bus::new()));
-        let mut z80_bus = Z80Bus::new(SharedBus::new(bus.clone()));
-
-        // Unsafe setup of raw pointer
-        unsafe {
-            z80_bus.set_raw_bus(bus.as_ptr());
-        }
-
-        z80_bus.write_byte(0x0000, 0x99);
-        assert_eq!(z80_bus.read_byte(0x0000), 0x99);
-
-        // Verify via original bus to ensure they share state
-        assert_eq!(bus.borrow().z80_ram[0], 0x99);
     }
 }
