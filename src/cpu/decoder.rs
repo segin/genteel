@@ -11,15 +11,18 @@ use std::sync::OnceLock;
 
 static DECODE_CACHE: OnceLock<Box<[Instruction]>> = OnceLock::new();
 
+/// Generate the full decode table for all 65536 opcodes
+pub fn generate_full_decode_table() -> Box<[Instruction]> {
+    let mut cache = Vec::with_capacity(65536);
+    for op in 0..=65535 {
+        cache.push(decode_uncached(op as u16));
+    }
+    cache.into_boxed_slice()
+}
+
 /// Decode a single M68k instruction from an opcode
 pub fn decode(opcode: u16) -> Instruction {
-    DECODE_CACHE.get_or_init(|| {
-        let mut cache = Vec::with_capacity(65536);
-        for op in 0..=65535 {
-            cache.push(decode_uncached(op as u16));
-        }
-        cache.into_boxed_slice()
-    })[opcode as usize]
+    DECODE_CACHE.get_or_init(generate_full_decode_table)[opcode as usize]
 }
 
 fn decode_uncached(opcode: u16) -> Instruction {

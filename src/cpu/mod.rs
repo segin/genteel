@@ -8,8 +8,7 @@ pub mod decoder;
 pub mod instructions;
 pub mod ops;
 
-use crate::cpu::decoder::decode;
-use crate::cpu::instructions::{ArithmeticInstruction, BitSource, BitsInstruction, Condition, DataInstruction, Instruction, Size, SystemInstruction, DecodeCacheEntry};
+use crate::cpu::instructions::{ArithmeticInstruction, BitSource, BitsInstruction, Condition, DataInstruction, Instruction, Size, SystemInstruction};
 use crate::memory::MemoryInterface;
 
 /// Status Register flags
@@ -50,8 +49,8 @@ pub struct Cpu {
     // Interrupt pending bitmask (bit N = level N is pending)
     pub interrupt_pending_mask: u8,
 
-    // Instruction cache (Direct Mapped, 64K entries)
-    pub decode_cache: Box<[DecodeCacheEntry]>,
+    // Decoded instruction lookup table (64K entries)
+    pub decode_lookup: Box<[Instruction]>,
 }
 
 impl Cpu {
@@ -68,7 +67,7 @@ impl Cpu {
             pending_interrupt: 0,
             pending_exception: false,
             interrupt_pending_mask: 0,
-            decode_cache: vec![DecodeCacheEntry::default(); 65536].into_boxed_slice(),
+            decode_lookup: decoder::generate_full_decode_table(),
         };
 
         // At startup, the supervisor stack pointer is read from address 0x00000000
@@ -92,19 +91,13 @@ impl Cpu {
         self.halted = false;
         self.pending_interrupt = 0;
         self.interrupt_pending_mask = 0;
-        // Invalidate cache on reset
-        self.decode_cache.fill(DecodeCacheEntry::default());
     }
 
     /// Invalidate the instruction cache.
     /// Should be called when code in ROM/RAM is modified (e.g. self-modifying code, or tests).
     pub fn invalidate_cache(&mut self) {
-        self.decode_cache.fill(DecodeCacheEntry::default());
-    }
-
-    fn invalidate_cache_line(&mut self, addr: u32) {
-        let index = ((addr >> 1) & 0xFFFF) as usize;
-        self.decode_cache[index].pc = u32::MAX;
+        // No-op: Instruction decoding is now static via lookup table.
+        // Cache invalidation is not needed as opcodes are immutable.
     }
 
     /// Request an interrupt at the specified level
@@ -301,7 +294,7 @@ impl Cpu {
             return 34;
         }
         self.pc = self.pc.wrapping_add(2);
-        let instr = decode(opcode);
+        let instr = self.decode_lookup[opcode as usize];
 
         let cycles = self.execute(instr, memory);
         self.cycles += cycles as u64;
@@ -575,7 +568,6 @@ impl Cpu {
 
     pub fn write_byte<M: MemoryInterface>(&mut self, addr: u32, val: u8, memory: &mut M) {
         memory.write_byte(addr, val);
-        self.invalidate_cache_line(addr);
     }
 
     pub fn write_word<M: MemoryInterface>(&mut self, addr: u32, val: u16, memory: &mut M) {
@@ -584,7 +576,6 @@ impl Cpu {
             return;
         }
         memory.write_word(addr, val);
-        self.invalidate_cache_line(addr);
     }
 
     pub fn write_long<M: MemoryInterface>(&mut self, addr: u32, val: u32, memory: &mut M) {
@@ -593,8 +584,6 @@ impl Cpu {
             return;
         }
         memory.write_long(addr, val);
-        self.invalidate_cache_line(addr);
-        self.invalidate_cache_line(addr.wrapping_add(2));
     }
 
     pub fn cpu_read_memory<M: MemoryInterface>(&mut self, addr: u32, size: Size, memory: &mut M) -> u32 {
@@ -742,3 +731,5 @@ mod tests_m68k_data_unit;
 mod tests_m68k_torture;
 #[cfg(test)]
 mod tests_cache;
+#[cfg(test)]
+mod bench_step;
