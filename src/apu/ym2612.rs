@@ -28,8 +28,8 @@ static SINE_TABLE: OnceLock<[f32; SINE_TABLE_SIZE]> = OnceLock::new();
 fn get_sine_table() -> &'static [f32; SINE_TABLE_SIZE] {
     SINE_TABLE.get_or_init(|| {
         let mut table = [0.0; SINE_TABLE_SIZE];
-        for i in 0..SINE_TABLE_SIZE {
-            table[i] = (i as f32 * 2.0 * std::f32::consts::PI / SINE_TABLE_SIZE as f32).sin();
+        for (i, entry) in table.iter_mut().enumerate() {
+            *entry = (i as f32 * 2.0 * std::f32::consts::PI / SINE_TABLE_SIZE as f32).sin();
         }
         table
     })
