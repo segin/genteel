@@ -321,4 +321,380 @@ mod tests {
         assert!(ext.is_long);
         assert_eq!(ext.displacement, -5);
     }
+
+    #[derive(Debug, Default)]
+    struct MockMemory {
+        pub data: std::collections::HashMap<u32, u8>,
+        pub reads: std::cell::RefCell<Vec<(u32, Size)>>,
+    }
+
+    impl MockMemory {
+        fn new() -> Self {
+            Self::default()
+        }
+
+        fn set_word(&mut self, addr: u32, val: u16) {
+            self.data.insert(addr, (val >> 8) as u8);
+            self.data.insert(addr + 1, (val & 0xFF) as u8);
+        }
+
+        fn set_long(&mut self, addr: u32, val: u32) {
+            self.set_word(addr, (val >> 16) as u16);
+            self.set_word(addr + 2, (val & 0xFFFF) as u16);
+        }
+
+        fn get_reads(&self) -> Vec<(u32, Size)> {
+            self.reads.borrow().clone()
+        }
+    }
+
+    impl MemoryInterface for MockMemory {
+        fn read_byte(&mut self, address: u32) -> u8 {
+            self.reads.borrow_mut().push((address, Size::Byte));
+            *self.data.get(&address).unwrap_or(&0)
+        }
+
+        fn write_byte(&mut self, _address: u32, _value: u8) {}
+
+        fn read_word(&mut self, address: u32) -> u16 {
+            self.reads.borrow_mut().push((address, Size::Word));
+            let high = *self.data.get(&address).unwrap_or(&0) as u16;
+            let low = *self.data.get(&(address + 1)).unwrap_or(&0) as u16;
+            (high << 8) | low
+        }
+
+        fn write_word(&mut self, _address: u32, _value: u16) {}
+
+        fn read_long(&mut self, address: u32) -> u32 {
+            self.reads.borrow_mut().push((address, Size::Long));
+            let b0 = *self.data.get(&address).unwrap_or(&0) as u32;
+            let b1 = *self.data.get(&(address + 1)).unwrap_or(&0) as u32;
+            let b2 = *self.data.get(&(address + 2)).unwrap_or(&0) as u32;
+            let b3 = *self.data.get(&(address + 3)).unwrap_or(&0) as u32;
+            (b0 << 24) | (b1 << 16) | (b2 << 8) | b3
+        }
+
+        fn write_long(&mut self, _address: u32, _value: u32) {}
+    }
+
+    #[test]
+    fn test_calculate_ea_register_direct() {
+        let mut mock = MockMemory::new();
+        let mut d = [0u32; 8];
+        let mut a = [0u32; 8];
+        let mut pc = 0x1000;
+
+        // Data Register
+        let (ea, cycles) = calculate_ea(
+            AddressingMode::DataRegister(3),
+            Size::Byte,
+            &mut d,
+            &mut a,
+            &mut pc,
+            &mut mock,
+        );
+        assert!(matches!(ea, EffectiveAddress::DataRegister(3)));
+        assert_eq!(cycles, 0);
+        assert_eq!(mock.get_reads().len(), 0);
+
+        // Address Register
+        let (ea, cycles) = calculate_ea(
+            AddressingMode::AddressRegister(5),
+            Size::Word,
+            &mut d,
+            &mut a,
+            &mut pc,
+            &mut mock,
+        );
+        assert!(matches!(ea, EffectiveAddress::AddressRegister(5)));
+        assert_eq!(cycles, 0);
+        assert_eq!(mock.get_reads().len(), 0);
+    }
+
+    #[test]
+    fn test_calculate_ea_indirect() {
+        let mut mock = MockMemory::new();
+        let mut d = [0u32; 8];
+        let mut a = [0u32; 8];
+        a[2] = 0x2000;
+        let mut pc = 0x1000;
+
+        let (ea, cycles) = calculate_ea(
+            AddressingMode::AddressIndirect(2),
+            Size::Long,
+            &mut d,
+            &mut a,
+            &mut pc,
+            &mut mock,
+        );
+
+        match ea {
+            EffectiveAddress::Memory(addr) => assert_eq!(addr, 0x2000),
+            _ => panic!("Expected Memory EA"),
+        }
+        assert_eq!(cycles, 4);
+        assert_eq!(mock.get_reads().len(), 0);
+    }
+
+    #[test]
+    fn test_calculate_ea_post_increment() {
+        let mut mock = MockMemory::new();
+        let mut d = [0u32; 8];
+        let mut a = [0u32; 8];
+        a[0] = 0x1000;
+        let mut pc = 0x100;
+
+        // Byte size (inc by 1)
+        let (ea, cycles) = calculate_ea(
+            AddressingMode::AddressPostIncrement(0),
+            Size::Byte,
+            &mut d,
+            &mut a,
+            &mut pc,
+            &mut mock,
+        );
+        if let EffectiveAddress::Memory(addr) = ea {
+            assert_eq!(addr, 0x1000);
+        } else {
+            panic!("Wrong EA");
+        }
+        assert_eq!(a[0], 0x1001);
+        assert_eq!(cycles, 4);
+
+        // Stack Pointer (A7) Byte size special case (inc by 2)
+        a[7] = 0x2000;
+        let (ea, _) = calculate_ea(
+            AddressingMode::AddressPostIncrement(7),
+            Size::Byte,
+            &mut d,
+            &mut a,
+            &mut pc,
+            &mut mock,
+        );
+        if let EffectiveAddress::Memory(addr) = ea {
+            assert_eq!(addr, 0x2000);
+        }
+        assert_eq!(a[7], 0x2002);
+    }
+
+    #[test]
+    fn test_calculate_ea_pre_decrement() {
+        let mut mock = MockMemory::new();
+        let mut d = [0u32; 8];
+        let mut a = [0u32; 8];
+        a[0] = 0x1000;
+        let mut pc = 0x100;
+
+        // Byte size (dec by 1)
+        let (ea, cycles) = calculate_ea(
+            AddressingMode::AddressPreDecrement(0),
+            Size::Byte,
+            &mut d,
+            &mut a,
+            &mut pc,
+            &mut mock,
+        );
+        if let EffectiveAddress::Memory(addr) = ea {
+            assert_eq!(addr, 0x0FFF);
+        } else {
+            panic!("Wrong EA");
+        }
+        assert_eq!(a[0], 0x0FFF);
+        assert_eq!(cycles, 6);
+
+        // Stack Pointer (A7) Byte size special case (dec by 2)
+        a[7] = 0x2000;
+        let (ea, _) = calculate_ea(
+            AddressingMode::AddressPreDecrement(7),
+            Size::Byte,
+            &mut d,
+            &mut a,
+            &mut pc,
+            &mut mock,
+        );
+        if let EffectiveAddress::Memory(addr) = ea {
+            assert_eq!(addr, 0x1FFE);
+        }
+        assert_eq!(a[7], 0x1FFE);
+    }
+
+    #[test]
+    fn test_calculate_ea_displacement() {
+        let mut mock = MockMemory::new();
+        let mut d = [0u32; 8];
+        let mut a = [0u32; 8];
+        a[0] = 0x1000;
+        let mut pc = 0x200;
+
+        // Extension word at PC 0x200: 0x0010 (+16)
+        mock.set_word(0x200, 0x0010);
+
+        let (ea, cycles) = calculate_ea(
+            AddressingMode::AddressDisplacement(0),
+            Size::Word,
+            &mut d,
+            &mut a,
+            &mut pc,
+            &mut mock,
+        );
+
+        if let EffectiveAddress::Memory(addr) = ea {
+            assert_eq!(addr, 0x1010);
+        } else {
+            panic!("Wrong EA");
+        }
+
+        assert_eq!(pc, 0x202);
+        assert_eq!(cycles, 8);
+
+        // Verify read
+        let reads = mock.get_reads();
+        assert_eq!(reads.len(), 1);
+        assert_eq!(reads[0], (0x200, Size::Word));
+    }
+
+    #[test]
+    fn test_calculate_ea_index() {
+        let mut mock = MockMemory::new();
+        let mut d = [0u32; 8];
+        let mut a = [0u32; 8];
+        a[0] = 0x1000;
+        d[1] = 0x20; // Index
+        let mut pc = 0x200;
+
+        // Extension word at PC 0x200: D1.L, Disp=4
+        // 0 (Dn) 001 (Reg=1) 1 (Long) 000 (Scale) 00000100 (Disp=4) -> 0x1804
+        mock.set_word(0x200, 0x1804);
+
+        let (ea, cycles) = calculate_ea(
+            AddressingMode::AddressIndex(0),
+            Size::Byte,
+            &mut d,
+            &mut a,
+            &mut pc,
+            &mut mock,
+        );
+
+        // Addr = Base(0x1000) + Index(0x20) + Disp(4) = 0x1024
+        if let EffectiveAddress::Memory(addr) = ea {
+            assert_eq!(addr, 0x1024);
+        } else {
+            panic!("Wrong EA");
+        }
+
+        assert_eq!(pc, 0x202);
+        assert_eq!(cycles, 10);
+        // Verify read
+        let reads = mock.get_reads();
+        assert_eq!(reads.len(), 1);
+        assert_eq!(reads[0], (0x200, Size::Word));
+    }
+
+    #[test]
+    fn test_calculate_ea_absolute() {
+        let mut mock = MockMemory::new();
+        let mut d = [0u32; 8];
+        let mut a = [0u32; 8];
+        let mut pc = 0x200;
+
+        // Short: 0x8000 -> Sign extended 0xFFFF8000
+        mock.set_word(0x200, 0x8000);
+        let (ea, cycles) = calculate_ea(
+            AddressingMode::AbsoluteShort,
+            Size::Word,
+            &mut d,
+            &mut a,
+            &mut pc,
+            &mut mock,
+        );
+        if let EffectiveAddress::Memory(addr) = ea {
+            assert_eq!(addr, 0xFFFF8000);
+        }
+        assert_eq!(pc, 0x202);
+        assert_eq!(cycles, 8);
+
+        // Long: 0x00FF0000
+        mock.set_long(0x202, 0x00FF0000);
+        let (ea, cycles) = calculate_ea(
+            AddressingMode::AbsoluteLong,
+            Size::Word,
+            &mut d,
+            &mut a,
+            &mut pc,
+            &mut mock,
+        );
+        if let EffectiveAddress::Memory(addr) = ea {
+            assert_eq!(addr, 0x00FF0000);
+        }
+        assert_eq!(pc, 0x206);
+        assert_eq!(cycles, 12);
+    }
+
+    #[test]
+    fn test_calculate_ea_pc_relative() {
+        let mut mock = MockMemory::new();
+        let mut d = [0u32; 8];
+        let mut a = [0u32; 8];
+        let mut pc = 0x200;
+
+        // PC Displacement: d16(PC)
+        // At 0x200, read 0x0010. Base PC is 0x200. Target = 0x210.
+        mock.set_word(0x200, 0x0010);
+
+        let (ea, cycles) = calculate_ea(
+            AddressingMode::PcDisplacement,
+            Size::Word,
+            &mut d,
+            &mut a,
+            &mut pc,
+            &mut mock,
+        );
+        if let EffectiveAddress::Memory(addr) = ea {
+            assert_eq!(addr, 0x210);
+        }
+        assert_eq!(pc, 0x202);
+        assert_eq!(cycles, 8);
+    }
+
+    #[test]
+    fn test_calculate_ea_immediate() {
+        let mut mock = MockMemory::new();
+        let mut d = [0u32; 8];
+        let mut a = [0u32; 8];
+        let mut pc = 0x200;
+
+        // Immediate Byte/Word (advances by 2 bytes)
+        // Value at 0x200
+        mock.set_word(0x200, 0x1234);
+
+        let (ea, cycles) = calculate_ea(
+            AddressingMode::Immediate,
+            Size::Word,
+            &mut d,
+            &mut a,
+            &mut pc,
+            &mut mock,
+        );
+        // Returns address where value is stored
+        if let EffectiveAddress::Memory(addr) = ea {
+            assert_eq!(addr, 0x200);
+        }
+        assert_eq!(pc, 0x202);
+        assert_eq!(cycles, 4);
+
+        // Immediate Long (advances by 4 bytes)
+        let (ea, cycles) = calculate_ea(
+            AddressingMode::Immediate,
+            Size::Long,
+            &mut d,
+            &mut a,
+            &mut pc,
+            &mut mock,
+        );
+        if let EffectiveAddress::Memory(addr) = ea {
+            assert_eq!(addr, 0x202);
+        }
+        assert_eq!(pc, 0x206);
+        assert_eq!(cycles, 8);
+    }
 }
