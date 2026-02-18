@@ -31,13 +31,13 @@ impl<M: MemoryInterface, I: IoInterface> CbOps for Z80<M, I> {
                 cb_bit(self, val, y);
 
                 if z != 6 {
-                    self.set_flag(flags::X_FLAG, (val & 0x08) != 0);
-                    self.set_flag(flags::Y_FLAG, (val & 0x20) != 0);
+                    let f = self.f & !(flags::X_FLAG | flags::Y_FLAG);
+                    self.f = f | (val & (flags::X_FLAG | flags::Y_FLAG));
                 } else {
                     // For (HL), X/Y come from MEMPTR (WZ) high byte.
                     let h_memptr = (self.memptr >> 8) as u8;
-                    self.set_flag(flags::X_FLAG, (h_memptr & 0x08) != 0);
-                    self.set_flag(flags::Y_FLAG, (h_memptr & 0x20) != 0);
+                    let f = self.f & !(flags::X_FLAG | flags::Y_FLAG);
+                    self.f = f | (h_memptr & (flags::X_FLAG | flags::Y_FLAG));
                 }
 
                 if z == 6 {
@@ -92,8 +92,8 @@ impl<M: MemoryInterface, I: IoInterface> CbOps for Z80<M, I> {
 
                 // X/Y from High Byte of EA
                 let h_ea = (addr >> 8) as u8;
-                self.set_flag(flags::X_FLAG, (h_ea & 0x08) != 0);
-                self.set_flag(flags::Y_FLAG, (h_ea & 0x20) != 0);
+                let f = self.f & !(flags::X_FLAG | flags::Y_FLAG);
+                self.f = f | (h_ea & (flags::X_FLAG | flags::Y_FLAG));
                 20
             }
             2 => {

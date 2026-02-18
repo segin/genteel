@@ -10,6 +10,7 @@ use crate::memory::{IoInterface, MemoryInterface};
 pub mod test_utils;
 
 pub mod op_cb;
+use op_cb::CbOps;
 
 /// Z80 Flag bits in the F register
 pub mod flags {
@@ -24,7 +25,7 @@ pub mod flags {
 }
 
 use crate::debugger::Debuggable;
-use crate::z80::op_cb::CbOps;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 /// Z80 CPU
@@ -89,6 +90,25 @@ pub struct Z80<M: MemoryInterface, I: IoInterface> {
 
     // Debug flag
     pub debug: bool,
+}
+
+macro_rules! z_dispatch {
+    ($z:expr, $self:ident, $y:expr, [
+        $f0:ident, $f1:ident, $f2:ident, $f3:ident,
+        $f4:ident, $f5:ident, $f6:ident, $f7:ident
+    ]) => {
+        match $z {
+            0 => $self.$f0($y),
+            1 => $self.$f1($y),
+            2 => $self.$f2($y),
+            3 => $self.$f3($y),
+            4 => $self.$f4($y),
+            5 => $self.$f5($y),
+            6 => $self.$f6($y),
+            7 => $self.$f7($y),
+            _ => 4,
+        }
+    };
 }
 
 impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
@@ -207,7 +227,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
     }
 
     pub(crate) fn set_parity_flag(&mut self, value: u8) {
-        let parity = value.count_ones().is_multiple_of(2);
+        let parity = value.count_ones().count_ones() % 2 == 0;
         self.set_flag(flags::PARITY, parity);
     }
 
@@ -356,7 +376,8 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
 
         // P
-        if self.a.count_ones().is_multiple_of(2) {
+        let parity = self.a.count_ones() % 2 == 0;
+        if parity {
             f |= flags::PARITY;
         }
 
@@ -376,7 +397,8 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
 
         // P
-        if self.a.count_ones().is_multiple_of(2) {
+        let parity = self.a.count_ones() % 2 == 0;
+        if parity {
             f |= flags::PARITY;
         }
 
@@ -396,7 +418,8 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
 
         // P
-        if self.a.count_ones().is_multiple_of(2) {
+        let parity = self.a.count_ones() % 2 == 0;
+        if parity {
             f |= flags::PARITY;
         }
 
@@ -734,14 +757,12 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         let x = (opcode >> 6) & 0x03;
         let y = (opcode >> 3) & 0x07;
         let z = opcode & 0x07;
-        let p = (y >> 1) & 0x03;
-        let q = y & 0x01;
 
         let t_states = match x {
-            0 => self.execute_x0(opcode, y, z, p, q),
+            0 => self.execute_x0(y, z),
             1 => self.execute_x1(y, z),
             2 => self.execute_x2(y, z),
-            3 => self.execute_x3(opcode, y, z, p, q),
+            3 => self.execute_x3(y, z),
             _ => 4,
         };
 
@@ -749,18 +770,17 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         t_states
     }
 
-    fn execute_x0(&mut self, _opcode: u8, y: u8, z: u8, p: u8, q: u8) -> u8 {
-        match z {
-            0 => self.execute_x0_control_misc(y),
-            1 => self.execute_x0_load_add_hl(p, q),
-            2 => self.execute_x0_load_indirect(p, q),
-            3 => self.execute_x0_inc_dec_rp(p, q),
-            4 => self.execute_x0_inc_r(y),
-            5 => self.execute_x0_dec_r(y),
-            6 => self.execute_x0_ld_r_n(y),
-            7 => self.execute_x0_rotate_accum_flags(y),
-            _ => 4,
-        }
+    fn execute_x0(&mut self, y: u8, z: u8) -> u8 {
+        z_dispatch!(z, self, y, [
+            execute_x0_control_misc,
+            execute_x0_load_add_hl,
+            execute_x0_load_indirect,
+            execute_x0_inc_dec_rp,
+            execute_x0_inc_r,
+            execute_x0_dec_r,
+            execute_x0_ld_r_n,
+            execute_x0_rotate_accum_flags
+        ])
     }
 
     fn execute_x0_control_misc(&mut self, y: u8) -> u8 {
@@ -803,7 +823,9 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
     }
 
-    fn execute_x0_load_add_hl(&mut self, p: u8, q: u8) -> u8 {
+    fn execute_x0_load_add_hl(&mut self, y: u8) -> u8 {
+        let p = (y >> 1) & 0x03;
+        let q = y & 0x01;
         if q == 0 {
             // LD rp, nn
             let nn = self.fetch_word();
@@ -817,7 +839,9 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
     }
 
-    fn execute_x0_load_indirect(&mut self, p: u8, q: u8) -> u8 {
+    fn execute_x0_load_indirect(&mut self, y: u8) -> u8 {
+        let p = (y >> 1) & 0x03;
+        let q = y & 0x01;
         match (p, q) {
             (0, 0) => {
                 // LD (BC), A
@@ -866,7 +890,6 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 // LD (nn), A
                 let addr = self.fetch_word();
                 self.write_byte(addr, self.a);
-                self.memptr = (self.a as u16) << 8 | addr.wrapping_add(1) & 0xFF;
                 self.memptr = ((self.a as u16) << 8) | (addr.wrapping_add(1) & 0xFF);
                 13
             }
@@ -881,7 +904,9 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
     }
 
-    fn execute_x0_inc_dec_rp(&mut self, p: u8, q: u8) -> u8 {
+    fn execute_x0_inc_dec_rp(&mut self, y: u8) -> u8 {
+        let p = (y >> 1) & 0x03;
+        let q = y & 0x01;
         // INC/DEC rp
         let rp = self.get_rp(p);
         if q == 0 {
@@ -1048,18 +1073,17 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
     }
 
-    fn execute_x3(&mut self, _opcode: u8, y: u8, z: u8, p: u8, q: u8) -> u8 {
-        match z {
-            0 => self.execute_x3_ret_cc(y),
-            1 => self.execute_x3_pop_ret_exx(p, q),
-            2 => self.execute_x3_jp_cc(y),
-            3 => self.execute_x3_jp_out_ex_di_ei(y),
-            4 => self.execute_x3_call_cc(y),
-            5 => self.execute_x3_push_call_prefixes(p, q),
-            6 => self.execute_x3_alu_n(y),
-            7 => self.execute_x3_rst(y),
-            _ => 4,
-        }
+    fn execute_x3(&mut self, y: u8, z: u8) -> u8 {
+        z_dispatch!(z, self, y, [
+            execute_x3_ret_cc,
+            execute_x3_pop_ret_exx,
+            execute_x3_jp_cc,
+            execute_x3_jp_out_ex_di_ei,
+            execute_x3_call_cc,
+            execute_x3_push_call_prefixes,
+            execute_x3_alu_n,
+            execute_x3_rst
+        ])
     }
 
     fn execute_x3_ret_cc(&mut self, y: u8) -> u8 {
@@ -1072,7 +1096,9 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
     }
 
-    fn execute_x3_pop_ret_exx(&mut self, p: u8, q: u8) -> u8 {
+    fn execute_x3_pop_ret_exx(&mut self, y: u8) -> u8 {
+        let p = (y >> 1) & 0x03;
+        let q = y & 0x01;
         if q == 0 {
             // POP rp2
             let val = self.pop();
@@ -1188,7 +1214,9 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
     }
 
-    fn execute_x3_push_call_prefixes(&mut self, p: u8, q: u8) -> u8 {
+    fn execute_x3_push_call_prefixes(&mut self, y: u8) -> u8 {
+        let p = (y >> 1) & 0x03;
+        let q = y & 0x01;
         if q == 0 {
             // PUSH rp2
             let val = self.get_rp2(p);
@@ -1235,11 +1263,188 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         11
     }
 
-    // ========== CB Prefix (Bit operations) ==========
-
-    // Implementation moved to src/z80/op_cb.rs via CbOps trait
-
     // ========== ED Prefix (Extended) ==========
+
+    fn execute_ed_in_r_c(&mut self, y: u8) -> u8 {
+        // IN r, (C)
+        let port = self.bc();
+        let val = self.read_port(port);
+        if y != 6 {
+            self.set_reg(y, val);
+        }
+        self.set_sz_flags(val);
+        self.set_parity_flag(val);
+        self.set_flag(flags::HALF_CARRY, false);
+        self.set_flag(flags::ADD_SUB, false);
+        12
+    }
+
+    fn execute_ed_out_c_r(&mut self, y: u8) -> u8 {
+        // OUT (C), r
+        let port = self.bc();
+        let val = if y == 6 { 0 } else { self.get_reg(y) };
+        self.write_port(port, val);
+        12
+    }
+
+    fn execute_ed_sbc_adc_hl_rp(&mut self, p: u8, q: u8) -> u8 {
+        if q == 0 {
+            // SBC HL, rp
+            let hl = self.hl() as u32;
+            let rp = self.get_rp(p) as u32;
+            let c = if self.get_flag(flags::CARRY) { 1u32 } else { 0 };
+            let result = hl.wrapping_sub(rp).wrapping_sub(c);
+
+            self.set_flag(flags::CARRY, result > 0xFFFF);
+            self.set_flag(flags::ADD_SUB, true);
+            self.set_flag(flags::ZERO, (result & 0xFFFF) == 0);
+            self.set_flag(flags::SIGN, (result & 0x8000) != 0);
+            // Half borrow: (HL & 0xFFF) - (RP & 0xFFF) - C < 0
+            let h_check = (hl & 0xFFF).wrapping_sub(rp & 0xFFF).wrapping_sub(c);
+            self.set_flag(flags::HALF_CARRY, h_check > 0xFFF);
+            // P/V: Overflow
+            let overflow = ((hl ^ rp) & (hl ^ result) & 0x8000) != 0;
+            self.set_flag(flags::PARITY, overflow);
+
+            // X/Y from High Byte
+            let h_res = (result >> 8) as u8;
+            self.set_flag(flags::X_FLAG, (h_res & 0x08) != 0);
+            self.set_flag(flags::Y_FLAG, (h_res & 0x20) != 0);
+
+            self.set_hl(result as u16);
+            15
+        } else {
+            // ADC HL, rp
+            let hl = self.hl() as u32;
+            let rp = self.get_rp(p) as u32;
+            let c = if self.get_flag(flags::CARRY) { 1u32 } else { 0 };
+            let result = hl + rp + c;
+
+            self.set_flag(flags::CARRY, result > 0xFFFF);
+            self.set_flag(flags::ADD_SUB, false);
+            self.set_flag(flags::ZERO, (result & 0xFFFF) == 0);
+            self.set_flag(flags::SIGN, (result & 0x8000) != 0);
+            // Half carry: Carry from bit 11
+            self.set_flag(flags::HALF_CARRY, ((hl & 0xFFF) + (rp & 0xFFF) + c) > 0xFFF);
+            // P/V: Overflow
+            let overflow = (!(hl ^ rp) & (hl ^ result) & 0x8000) != 0;
+            self.set_flag(flags::PARITY, overflow);
+
+            // X/Y from High Byte
+            let h_res = (result >> 8) as u8;
+            self.set_flag(flags::X_FLAG, (h_res & 0x08) != 0);
+            self.set_flag(flags::Y_FLAG, (h_res & 0x20) != 0);
+
+            self.set_hl(result as u16);
+            15
+        }
+    }
+
+    fn execute_ed_ld_16(&mut self, p: u8, q: u8) -> u8 {
+        let nn = self.fetch_word();
+        if q == 0 {
+            // LD (nn), rp
+            self.write_word(nn, self.get_rp(p));
+        } else {
+            // LD rp, (nn)
+            let val = self.read_word(nn);
+            self.set_rp(p, val);
+        }
+        self.memptr = nn.wrapping_add(1);
+        20
+    }
+
+    fn execute_ed_neg(&mut self) -> u8 {
+        // NEG
+        let a = self.a;
+        self.a = 0;
+        self.sub_a(a, false, true);
+        8
+    }
+
+    fn execute_ed_retn_reti(&mut self, q: u8) -> u8 {
+        if q == 0 {
+            // RETN
+            self.iff1 = self.iff2;
+            self.pc = self.pop();
+            14
+        } else {
+            // RETI
+            self.pc = self.pop();
+            14
+        }
+    }
+
+    fn execute_ed_im(&mut self, y: u8) -> u8 {
+        // IM y
+        self.im = match y & 0x03 {
+            0 | 1 => 0,
+            2 => 1,
+            3 => 2,
+            _ => 0,
+        };
+        8
+    }
+
+    fn execute_ed_misc(&mut self, y: u8) -> u8 {
+        match y {
+            0 => {
+                // LD I, A
+                self.i = self.a;
+                9
+            }
+            1 => {
+                // LD R, A
+                self.r = self.a;
+                9
+            }
+            2 => {
+                // LD A, I
+                self.a = self.i;
+                self.set_sz_flags(self.a);
+                self.set_flag(flags::PARITY, self.iff2);
+                self.set_flag(flags::HALF_CARRY, false);
+                self.set_flag(flags::ADD_SUB, false);
+                9
+            }
+            3 => {
+                // LD A, R
+                self.a = self.r;
+                self.set_sz_flags(self.a);
+                self.set_flag(flags::PARITY, self.iff2);
+                self.set_flag(flags::HALF_CARRY, false);
+                self.set_flag(flags::ADD_SUB, false);
+                9
+            }
+            4 => {
+                // RRD
+                let hl = self.hl();
+                let m = self.read_byte(hl);
+                let new_m = (self.a << 4) | (m >> 4);
+                self.a = (self.a & 0xF0) | (m & 0x0F);
+                self.write_byte(hl, new_m);
+                self.set_sz_flags(self.a);
+                self.set_parity_flag(self.a);
+                self.set_flag(flags::HALF_CARRY, false);
+                self.set_flag(flags::ADD_SUB, false);
+                18
+            }
+            5 => {
+                // RLD
+                let hl = self.hl();
+                let m = self.read_byte(hl);
+                let new_m = (m << 4) | (self.a & 0x0F);
+                self.a = (self.a & 0xF0) | (m >> 4);
+                self.write_byte(hl, new_m);
+                self.set_sz_flags(self.a);
+                self.set_parity_flag(self.a);
+                self.set_flag(flags::HALF_CARRY, false);
+                self.set_flag(flags::ADD_SUB, false);
+                18
+            }
+            _ => 8,
+        }
+    }
 
     fn execute_ed_prefix(&mut self) -> u8 {
         let opcode = self.fetch_byte();
@@ -1251,177 +1456,14 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
 
         match x {
             1 => match z {
-                0 => {
-                    // IN r, (C)
-                    let port = self.bc();
-                    let val = self.read_port(port);
-                    if y != 6 {
-                        self.set_reg(y, val);
-                    }
-                    self.set_sz_flags(val);
-                    self.set_parity_flag(val);
-                    self.set_flag(flags::HALF_CARRY, false);
-                    self.set_flag(flags::ADD_SUB, false);
-                    12
-                }
-                1 => {
-                    // OUT (C), r
-                    let port = self.bc();
-                    let val = if y == 6 { 0 } else { self.get_reg(y) };
-                    self.write_port(port, val);
-                    12
-                }
-                2 => {
-                    if q == 0 {
-                        // SBC HL, rp
-                        let hl = self.hl() as u32;
-                        let rp = self.get_rp(p) as u32;
-                        let c = if self.get_flag(flags::CARRY) { 1u32 } else { 0 };
-                        let result = hl.wrapping_sub(rp).wrapping_sub(c);
-
-                        self.set_flag(flags::CARRY, result > 0xFFFF);
-                        self.set_flag(flags::ADD_SUB, true);
-                        self.set_flag(flags::ZERO, (result & 0xFFFF) == 0);
-                        self.set_flag(flags::SIGN, (result & 0x8000) != 0);
-                        // Half borrow: (HL & 0xFFF) - (RP & 0xFFF) - C < 0
-                        let h_check = (hl & 0xFFF).wrapping_sub(rp & 0xFFF).wrapping_sub(c);
-                        self.set_flag(flags::HALF_CARRY, h_check > 0xFFF);
-                        // P/V: Overflow
-                        let overflow = ((hl ^ rp) & (hl ^ result) & 0x8000) != 0;
-                        self.set_flag(flags::PARITY, overflow);
-
-                        // X/Y from High Byte
-                        let h_res = (result >> 8) as u8;
-                        self.set_flag(flags::X_FLAG, (h_res & 0x08) != 0);
-                        self.set_flag(flags::Y_FLAG, (h_res & 0x20) != 0);
-
-                        self.set_hl(result as u16);
-                        15
-                    } else {
-                        // ADC HL, rp
-                        let hl = self.hl() as u32;
-                        let rp = self.get_rp(p) as u32;
-                        let c = if self.get_flag(flags::CARRY) { 1u32 } else { 0 };
-                        let result = hl + rp + c;
-
-                        self.set_flag(flags::CARRY, result > 0xFFFF);
-                        self.set_flag(flags::ADD_SUB, false);
-                        self.set_flag(flags::ZERO, (result & 0xFFFF) == 0);
-                        self.set_flag(flags::SIGN, (result & 0x8000) != 0);
-                        // Half carry: Carry from bit 11
-                        self.set_flag(flags::HALF_CARRY, ((hl & 0xFFF) + (rp & 0xFFF) + c) > 0xFFF);
-                        // P/V: Overflow
-                        let overflow = (!(hl ^ rp) & (hl ^ result) & 0x8000) != 0;
-                        self.set_flag(flags::PARITY, overflow);
-
-                        // X/Y from High Byte
-                        let h_res = (result >> 8) as u8;
-                        self.set_flag(flags::X_FLAG, (h_res & 0x08) != 0);
-                        self.set_flag(flags::Y_FLAG, (h_res & 0x20) != 0);
-
-                        self.set_hl(result as u16);
-                        15
-                    }
-                }
-                3 => {
-                    let nn = self.fetch_word();
-                    if q == 0 {
-                        // LD (nn), rp
-                        self.write_word(nn, self.get_rp(p));
-                    } else {
-                        // LD rp, (nn)
-                        let val = self.read_word(nn);
-                        self.set_rp(p, val);
-                    }
-                    self.memptr = nn.wrapping_add(1);
-                    20
-                }
-                4 => {
-                    // NEG
-                    let a = self.a;
-                    self.a = 0;
-                    self.sub_a(a, false, true);
-                    8
-                }
-                5 => {
-                    if q == 0 {
-                        // RETN
-                        self.iff1 = self.iff2;
-                        self.pc = self.pop();
-                        14
-                    } else {
-                        // RETI
-                        self.pc = self.pop();
-                        14
-                    }
-                }
-                6 => {
-                    // IM y
-                    self.im = match y & 0x03 {
-                        0 | 1 => 0,
-                        2 => 1,
-                        3 => 2,
-                        _ => 0,
-                    };
-                    8
-                }
-                7 => match y {
-                    0 => {
-                        // LD I, A
-                        self.i = self.a;
-                        9
-                    }
-                    1 => {
-                        // LD R, A
-                        self.r = self.a;
-                        9
-                    }
-                    2 => {
-                        // LD A, I
-                        self.a = self.i;
-                        self.set_sz_flags(self.a);
-                        self.set_flag(flags::PARITY, self.iff2);
-                        self.set_flag(flags::HALF_CARRY, false);
-                        self.set_flag(flags::ADD_SUB, false);
-                        9
-                    }
-                    3 => {
-                        // LD A, R
-                        self.a = self.r;
-                        self.set_sz_flags(self.a);
-                        self.set_flag(flags::PARITY, self.iff2);
-                        self.set_flag(flags::HALF_CARRY, false);
-                        self.set_flag(flags::ADD_SUB, false);
-                        9
-                    }
-                    4 => {
-                        // RRD
-                        let hl = self.hl();
-                        let m = self.read_byte(hl);
-                        let new_m = (self.a << 4) | (m >> 4);
-                        self.a = (self.a & 0xF0) | (m & 0x0F);
-                        self.write_byte(hl, new_m);
-                        self.set_sz_flags(self.a);
-                        self.set_parity_flag(self.a);
-                        self.set_flag(flags::HALF_CARRY, false);
-                        self.set_flag(flags::ADD_SUB, false);
-                        18
-                    }
-                    5 => {
-                        // RLD
-                        let hl = self.hl();
-                        let m = self.read_byte(hl);
-                        let new_m = (m << 4) | (self.a & 0x0F);
-                        self.a = (self.a & 0xF0) | (m >> 4);
-                        self.write_byte(hl, new_m);
-                        self.set_sz_flags(self.a);
-                        self.set_parity_flag(self.a);
-                        self.set_flag(flags::HALF_CARRY, false);
-                        self.set_flag(flags::ADD_SUB, false);
-                        18
-                    }
-                    _ => 8,
-                },
+                0 => self.execute_ed_in_r_c(y),
+                1 => self.execute_ed_out_c_r(y),
+                2 => self.execute_ed_sbc_adc_hl_rp(p, q),
+                3 => self.execute_ed_ld_16(p, q),
+                4 => self.execute_ed_neg(),
+                5 => self.execute_ed_retn_reti(q),
+                6 => self.execute_ed_im(y),
+                7 => self.execute_ed_misc(y),
                 _ => 8,
             },
             2 => {
@@ -1672,9 +1714,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
     }
 
-    fn execute_index_prefix(&mut self, is_ix: bool) -> u8 {
-        let opcode = self.fetch_byte();
-
+    fn execute_index_add_16(&mut self, opcode: u8, is_ix: bool) -> u8 {
         match opcode {
             0x09 => {
                 let val = self.bc();
@@ -1686,6 +1726,21 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 self.add_index(val, is_ix);
                 15
             }
+            0x29 => {
+                let val = self.get_index_val(is_ix);
+                self.add_index(val, is_ix);
+                15
+            }
+            0x39 => {
+                self.add_index(self.sp, is_ix);
+                15
+            }
+            _ => 8,
+        }
+    }
+
+    fn execute_index_load_store_16(&mut self, opcode: u8, is_ix: bool) -> u8 {
+        match opcode {
             0x21 => {
                 let val = self.fetch_word();
                 self.set_index_val(val, is_ix);
@@ -1697,11 +1752,34 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 self.write_word(addr, val);
                 20
             }
+            0x2A => {
+                let addr = self.fetch_word();
+                let val = self.read_word(addr);
+                self.set_index_val(val, is_ix);
+                20
+            }
+            _ => 8,
+        }
+    }
+
+    fn execute_index_inc_dec_16(&mut self, opcode: u8, is_ix: bool) -> u8 {
+        match opcode {
             0x23 => {
                 let val = self.get_index_val(is_ix);
                 self.set_index_val(val.wrapping_add(1), is_ix);
                 10
             }
+            0x2B => {
+                let val = self.get_index_val(is_ix);
+                self.set_index_val(val.wrapping_sub(1), is_ix);
+                10
+            }
+            _ => 8,
+        }
+    }
+
+    fn execute_index_8bit_halves(&mut self, opcode: u8, is_ix: bool) -> u8 {
+        match opcode {
             0x24 => {
                 let val = self.get_index_h(is_ix);
                 let res = self.inc(val);
@@ -1718,22 +1796,6 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 let n = self.fetch_byte();
                 self.set_index_h(n, is_ix);
                 11
-            }
-            0x29 => {
-                let val = self.get_index_val(is_ix);
-                self.add_index(val, is_ix);
-                15
-            }
-            0x2A => {
-                let addr = self.fetch_word();
-                let val = self.read_word(addr);
-                self.set_index_val(val, is_ix);
-                20
-            }
-            0x2B => {
-                let val = self.get_index_val(is_ix);
-                self.set_index_val(val.wrapping_sub(1), is_ix);
-                10
             }
             0x2C => {
                 let val = self.get_index_l(is_ix);
@@ -1752,86 +1814,63 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 self.set_index_l(n, is_ix);
                 11
             }
+            _ => 8,
+        }
+    }
+
+    fn execute_index_mem_8bit(&mut self, opcode: u8, is_ix: bool) -> u8 {
+        let d = self.fetch_byte() as i8;
+        let addr = self.calc_index_addr(d, is_ix);
+        match opcode {
             0x34 => {
-                let d = self.fetch_byte() as i8;
-                let addr = self.calc_index_addr(d, is_ix);
                 let val = self.read_byte(addr);
                 let result = self.inc(val);
                 self.write_byte(addr, result);
                 23
             }
             0x35 => {
-                let d = self.fetch_byte() as i8;
-                let addr = self.calc_index_addr(d, is_ix);
                 let val = self.read_byte(addr);
                 let result = self.dec(val);
                 self.write_byte(addr, result);
                 23
             }
             0x36 => {
-                let d = self.fetch_byte() as i8;
-                let addr = self.calc_index_addr(d, is_ix);
                 let n = self.fetch_byte();
                 self.write_byte(addr, n);
                 19
             }
-            0x39 => {
-                self.add_index(self.sp, is_ix);
-                15
-            }
+            _ => 8,
+        }
+    }
 
-            // Specific ALU ops
-            0x86 | 0x8E | 0x96 | 0x9E | 0xA6 | 0xAE | 0xB6 | 0xBE => {
-                let d = self.fetch_byte() as i8;
-                let addr = self.calc_index_addr(d, is_ix);
-                let val = self.read_byte(addr);
-                self.execute_index_alu((opcode >> 3) & 0x07, val);
-                19
-            }
+    fn execute_index_alu_mem(&mut self, opcode: u8, is_ix: bool) -> u8 {
+        let d = self.fetch_byte() as i8;
+        let addr = self.calc_index_addr(d, is_ix);
+        let val = self.read_byte(addr);
+        self.execute_index_alu((opcode >> 3) & 0x07, val);
+        19
+    }
 
-            // LD r, (IX/IY+d) and LD (IX/IY+d), r
-            // LD r, (IX/IY+d) and LD (IX/IY+d), r
-            0x46 | 0x4E | 0x56 | 0x5E | 0x66 | 0x6E | 0x7E => {
-                let d = self.fetch_byte() as i8;
-                let addr = self.calc_index_addr(d, is_ix);
-                let val = self.read_byte(addr);
-                let r = (opcode >> 3) & 0x07;
-                self.set_reg(r, val);
-                19
-            }
-            0x70..=0x75 | 0x77 => {
-                let d = self.fetch_byte() as i8;
-                let addr = self.calc_index_addr(d, is_ix);
-                let r = opcode & 0x07;
-                let val = self.get_reg(r);
-                self.write_byte(addr, val);
-                19
-            }
-            0x76 => {
-                self.halted = true;
-                8
-            }
+    fn execute_index_load_r_mem(&mut self, opcode: u8, is_ix: bool) -> u8 {
+        let d = self.fetch_byte() as i8;
+        let addr = self.calc_index_addr(d, is_ix);
+        let val = self.read_byte(addr);
+        let r = (opcode >> 3) & 0x07;
+        self.set_reg(r, val);
+        19
+    }
 
-            // Generic Undocumented (using index halves)
-            0x40..=0x7F => {
-                if opcode == 0x76 {
-                    self.halted = true;
-                    return 8;
-                }
-                let r_src = opcode & 0x07;
-                let r_dest = (opcode >> 3) & 0x07;
-                let val = self.get_index_byte(r_src, is_ix);
-                self.set_index_byte(r_dest, val, is_ix);
-                8
-            }
+    fn execute_index_load_mem_r(&mut self, opcode: u8, is_ix: bool) -> u8 {
+        let d = self.fetch_byte() as i8;
+        let addr = self.calc_index_addr(d, is_ix);
+        let r = opcode & 0x07;
+        let val = self.get_reg(r);
+        self.write_byte(addr, val);
+        19
+    }
 
-            // Generic Undocumented ALU
-            0x80..=0xBF => {
-                let val = self.get_index_byte(opcode & 0x07, is_ix);
-                self.execute_index_alu((opcode >> 3) & 0x07, val);
-                8
-            }
-
+    fn execute_index_stack_control(&mut self, opcode: u8, is_ix: bool) -> u8 {
+        match opcode {
             0xE1 => {
                 let val = self.pop();
                 self.set_index_val(val, is_ix);
@@ -1860,6 +1899,62 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 self.sp = self.get_index_val(is_ix);
                 10
             }
+            _ => 8,
+        }
+    }
+
+    fn execute_index_undoc_load(&mut self, opcode: u8, is_ix: bool) -> u8 {
+        // Opcode 0x76 (HALT) is handled by caller
+        let r_src = opcode & 0x07;
+        let r_dest = (opcode >> 3) & 0x07;
+        let val = self.get_index_byte(r_src, is_ix);
+        self.set_index_byte(r_dest, val, is_ix);
+        8
+    }
+
+    fn execute_index_undoc_alu(&mut self, opcode: u8, is_ix: bool) -> u8 {
+        let val = self.get_index_byte(opcode & 0x07, is_ix);
+        self.execute_index_alu((opcode >> 3) & 0x07, val);
+        8
+    }
+
+    fn execute_index_prefix(&mut self, is_ix: bool) -> u8 {
+        let opcode = self.fetch_byte();
+
+        match opcode {
+            0x09 | 0x19 | 0x29 | 0x39 => self.execute_index_add_16(opcode, is_ix),
+            0x21 | 0x22 | 0x2A => self.execute_index_load_store_16(opcode, is_ix),
+            0x23 | 0x2B => self.execute_index_inc_dec_16(opcode, is_ix),
+            0x24 | 0x25 | 0x26 | 0x2C | 0x2D | 0x2E => self.execute_index_8bit_halves(opcode, is_ix),
+            0x34 | 0x35 | 0x36 => self.execute_index_mem_8bit(opcode, is_ix),
+
+            // Specific ALU ops
+            0x86 | 0x8E | 0x96 | 0x9E | 0xA6 | 0xAE | 0xB6 | 0xBE => {
+                self.execute_index_alu_mem(opcode, is_ix)
+            }
+
+            // LD r, (IX/IY+d)
+            0x46 | 0x4E | 0x56 | 0x5E | 0x66 | 0x6E | 0x7E => {
+                self.execute_index_load_r_mem(opcode, is_ix)
+            }
+            // LD (IX/IY+d), r
+            0x70..=0x75 | 0x77 => self.execute_index_load_mem_r(opcode, is_ix),
+
+            0x76 => {
+                self.halted = true;
+                8
+            }
+
+            // Generic Undocumented (using index halves)
+            // Note: 0x76 HALT is handled above, and specific LDs are also handled above.
+            0x40..=0x7F => self.execute_index_undoc_load(opcode, is_ix),
+
+            // Generic Undocumented ALU
+            // Note: Specific ALU ops (IX+d) are handled above.
+            0x80..=0xBF => self.execute_index_undoc_alu(opcode, is_ix),
+
+            0xE1 | 0xE3 | 0xE5 | 0xE9 | 0xF9 => self.execute_index_stack_control(opcode, is_ix),
+
             0xCB => {
                 let d = self.fetch_byte() as i8;
                 let addr = self.calc_index_addr(d, is_ix);
@@ -1884,72 +1979,104 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
 
 }
 
+#[derive(Serialize, Deserialize, Default)]
+struct Z80State {
+    a: Option<u8>,
+    f: Option<u8>,
+    b: Option<u8>,
+    c: Option<u8>,
+    d: Option<u8>,
+    e: Option<u8>,
+    h: Option<u8>,
+    l: Option<u8>,
+    ix: Option<u16>,
+    iy: Option<u16>,
+    sp: Option<u16>,
+    pc: Option<u16>,
+    iff1: Option<bool>,
+    iff2: Option<bool>,
+    im: Option<u8>,
+    halted: Option<bool>,
+    cycles: Option<u64>,
+}
+
 impl<M: MemoryInterface, I: IoInterface> Debuggable for Z80<M, I> {
     fn read_state(&self) -> Value {
-        json!({
-            "a": self.a, "f": self.f,
-            "b": self.b, "c": self.c,
-            "d": self.d, "e": self.e,
-            "h": self.h, "l": self.l,
-            "ix": self.ix, "iy": self.iy,
-            "sp": self.sp, "pc": self.pc,
-            "iff1": self.iff1, "iff2": self.iff2,
-            "im": self.im, "halted": self.halted,
-            "cycles": self.cycles,
+        serde_json::to_value(Z80State {
+            a: Some(self.a),
+            f: Some(self.f),
+            b: Some(self.b),
+            c: Some(self.c),
+            d: Some(self.d),
+            e: Some(self.e),
+            h: Some(self.h),
+            l: Some(self.l),
+            ix: Some(self.ix),
+            iy: Some(self.iy),
+            sp: Some(self.sp),
+            pc: Some(self.pc),
+            iff1: Some(self.iff1),
+            iff2: Some(self.iff2),
+            im: Some(self.im),
+            halted: Some(self.halted),
+            cycles: Some(self.cycles),
         })
+        .unwrap()
     }
 
     fn write_state(&mut self, state: &Value) {
-        if let Some(a) = state["a"].as_u64() {
-            self.a = a as u8;
+        let z80_state: Z80State = serde_json::from_value(state.clone()).unwrap_or_default();
+
+        if let Some(v) = z80_state.a {
+            self.a = v;
         }
-        if let Some(f) = state["f"].as_u64() {
-            self.f = f as u8;
+        if let Some(v) = z80_state.f {
+            self.f = v;
         }
-        if let Some(b) = state["b"].as_u64() {
-            self.b = b as u8;
+        if let Some(v) = z80_state.b {
+            self.b = v;
         }
-        if let Some(c) = state["c"].as_u64() {
-            self.c = c as u8;
+        if let Some(v) = z80_state.c {
+            self.c = v;
         }
-        if let Some(d) = state["d"].as_u64() {
-            self.d = d as u8;
+        if let Some(v) = z80_state.d {
+            self.d = v;
         }
-        if let Some(e) = state["e"].as_u64() {
-            self.e = e as u8;
+        if let Some(v) = z80_state.e {
+            self.e = v;
         }
-        if let Some(h) = state["h"].as_u64() {
-            self.h = h as u8;
+        if let Some(v) = z80_state.h {
+            self.h = v;
         }
-        if let Some(l) = state["l"].as_u64() {
-            self.l = l as u8;
+        if let Some(v) = z80_state.l {
+            self.l = v;
         }
-        if let Some(ix) = state["ix"].as_u64() {
-            self.ix = ix as u16;
+        if let Some(v) = z80_state.ix {
+            self.ix = v;
         }
-        if let Some(iy) = state["iy"].as_u64() {
-            self.iy = iy as u16;
+        if let Some(v) = z80_state.iy {
+            self.iy = v;
         }
-        if let Some(sp) = state["sp"].as_u64() {
-            self.sp = sp as u16;
+        if let Some(v) = z80_state.sp {
+            self.sp = v;
         }
-        if let Some(pc) = state["pc"].as_u64() {
-            self.pc = pc as u16;
+        if let Some(v) = z80_state.pc {
+            self.pc = v;
         }
-        if let Some(iff1) = state["iff1"].as_bool() {
-            self.iff1 = iff1;
+        if let Some(v) = z80_state.iff1 {
+            self.iff1 = v;
         }
-        if let Some(iff2) = state["iff2"].as_bool() {
-            self.iff2 = iff2;
+        if let Some(v) = z80_state.iff2 {
+            self.iff2 = v;
         }
-        if let Some(im) = state["im"].as_u64() {
-            self.im = im as u8;
+        if let Some(v) = z80_state.im {
+            self.im = v;
         }
-        if let Some(halted) = state["halted"].as_bool() {
-            self.halted = halted;
+        if let Some(v) = z80_state.halted {
+            self.halted = v;
         }
-        if let Some(cycles) = state["cycles"].as_u64() {
-            self.cycles = cycles;
+        if let Some(v) = z80_state.cycles {
+            self.cycles = v;
         }
     }
 }
