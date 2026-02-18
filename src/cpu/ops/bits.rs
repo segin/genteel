@@ -757,6 +757,50 @@ mod tests {
     }
 
     #[test]
+    fn test_exec_or_memory_src() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x00000000;
+        cpu.a[0] = 0x2000;
+        memory.write_byte(0x2000, 0xFF);
+
+        // OR.B (A0), D0
+        let cycles = exec_or(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::AddressIndirect(0),
+            AddressingMode::DataRegister(0),
+            true,
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[0] & 0xFF, 0xFF);
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert_eq!(cycles, 8);
+    }
+
+    #[test]
+    fn test_exec_or_positive() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x01;
+        cpu.d[1] = 0x02;
+
+        let cycles = exec_or(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            true,
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1] & 0xFF, 0x03);
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert_eq!(cycles, 4);
+    }
+
+    #[test]
     fn test_exec_btst_reg_zero() {
         let (mut cpu, mut memory) = create_test_setup();
         cpu.d[0] = 0x0000_0000;
@@ -1147,7 +1191,7 @@ mod tests {
             &mut memory,
         );
 
-        assert_eq!(cpu.d[1], 0x00000000);
+        assert_eq!(cpu.d[1], 0x00000000); // F0F0F0F0 & 0F0F0F0F = 00000000
         assert!(!cpu.get_flag(flags::NEGATIVE));
         assert!(cpu.get_flag(flags::ZERO));
         assert_eq!(cycles, 4);
