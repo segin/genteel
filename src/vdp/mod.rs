@@ -1044,6 +1044,27 @@ impl Vdp {
     }
 
     #[inline(always)]
+    unsafe fn draw_tile_segment(
+        dest_ptr: *mut u16,
+        cram_ptr: *const u16,
+        byte: u8,
+        h_flip: bool,
+    ) {
+        let (first, second) = if h_flip {
+            (byte & 0x0F, byte >> 4)
+        } else {
+            (byte >> 4, byte & 0x0F)
+        };
+
+        if first != 0 {
+            *dest_ptr = *cram_ptr.add(first as usize);
+        }
+        if second != 0 {
+            *dest_ptr.add(1) = *cram_ptr.add(second as usize);
+        }
+    }
+
+    #[inline(always)]
     unsafe fn draw_full_tile_row(&mut self, entry: u16, pixel_v: u16, dest_idx: usize) {
         let palette = ((entry >> 13) & 0x03) as u8;
         let v_flip = (entry & 0x1000) != 0;
@@ -1072,45 +1093,15 @@ impl Vdp {
         let dest_ptr = self.framebuffer.as_mut_ptr().add(dest_idx);
 
         if h_flip {
-            let mut col = p3 & 0x0F;
-            if col != 0 { *dest_ptr = *cram_ptr.add(col as usize); }
-            col = p3 >> 4;
-            if col != 0 { *dest_ptr.add(1) = *cram_ptr.add(col as usize); }
-
-            col = p2 & 0x0F;
-            if col != 0 { *dest_ptr.add(2) = *cram_ptr.add(col as usize); }
-            col = p2 >> 4;
-            if col != 0 { *dest_ptr.add(3) = *cram_ptr.add(col as usize); }
-
-            col = p1 & 0x0F;
-            if col != 0 { *dest_ptr.add(4) = *cram_ptr.add(col as usize); }
-            col = p1 >> 4;
-            if col != 0 { *dest_ptr.add(5) = *cram_ptr.add(col as usize); }
-
-            col = p0 & 0x0F;
-            if col != 0 { *dest_ptr.add(6) = *cram_ptr.add(col as usize); }
-            col = p0 >> 4;
-            if col != 0 { *dest_ptr.add(7) = *cram_ptr.add(col as usize); }
+            Self::draw_tile_segment(dest_ptr, cram_ptr, p3, true);
+            Self::draw_tile_segment(dest_ptr.add(2), cram_ptr, p2, true);
+            Self::draw_tile_segment(dest_ptr.add(4), cram_ptr, p1, true);
+            Self::draw_tile_segment(dest_ptr.add(6), cram_ptr, p0, true);
         } else {
-            let mut col = p0 >> 4;
-            if col != 0 { *dest_ptr = *cram_ptr.add(col as usize); }
-            col = p0 & 0x0F;
-            if col != 0 { *dest_ptr.add(1) = *cram_ptr.add(col as usize); }
-
-            col = p1 >> 4;
-            if col != 0 { *dest_ptr.add(2) = *cram_ptr.add(col as usize); }
-            col = p1 & 0x0F;
-            if col != 0 { *dest_ptr.add(3) = *cram_ptr.add(col as usize); }
-
-            col = p2 >> 4;
-            if col != 0 { *dest_ptr.add(4) = *cram_ptr.add(col as usize); }
-            col = p2 & 0x0F;
-            if col != 0 { *dest_ptr.add(5) = *cram_ptr.add(col as usize); }
-
-            col = p3 >> 4;
-            if col != 0 { *dest_ptr.add(6) = *cram_ptr.add(col as usize); }
-            col = p3 & 0x0F;
-            if col != 0 { *dest_ptr.add(7) = *cram_ptr.add(col as usize); }
+            Self::draw_tile_segment(dest_ptr, cram_ptr, p0, false);
+            Self::draw_tile_segment(dest_ptr.add(2), cram_ptr, p1, false);
+            Self::draw_tile_segment(dest_ptr.add(4), cram_ptr, p2, false);
+            Self::draw_tile_segment(dest_ptr.add(6), cram_ptr, p3, false);
         }
     }
 
