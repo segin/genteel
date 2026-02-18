@@ -145,6 +145,20 @@ impl<'a> Iterator for SpriteIterator<'a> {
 
 const NUM_REGISTERS: usize = 24;
 
+#[derive(Clone, Copy)]
+struct PlaneRenderConfig {
+    is_plane_a: bool,
+    fetch_line: u16,
+    line_offset: usize,
+    h_scroll: u16,
+    plane_w: usize,
+    plane_h: usize,
+    name_table_base: usize,
+    plane_w_mask: usize,
+    priority_filter: bool,
+    screen_width: u16,
+}
+
 fn default_cram_cache() -> [u16; 64] {
     [0; 64]
 }
@@ -720,8 +734,22 @@ impl Vdp {
         draw_line: u16,
         priority_filter: bool,
     ) {
-        let plane_size = self.plane_size();
-        let (plane_w, plane_h) = plane_size;
+        let config = self.get_render_config(is_plane_a, fetch_line, draw_line, priority_filter);
+        let mut screen_x = 0;
+
+        self.render_plane_head(&mut screen_x, &config);
+        self.render_plane_body(&mut screen_x, &config);
+        self.render_plane_tail(&mut screen_x, &config);
+    }
+
+    fn get_render_config(
+        &self,
+        is_plane_a: bool,
+        fetch_line: u16,
+        draw_line: u16,
+        priority_filter: bool,
+    ) -> PlaneRenderConfig {
+        let (plane_w, plane_h) = self.plane_size();
         let name_table_base = if is_plane_a {
             self.plane_a_address()
         } else {
@@ -735,68 +763,45 @@ impl Vdp {
         // Fetch H-scroll once for the line (matching real hardware behavior for per-line/cell)
         let (_, h_scroll) = self.get_scroll_values(is_plane_a, fetch_line, 0);
 
-        let mut screen_x: u16 = 0;
+        PlaneRenderConfig {
+            is_plane_a,
+            fetch_line,
+            line_offset,
+            h_scroll,
+            plane_w,
+            plane_h,
+            name_table_base,
+            plane_w_mask,
+            priority_filter,
+            screen_width,
+        }
+    }
 
-        // Head Loop: Handle misalignment
-        while screen_x < screen_width {
-            let scrolled_h = screen_x.wrapping_sub(h_scroll);
+    fn render_plane_head(&mut self, screen_x: &mut u16, config: &PlaneRenderConfig) {
+        while *screen_x < config.screen_width {
+            let scrolled_h = (*screen_x).wrapping_sub(config.h_scroll);
             let pixel_h = scrolled_h & 0x07;
 
             if pixel_h == 0 {
                 break;
             }
 
-            let processed = self.render_tile(
-                screen_x,
-                fetch_line,
-                line_offset,
-                h_scroll,
-                is_plane_a,
-                plane_w,
-                plane_h,
-                name_table_base,
-                plane_w_mask,
-                priority_filter,
-                screen_width,
-            );
-            screen_x += processed;
+            let processed = self.render_tile(*screen_x, config);
+            *screen_x += processed;
         }
+    }
 
-        // Body Loop: Process 8 pixels at a time (Aligned)
-        while screen_x + 8 <= screen_width {
-            // pixel_h is known to be 0 here
-            self.render_tile(
-                screen_x,
-                fetch_line,
-                line_offset,
-                h_scroll,
-                is_plane_a,
-                plane_w,
-                plane_h,
-                name_table_base,
-                plane_w_mask,
-                priority_filter,
-                screen_width,
-            );
-            screen_x += 8;
+    fn render_plane_body(&mut self, screen_x: &mut u16, config: &PlaneRenderConfig) {
+        while *screen_x + 8 <= config.screen_width {
+            self.render_tile(*screen_x, config);
+            *screen_x += 8;
         }
+    }
 
-        // Tail Loop: Handle remaining pixels
-        while screen_x < screen_width {
-            let processed = self.render_tile(
-                screen_x,
-                fetch_line,
-                line_offset,
-                h_scroll,
-                is_plane_a,
-                plane_w,
-                plane_h,
-                name_table_base,
-                plane_w_mask,
-                priority_filter,
-                screen_width,
-            );
-            screen_x += processed;
+    fn render_plane_tail(&mut self, screen_x: &mut u16, config: &PlaneRenderConfig) {
+        while *screen_x < config.screen_width {
+            let processed = self.render_tile(*screen_x, config);
+            *screen_x += processed;
         }
     }
 
@@ -1114,47 +1119,39 @@ impl Vdp {
         }
     }
 
-    fn render_tile(
-        &mut self,
-        screen_x: u16,
-        fetch_line: u16,
-        line_offset: usize,
-        h_scroll: u16,
-        is_plane_a: bool,
-        plane_w: usize,
-        plane_h: usize,
-        name_table_base: usize,
-        plane_w_mask: usize,
-        priority_filter: bool,
-        screen_width: u16,
-    ) -> u16 {
+    fn render_tile(&mut self, screen_x: u16, config: &PlaneRenderConfig) -> u16 {
         // Horizontal position in plane
         // The scroll value is subtracted from the horizontal position
-        let scrolled_h = screen_x.wrapping_sub(h_scroll);
+        let scrolled_h = screen_x.wrapping_sub(config.h_scroll);
         let pixel_h = scrolled_h & 0x07;
-        let tile_h = ((scrolled_h >> 3) as usize) & plane_w_mask;
+        let tile_h = ((scrolled_h >> 3) as usize) & config.plane_w_mask;
 
         // Fetch V-scroll for this specific column (per-column VS support)
         let (v_scroll, _) =
-            self.get_scroll_values(is_plane_a, fetch_line, (screen_x >> 3) as usize);
+            self.get_scroll_values(config.is_plane_a, config.fetch_line, (screen_x >> 3) as usize);
 
         // Vertical position in plane
-        let scrolled_v = fetch_line.wrapping_add(v_scroll);
-        let tile_v = (scrolled_v as usize / 8) % plane_h;
+        let scrolled_v = config.fetch_line.wrapping_add(v_scroll);
+        let tile_v = (scrolled_v as usize / 8) % config.plane_h;
         let pixel_v = scrolled_v % 8;
 
-        let entry = self.fetch_nametable_entry(name_table_base, tile_v, tile_h, plane_w);
+        let entry =
+            self.fetch_nametable_entry(config.name_table_base, tile_v, tile_h, config.plane_w);
         let tile_index = entry & 0x07FF;
         let priority = (entry & 0x8000) != 0;
 
         let pixels_left_in_tile = 8 - pixel_h;
-        let pixels_to_process = std::cmp::min(pixels_left_in_tile, screen_width - screen_x);
+        let pixels_to_process = std::cmp::min(pixels_left_in_tile, config.screen_width - screen_x);
 
-        if priority == priority_filter && tile_index != 0 {
+        if priority == config.priority_filter && tile_index != 0 {
             if pixels_to_process == 8 && pixel_h == 0 {
                 // Fast path for full aligned tile
                 unsafe {
-                    self.draw_full_tile_row(entry, pixel_v, line_offset + screen_x as usize);
+                    self.draw_full_tile_row(
+                        entry,
+                        pixel_v,
+                        config.line_offset + screen_x as usize,
+                    );
                 }
             } else {
                 self.draw_partial_tile_row(
@@ -1162,7 +1159,7 @@ impl Vdp {
                     pixel_v,
                     pixel_h,
                     pixels_to_process,
-                    line_offset + screen_x as usize,
+                    config.line_offset + screen_x as usize,
                 );
             }
         }
