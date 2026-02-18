@@ -60,20 +60,17 @@ cargo test
 
 ## Development Tools
 
-The repository includes tools in the `scripts/` directory to assist with development and code quality.
-
-### Code Audit Tool
-
-The repository includes a static analysis tool in `scripts/audit_tool.py` to check for:
-- Potential secrets (API keys, private keys, etc.)
-- Technical debt (`TODO`, `FIXME`, `XXX` tags)
-- Usage of `unsafe` blocks
+The repository includes a Python-based security and quality audit tool located in `scripts/audit_tool.py`. This tool scans the codebase for:
+*   **Potential Secrets:** API keys, passwords, tokens.
+*   **Technical Debt:** `TODO`, `FIXME`, `XXX` comments.
+*   **Unsafe Code:** Usage of `unsafe` blocks in Rust.
 
 To run the audit:
 ```bash
 python3 scripts/audit_tool.py
 ```
-Reports are generated in the `audit_reports/` directory.
+
+The report will be generated in the `audit_reports/` directory.
 
 ## Status
 
