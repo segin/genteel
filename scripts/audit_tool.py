@@ -63,6 +63,27 @@ SECRET_PATTERNS = {
     "Generic Token": re.compile(r"token" + r"\s*=\s*['\"][a-zA-Z0-9]{20,}['\"]")
 }
 
+# Optimization: Combine all secret patterns into a single regex for fast scanning.
+# This acts as a Bloom filter: if the combined pattern doesn't match, we skip detailed checks.
+# This avoids running N regex searches per line for lines without secrets.
+def _compile_combined_secrets():
+    parts = []
+    for pattern in SECRET_PATTERNS.values():
+        p = pattern.pattern
+        # Handle (?i) at start of pattern
+        if p.startswith("(?i)"):
+            parts.append(f"(?i:{p[4:]})")
+        # Handle re.IGNORECASE flag on compiled pattern
+        elif pattern.flags & re.IGNORECASE:
+            parts.append(f"(?i:{p})")
+        else:
+            parts.append(f"(?:{p})")
+
+    # Join with OR operator
+    return re.compile("|".join(parts))
+
+COMBINED_SECRET_PATTERN = _compile_combined_secrets()
+
 TODO_PATTERN = re.compile(r"(TODO|FIXME|XXX)" + r":")
 UNSAFE_PATTERN = re.compile(r"unsafe" + r"\s*\{")
 
@@ -107,15 +128,17 @@ def scan_text_patterns():
             with open(f, 'r', encoding='utf-8', errors='ignore') as fp:
                 for i, line_content in enumerate(fp):
                     # Secrets
-                    for name, compiled_pattern in SECRET_PATTERNS.items():
-                        if compiled_pattern.search(line_content):
-                            add_finding(
-                                title=f"Potential Secret: {name}",
-                                severity="Critical",
-                                description=f"Found pattern matching {name}",
-                                file_path=f,
-                                line_number=i+1
-                            )
+                    # Optimization: Check combined pattern first
+                    if COMBINED_SECRET_PATTERN.search(line_content):
+                        for name, compiled_pattern in SECRET_PATTERNS.items():
+                            if compiled_pattern.search(line_content):
+                                add_finding(
+                                    title=f"Potential Secret: {name}",
+                                    severity="Critical",
+                                    description=f"Found pattern matching {name}",
+                                    file_path=f,
+                                    line_number=i+1
+                                )
                     
                     # Technical Debt
                     if TODO_PATTERN.search(line_content):
