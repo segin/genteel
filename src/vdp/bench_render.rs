@@ -68,7 +68,7 @@ fn bench_render_line_performance() {
     }
 
     let start = Instant::now();
-    let iterations = 10000;
+    let iterations = 100000;
 
     for _ in 0..iterations {
         // Render line 100
@@ -78,6 +78,62 @@ fn bench_render_line_performance() {
     let duration = start.elapsed();
     println!(
         "Render Line ({} iterations) took: {:?}",
+        iterations, duration
+    );
+}
+
+#[test]
+fn bench_render_line_sparse() {
+    let mut vdp = Vdp::new();
+    vdp.registers[1] = 0x40 | 0x04;
+    vdp.registers[16] = 0x11;
+    vdp.registers[2] = 0x30;
+    vdp.registers[4] = 0x07;
+    vdp.registers[5] = 0x6A;
+
+    // Fill VRAM with 50% zeros
+    for i in 0..0x10000 {
+        if i % 2 == 0 {
+             vdp.vram[i] = (i & 0xFF) as u8;
+        } else {
+             vdp.vram[i] = 0;
+        }
+    }
+    // Fill CRAM
+    for i in 0..128 {
+        vdp.cram[i] = (i & 0xFF) as u8;
+    }
+    for i in 0..64 {
+        vdp.cram_cache[i] = (i as u16) * 0x0400 + 0x0020;
+    }
+
+    let sat_base = 0xD400;
+    for i in 0..40 {
+        let addr = sat_base + (i * 8);
+        let y = 90 + (i % 20);
+        vdp.vram[addr] = 0x00;
+        vdp.vram[addr + 1] = (y + 128) as u8;
+        vdp.vram[addr + 2] = 0x00;
+        let link = if i == 39 { 0 } else { i + 1 };
+        vdp.vram[addr + 3] = link as u8;
+        let priority = if i % 2 == 0 { 0x80 } else { 0x00 };
+        vdp.vram[addr + 4] = priority;
+        vdp.vram[addr + 5] = 0x00;
+        let x = 128 + (i * 8);
+        vdp.vram[addr + 6] = (x >> 8) as u8;
+        vdp.vram[addr + 7] = (x & 0xFF) as u8;
+    }
+
+    let start = Instant::now();
+    let iterations = 100000;
+
+    for _ in 0..iterations {
+        vdp.render_line(100);
+    }
+
+    let duration = start.elapsed();
+    println!(
+        "Render Line Sparse ({} iterations) took: {:?}",
         iterations, duration
     );
 }

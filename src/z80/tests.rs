@@ -2,17 +2,7 @@
 //! Comprehensive unit tests for Z80 CPU
 
 use super::*;
-use crate::memory::Memory;
-use crate::memory::{IoInterface, MemoryInterface};
-use serde_json::json;
-
-fn create_z80(program: &[u8]) -> Z80<crate::memory::Memory, crate::z80::test_utils::TestIo> {
-    let mut memory = Memory::new(0x10000);
-    for (i, &byte) in program.iter().enumerate() {
-        memory.data[i] = byte;
-    }
-    Z80::new(memory, crate::z80::test_utils::TestIo::default())
-}
+use crate::z80::test_utils::create_z80;
 
 // ==================== Register Pair Tests ====================
 
@@ -489,67 +479,71 @@ fn test_ex_de_hl() {
     assert_eq!(z80.hl(), 0x1234);
 }
 
-// ==================== State Serialization Tests ====================
-
 #[test]
-fn test_read_write_state() {
+fn test_debug_state() {
+    use crate::debugger::Debuggable;
+    use serde_json::json;
     let mut z80 = create_z80(&[]);
+
+    // Set some initial state
     z80.a = 0xAA;
-    z80.f = 0xBB;
-    z80.bc(); // just to use it
-    z80.set_bc(0x1234);
-    z80.set_de(0x5678);
-    z80.set_hl(0x9ABC);
-    z80.pc = 0xDEAD;
-    z80.sp = 0xBEEF;
-    z80.ix = 0x1111;
-    z80.iy = 0x2222;
-    z80.halted = true;
-    z80.im = 2;
-    z80.iff1 = true;
-    z80.iff2 = false;
-    z80.cycles = 123456;
+    z80.pc = 0x1234;
+    z80.cycles = 100;
 
+    // Read state
     let state = z80.read_state();
-
-    // Verify read
     assert_eq!(state["a"], 0xAA);
-    assert_eq!(state["f"], 0xBB);
-    assert_eq!(state["b"], 0x12);
-    assert_eq!(state["c"], 0x34);
-    assert_eq!(state["pc"], 0xDEAD);
-    assert_eq!(state["halted"], true);
+    assert_eq!(state["pc"], 0x1234);
+    assert_eq!(state["cycles"], 100);
 
-    // Verify partial write
-    let mut z80_new = create_z80(&[]);
-    let partial_state = json!({
-        "a": 0xFF,
-        "pc": 0x0000
+    // Partial update
+    let update = json!({
+        "a": 0xBB,
+        "cycles": 200
     });
-    z80_new.write_state(&partial_state);
+    z80.write_state(&update);
 
-    assert_eq!(z80_new.a, 0xFF);
-    assert_eq!(z80_new.pc, 0x0000);
-    // Should be default
-    assert_eq!(z80_new.b, 0x00);
+    assert_eq!(z80.a, 0xBB);
+    assert_eq!(z80.pc, 0x1234); // Should not change
+    assert_eq!(z80.cycles, 200);
 
-    // Verify full write
-    z80_new.write_state(&state);
-    assert_eq!(z80_new.a, 0xAA);
-    assert_eq!(z80_new.f, 0xBB);
-    assert_eq!(z80_new.b, 0x12);
-    assert_eq!(z80_new.c, 0x34);
-    assert_eq!(z80_new.d, 0x56);
-    assert_eq!(z80_new.e, 0x78);
-    assert_eq!(z80_new.h, 0x9A);
-    assert_eq!(z80_new.l, 0xBC);
-    assert_eq!(z80_new.pc, 0xDEAD);
-    assert_eq!(z80_new.sp, 0xBEEF);
-    assert_eq!(z80_new.ix, 0x1111);
-    assert_eq!(z80_new.iy, 0x2222);
-    assert_eq!(z80_new.halted, true);
-    assert_eq!(z80_new.im, 2);
-    assert_eq!(z80_new.iff1, true);
-    assert_eq!(z80_new.iff2, false);
-    assert_eq!(z80_new.cycles, 123456);
+    // Full update
+    let full_update = json!({
+        "a": 0xCC,
+        "f": 0xDD,
+        "b": 0x11,
+        "c": 0x22,
+        "d": 0x33,
+        "e": 0x44,
+        "h": 0x55,
+        "l": 0x66,
+        "ix": 0x1000,
+        "iy": 0x2000,
+        "sp": 0x3000,
+        "pc": 0x4000,
+        "iff1": true,
+        "iff2": true,
+        "im": 2,
+        "halted": true,
+        "cycles": 300
+    });
+    z80.write_state(&full_update);
+
+    assert_eq!(z80.a, 0xCC);
+    assert_eq!(z80.f, 0xDD);
+    assert_eq!(z80.b, 0x11);
+    assert_eq!(z80.c, 0x22);
+    assert_eq!(z80.d, 0x33);
+    assert_eq!(z80.e, 0x44);
+    assert_eq!(z80.h, 0x55);
+    assert_eq!(z80.l, 0x66);
+    assert_eq!(z80.ix, 0x1000);
+    assert_eq!(z80.iy, 0x2000);
+    assert_eq!(z80.sp, 0x3000);
+    assert_eq!(z80.pc, 0x4000);
+    assert_eq!(z80.iff1, true);
+    assert_eq!(z80.iff2, true);
+    assert_eq!(z80.im, 2);
+    assert_eq!(z80.halted, true);
+    assert_eq!(z80.cycles, 300);
 }
