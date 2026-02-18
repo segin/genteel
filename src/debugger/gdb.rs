@@ -14,32 +14,19 @@ pub const DEFAULT_PORT: u16 = 1234;
 /// Maximum GDB packet size to prevent unbounded memory consumption
 pub const MAX_PACKET_SIZE: usize = 4096;
 
-/// Maximum number of breakpoints allowed to prevent memory exhaustion
-pub const MAX_BREAKPOINTS: usize = 1024;
-
-/// Maximum failed authentication attempts before lockout
-const MAX_AUTH_ATTEMPTS: u32 = 3;
-/// Duration of authentication lockout
-const AUTH_LOCKOUT_DURATION: Duration = Duration::from_secs(60);
-
-/// Constant-time string comparison to prevent timing attacks.
-///
-/// This function compares two strings in constant time (relative to the length
-/// of the input strings), preventing timing attacks that could reveal the content
-/// of the strings. It does not hide the length of the strings.
-fn secure_compare(a: &str, b: &str) -> bool {
+/// Constant-time string comparison to prevent timing attacks
+fn constant_time_eq(a: &str, b: &str) -> bool {
     let a_bytes = a.as_bytes();
     let b_bytes = b.as_bytes();
-
     if a_bytes.len() != b_bytes.len() {
         return false;
     }
 
-    let mut result = 0u8;
-    for (x, y) in a_bytes.iter().zip(b_bytes.iter()) {
-        result |= x ^ y;
-    }
-    result == 0
+    a_bytes
+        .iter()
+        .zip(b_bytes)
+        .fold(0, |acc, (x, y)| acc | (x ^ y))
+        == 0
 }
 
 /// GDB stop reasons
@@ -676,7 +663,7 @@ impl GdbServer {
 
             let provided_pass = stripped.trim();
             if let Some(ref correct_pass) = self.password {
-                if secure_compare(provided_pass, correct_pass) {
+                if constant_time_eq(provided_pass, correct_pass) {
                     self.authenticated = true;
                     self.auth_failed_attempts = 0;
                     self.auth_lockout_until = None;
@@ -776,6 +763,17 @@ mod tests {
             auth_failed_attempts: 0,
             auth_lockout_until: None,
         }
+    }
+
+    #[test]
+    fn test_constant_time_eq() {
+        assert!(constant_time_eq("secret", "secret"));
+        assert!(!constant_time_eq("secret", "secreT"));
+        assert!(!constant_time_eq("secret", "secre"));
+        assert!(!constant_time_eq("secret", "secret1"));
+        assert!(!constant_time_eq("", "secret"));
+        assert!(!constant_time_eq("secret", ""));
+        assert!(constant_time_eq("", ""));
     }
 
     #[test]
