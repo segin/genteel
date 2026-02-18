@@ -550,15 +550,16 @@ pub fn exec_divu<M: MemoryInterface>(
     let quotient = dividend / (divisor as u32);
     let remainder = dividend % (divisor as u32);
 
+    // C is always cleared
+    cpu.set_flag(flags::CARRY, false);
+
     if quotient > 0xFFFF {
         cpu.set_flag(flags::OVERFLOW, true);
-        cpu.set_flag(flags::CARRY, false);
     } else {
         cpu.d[dst_reg as usize] = (remainder << 16) | (quotient & 0xFFFF);
         cpu.set_flag(flags::ZERO, (quotient & 0xFFFF) == 0);
         cpu.set_flag(flags::NEGATIVE, (quotient & 0x8000) != 0);
         cpu.set_flag(flags::OVERFLOW, false);
-        cpu.set_flag(flags::CARRY, false);
     }
 
     140 + cycles
@@ -831,9 +832,11 @@ mod tests {
         memory.write_long(0x14, 0x3000);
 
         let mut cpu = Cpu::new(&mut memory);
+        let sp = cpu.a[7];
         // Reset state
         cpu.d = [0; 8];
         cpu.a = [0; 8];
+        cpu.a[7] = sp;
         cpu.pc = 0x100;
         cpu.sr = 0;
         (cpu, memory)
@@ -841,6 +844,91 @@ mod tests {
 
     fn create_test_setup() -> (Cpu, Memory) {
         create_test_cpu()
+    }
+
+    #[test]
+    fn test_exec_divu_basic() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        // Setup: D0 = 20 (dividend), D1 = 4 (divisor)
+        cpu.d[0] = 20;
+        cpu.d[1] = 4;
+        let src = AddressingMode::DataRegister(1);
+
+        exec_divu(&mut cpu, src, 0, &mut memory);
+
+        // Quotient = 20 / 4 = 5. Remainder = 0.
+        // Result in D0 = Remainder << 16 | Quotient = 0x00000005.
+        assert_eq!(cpu.d[0], 5);
+
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert!(!cpu.get_flag(flags::CARRY));
+    }
+
+    #[test]
+    fn test_exec_divu_remainder() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        // 10 / 3 = 3 rem 1
+        cpu.d[0] = 10;
+        cpu.d[1] = 3;
+        let src = AddressingMode::DataRegister(1);
+
+        exec_divu(&mut cpu, src, 0, &mut memory);
+
+        // D0 = (1 << 16) | 3 = 0x00010003
+        assert_eq!(cpu.d[0], 0x00010003);
+    }
+
+    #[test]
+    fn test_exec_divu_zero_divide() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        cpu.d[0] = 100;
+        cpu.d[1] = 0;
+        let src = AddressingMode::DataRegister(1);
+
+        // Setup exception vector 5 (Zero Divide) -> Address 0x14
+        let handler_addr = 0x2000;
+        memory.write_long(20, handler_addr);
+
+        let initial_sp = cpu.a[7];
+
+        exec_divu(&mut cpu, src, 0, &mut memory);
+
+        // Should have jumped to handler
+        assert_eq!(cpu.pc, handler_addr);
+
+        // Should have pushed PC and SR to stack
+        // Stack grows down. Pushed 4 bytes PC, 2 bytes SR.
+        assert_eq!(cpu.a[7], initial_sp - 6);
+    }
+
+    #[test]
+    fn test_exec_divu_overflow() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        // 0x10000 (65536) / 1 = 0x10000. 0x10000 > 0xFFFF. Overflow.
+        cpu.d[0] = 0x10000;
+        cpu.d[1] = 1;
+        let src = AddressingMode::DataRegister(1);
+
+        let initial_d0 = cpu.d[0];
+
+        // Ensure Carry is set initially to verify it gets cleared
+        cpu.set_flag(flags::CARRY, true);
+
+        exec_divu(&mut cpu, src, 0, &mut memory);
+
+        assert!(cpu.get_flag(flags::OVERFLOW));
+
+        // Destination register should be unchanged
+        assert_eq!(cpu.d[0], initial_d0);
+
+        // Carry flag should be cleared (we fixed this behavior in exec_divu)
+        assert!(!cpu.get_flag(flags::CARRY), "Carry flag should be cleared on overflow");
     }
 
     #[test]
