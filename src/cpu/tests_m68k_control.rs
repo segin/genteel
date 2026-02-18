@@ -523,35 +523,44 @@ fn test_rte_privilege_violation() {
 }
 
 #[test]
-fn test_rte_supervisor() {
+fn test_rte_supervisor_behavior() {
     let (mut cpu, mut memory) = create_cpu();
 
     // RTE opcode: 0x4E73
     write_op(&mut memory, &[0x4E73]);
 
-    // Setup Stacks
-    cpu.ssp = 0x8000;
+    // Setup initial state: Supervisor mode
+    cpu.sr |= flags::SUPERVISOR;
+    // Set SP (using SSP since in supervisor mode)
+    cpu.a[7] = 0x8000;
+    // Set USP to a known value
     cpu.usp = 0xA000;
-    cpu.a[7] = cpu.ssp; // Active stack is SSP (Supervisor)
 
-    // Prepare Stack Frame for RTE
-    // Pushes: SR (word), PC (long)
-    // We need to write them to memory where SP points.
-    // Stack grows down, Pop increments.
-    // RTE pops SR from (SP), then PC from (SP+2).
+    // We want to return to PC=0x2000 and SR=0x0000 (User mode)
+    let target_pc = 0x2000;
+    let target_sr = 0x0000;
 
-    let return_pc = 0x2000;
-    let return_sr = 0x0000; // User mode (cleared Supervisor bit)
+    // Push frame to stack manually as if an exception occurred.
+    // Stack Frame (68000):
+    // SP -> SR (Word)
+    // SP+2 -> PC (Long)
 
-    memory.write_word(0x8000, return_sr);
-    memory.write_long(0x8002, return_pc);
+    // So if initial SP was 0x8000.
+    // After push PC (4 bytes): SP=0x7FFC. Mem[0x7FFC] = PC.
+    // After push SR (2 bytes): SP=0x7FFA. Mem[0x7FFA] = SR.
+
+    memory.write_word(0x7FFA, target_sr);
+    memory.write_long(0x7FFC, target_pc);
+    cpu.a[7] = 0x7FFA;
 
     cpu.step_instruction(&mut memory);
 
-    assert_eq!(cpu.pc, return_pc);
-    assert_eq!(cpu.sr, return_sr);
-    // Switched to User Mode, so A7 should be USP
-    assert_eq!(cpu.a[7], cpu.usp);
-    // SSP should be updated to where we popped from (0x8006)
-    assert_eq!(cpu.ssp, 0x8006);
+    assert_eq!(cpu.pc, target_pc);
+    assert_eq!(cpu.sr, target_sr);
+    // Should be in user mode now
+    assert_eq!(cpu.sr & flags::SUPERVISOR, 0);
+    // Active SP (A7) should be USP
+    assert_eq!(cpu.a[7], 0xA000);
+    // SSP should be back to 0x8000 (where we popped from)
+    assert_eq!(cpu.ssp, 0x8000);
 }
