@@ -225,7 +225,7 @@ pub fn exec_suba<M: MemoryInterface>(
     };
 
     let dst_val = cpu.a[dst_reg as usize];
-    cpu.a[dst_reg as usize] = dst_val.wrapping_sub(src_val);
+    cpu.a[dst_reg as usize] = dst_val.wrapping_add(src_val);
 
     cycles
 }
@@ -550,6 +550,9 @@ pub fn exec_divu<M: MemoryInterface>(
     let quotient = dividend / (divisor as u32);
     let remainder = dividend % (divisor as u32);
 
+    // C is always cleared
+    cpu.set_flag(flags::CARRY, false);
+
     if quotient > 0xFFFF {
         cpu.set_flag(flags::OVERFLOW, true);
     } else {
@@ -557,7 +560,6 @@ pub fn exec_divu<M: MemoryInterface>(
         cpu.set_flag(flags::ZERO, (quotient & 0xFFFF) == 0);
         cpu.set_flag(flags::NEGATIVE, (quotient & 0x8000) != 0);
         cpu.set_flag(flags::OVERFLOW, false);
-        cpu.set_flag(flags::CARRY, false);
     }
 
     140 + cycles
@@ -579,12 +581,14 @@ pub fn exec_divs<M: MemoryInterface>(
     }
 
     let dividend = cpu.d[dst_reg as usize] as i32;
-    let quotient = dividend / (divisor as i32);
-    let remainder = dividend % (divisor as i32);
+    let divisor = divisor as i32;
+    let (quotient, overflow) = dividend.overflowing_div(divisor);
 
-    if !(-32768..=32767).contains(&quotient) {
+    if overflow || !(-32768..=32767).contains(&quotient) {
         cpu.set_flag(flags::OVERFLOW, true);
+        cpu.set_flag(flags::CARRY, false);
     } else {
+        let remainder = dividend % divisor;
         cpu.d[dst_reg as usize] = ((remainder as u32) << 16) | ((quotient as u32) & 0xFFFF);
         cpu.set_flag(flags::ZERO, (quotient as i16) == 0);
         cpu.set_flag(flags::NEGATIVE, (quotient as i16) < 0);
@@ -807,4 +811,161 @@ fn fetch_postinc_operand<M: MemoryInterface>(
     let val = cpu.cpu_read_memory(addr, size, memory);
     cpu.a[reg as usize] = addr.wrapping_add(size.bytes());
     val
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cpu::Cpu;
+    use crate::memory::Memory;
+    use crate::cpu::decoder::{AddressingMode, Size};
+    use crate::cpu::flags;
+
+    fn create_test_cpu() -> (Cpu, Memory) {
+        let mut memory = Memory::new(0x10000);
+        // Initial SP and PC
+        memory.write_long(0, 0x1000); // SP
+        memory.write_long(4, 0x100); // PC
+        let cpu = Cpu::new(&mut memory);
+        (cpu, memory)
+    }
+
+    #[test]
+    fn test_exec_add_byte() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        cpu.d[0] = 0x10;
+        cpu.d[1] = 0x20;
+
+        let cycles = exec_add(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1] & 0xFF, 0x30);
+        assert_eq!(cycles, 4);
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_exec_add_word() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        cpu.d[0] = 0x1000;
+        cpu.d[1] = 0x2000;
+
+        let cycles = exec_add(
+            &mut cpu,
+            Size::Word,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1] & 0xFFFF, 0x3000);
+        assert_eq!(cycles, 4);
+    }
+
+    #[test]
+    fn test_exec_add_long() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        cpu.d[0] = 0x10000000;
+        cpu.d[1] = 0x20000000;
+
+        let cycles = exec_add(
+            &mut cpu,
+            Size::Long,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1], 0x30000000);
+        assert_eq!(cycles, 8);
+    }
+
+    #[test]
+    fn test_exec_add_flags_carry_overflow() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        // Byte: 0xFF + 0x01 = 0x00, Carry Set, Zero Set
+        cpu.d[0] = 0xFF;
+        cpu.d[1] = 0x01;
+
+        exec_add(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1] & 0xFF, 0x00);
+        assert!(cpu.get_flag(flags::ZERO));
+        assert!(cpu.get_flag(flags::CARRY));
+        assert!(cpu.get_flag(flags::EXTEND));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+
+        // Byte: 0x7F + 0x01 = 0x80 (-128), Overflow Set, Negative Set
+        cpu.d[0] = 0x7F;
+        cpu.d[1] = 0x01;
+
+        exec_add(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1] & 0xFF, 0x80);
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert!(cpu.get_flag(flags::OVERFLOW));
+        assert!(!cpu.get_flag(flags::CARRY));
+    }
+
+    #[test]
+    fn test_exec_add_memory_to_reg() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        cpu.a[0] = 0x1000;
+        memory.write_word(0x1000, 0x1234);
+        cpu.d[0] = 0x0000;
+
+        // ADD.W (A0), D0
+        let cycles = exec_add(
+            &mut cpu,
+            Size::Word,
+            AddressingMode::AddressIndirect(0),
+            AddressingMode::DataRegister(0),
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[0] & 0xFFFF, 0x1234);
+        // Cycles: 4 + calculate_ea(Indirect) = 4 + 4 = 8.
+        assert_eq!(cycles, 8);
+    }
+
+    #[test]
+    fn test_exec_add_reg_to_memory() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        cpu.d[0] = 0x1234;
+        cpu.a[0] = 0x2000;
+        memory.write_word(0x2000, 0x0000);
+
+        // ADD.W D0, (A0)
+        let cycles = exec_add(
+            &mut cpu,
+            Size::Word,
+            AddressingMode::DataRegister(0),
+            AddressingMode::AddressIndirect(0),
+            &mut memory,
+        );
+
+        assert_eq!(memory.read_word(0x2000), 0x1234);
+        // Cycles: 4 + calculate_ea(Indirect) = 4 + 4 = 8.
+        assert_eq!(cycles, 8);
+    }
 }
