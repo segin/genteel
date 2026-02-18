@@ -34,12 +34,12 @@ fn decode_uncached(opcode: u16) -> Instruction {
         0x7 => decode_moveq(opcode),
         0x8 => decode_group_8(opcode),
         0x9 => decode_sub(opcode),
-        0xA => Instruction::System(SystemInstruction::LineA { opcode }),
+        0xA => Instruction::LineA { opcode },
         0xB => decode_group_b(opcode),
         0xC => decode_group_c(opcode),
         0xD => decode_add(opcode),
         0xE => decode_shifts(opcode),
-        0xF => Instruction::System(SystemInstruction::LineF { opcode }),
+        0xF => Instruction::LineF { opcode },
         _ => unreachable!(),
     }
 }
@@ -50,16 +50,16 @@ fn decode_group_0(opcode: u16) -> Instruction {
     if (opcode & 0x0100) != 0 {
         decode_movep(opcode)
             .or_else(|| decode_bit_dynamic(opcode))
-            .unwrap_or(Instruction::System(SystemInstruction::Unimplemented {
+            .unwrap_or(Instruction::Unimplemented {
                 opcode,
-            }))
+            })
     } else {
         decode_static_bit(opcode)
             .or_else(|| decode_ccr_sr_immediate(opcode))
             .or_else(|| decode_immediate_alu(opcode))
-            .unwrap_or(Instruction::System(SystemInstruction::Unimplemented {
+            .unwrap_or(Instruction::Unimplemented {
                 opcode,
-            }))
+            })
     }
 }
 
@@ -146,7 +146,7 @@ fn decode_ccr_sr_immediate(opcode: u16) -> Option<Instruction> {
             (0b001, 0b01) => Instruction::System(SystemInstruction::AndiToSr),
             (0b101, 0b00) => Instruction::System(SystemInstruction::EoriToCcr),
             (0b101, 0b01) => Instruction::System(SystemInstruction::EoriToSr),
-            _ => Instruction::System(SystemInstruction::Unimplemented { opcode }),
+            _ => Instruction::Unimplemented { opcode },
         });
     }
     None
@@ -191,7 +191,7 @@ fn decode_move(opcode: u16, size: Size) -> Instruction {
     let src = match AddressingMode::from_mode_reg(src_mode, src_reg) {
         Some(m) => m,
         None => {
-            return Instruction::System(SystemInstruction::Unimplemented { opcode });
+            return Instruction::Unimplemented { opcode };
         }
     };
 
@@ -199,7 +199,7 @@ fn decode_move(opcode: u16, size: Size) -> Instruction {
     if dst_mode == 0b001 {
         // MOVEA - size must be word or long
         if size == Size::Byte {
-            return Instruction::System(SystemInstruction::Unimplemented { opcode });
+            return Instruction::Unimplemented { opcode };
         }
         return Instruction::Data(DataInstruction::MoveA {
             size,
@@ -211,12 +211,12 @@ fn decode_move(opcode: u16, size: Size) -> Instruction {
     let dst = match AddressingMode::from_mode_reg(dst_mode, dst_reg) {
         Some(m) => m,
         None => {
-            return Instruction::System(SystemInstruction::Unimplemented { opcode });
+            return Instruction::Unimplemented { opcode };
         }
     };
 
     if !dst.is_alterable() {
-        return Instruction::System(SystemInstruction::Unimplemented { opcode });
+        return Instruction::Unimplemented { opcode };
     }
 
     Instruction::Data(DataInstruction::Move { size, src, dst })
@@ -227,9 +227,9 @@ fn decode_group_4(opcode: u16) -> Instruction {
         .or_else(|| decode_group_4_control(opcode))
         .or_else(|| decode_group_4_movem(opcode))
         .or_else(|| decode_group_4_arithmetic(opcode))
-        .unwrap_or(Instruction::System(SystemInstruction::Unimplemented {
+        .unwrap_or(Instruction::Unimplemented {
             opcode,
-        }))
+        })
 }
 
 fn decode_group_4_misc(opcode: u16) -> Option<Instruction> {
@@ -289,7 +289,7 @@ fn decode_group_4_misc(opcode: u16) -> Option<Instruction> {
 
     // ILLEGAL - 4AFC
     if opcode == 0x4AFC {
-        return Some(Instruction::System(SystemInstruction::Illegal));
+        return Some(Instruction::Illegal);
     }
     None
 }
@@ -467,7 +467,7 @@ fn decode_group_5(opcode: u16) -> Instruction {
         if let Some(dst) = AddressingMode::from_mode_reg(mode, reg) {
             // Check for illegal Byte operation on Address Register
             if size == Size::Byte && matches!(dst, AddressingMode::AddressRegister(_)) {
-                return Instruction::System(SystemInstruction::Illegal);
+                return Instruction::Illegal;
             }
 
             let is_sub = (opcode >> 8) & 0x01 != 0;
@@ -479,7 +479,7 @@ fn decode_group_5(opcode: u16) -> Instruction {
         }
     }
 
-    Instruction::System(SystemInstruction::Unimplemented { opcode })
+    Instruction::Unimplemented { opcode }
 }
 
 fn decode_group_6(opcode: u16) -> Instruction {
@@ -511,7 +511,7 @@ fn decode_moveq(opcode: u16) -> Instruction {
     // D = destination register, D = 8-bit data
 
     if opcode & 0x0100 != 0 {
-        return Instruction::System(SystemInstruction::Unimplemented { opcode });
+        return Instruction::Unimplemented { opcode };
     }
 
     let dst_reg = ((opcode >> 9) & 0x07) as u8;
@@ -571,7 +571,7 @@ fn decode_group_8(opcode: u16) -> Instruction {
         }
     }
 
-    Instruction::System(SystemInstruction::Unimplemented { opcode })
+    Instruction::Unimplemented { opcode }
 }
 
 fn decode_sub(opcode: u16) -> Instruction {
@@ -623,7 +623,7 @@ fn decode_sub(opcode: u16) -> Instruction {
         }
     }
 
-    Instruction::System(SystemInstruction::Unimplemented { opcode })
+    Instruction::Unimplemented { opcode }
 }
 
 fn decode_group_b(opcode: u16) -> Instruction {
@@ -688,7 +688,7 @@ fn decode_group_b(opcode: u16) -> Instruction {
         }
     }
 
-    Instruction::System(SystemInstruction::Unimplemented { opcode })
+    Instruction::Unimplemented { opcode }
 }
 
 fn decode_group_c(opcode: u16) -> Instruction {
@@ -752,7 +752,7 @@ fn decode_group_c(opcode: u16) -> Instruction {
         }
     }
 
-    Instruction::System(SystemInstruction::Unimplemented { opcode })
+    Instruction::Unimplemented { opcode }
 }
 
 fn decode_add(opcode: u16) -> Instruction {
@@ -804,7 +804,7 @@ fn decode_add(opcode: u16) -> Instruction {
         }
     }
 
-    Instruction::System(SystemInstruction::Unimplemented { opcode })
+    Instruction::Unimplemented { opcode }
 }
 
 fn make_shift_instruction(
@@ -869,7 +869,7 @@ fn decode_shifts(opcode: u16) -> Instruction {
         return make_shift_instruction(op_type, direction, size, dst, count);
     }
 
-    Instruction::System(SystemInstruction::Unimplemented { opcode })
+    Instruction::Unimplemented { opcode }
 }
 
 #[cfg(test)]
@@ -1049,22 +1049,22 @@ mod tests {
         // NBCD A0 (0x4808)
         assert_eq!(
             decode(0x4808),
-            Instruction::System(SystemInstruction::Unimplemented { opcode: 0x4808 })
+            Instruction::Unimplemented { opcode: 0x4808 }
         );
         // NBCD #<data> (0x483C)
         assert_eq!(
             decode(0x483C),
-            Instruction::System(SystemInstruction::Unimplemented { opcode: 0x483C })
+            Instruction::Unimplemented { opcode: 0x483C }
         );
         // NBCD d16(PC) (0x483A)
         assert_eq!(
             decode(0x483A),
-            Instruction::System(SystemInstruction::Unimplemented { opcode: 0x483A })
+            Instruction::Unimplemented { opcode: 0x483A }
         );
         // NBCD d8(PC,Xn) (0x483B)
         assert_eq!(
             decode(0x483B),
-            Instruction::System(SystemInstruction::Unimplemented { opcode: 0x483B })
+            Instruction::Unimplemented { opcode: 0x483B }
         );
     }
 }

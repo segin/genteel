@@ -516,13 +516,13 @@ impl Cpu {
                 SystemInstruction::OriToSr => ops::system::exec_ori_to_sr(self, memory),
                 SystemInstruction::EoriToCcr => ops::system::exec_eori_to_ccr(self, memory),
                 SystemInstruction::EoriToSr => ops::system::exec_eori_to_sr(self, memory),
-                SystemInstruction::Illegal => self.process_exception(4, memory),
-                SystemInstruction::LineA { opcode: _ } => self.process_exception(10, memory),
-                SystemInstruction::LineF { opcode: _ } => self.process_exception(11, memory),
-                SystemInstruction::Unimplemented { opcode: _ } => {
-                    self.process_exception(4, memory) // Illegal instruction
-                }
             },
+            Instruction::Illegal => self.process_exception(4, memory),
+            Instruction::LineA { opcode: _ } => self.process_exception(10, memory),
+            Instruction::LineF { opcode: _ } => self.process_exception(11, memory),
+            Instruction::Unimplemented { opcode: _ } => {
+                self.process_exception(4, memory) // Illegal instruction
+            }
         }
     }
 
