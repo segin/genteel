@@ -278,6 +278,10 @@ pub enum Instruction {
     Arithmetic(ArithmeticInstruction),
     Bits(BitsInstruction),
     System(SystemInstruction),
+    Unimplemented { opcode: u16 },
+    Illegal,
+    LineA { opcode: u16 },
+    LineF { opcode: u16 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -616,16 +620,6 @@ pub enum SystemInstruction {
     OriToSr,
     EoriToCcr,
     EoriToSr,
-    Illegal,
-    LineA {
-        opcode: u16,
-    },
-    LineF {
-        opcode: u16,
-    },
-    Unimplemented {
-        opcode: u16,
-    },
 }
 
 /// Cache entry for decoded instructions

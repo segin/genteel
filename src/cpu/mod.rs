@@ -9,7 +9,10 @@ pub mod instructions;
 pub mod ops;
 
 use crate::cpu::decoder::decode;
-use crate::cpu::instructions::{ArithmeticInstruction, BitSource, BitsInstruction, Condition, DataInstruction, Instruction, Size, SystemInstruction, DecodeCacheEntry};
+use crate::cpu::instructions::{
+    ArithmeticInstruction, BitSource, BitsInstruction, Condition, DataInstruction,
+    DecodeCacheEntry, Instruction, Size, SystemInstruction,
+};
 use crate::memory::MemoryInterface;
 
 /// Status Register flags
@@ -328,12 +331,18 @@ impl Cpu {
                     ops::arithmetic::exec_clr(self, size, dst, memory)
                 }
                 DataInstruction::Exg { rx, ry, mode } => ops::data::exec_exg(self, rx, ry, mode),
-                DataInstruction::Movep { size, reg, an, direction } => {
-                    ops::data::exec_movep(self, size, reg, an, direction, memory)
-                }
-                DataInstruction::Movem { size, direction, mask: _, ea } => {
-                    ops::data::exec_movem(self, size, direction, ea, memory)
-                }
+                DataInstruction::Movep {
+                    size,
+                    reg,
+                    an,
+                    direction,
+                } => ops::data::exec_movep(self, size, reg, an, direction, memory),
+                DataInstruction::Movem {
+                    size,
+                    direction,
+                    mask: _,
+                    ea,
+                } => ops::data::exec_movem(self, size, direction, ea, memory),
                 DataInstruction::Swap { reg } => ops::data::exec_swap(self, reg),
                 DataInstruction::Ext { size, reg } => ops::data::exec_ext(self, size, reg),
             },
@@ -377,21 +386,31 @@ impl Cpu {
                 ArithmeticInstruction::Neg { size, dst } => {
                     ops::arithmetic::exec_neg(self, size, dst, memory)
                 }
-                ArithmeticInstruction::Abcd { src_reg, dst_reg, memory_mode } => {
-                    ops::arithmetic::exec_abcd(self, src_reg, dst_reg, memory_mode, memory)
-                }
-                ArithmeticInstruction::Sbcd { src_reg, dst_reg, memory_mode } => {
-                    ops::arithmetic::exec_sbcd(self, src_reg, dst_reg, memory_mode, memory)
-                }
+                ArithmeticInstruction::Abcd {
+                    src_reg,
+                    dst_reg,
+                    memory_mode,
+                } => ops::arithmetic::exec_abcd(self, src_reg, dst_reg, memory_mode, memory),
+                ArithmeticInstruction::Sbcd {
+                    src_reg,
+                    dst_reg,
+                    memory_mode,
+                } => ops::arithmetic::exec_sbcd(self, src_reg, dst_reg, memory_mode, memory),
                 ArithmeticInstruction::Nbcd { dst } => {
                     ops::arithmetic::exec_nbcd(self, dst, memory)
                 }
-                ArithmeticInstruction::AddX { size, src_reg, dst_reg, memory_mode } => {
-                    ops::arithmetic::exec_addx(self, size, src_reg, dst_reg, memory_mode, memory)
-                }
-                ArithmeticInstruction::SubX { size, src_reg, dst_reg, memory_mode } => {
-                    ops::arithmetic::exec_subx(self, size, src_reg, dst_reg, memory_mode, memory)
-                }
+                ArithmeticInstruction::AddX {
+                    size,
+                    src_reg,
+                    dst_reg,
+                    memory_mode,
+                } => ops::arithmetic::exec_addx(self, size, src_reg, dst_reg, memory_mode, memory),
+                ArithmeticInstruction::SubX {
+                    size,
+                    src_reg,
+                    dst_reg,
+                    memory_mode,
+                } => ops::arithmetic::exec_subx(self, size, src_reg, dst_reg, memory_mode, memory),
                 ArithmeticInstruction::NegX { size, dst } => {
                     ops::arithmetic::exec_negx(self, size, dst, memory)
                 }
@@ -415,27 +434,29 @@ impl Cpu {
                 }
             },
             Instruction::Bits(bits_instr) => match bits_instr {
-                BitsInstruction::And { size, src, dst, direction } => {
-                    ops::bits::exec_and(self, size, src, dst, direction, memory)
-                }
+                BitsInstruction::And {
+                    size,
+                    src,
+                    dst,
+                    direction,
+                } => ops::bits::exec_and(self, size, src, dst, direction, memory),
                 BitsInstruction::AndI { size, dst } => {
                     ops::bits::exec_andi(self, size, dst, memory)
                 }
-                BitsInstruction::Or { size, src, dst, direction } => {
-                    ops::bits::exec_or(self, size, src, dst, direction, memory)
-                }
-                BitsInstruction::OrI { size, dst } => {
-                    ops::bits::exec_ori(self, size, dst, memory)
-                }
+                BitsInstruction::Or {
+                    size,
+                    src,
+                    dst,
+                    direction,
+                } => ops::bits::exec_or(self, size, src, dst, direction, memory),
+                BitsInstruction::OrI { size, dst } => ops::bits::exec_ori(self, size, dst, memory),
                 BitsInstruction::Eor { size, src_reg, dst } => {
                     ops::bits::exec_eor(self, size, src_reg, dst, memory)
                 }
                 BitsInstruction::EorI { size, dst } => {
                     ops::bits::exec_eori(self, size, dst, memory)
                 }
-                BitsInstruction::Not { size, dst } => {
-                    ops::bits::exec_not(self, size, dst, memory)
-                }
+                BitsInstruction::Not { size, dst } => ops::bits::exec_not(self, size, dst, memory),
                 BitsInstruction::Lsl { size, dst, count } => {
                     ops::bits::exec_shift(self, size, dst, count, true, false, memory)
                 }
@@ -445,11 +466,15 @@ impl Cpu {
                 BitsInstruction::Asl { size, dst, count } => {
                     ops::bits::exec_shift(self, size, dst, count, true, true, memory)
                 }
-                BitsInstruction::AslM { dst } => ops::bits::exec_shift_mem(self, dst, true, true, memory),
+                BitsInstruction::AslM { dst } => {
+                    ops::bits::exec_shift_mem(self, dst, true, true, memory)
+                }
                 BitsInstruction::Asr { size, dst, count } => {
                     ops::bits::exec_shift(self, size, dst, count, false, true, memory)
                 }
-                BitsInstruction::AsrM { dst } => ops::bits::exec_shift_mem(self, dst, false, true, memory),
+                BitsInstruction::AsrM { dst } => {
+                    ops::bits::exec_shift_mem(self, dst, false, true, memory)
+                }
                 BitsInstruction::Rol { size, dst, count } => {
                     ops::bits::exec_rotate(self, size, dst, count, true, false, memory)
                 }
@@ -469,11 +494,16 @@ impl Cpu {
                 BitsInstruction::Tas { dst } => ops::bits::exec_tas(self, dst, memory),
             },
             Instruction::System(sys_instr) => match sys_instr {
-                SystemInstruction::Bra { displacement } => ops::system::exec_bra(self, displacement, memory),
-                SystemInstruction::Bsr { displacement } => ops::system::exec_bsr(self, displacement, memory),
-                SystemInstruction::Bcc { condition, displacement } => {
-                    ops::system::exec_bcc(self, condition, displacement, memory)
+                SystemInstruction::Bra { displacement } => {
+                    ops::system::exec_bra(self, displacement, memory)
                 }
+                SystemInstruction::Bsr { displacement } => {
+                    ops::system::exec_bsr(self, displacement, memory)
+                }
+                SystemInstruction::Bcc {
+                    condition,
+                    displacement,
+                } => ops::system::exec_bcc(self, condition, displacement, memory),
                 SystemInstruction::Scc { condition, dst } => {
                     ops::system::exec_scc(self, condition, dst, memory)
                 }
@@ -505,24 +535,28 @@ impl Cpu {
                     ops::system::exec_link(self, reg, displacement, memory)
                 }
                 SystemInstruction::Unlk { reg } => ops::system::exec_unlk(self, reg, memory),
-                SystemInstruction::MoveToSr { src } => ops::system::exec_move_to_sr(self, src, memory),
+                SystemInstruction::MoveToSr { src } => {
+                    ops::system::exec_move_to_sr(self, src, memory)
+                }
                 SystemInstruction::MoveFromSr { dst } => {
                     ops::system::exec_move_from_sr(self, dst, memory)
                 }
-                SystemInstruction::MoveToCcr { src } => ops::system::exec_move_to_ccr(self, src, memory),
+                SystemInstruction::MoveToCcr { src } => {
+                    ops::system::exec_move_to_ccr(self, src, memory)
+                }
                 SystemInstruction::AndiToCcr => ops::system::exec_andi_to_ccr(self, memory),
                 SystemInstruction::AndiToSr => ops::system::exec_andi_to_sr(self, memory),
                 SystemInstruction::OriToCcr => ops::system::exec_ori_to_ccr(self, memory),
                 SystemInstruction::OriToSr => ops::system::exec_ori_to_sr(self, memory),
                 SystemInstruction::EoriToCcr => ops::system::exec_eori_to_ccr(self, memory),
                 SystemInstruction::EoriToSr => ops::system::exec_eori_to_sr(self, memory),
-                SystemInstruction::Illegal => self.process_exception(4, memory),
-                SystemInstruction::LineA { opcode: _ } => self.process_exception(10, memory),
-                SystemInstruction::LineF { opcode: _ } => self.process_exception(11, memory),
-                SystemInstruction::Unimplemented { opcode: _ } => {
-                    self.process_exception(4, memory) // Illegal instruction
-                }
             },
+            Instruction::Illegal => self.process_exception(4, memory),
+            Instruction::LineA { opcode: _ } => self.process_exception(10, memory),
+            Instruction::LineF { opcode: _ } => self.process_exception(11, memory),
+            Instruction::Unimplemented { opcode: _ } => {
+                self.process_exception(4, memory) // Illegal instruction
+            }
         }
     }
 
@@ -597,7 +631,12 @@ impl Cpu {
         self.invalidate_cache_line(addr.wrapping_add(2));
     }
 
-    pub fn cpu_read_memory<M: MemoryInterface>(&mut self, addr: u32, size: Size, memory: &mut M) -> u32 {
+    pub fn cpu_read_memory<M: MemoryInterface>(
+        &mut self,
+        addr: u32,
+        size: Size,
+        memory: &mut M,
+    ) -> u32 {
         match size {
             Size::Byte => memory.read_byte(addr) as u32,
             Size::Word => self.read_word(addr, memory) as u32,
@@ -717,28 +756,28 @@ impl Cpu {
 #[cfg(test)]
 mod tests_addressing;
 #[cfg(test)]
+mod tests_bug_fixes;
+#[cfg(test)]
+mod tests_cache;
+#[cfg(test)]
+mod tests_m68k_alu;
+#[cfg(test)]
+mod tests_m68k_bcd;
+#[cfg(test)]
+mod tests_m68k_bits;
+#[cfg(test)]
 mod tests_m68k_comprehensive;
 #[cfg(test)]
 mod tests_m68k_control;
 #[cfg(test)]
 mod tests_m68k_data;
 #[cfg(test)]
+mod tests_m68k_data_unit;
+#[cfg(test)]
 mod tests_m68k_extended;
-#[cfg(test)]
-mod tests_performance;
-#[cfg(test)]
-mod tests_m68k_bcd;
-#[cfg(test)]
-mod tests_m68k_bits;
-#[cfg(test)]
-mod tests_bug_fixes;
-#[cfg(test)]
-mod tests_m68k_alu;
 #[cfg(test)]
 mod tests_m68k_shift;
 #[cfg(test)]
-mod tests_m68k_data_unit;
-#[cfg(test)]
 mod tests_m68k_torture;
 #[cfg(test)]
-mod tests_cache;
+mod tests_performance;
