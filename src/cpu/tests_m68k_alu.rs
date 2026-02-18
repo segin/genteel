@@ -691,6 +691,129 @@ fn test_divu_by_zero() {
     memory.write_long(0x14, 0x2000);
     cpu.step_instruction(&mut memory);
     // Should trap
+    assert_eq!(cpu.pc, 0x2000);
+}
+
+#[test]
+fn test_divs_basic() {
+    let (mut cpu, mut memory) = create_cpu();
+    write_op(&mut memory, &[0x81C1]); // DIVS.W D1, D0
+    // -10 / 3
+    // Quotient: -3 (0xFFFD)
+    // Remainder: -1 (0xFFFF)
+    cpu.d[0] = (-10i32) as u32;
+    cpu.d[1] = 3;
+    cpu.step_instruction(&mut memory);
+
+    let quotient = (cpu.d[0] & 0xFFFF) as i16;
+    let remainder = ((cpu.d[0] >> 16) & 0xFFFF) as i16;
+
+    assert_eq!(quotient, -3);
+    assert_eq!(remainder, -1);
+
+    // Flags for quotient -3: N=1, Z=0
+    assert!(cpu.get_flag(flags::NEGATIVE));
+    assert!(!cpu.get_flag(flags::ZERO));
+    assert!(!cpu.get_flag(flags::OVERFLOW));
+    assert!(!cpu.get_flag(flags::CARRY));
+}
+
+#[test]
+fn test_divs_by_zero() {
+    let (mut cpu, mut memory) = create_cpu();
+    write_op(&mut memory, &[0x81C1]); // DIVS.W D1, D0
+    cpu.d[0] = 100;
+    cpu.d[1] = 0;
+    // Set up divide by zero vector
+    memory.write_long(0x14, 0x2000);
+    cpu.step_instruction(&mut memory);
+    // Should trap
+    assert_eq!(cpu.pc, 0x2000);
+}
+
+#[test]
+fn test_divs_overflow() {
+    let (mut cpu, mut memory) = create_cpu();
+    write_op(&mut memory, &[0x81C1]); // DIVS.W D1, D0
+    // 0x80000000 (-2147483648) / -1 = 2147483648
+    // 2147483648 cannot fit in 16-bit signed quotient (max 32767)
+    cpu.d[0] = 0x80000000;
+    cpu.d[1] = 0xFFFFFFFF; // -1
+    cpu.step_instruction(&mut memory);
+
+    // Check overflow flag
+    assert!(cpu.get_flag(flags::OVERFLOW));
+
+    // Destination register should be unchanged
+    assert_eq!(cpu.d[0], 0x80000000);
+}
+
+#[test]
+fn test_divs_pos_neg() {
+    let (mut cpu, mut memory) = create_cpu();
+    write_op(&mut memory, &[0x81C1]); // DIVS.W D1, D0
+    cpu.d[0] = 100;
+    cpu.d[1] = (-10i16) as u16 as u32; // -10
+    cpu.step_instruction(&mut memory);
+
+    let quotient = (cpu.d[0] & 0xFFFF) as i16;
+    let remainder = (cpu.d[0] >> 16) as i16;
+
+    assert_eq!(quotient, -10);
+    assert_eq!(remainder, 0);
+    assert!(cpu.get_flag(flags::NEGATIVE));
+    assert!(!cpu.get_flag(flags::ZERO));
+    assert!(!cpu.get_flag(flags::OVERFLOW));
+    assert!(!cpu.get_flag(flags::CARRY));
+}
+
+#[test]
+fn test_divs_neg_neg() {
+    let (mut cpu, mut memory) = create_cpu();
+    write_op(&mut memory, &[0x81C1]); // DIVS.W D1, D0
+    cpu.d[0] = (-100i32) as u32;
+    cpu.d[1] = (-10i16) as u16 as u32; // -10
+    cpu.step_instruction(&mut memory);
+
+    let quotient = (cpu.d[0] & 0xFFFF) as i16;
+    let remainder = (cpu.d[0] >> 16) as i16;
+
+    assert_eq!(quotient, 10);
+    assert_eq!(remainder, 0);
+    assert!(!cpu.get_flag(flags::NEGATIVE));
+    assert!(!cpu.get_flag(flags::ZERO));
+    assert!(!cpu.get_flag(flags::OVERFLOW));
+    assert!(!cpu.get_flag(flags::CARRY));
+}
+
+#[test]
+fn test_divs_remainder() {
+    let (mut cpu, mut memory) = create_cpu();
+    write_op(&mut memory, &[0x81C1]); // DIVS.W D1, D0
+    cpu.d[0] = 105;
+    cpu.d[1] = 10;
+    cpu.step_instruction(&mut memory);
+
+    let quotient = (cpu.d[0] & 0xFFFF) as i16;
+    let remainder = (cpu.d[0] >> 16) as i16;
+
+    assert_eq!(quotient, 10);
+    assert_eq!(remainder, 5);
+}
+
+#[test]
+fn test_divs_neg_remainder() {
+    let (mut cpu, mut memory) = create_cpu();
+    write_op(&mut memory, &[0x81C1]); // DIVS.W D1, D0
+    cpu.d[0] = (-105i32) as u32;
+    cpu.d[1] = 10;
+    cpu.step_instruction(&mut memory);
+
+    let quotient = (cpu.d[0] & 0xFFFF) as i16;
+    let remainder = (cpu.d[0] >> 16) as i16;
+
+    assert_eq!(quotient, -10);
+    assert_eq!(remainder, -5);
 }
 
 #[test]
