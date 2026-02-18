@@ -816,8 +816,8 @@ fn fetch_postinc_operand<M: MemoryInterface>(
 mod tests {
     use super::*;
     use crate::cpu::Cpu;
-    use crate::memory::Memory;
     use crate::cpu::flags;
+    use crate::memory::Memory;
 
     fn create_test_cpu() -> (Cpu, Memory) {
         let mut memory = Memory::new(0x10000);
@@ -837,6 +837,92 @@ mod tests {
         cpu.pc = 0x100;
         cpu.sr = 0;
         (cpu, memory)
+    }
+
+    fn create_test_setup() -> (Cpu, Memory) {
+        create_test_cpu()
+    }
+
+    #[test]
+    fn test_abcd_basic() {
+        let (mut cpu, mut memory) = create_test_setup();
+        // 0x45 + 0x33 = 0x78
+        cpu.d[0] = 0x45;
+        cpu.d[1] = 0x33;
+        cpu.set_flag(flags::EXTEND, false);
+        cpu.set_flag(flags::ZERO, true);
+
+        let cycles = exec_abcd(&mut cpu, 0, 1, false, &mut memory);
+
+        assert_eq!(cpu.d[1] & 0xFF, 0x78);
+        assert!(!cpu.get_flag(flags::EXTEND));
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::ZERO)); // Non-zero result clears Z
+        assert_eq!(cycles, 6);
+    }
+
+    #[test]
+    fn test_abcd_decimal_adjust() {
+        let (mut cpu, mut memory) = create_test_setup();
+        // Lower nibble adjust: 0x09 + 0x01 = 0x0A -> 0x10
+        cpu.d[0] = 0x09;
+        cpu.d[1] = 0x01;
+        cpu.set_flag(flags::EXTEND, false);
+
+        exec_abcd(&mut cpu, 0, 1, false, &mut memory);
+        assert_eq!(cpu.d[1] & 0xFF, 0x10);
+        assert!(!cpu.get_flag(flags::EXTEND));
+
+        // Upper nibble adjust: 0x90 + 0x10 = 0xA0 -> 0x00 (Carry)
+        cpu.d[0] = 0x90;
+        cpu.d[1] = 0x10;
+        cpu.set_flag(flags::EXTEND, false);
+
+        exec_abcd(&mut cpu, 0, 1, false, &mut memory);
+        assert_eq!(cpu.d[1] & 0xFF, 0x00);
+        assert!(cpu.get_flag(flags::EXTEND));
+        assert!(cpu.get_flag(flags::CARRY));
+    }
+
+    #[test]
+    fn test_abcd_extend_flag() {
+        let (mut cpu, mut memory) = create_test_setup();
+        // 0x05 + 0x05 + X(1) = 0x11
+        cpu.d[0] = 0x05;
+        cpu.d[1] = 0x05;
+        cpu.set_flag(flags::EXTEND, true);
+
+        exec_abcd(&mut cpu, 0, 1, false, &mut memory);
+        assert_eq!(cpu.d[1] & 0xFF, 0x11);
+    }
+
+    #[test]
+    fn test_abcd_zero_flag_persistence() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // Case 1: Result is zero, Z should remain set (if it was set)
+        cpu.d[0] = 0x00;
+        cpu.d[1] = 0x00;
+        cpu.set_flag(flags::EXTEND, false);
+        cpu.set_flag(flags::ZERO, true); // Z previously set (e.g. from previous byte)
+
+        exec_abcd(&mut cpu, 0, 1, false, &mut memory);
+        assert_eq!(cpu.d[1] & 0xFF, 0x00);
+        assert!(cpu.get_flag(flags::ZERO));
+
+        // Case 2: Result is zero, Z should remain clear (if it was clear)
+        cpu.set_flag(flags::ZERO, false);
+        exec_abcd(&mut cpu, 0, 1, false, &mut memory);
+        assert!(!cpu.get_flag(flags::ZERO));
+
+        // Case 3: Result is non-zero, Z should be cleared
+        cpu.d[0] = 0x01;
+        cpu.d[1] = 0x00;
+        cpu.set_flag(flags::ZERO, true);
+
+        exec_abcd(&mut cpu, 0, 1, false, &mut memory);
+        assert_eq!(cpu.d[1] & 0xFF, 0x01);
+        assert!(!cpu.get_flag(flags::ZERO));
     }
 
     #[test]
@@ -1286,6 +1372,47 @@ mod tests {
 
         assert!(cpu.get_flag(flags::NEGATIVE));
         assert!(!cpu.get_flag(flags::ZERO));
+    }
+
+    #[test]
+    fn test_abcd_memory_mode() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // ABCD -(A0), -(A1)
+        // A0 = 0x2001, A1 = 0x3001
+        // Mem[0x2000] = 0x15
+        // Mem[0x3000] = 0x25
+        // Result: 0x40 at Mem[0x3000]
+
+        cpu.a[0] = 0x2001;
+        cpu.a[1] = 0x3001;
+        memory.write_byte(0x2000, 0x15);
+        memory.write_byte(0x3000, 0x25);
+        cpu.set_flag(flags::EXTEND, false);
+
+        let cycles = exec_abcd(&mut cpu, 0, 1, true, &mut memory);
+
+        assert_eq!(memory.read_byte(0x3000), 0x40);
+        assert_eq!(cpu.a[0], 0x2000);
+        assert_eq!(cpu.a[1], 0x3000);
+        assert_eq!(cycles, 18);
+    }
+
+    #[test]
+    fn test_abcd_carry_generation() {
+        let (mut cpu, mut memory) = create_test_setup();
+        // 0x99 + 0x01 = 0x00, Carry = 1
+        cpu.d[0] = 0x99;
+        cpu.d[1] = 0x01;
+        cpu.set_flag(flags::EXTEND, false);
+        cpu.set_flag(flags::ZERO, true);
+
+        exec_abcd(&mut cpu, 0, 1, false, &mut memory);
+
+        assert_eq!(cpu.d[1] & 0xFF, 0x00);
+        assert!(cpu.get_flag(flags::EXTEND));
+        assert!(cpu.get_flag(flags::CARRY));
+        assert!(cpu.get_flag(flags::ZERO)); // Result 0, Z remains set
     }
 
     #[test]
