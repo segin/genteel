@@ -283,11 +283,17 @@ impl Emulator {
             ));
         }
 
-        let data = if path.to_lowercase().ends_with(".zip") {
+        let is_zip = canonical_path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|s| s.eq_ignore_ascii_case("zip"))
+            .unwrap_or(false);
+
+        let data = if is_zip {
             // Extract ROM from zip file
-            Self::load_rom_from_zip(path)?
+            Self::load_rom_from_zip(&canonical_path)?
         } else {
-            let mut file = std::fs::File::open(path)?;
+            let mut file = std::fs::File::open(&canonical_path)?;
             let metadata = file.metadata()?;
             let size = metadata.len();
             Self::read_rom_with_limit(&mut file, size)?
@@ -329,7 +335,7 @@ impl Emulator {
         Ok(data)
     }
     /// Load ROM from a zip file (finds first .bin, .md, .gen, or .smd file)
-    fn load_rom_from_zip(path: &str) -> std::io::Result<Vec<u8>> {
+    fn load_rom_from_zip(path: &std::path::Path) -> std::io::Result<Vec<u8>> {
         let file = std::fs::File::open(path)?;
         let mut archive = zip::ZipArchive::new(file)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
@@ -377,7 +383,6 @@ impl Emulator {
     pub fn step_frame_internal(&mut self) {
         self.internal_frame_count += 1;
         if self.debug {
-            #[cfg(feature = "gui")]
             self.log_debug(self.internal_frame_count);
         }
         // Genesis timing constants (NTSC):
@@ -1239,7 +1244,7 @@ mod tests {
         }
         std::fs::write(path, &zip_data).unwrap();
         // Attempt to load
-        let result = Emulator::load_rom_from_zip(path);
+        let result = Emulator::load_rom_from_zip(std::path::Path::new(path));
         // Cleanup
         let _ = std::fs::remove_file(path);
         // Verify rejection
