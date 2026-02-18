@@ -241,10 +241,9 @@ pub fn exec_movem<M: MemoryInterface>(
         for i in 0..16 {
             if (mask & (1 << i)) != 0 {
                 if i < 8 {
-                    // Data register: Word load affects only lower 16 bits, Long load affects all
+                    // Data register: Word load is sign-extended to 32 bits, Long load is normal
                     if size == Size::Word {
-                        let val = cpu.read_word(addr, memory);
-                        cpu.d[i] = (cpu.d[i] & 0xFFFF0000) | (val as u32);
+                        cpu.d[i] = cpu.read_word(addr, memory) as i16 as i32 as u32;
                     } else {
                         cpu.d[i] = cpu.read_long(addr, memory);
                     }
@@ -340,4 +339,153 @@ pub fn exec_ext(cpu: &mut Cpu, size: Size, reg: u8) -> u32 {
     cpu.set_flag(flags::CARRY, false);
 
     4
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cpu::flags;
+    use crate::cpu::Cpu;
+    use crate::memory::Memory;
+
+    fn create_test_cpu() -> (Cpu, Memory) {
+        let mut memory = Memory::new(0x10000);
+        memory.write_long(0, 0x1000); // SP
+        memory.write_long(4, 0x100); // PC
+        let cpu = Cpu::new(&mut memory);
+        (cpu, memory)
+    }
+
+    #[test]
+    fn test_move_reg_to_reg() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        cpu.d[0] = 0x12345678;
+        cpu.d[1] = 0;
+
+        // MOVE.L D0, D1
+        exec_move(
+            &mut cpu,
+            Size::Long,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1], 0x12345678);
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert!(!cpu.get_flag(flags::CARRY));
+    }
+
+    #[test]
+    fn test_move_mem_to_reg() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        memory.write_long(0x2000, 0xDEADBEEF);
+        cpu.a[0] = 0x2000;
+
+        // MOVE.L (A0), D0
+        exec_move(
+            &mut cpu,
+            Size::Long,
+            AddressingMode::AddressIndirect(0),
+            AddressingMode::DataRegister(0),
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[0], 0xDEADBEEF);
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(cpu.get_flag(flags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_move_reg_to_mem() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        cpu.d[0] = 0xCAFEBABE;
+        cpu.a[0] = 0x3000;
+
+        // MOVE.L D0, (A0)
+        exec_move(
+            &mut cpu,
+            Size::Long,
+            AddressingMode::DataRegister(0),
+            AddressingMode::AddressIndirect(0),
+            &mut memory,
+        );
+
+        assert_eq!(memory.read_long(0x3000), 0xCAFEBABE);
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::ZERO));
+    }
+
+    #[test]
+    fn test_move_flags_negative() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        cpu.d[0] = 0x80; // Negative byte
+
+        // MOVE.B D0, D1
+        exec_move(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            &mut memory,
+        );
+
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert!(!cpu.get_flag(flags::CARRY));
+    }
+
+    #[test]
+    fn test_move_flags_zero() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        cpu.d[0] = 0;
+
+        // MOVE.L D0, D1
+        exec_move(
+            &mut cpu,
+            Size::Long,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            &mut memory,
+        );
+
+        assert!(cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert!(!cpu.get_flag(flags::CARRY));
+    }
+
+    #[test]
+    fn test_move_sizes() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        // Byte
+        cpu.d[0] = 0xFFFFFFFF;
+        cpu.d[1] = 0x00000000;
+        exec_move(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            &mut memory,
+        );
+        assert_eq!(cpu.d[1], 0x000000FF);
+        assert!(cpu.get_flag(flags::NEGATIVE)); // 0xFF is -1 in byte
+
+        // Word
+        cpu.d[0] = 0xFFFFFFFF;
+        cpu.d[1] = 0x00000000;
+        exec_move(
+            &mut cpu,
+            Size::Word,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            &mut memory,
+        );
+        assert_eq!(cpu.d[1], 0x0000FFFF);
+        assert!(cpu.get_flag(flags::NEGATIVE)); // 0xFFFF is -1 in word
+    }
 }
