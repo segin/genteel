@@ -306,6 +306,15 @@ fn test_subq_1_to_8() {
     }
 }
 
+#[test]
+fn test_subq_to_address_reg() {
+    let (mut cpu, mut memory) = create_cpu();
+    write_op(&mut memory, &[0x5348]); // SUBQ.W #1, A0
+    cpu.a[0] = 0x1001;
+    cpu.step_instruction(&mut memory);
+    assert_eq!(cpu.a[0], 0x1000);
+}
+
 // ============================================================================
 // SUBX Tests
 // ============================================================================
