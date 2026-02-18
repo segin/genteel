@@ -816,6 +816,9 @@ fn fetch_postinc_operand<M: MemoryInterface>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cpu::decoder::AddressingMode;
+    use crate::cpu::flags;
+    use crate::cpu::Cpu;
     use crate::memory::Memory;
 
     fn create_test_setup() -> (Cpu, Memory) {
@@ -827,104 +830,155 @@ mod tests {
     }
 
     #[test]
-    fn test_exec_sbcd_reg_simple() {
+    fn test_exec_muls_pos_pos() {
         let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x12; // Destination
-        cpu.d[1] = 0x01; // Source
+        cpu.d[0] = 100;
+        cpu.d[1] = 200;
 
-        // SBCD D1, D0
-        exec_sbcd(&mut cpu, 1, 0, false, &mut memory);
+        let cycles = exec_muls(
+            &mut cpu,
+            AddressingMode::DataRegister(0),
+            1,
+            &mut memory,
+        );
 
-        assert_eq!(cpu.d[0] & 0xFF, 0x11); // 0x12 - 0x01 = 0x11
+        // 100 * 200 = 20000
+        assert_eq!(cpu.d[1], 20000);
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
         assert!(!cpu.get_flag(flags::CARRY));
-        assert!(!cpu.get_flag(flags::EXTEND));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert_eq!(cycles, 70);
     }
 
     #[test]
-    fn test_exec_sbcd_reg_borrow_low() {
+    fn test_exec_muls_pos_neg() {
         let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x22; // Destination
-        cpu.d[1] = 0x05; // Source
+        cpu.d[0] = 100;
+        cpu.d[1] = 0xFFFE; // -2 as i16
 
-        // SBCD D1, D0
-        exec_sbcd(&mut cpu, 1, 0, false, &mut memory);
+        let cycles = exec_muls(
+            &mut cpu,
+            AddressingMode::DataRegister(0),
+            1,
+            &mut memory,
+        );
 
-        assert_eq!(cpu.d[0] & 0xFF, 0x17); // 22 - 5 = 17
+        // 100 * -2 = -200
+        assert_eq!(cpu.d[1] as i32, -200);
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(cpu.get_flag(flags::NEGATIVE));
         assert!(!cpu.get_flag(flags::CARRY));
-        assert!(!cpu.get_flag(flags::EXTEND));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert_eq!(cycles, 70);
     }
 
     #[test]
-    fn test_exec_sbcd_reg_borrow_high() {
+    fn test_exec_muls_neg_pos() {
         let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x15; // Destination
-        cpu.d[1] = 0x25; // Source
+        cpu.d[0] = 0xFFFE; // -2 as i16
+        cpu.d[1] = 100;
 
-        // SBCD D1, D0
-        exec_sbcd(&mut cpu, 1, 0, false, &mut memory);
+        let cycles = exec_muls(
+            &mut cpu,
+            AddressingMode::DataRegister(0),
+            1,
+            &mut memory,
+        );
 
-        assert_eq!(cpu.d[0] & 0xFF, 0x90); // 15 - 25 = 90 (borrow)
-        assert!(cpu.get_flag(flags::CARRY));
-        assert!(cpu.get_flag(flags::EXTEND));
+        // -2 * 100 = -200
+        assert_eq!(cpu.d[1] as i32, -200);
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert_eq!(cycles, 70);
     }
 
     #[test]
-    fn test_exec_sbcd_z_flag() {
+    fn test_exec_muls_neg_neg() {
         let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0xFFFE; // -2 as i16
+        cpu.d[1] = 0xFFF6; // -10 as i16
 
-        // Case 1: Result 0, Z originally 1 -> Z remains 1
-        cpu.d[0] = 0x33;
-        cpu.d[1] = 0x33;
-        cpu.set_flag(flags::ZERO, true);
-        exec_sbcd(&mut cpu, 1, 0, false, &mut memory);
-        assert_eq!(cpu.d[0] & 0xFF, 0x00);
+        let cycles = exec_muls(
+            &mut cpu,
+            AddressingMode::DataRegister(0),
+            1,
+            &mut memory,
+        );
+
+        // -2 * -10 = 20
+        assert_eq!(cpu.d[1], 20);
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert_eq!(cycles, 70);
+    }
+
+    #[test]
+    fn test_exec_muls_zero() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 100;
+        cpu.d[1] = 0;
+
+        let cycles = exec_muls(
+            &mut cpu,
+            AddressingMode::DataRegister(0),
+            1,
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1], 0);
         assert!(cpu.get_flag(flags::ZERO));
-
-        // Case 2: Result 0, Z originally 0 -> Z remains 0
-        cpu.d[0] = 0x33;
-        cpu.d[1] = 0x33;
-        cpu.set_flag(flags::ZERO, false);
-        exec_sbcd(&mut cpu, 1, 0, false, &mut memory);
-        assert_eq!(cpu.d[0] & 0xFF, 0x00);
-        assert!(!cpu.get_flag(flags::ZERO));
-
-        // Case 3: Result non-zero, Z originally 1 -> Z becomes 0
-        cpu.d[0] = 0x33;
-        cpu.d[1] = 0x11;
-        cpu.set_flag(flags::ZERO, true);
-        exec_sbcd(&mut cpu, 1, 0, false, &mut memory);
-        assert_eq!(cpu.d[0] & 0xFF, 0x22);
-        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert_eq!(cycles, 70);
     }
 
     #[test]
-    fn test_exec_sbcd_memory_mode() {
+    fn test_exec_muls_large_result() {
         let (mut cpu, mut memory) = create_test_setup();
-        cpu.a[0] = 0x2001; // Dest pointer
-        cpu.a[1] = 0x3001; // Src pointer
-        memory.write_byte(0x2000, 0x33);
-        memory.write_byte(0x3000, 0x11);
+        cpu.d[0] = 0x7FFF; // 32767
+        cpu.d[1] = 0x7FFF; // 32767
 
-        // SBCD -(A1), -(A0)
-        exec_sbcd(&mut cpu, 1, 0, true, &mut memory);
+        let cycles = exec_muls(
+            &mut cpu,
+            AddressingMode::DataRegister(0),
+            1,
+            &mut memory,
+        );
 
-        assert_eq!(memory.read_byte(0x2000), 0x22); // 33 - 11 = 22
-        assert_eq!(cpu.a[0], 0x2000); // Decremented
-        assert_eq!(cpu.a[1], 0x3000); // Decremented
+        // 32767 * 32767 = 1073676289 = 0x3FFF0001
+        assert_eq!(cpu.d[1], 0x3FFF0001);
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert_eq!(cycles, 70);
     }
 
     #[test]
-    fn test_exec_sbcd_extend_flag() {
+    fn test_exec_muls_edge_cases() {
         let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x10;
-        cpu.d[1] = 0x00;
-        cpu.set_flag(flags::EXTEND, true); // Borrow input
+        cpu.d[0] = 0x8000; // -32768
+        cpu.d[1] = 0x8000; // -32768
 
-        // SBCD D1, D0
-        exec_sbcd(&mut cpu, 1, 0, false, &mut memory);
+        let cycles = exec_muls(
+            &mut cpu,
+            AddressingMode::DataRegister(0),
+            1,
+            &mut memory,
+        );
 
-        assert_eq!(cpu.d[0] & 0xFF, 0x09); // 10 - 0 - 1 = 09
-        assert!(!cpu.get_flag(flags::CARRY)); // No borrow generated from this operation (10 >= 1)
-        assert!(!cpu.get_flag(flags::EXTEND));
+        // -32768 * -32768 = 1073741824 = 0x40000000
+        assert_eq!(cpu.d[1], 0x40000000);
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert_eq!(cycles, 70);
     }
 }
