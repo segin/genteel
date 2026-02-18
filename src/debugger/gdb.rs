@@ -1306,4 +1306,40 @@ mod tests {
         assert!(secure_compare("p@sswöd", "p@sswöd"));
         assert!(!secure_compare("p@sswöd", "p@sswod"));
     }
+
+    #[test]
+    fn test_authentication_reset_on_success() {
+        let password = "secret".to_string();
+        let mut server = GdbServer::new(0, Some(password)).unwrap();
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+
+        fn to_hex(s: &str) -> String {
+            s.bytes().map(|b| format!("{:02x}", b)).collect()
+        }
+
+        let wrong_packet = format!("qRcmd,{}", to_hex("auth wrong"));
+        let right_packet = format!("qRcmd,{}", to_hex("auth secret"));
+
+        // 1. Fail 2 times (limit is 3)
+        for i in 0..2 {
+            assert_eq!(
+                server.process_command(&wrong_packet, &mut regs, &mut mem),
+                "E01"
+            );
+            assert!(!server.authenticated);
+            assert_eq!(server.auth_failed_attempts, i + 1);
+        }
+
+        // 2. Succeed
+        assert_eq!(
+            server.process_command(&right_packet, &mut regs, &mut mem),
+            "OK"
+        );
+        assert!(server.authenticated);
+
+        // 3. Verify strikes are cleared
+        assert_eq!(server.auth_failed_attempts, 0);
+        assert!(server.auth_lockout_until.is_none());
+    }
 }
