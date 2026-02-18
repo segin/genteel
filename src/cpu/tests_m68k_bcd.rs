@@ -1,7 +1,6 @@
-//! M68k BCD Instructions Tests
+//! M68k BCD Instruction Tests
 //!
-//! Comprehensive unit tests for M68k BCD (Binary Coded Decimal) instructions.
-//! Focuses on ABCD, SBCD, and NBCD logic.
+//! Comprehensive tests for BCD operations (SBCD, ABCD, NBCD).
 
 #![cfg(test)]
 
@@ -24,6 +23,15 @@ fn write_op(memory: &mut Memory, opcodes: &[u16]) {
         memory.write_word(addr, op);
         addr += 2;
     }
+}
+
+// Helper to construct SBCD opcode
+// mode: 0 = Data Register (Dy, Dx), 1 = Predecrement (-(Ay), -(Ax))
+// rx: Destination Register (Dx or Ax)
+// ry: Source Register (Dy or Ay)
+fn sbcd_op(rx: u8, ry: u8, mode: u8) -> u16 {
+    // 1000 Rx(3) 10000 m(1) Ry(3)
+    0x8100 | ((rx as u16) << 9) | ((mode as u16 & 1) << 3) | (ry as u16)
 }
 
 // ============================================================================
@@ -174,20 +182,20 @@ fn test_sbcd_d0_d1_simple() {
 fn test_sbcd_reg_simple() {
     let (mut cpu, mut memory) = create_cpu();
     // SBCD D1, D0
-    // Opcode: 1000 000 1 0000 0 001 = 0x8101
-    write_op(&mut memory, &[0x8101]);
+    write_op(&mut memory, &[sbcd_op(0, 1, 0)]);
 
     cpu.d[0] = 0x45; // 45
     cpu.d[1] = 0x23; // 23
-    cpu.set_flag(flags::ZERO, true); // Z starts set
-    cpu.set_flag(flags::EXTEND, false);
+    cpu.set_flag(flags::ZERO, true);    // Z starts set
+    cpu.set_flag(flags::EXTEND, false); // No borrow in
 
     cpu.step_instruction(&mut memory);
 
-    // 45 - 23 = 22
+    // 45 - 23 = 22 (0x22)
     assert_eq!(cpu.d[0] & 0xFF, 0x22);
-    assert!(!cpu.get_flag(flags::ZERO)); // Z cleared because result non-zero
-    assert!(!cpu.get_flag(flags::EXTEND)); // No borrow
+    assert!(!cpu.get_flag(flags::ZERO));   // Result non-zero, Z cleared
+    assert!(!cpu.get_flag(flags::CARRY));  // No borrow
+    assert!(!cpu.get_flag(flags::EXTEND)); // No borrow out
 }
 
 #[test]
@@ -208,7 +216,7 @@ fn test_sbcd_borrow() {
 fn test_sbcd_reg_borrow() {
     let (mut cpu, mut memory) = create_cpu();
     // SBCD D1, D0
-    write_op(&mut memory, &[0x8101]);
+    write_op(&mut memory, &[sbcd_op(0, 1, 0)]);
 
     cpu.d[0] = 0x23; // 23
     cpu.d[1] = 0x45; // 45
@@ -240,7 +248,7 @@ fn test_sbcd_with_extend() {
 fn test_sbcd_reg_input_borrow() {
     let (mut cpu, mut memory) = create_cpu();
     // SBCD D1, D0
-    write_op(&mut memory, &[0x8101]);
+    write_op(&mut memory, &[sbcd_op(0, 1, 0)]);
 
     cpu.d[0] = 0x45; // 45
     cpu.d[1] = 0x23; // 23
@@ -273,7 +281,7 @@ fn test_sbcd_z_flag() {
 fn test_sbcd_reg_correction_low() {
     let (mut cpu, mut memory) = create_cpu();
     // SBCD D1, D0
-    write_op(&mut memory, &[0x8101]);
+    write_op(&mut memory, &[sbcd_op(0, 1, 0)]);
 
     cpu.d[0] = 0x15; // 15
     cpu.d[1] = 0x08; // 08
@@ -292,7 +300,7 @@ fn test_sbcd_reg_correction_low() {
 fn test_sbcd_reg_correction_high() {
     let (mut cpu, mut memory) = create_cpu();
     // SBCD D1, D0
-    write_op(&mut memory, &[0x8101]);
+    write_op(&mut memory, &[sbcd_op(0, 1, 0)]);
 
     cpu.d[0] = 0x80; // 80
     cpu.d[1] = 0x81; // 81
@@ -311,7 +319,7 @@ fn test_sbcd_reg_correction_high() {
 fn test_sbcd_zero_flag_unchanged_if_zero() {
     let (mut cpu, mut memory) = create_cpu();
     // SBCD D1, D0
-    write_op(&mut memory, &[0x8101]);
+    write_op(&mut memory, &[sbcd_op(0, 1, 0)]);
 
     cpu.d[0] = 0x55;
     cpu.d[1] = 0x55;
@@ -330,7 +338,7 @@ fn test_sbcd_zero_flag_unchanged_if_zero() {
 fn test_sbcd_zero_flag_cleared_if_nonzero() {
     let (mut cpu, mut memory) = create_cpu();
     // SBCD D1, D0
-    write_op(&mut memory, &[0x8101]);
+    write_op(&mut memory, &[sbcd_op(0, 1, 0)]);
 
     cpu.d[0] = 0x56;
     cpu.d[1] = 0x55;
@@ -348,7 +356,7 @@ fn test_sbcd_zero_flag_cleared_if_nonzero() {
 fn test_sbcd_zero_flag_unchanged_if_zero_input_nonzero() {
     let (mut cpu, mut memory) = create_cpu();
     // SBCD D1, D0
-    write_op(&mut memory, &[0x8101]);
+    write_op(&mut memory, &[sbcd_op(0, 1, 0)]);
 
     cpu.d[0] = 0x55;
     cpu.d[1] = 0x55;
@@ -366,8 +374,7 @@ fn test_sbcd_zero_flag_unchanged_if_zero_input_nonzero() {
 fn test_sbcd_mem_simple() {
     let (mut cpu, mut memory) = create_cpu();
     // SBCD -(A1), -(A0)
-    // Opcode: 1000 000 1 0000 1 001 = 0x8109
-    write_op(&mut memory, &[0x8109]);
+    write_op(&mut memory, &[sbcd_op(0, 1, 1)]);
 
     cpu.a[0] = 0x2001;
     cpu.a[1] = 0x3001;
@@ -393,7 +400,8 @@ fn test_sbcd_multi_byte_chain() {
 
     // Low byte: SBCD -(A1), -(A0)
     // High byte: SBCD -(A1), -(A0)
-    write_op(&mut memory, &[0x8109, 0x8109]);
+    let op = sbcd_op(0, 1, 1);
+    write_op(&mut memory, &[op, op]);
 
     cpu.a[0] = 0x2002;
     cpu.a[1] = 0x3002;
@@ -419,6 +427,75 @@ fn test_sbcd_multi_byte_chain() {
     assert!(!cpu.get_flag(flags::EXTEND));
 
     // Result: 0399
+}
+
+#[test]
+fn test_sbcd_zero_result_chain() {
+    let (mut cpu, mut memory) = create_cpu();
+
+    // Calculate 2233 - 2233 = 0000
+    // Byte 0: 33 - 33 = 0
+    // Byte 1: 22 - 22 = 0
+
+    let op = sbcd_op(0, 1, 1);
+    write_op(&mut memory, &[op, op]);
+
+    cpu.a[0] = 0x2002;
+    cpu.a[1] = 0x3002;
+
+    memory.write_byte(0x2000, 0x22);
+    memory.write_byte(0x2001, 0x33);
+
+    memory.write_byte(0x3000, 0x22);
+    memory.write_byte(0x3001, 0x33);
+
+    cpu.set_flag(flags::EXTEND, false);
+    cpu.set_flag(flags::ZERO, true); // Z starts set
+
+    // First SBCD
+    cpu.step_instruction(&mut memory);
+    assert_eq!(memory.read_byte(0x2001), 0x00);
+    assert!(!cpu.get_flag(flags::EXTEND));
+    assert!(cpu.get_flag(flags::ZERO)); // Z remains set
+
+    // Second SBCD
+    cpu.step_instruction(&mut memory);
+    assert_eq!(memory.read_byte(0x2000), 0x00);
+    assert!(!cpu.get_flag(flags::EXTEND));
+    assert!(cpu.get_flag(flags::ZERO)); // Z remains set (entire 16-bit result is 0)
+}
+
+#[test]
+fn test_sbcd_correction_boundary() {
+    let (mut cpu, mut memory) = create_cpu();
+    // Test boundary cases where BCD correction applies
+
+    // 0x10 - 0x01 = 0x09
+    write_op(&mut memory, &[sbcd_op(0, 1, 0)]);
+    cpu.d[0] = 0x10;
+    cpu.d[1] = 0x01;
+    cpu.set_flag(flags::EXTEND, false);
+    cpu.step_instruction(&mut memory);
+    assert_eq!(cpu.d[0] & 0xFF, 0x09);
+
+    // 0x00 - 0x01 = 0x99 (Borrow)
+    cpu.pc = 0x1000;
+    write_op(&mut memory, &[sbcd_op(0, 1, 0)]);
+    cpu.d[0] = 0x00;
+    cpu.d[1] = 0x01;
+    cpu.set_flag(flags::EXTEND, false);
+    cpu.step_instruction(&mut memory);
+    assert_eq!(cpu.d[0] & 0xFF, 0x99);
+    assert!(cpu.get_flag(flags::EXTEND));
+
+    // 0x80 - 0x01 = 0x79
+    cpu.pc = 0x1000;
+    write_op(&mut memory, &[sbcd_op(0, 1, 0)]);
+    cpu.d[0] = 0x80;
+    cpu.d[1] = 0x01;
+    cpu.set_flag(flags::EXTEND, false);
+    cpu.step_instruction(&mut memory);
+    assert_eq!(cpu.d[0] & 0xFF, 0x79);
 }
 
 // ============================================================================
