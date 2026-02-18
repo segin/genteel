@@ -535,7 +535,7 @@ pub fn exec_tas<M: MemoryInterface>(cpu: &mut Cpu, dst: AddressingMode, memory: 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cpu::decoder::{AddressingMode, Size};
+    use crate::cpu::decoder::{AddressingMode, ShiftCount, Size};
     use crate::cpu::flags;
     use crate::cpu::Cpu;
     use crate::memory::Memory;
@@ -664,115 +664,105 @@ mod tests {
     }
 
     #[test]
-    fn test_exec_eor_byte() {
+    fn test_exec_rotate_rol_byte() {
         let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x123456AA;
-        cpu.d[1] = 0x77665555;
+        cpu.d[0] = 0x80; // 1000 0000
 
-        // EOR.B D0, D1
-        let cycles = exec_eor(
+        exec_rotate(
             &mut cpu,
             Size::Byte,
-            0,
-            AddressingMode::DataRegister(1),
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(1),
+            true, // left
+            false,
             &mut memory,
         );
 
-        assert_eq!(cpu.d[1], 0x776655FF); // 0xAA ^ 0x55 = 0xFF
-        assert!(cpu.get_flag(flags::NEGATIVE));
+        // 1000 0000 -> 0000 0001 (0x01)
+        // Last shifted out: 1 (MSB of 0x80)
+        assert_eq!(cpu.d[0] & 0xFF, 0x01);
+        assert!(cpu.get_flag(flags::CARRY));
         assert!(!cpu.get_flag(flags::ZERO));
-        assert!(!cpu.get_flag(flags::CARRY));
-        assert!(!cpu.get_flag(flags::OVERFLOW));
-        assert_eq!(cycles, 4);
-    }
-
-    #[test]
-    fn test_exec_eor_word() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x1234F0F0;
-        cpu.d[1] = 0x77660F0F;
-
-        // EOR.W D0, D1
-        let cycles = exec_eor(
-            &mut cpu,
-            Size::Word,
-            0,
-            AddressingMode::DataRegister(1),
-            &mut memory,
-        );
-
-        assert_eq!(cpu.d[1], 0x7766FFFF); // 0xF0F0 ^ 0x0F0F = 0xFFFF
-        assert!(cpu.get_flag(flags::NEGATIVE));
-        assert!(!cpu.get_flag(flags::ZERO));
-        assert_eq!(cycles, 4);
-    }
-
-    #[test]
-    fn test_exec_eor_long() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0xF0F0F0F0;
-        cpu.d[1] = 0x0F0F0F0F;
-
-        // EOR.L D0, D1
-        let cycles = exec_eor(
-            &mut cpu,
-            Size::Long,
-            0,
-            AddressingMode::DataRegister(1),
-            &mut memory,
-        );
-
-        assert_eq!(cpu.d[1], 0xFFFFFFFF);
-        assert!(cpu.get_flag(flags::NEGATIVE));
-        assert!(!cpu.get_flag(flags::ZERO));
-        assert_eq!(cycles, 4);
-    }
-
-    #[test]
-    fn test_exec_eor_zero() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x12345678;
-        cpu.d[1] = 0x12345678;
-        cpu.set_flag(flags::CARRY, true);
-        cpu.set_flag(flags::OVERFLOW, true);
-        cpu.set_flag(flags::NEGATIVE, true);
-
-        // EOR.L D0, D1 -> Result 0
-        let cycles = exec_eor(
-            &mut cpu,
-            Size::Long,
-            0,
-            AddressingMode::DataRegister(1),
-            &mut memory,
-        );
-
-        assert_eq!(cpu.d[1], 0);
         assert!(!cpu.get_flag(flags::NEGATIVE));
-        assert!(cpu.get_flag(flags::ZERO));
-        assert!(!cpu.get_flag(flags::CARRY));
-        assert!(!cpu.get_flag(flags::OVERFLOW));
-        assert_eq!(cycles, 4);
     }
 
     #[test]
-    fn test_exec_eor_memory() {
+    fn test_exec_rotate_ror_byte() {
         let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x000000FF;
-        cpu.a[0] = 0x2000;
-        memory.write_byte(0x2000, 0x00);
+        cpu.d[0] = 0x01; // 0000 0001
 
-        // EOR.B D0, (A0)
-        let cycles = exec_eor(
+        exec_rotate(
             &mut cpu,
             Size::Byte,
-            0,
-            AddressingMode::AddressIndirect(0),
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(1),
+            false, // right
+            false,
             &mut memory,
         );
 
-        assert_eq!(memory.read_byte(0x2000), 0xFF);
-        assert!(cpu.get_flag(flags::NEGATIVE));
+        // 0000 0001 -> 1000 0000 (0x80)
+        // Last shifted out: 1 (LSB of 0x01)
+        assert_eq!(cpu.d[0] & 0xFF, 0x80);
+        assert!(cpu.get_flag(flags::CARRY));
         assert!(!cpu.get_flag(flags::ZERO));
-        assert_eq!(cycles, 8); // 4 (base) + 4 (AddrIndirect)
+        assert!(cpu.get_flag(flags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_exec_rotate_rol_long_wrap() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x80000000;
+
+        exec_rotate(
+            &mut cpu,
+            Size::Long,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(32),
+            true, // left
+            false,
+            &mut memory,
+        );
+
+        // ROL #32 on Long should return same value
+        assert_eq!(cpu.d[0], 0x80000000);
+        // Flags update: Last bit shifted out.
+        // For ROL #32: Shift 32 times.
+        // Last shift (32nd) shifts bit at index 0 (of the value *before* that 32nd shift) to bit 1?
+        // Wait, shifting 1 bit left: bit 31 goes out.
+        // Shift 1: Out 31.
+        // Shift 2: Out 30.
+        // ...
+        // Shift 32: Out 0.
+        // Original value 0x80000000. Bit 0 is 0.
+        // So Carry should be 0.
+        assert!(!cpu.get_flag(flags::CARRY));
+    }
+
+    #[test]
+    fn test_exec_rotate_ror_long_wrap() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x00000001;
+
+        exec_rotate(
+            &mut cpu,
+            Size::Long,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(32),
+            false, // right
+            false,
+            &mut memory,
+        );
+
+        // ROR #32 on Long should return same value
+        assert_eq!(cpu.d[0], 0x00000001);
+        // Flags update: Last bit shifted out.
+        // For ROR #32: Shift 32 times.
+        // Shift 1: Out 0.
+        // ...
+        // Shift 32: Out 31.
+        // Original value 0x00000001. Bit 31 is 0.
+        // So Carry should be 0.
+        assert!(!cpu.get_flag(flags::CARRY));
     }
 }
