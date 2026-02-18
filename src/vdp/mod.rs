@@ -1014,6 +1014,66 @@ impl Vdp {
         }
     }
 
+    fn get_plane_base_config(&self, is_plane_a: bool) -> (usize, usize, usize) {
+        let (plane_w, plane_h) = self.plane_size();
+        let name_table_base = if is_plane_a {
+            self.plane_a_address()
+        } else {
+            self.plane_b_address()
+        };
+        (plane_w, plane_h, name_table_base)
+    }
+
+    fn calculate_plane_coords(
+        &self,
+        is_plane_a: bool,
+        fetch_line: u16,
+        screen_x: u16,
+        h_scroll: u16,
+        plane_w: usize,
+        plane_h: usize,
+    ) -> (u16, usize, u16, usize) {
+        let plane_w_mask = plane_w - 1;
+        let scrolled_h = screen_x.wrapping_sub(h_scroll);
+        let pixel_h = (scrolled_h & 0x07) as u16;
+        let tile_h = ((scrolled_h >> 3) as usize) & plane_w_mask;
+
+        // Fetch V-scroll for this specific column (per-column VS support)
+        let (v_scroll, _) =
+            self.get_scroll_values(is_plane_a, fetch_line, (screen_x >> 3) as usize);
+
+        // Vertical position in plane
+        let scrolled_v = fetch_line.wrapping_add(v_scroll);
+        let tile_v = (scrolled_v as usize / 8) % plane_h;
+        let pixel_v = scrolled_v % 8;
+
+        (pixel_h, tile_h, pixel_v, tile_v)
+    }
+
+    fn draw_plane_tile_strip(
+        &mut self,
+        entry: u16,
+        pixel_v: u16,
+        pixel_h: u16,
+        pixels_to_process: u16,
+        dest_idx: usize,
+    ) {
+        if pixels_to_process == 8 && pixel_h == 0 {
+            // Fast path for full aligned tile
+            unsafe {
+                self.draw_full_tile_row(entry, pixel_v, dest_idx);
+            }
+        } else {
+            self.draw_partial_tile_row(
+                entry,
+                pixel_v,
+                pixel_h,
+                pixels_to_process,
+                dest_idx,
+            );
+        }
+    }
+
     fn render_plane(
         &mut self,
         is_plane_a: bool,
@@ -1021,16 +1081,10 @@ impl Vdp {
         draw_line: u16,
         priority_filter: bool,
     ) {
-        let (plane_w, plane_h) = self.plane_size();
-        let name_table_base = if is_plane_a {
-            self.plane_a_address()
-        } else {
-            self.plane_b_address()
-        };
+        let (plane_w, plane_h, name_table_base) = self.get_plane_base_config(is_plane_a);
 
         let screen_width = self.screen_width();
         let line_offset = (draw_line as usize) * 320;
-        let plane_w_mask = plane_w - 1;
 
         // Fetch H-scroll once for the line (matching real hardware behavior for per-line/cell)
         let (_, h_scroll) = self.get_scroll_values(is_plane_a, fetch_line, 0);
@@ -1038,20 +1092,14 @@ impl Vdp {
         let mut screen_x: u16 = 0;
 
         while screen_x < screen_width {
-            // Horizontal position in plane
-            // The scroll value is subtracted from the horizontal position
-            let scrolled_h = screen_x.wrapping_sub(h_scroll);
-            let pixel_h = (scrolled_h & 0x07) as u16;
-            let tile_h = ((scrolled_h >> 3) as usize) & plane_w_mask;
-
-            // Fetch V-scroll for this specific column (per-column VS support)
-            let (v_scroll, _) =
-                self.get_scroll_values(is_plane_a, fetch_line, (screen_x >> 3) as usize);
-
-            // Vertical position in plane
-            let scrolled_v = fetch_line.wrapping_add(v_scroll);
-            let tile_v = (scrolled_v as usize / 8) % plane_h;
-            let pixel_v = scrolled_v % 8;
+            let (pixel_h, tile_h, pixel_v, tile_v) = self.calculate_plane_coords(
+                is_plane_a,
+                fetch_line,
+                screen_x,
+                h_scroll,
+                plane_w,
+                plane_h,
+            );
 
             let entry = self.fetch_nametable_entry(name_table_base, tile_v, tile_h, plane_w);
             let tile_index = entry & 0x07FF;
@@ -1061,20 +1109,13 @@ impl Vdp {
             let pixels_to_process = std::cmp::min(pixels_left_in_tile, screen_width - screen_x);
 
             if priority == priority_filter && tile_index != 0 {
-                if pixels_to_process == 8 && pixel_h == 0 {
-                    // Fast path for full aligned tile
-                    unsafe {
-                        self.draw_full_tile_row(entry, pixel_v, line_offset + screen_x as usize);
-                    }
-                } else {
-                    self.draw_partial_tile_row(
-                        entry,
-                        pixel_v,
-                        pixel_h,
-                        pixels_to_process,
-                        line_offset + screen_x as usize,
-                    );
-                }
+                self.draw_plane_tile_strip(
+                    entry,
+                    pixel_v,
+                    pixel_h,
+                    pixels_to_process,
+                    line_offset + screen_x as usize,
+                );
             }
 
             screen_x += pixels_to_process;
