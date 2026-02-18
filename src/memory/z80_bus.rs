@@ -56,27 +56,14 @@ impl Z80Bus {
     /// Set the bank register (called on write to $6000)
     /// The value written becomes the upper bits of the 68k address
     pub fn set_bank(&mut self, value: u8) {
-        if !self.raw_bus.is_null() {
-            unsafe {
-                (*self.raw_bus).write_byte(0xA06000, value);
-            }
-        } else {
-            self.bus.bus.borrow_mut().write_byte(0xA06000, value);
-        }
+        self.bus.bus.borrow_mut().write_byte(0xA06000, value);
     }
 
     /// Reset bank register to 0
     pub fn reset_bank(&mut self) {
-        if !self.raw_bus.is_null() {
-            unsafe {
-                (*self.raw_bus).z80_bank_addr = 0;
-                (*self.raw_bus).z80_bank_bit = 0;
-            }
-        } else {
-            let mut bus = self.bus.bus.borrow_mut();
-            bus.z80_bank_addr = 0;
-            bus.z80_bank_bit = 0;
-        }
+        let mut bus = self.bus.bus.borrow_mut();
+        bus.z80_bank_addr = 0;
+        bus.z80_bank_bit = 0;
     }
 
     /// Internal helper to read byte from Bus (deduplicated logic)
@@ -318,22 +305,5 @@ mod tests {
         // Writes should not panic
         z80_bus.write_port(0x0000, 0x42);
         z80_bus.write_port(0xFFFF, 0xAB);
-    }
-
-    #[test]
-    fn test_raw_bus_access() {
-        let bus = Rc::new(RefCell::new(Bus::new()));
-        let mut z80_bus = Z80Bus::new(SharedBus::new(bus.clone()));
-
-        // Unsafe setup of raw pointer
-        unsafe {
-            z80_bus.set_raw_bus(bus.as_ptr());
-        }
-
-        z80_bus.write_byte(0x0000, 0x99);
-        assert_eq!(z80_bus.read_byte(0x0000), 0x99);
-
-        // Verify via original bus to ensure they share state
-        assert_eq!(bus.borrow().z80_ram[0], 0x99);
     }
 }
