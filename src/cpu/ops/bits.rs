@@ -248,6 +248,28 @@ pub fn exec_shift<M: MemoryInterface>(
     6 + cycles + 2 * count_val
 }
 
+pub fn exec_shift_mem<M: MemoryInterface>(
+    cpu: &mut Cpu,
+    dst: AddressingMode,
+    left: bool,
+    arithmetic: bool,
+    memory: &mut M,
+) -> u32 {
+    // Memory shifts are always word size, count 1
+    let cycles = exec_shift(
+        cpu,
+        Size::Word,
+        dst,
+        ShiftCount::Immediate(1),
+        left,
+        arithmetic,
+        memory,
+    );
+    // V is always cleared for memory shifts
+    cpu.set_flag(flags::OVERFLOW, false);
+    cycles + 2 // Memory shifts take 8 cycles + EA (exec_shift returns 6 + cycles + 2*1 = 8 + cycles)
+}
+
 pub fn exec_rotate<M: MemoryInterface>(
     cpu: &mut Cpu,
     size: Size,
@@ -281,7 +303,7 @@ pub fn exec_rotate<M: MemoryInterface>(
         if effective_count == 0 {
             result = val;
             if count_val > 0 {
-                carry = (val & msb) != 0;
+                carry = (val & 1) != 0;
             }
         } else {
             result = ((val << effective_count) | (val >> (bits - effective_count))) & mask;
@@ -290,7 +312,7 @@ pub fn exec_rotate<M: MemoryInterface>(
     } else if effective_count == 0 {
         result = val;
         if count_val > 0 {
-            carry = (val & 1) != 0;
+            carry = (val & msb) != 0;
         }
     } else {
         result = ((val >> effective_count) | (val << (bits - effective_count))) & mask;
@@ -639,5 +661,120 @@ mod tests {
         assert!(cpu.get_flag(flags::NEGATIVE));
         assert!(!cpu.get_flag(flags::ZERO));
         assert_eq!(cycles, 8); // 4 (base) + 0 (DataReg) + 4 (AddrIndirect)
+    }
+
+    #[test]
+    fn test_exec_eor_byte() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0xAA;
+        cpu.d[1] = 0x55;
+
+        // EOR.B D0, D1
+        let cycles = exec_eor(
+            &mut cpu,
+            Size::Byte,
+            0, // D0
+            AddressingMode::DataRegister(1),
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1] & 0xFF, 0xFF); // 0xAA ^ 0x55 = 0xFF
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert_eq!(cycles, 4);
+    }
+
+    #[test]
+    fn test_exec_eor_word() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0xFFFF;
+        cpu.d[1] = 0x0000;
+
+        // EOR.W D0, D1
+        let cycles = exec_eor(
+            &mut cpu,
+            Size::Word,
+            0, // D0
+            AddressingMode::DataRegister(1),
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1] & 0xFFFF, 0xFFFF);
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert_eq!(cycles, 4);
+    }
+
+    #[test]
+    fn test_exec_eor_long() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0xAAAAAAAA;
+        cpu.d[1] = 0x55555555;
+
+        // EOR.L D0, D1
+        let cycles = exec_eor(
+            &mut cpu,
+            Size::Long,
+            0, // D0
+            AddressingMode::DataRegister(1),
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1], 0xFFFFFFFF);
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert_eq!(cycles, 4);
+    }
+
+    #[test]
+    fn test_exec_eor_zero() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x12345678;
+        cpu.d[1] = 0x12345678;
+
+        // Set flags to verify they are cleared
+        cpu.set_flag(flags::CARRY, true);
+        cpu.set_flag(flags::OVERFLOW, true);
+        cpu.set_flag(flags::NEGATIVE, true);
+
+        // EOR.L D0, D1
+        let cycles = exec_eor(
+            &mut cpu,
+            Size::Long,
+            0, // D0
+            AddressingMode::DataRegister(1),
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1], 0);
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert_eq!(cycles, 4);
+    }
+
+    #[test]
+    fn test_exec_eor_memory() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0xFF;
+        cpu.a[0] = 0x2000;
+        memory.write_byte(0x2000, 0xAA);
+
+        // EOR.B D0, (A0)
+        let cycles = exec_eor(
+            &mut cpu,
+            Size::Byte,
+            0, // D0
+            AddressingMode::AddressIndirect(0),
+            &mut memory,
+        );
+
+        assert_eq!(memory.read_byte(0x2000), 0x55); // 0xFF ^ 0xAA = 0x55
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert_eq!(cycles, 8); // 4 (base) + 4 (AddrIndirect)
     }
 }
