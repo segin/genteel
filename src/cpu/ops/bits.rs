@@ -1491,4 +1491,26 @@ mod tests {
         assert!(!cpu.get_flag(flags::CARRY)); // Cleared
         assert_eq!(cycles, 6);
     }
+
+    #[test]
+    fn test_exec_rotate_multi_bit() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x12345678;
+        cpu.set_flag(flags::CARRY, false);
+
+        exec_rotate(
+            &mut cpu,
+            Size::Long,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(4),
+            true, // left
+            false,
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[0], 0x23456781);
+        assert!(cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+    }
 }
