@@ -54,6 +54,57 @@ pub fn split_u32_to_u16(long: u32) -> (u16, u16) {
     split_u32_to_words(long)
 }
 
+/// Serde helper for arrays larger than 32 elements
+pub mod big_array {
+    use serde::{Deserializer, Serializer};
+    use serde::ser::SerializeTuple;
+
+    pub fn serialize<S, const N: usize>(data: &[u8; N], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut s = serializer.serialize_tuple(N)?;
+        for item in data {
+            s.serialize_element(item)?;
+        }
+        s.end()
+    }
+
+    pub fn deserialize<'de, D, const N: usize>(deserializer: D) -> Result<[u8; N], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ArrayVisitor<const N: usize>;
+
+        impl<'de, const N: usize> serde::de::Visitor<'de> for ArrayVisitor<N> {
+            type Value = [u8; N];
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_fmt(format_args!("an array of length {}", N))
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<[u8; N], A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
+                // Note: Allocating a large array on stack might be risky if N is very large.
+                // But [u8; N] is usually used for fixed size buffers.
+                // For 64KB, it's fine on most threads (default stack 2MB).
+                // Box::new could be used but we return [u8; N] by value.
+                let mut arr = [0u8; N];
+                for i in 0..N {
+                    arr[i] = seq
+                        .next_element()?
+                        .ok_or_else(|| serde::de::Error::invalid_length(i, &self))?;
+                }
+                Ok(arr)
+            }
+        }
+
+        deserializer.deserialize_tuple(N, ArrayVisitor)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
