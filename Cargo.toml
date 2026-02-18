@@ -26,6 +26,7 @@ rand = "0.10.0"
 egui = { version = "0.26", optional = true }
 egui-winit = { version = "0.26", optional = true, default-features = false, features = ["links"] }
 egui-wgpu = { version = "0.26", optional = true }
+constant_time_eq = "0.4.2"
 
 [dev-dependencies]
 proptest = "1.0"

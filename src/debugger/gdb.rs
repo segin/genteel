@@ -8,6 +8,8 @@ use std::io::{BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::time::{Duration, Instant};
 
+use constant_time_eq::constant_time_eq;
+
 /// Default GDB server port
 pub const DEFAULT_PORT: u16 = 1234;
 
@@ -21,26 +23,6 @@ pub const MAX_BREAKPOINTS: usize = 1024;
 const MAX_AUTH_ATTEMPTS: u32 = 3;
 /// Duration of authentication lockout
 const AUTH_LOCKOUT_DURATION: Duration = Duration::from_secs(60);
-
-/// Constant-time string comparison to prevent timing attacks.
-///
-/// This function compares two strings in constant time (relative to the length
-/// of the input strings), preventing timing attacks that could reveal the content
-/// of the strings. It does not hide the length of the strings.
-fn secure_compare(a: &str, b: &str) -> bool {
-    let a_bytes = a.as_bytes();
-    let b_bytes = b.as_bytes();
-
-    if a_bytes.len() != b_bytes.len() {
-        return false;
-    }
-
-    let mut result = 0u8;
-    for (x, y) in a_bytes.iter().zip(b_bytes.iter()) {
-        result |= x ^ y;
-    }
-    result == 0
-}
 
 /// GDB stop reasons
 #[derive(Debug, Clone, Copy)]
@@ -676,7 +658,7 @@ impl GdbServer {
 
             let provided_pass = stripped.trim();
             if let Some(ref correct_pass) = self.password {
-                if secure_compare(provided_pass, correct_pass) {
+                if constant_time_eq(provided_pass.as_bytes(), correct_pass.as_bytes()) {
                     self.authenticated = true;
                     self.auth_failed_attempts = 0;
                     self.auth_lockout_until = None;
@@ -1288,22 +1270,22 @@ mod tests {
     #[test]
     fn test_secure_compare() {
         // Equal strings
-        assert!(secure_compare("password", "password"));
-        assert!(secure_compare("", ""));
-        assert!(secure_compare("123456", "123456"));
+        assert!(constant_time_eq("password".as_bytes(), "password".as_bytes()));
+        assert!(constant_time_eq("".as_bytes(), "".as_bytes()));
+        assert!(constant_time_eq("123456".as_bytes(), "123456".as_bytes()));
 
         // Unequal strings, same length
-        assert!(!secure_compare("password", "passworf"));
-        assert!(!secure_compare("123456", "123457"));
-        assert!(!secure_compare("a", "b"));
+        assert!(!constant_time_eq("password".as_bytes(), "passworf".as_bytes()));
+        assert!(!constant_time_eq("123456".as_bytes(), "123457".as_bytes()));
+        assert!(!constant_time_eq("a".as_bytes(), "b".as_bytes()));
 
         // Unequal strings, different length
-        assert!(!secure_compare("password", "pass"));
-        assert!(!secure_compare("pass", "password"));
-        assert!(!secure_compare("", "a"));
+        assert!(!constant_time_eq("password".as_bytes(), "pass".as_bytes()));
+        assert!(!constant_time_eq("pass".as_bytes(), "password".as_bytes()));
+        assert!(!constant_time_eq("".as_bytes(), "a".as_bytes()));
 
         // Unicode
-        assert!(secure_compare("p@sswöd", "p@sswöd"));
-        assert!(!secure_compare("p@sswöd", "p@sswod"));
+        assert!(constant_time_eq("p@sswöd".as_bytes(), "p@sswöd".as_bytes()));
+        assert!(!constant_time_eq("p@sswöd".as_bytes(), "p@sswod".as_bytes()));
     }
 }
