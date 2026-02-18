@@ -106,13 +106,14 @@ impl AudioBuffer {
     }
 
     /// Pop samples as f32 (for cpal)
+    /// Range is [-1.0, 1.0)
     pub fn pop_f32(&mut self, dest: &mut [f32]) {
         for sample in dest.iter_mut() {
             if self.available > 0 {
                 let i16_sample = self.buffer[self.read_pos];
                 self.read_pos = (self.read_pos + 1) % self.buffer.len();
                 self.available -= 1;
-                // Convert i16 to f32 [-1.0, 1.0]
+                // Convert i16 to f32 [-1.0, 1.0)
                 *sample = i16_sample as f32 / 32768.0;
             } else {
                 *sample = 0.0;
@@ -264,8 +265,8 @@ mod tests {
         let mut out = [0.0f32; 2];
         buf.pop_f32(&mut out);
 
-        assert!((out[0] - 0.5).abs() < 0.001);
-        assert!((out[1] + 0.5).abs() < 0.001);
+        assert_eq!(out[0], 0.5);
+        assert_eq!(out[1], -0.5);
     }
 
     #[test]
@@ -317,19 +318,19 @@ mod tests {
 
         // i16::MAX is 32767. 32767 / 32768.0 = 0.999969482421875
         let expected_max = 32767.0 / 32768.0;
-        assert!((out[0] - expected_max).abs() < f32::EPSILON);
+        assert_eq!(out[0], expected_max);
 
         // i16::MIN is -32768. -32768 / 32768.0 = -1.0
-        assert!((out[1] - (-1.0)).abs() < f32::EPSILON);
+        assert_eq!(out[1], -1.0);
 
         // 0 / 32768.0 = 0.0
-        assert!((out[2] - 0.0).abs() < f32::EPSILON);
+        assert_eq!(out[2], 0.0);
 
         // 1 / 32768.0
-        assert!((out[3] - (1.0/32768.0)).abs() < f32::EPSILON);
+        assert_eq!(out[3], 1.0 / 32768.0);
 
         // -1 / 32768.0
-        assert!((out[4] - (-1.0/32768.0)).abs() < f32::EPSILON);
+        assert_eq!(out[4], -1.0 / 32768.0);
     }
 
     #[test]
@@ -341,7 +342,7 @@ mod tests {
         buf.pop_f32(&mut out);
 
         // First sample should be valid
-        assert!((out[0] - (1000.0/32768.0)).abs() < f32::EPSILON);
+        assert_eq!(out[0], 1000.0 / 32768.0);
         // Rest should be silence (0.0)
         assert_eq!(out[1], 0.0);
         assert_eq!(out[2], 0.0);
@@ -359,7 +360,7 @@ mod tests {
             buf.pop_f32(&mut out);
 
             let expected = sample as f32 / 32768.0;
-            assert!((out[0] - expected).abs() < f32::EPSILON, "Failed precision check for sample: {}", sample);
+            assert_eq!(out[0], expected, "Failed precision check for sample: {}", sample);
 
             // Verify range
             assert!(out[0] >= -1.0, "Failed lower bound check for sample: {}", sample);
