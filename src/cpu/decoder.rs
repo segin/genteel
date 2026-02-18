@@ -1067,4 +1067,43 @@ mod tests {
             Instruction::System(SystemInstruction::Unimplemented { opcode: 0x483B })
         );
     }
+
+    #[test]
+    fn test_decode_bit_dynamic() {
+        // BTST D1, D0 -> 0x0300
+        assert_eq!(
+            decode(0x0300),
+            Instruction::Bits(BitsInstruction::Btst {
+                bit: BitSource::Register(1),
+                dst: AddressingMode::DataRegister(0),
+            })
+        );
+
+        // BCHG D2, (A1) -> 0x0551
+        assert_eq!(
+            decode(0x0551),
+            Instruction::Bits(BitsInstruction::Bchg {
+                bit: BitSource::Register(2),
+                dst: AddressingMode::AddressIndirect(1),
+            })
+        );
+
+        // BCLR D3, (A2)+ -> 0x079A
+        assert_eq!(
+            decode(0x079A),
+            Instruction::Bits(BitsInstruction::Bclr {
+                bit: BitSource::Register(3),
+                dst: AddressingMode::AddressPostIncrement(2),
+            })
+        );
+
+        // BSET D4, -(A3) -> 0x09E3
+        assert_eq!(
+            decode(0x09E3),
+            Instruction::Bits(BitsInstruction::Bset {
+                bit: BitSource::Register(4),
+                dst: AddressingMode::AddressPreDecrement(3),
+            })
+        );
+    }
 }
