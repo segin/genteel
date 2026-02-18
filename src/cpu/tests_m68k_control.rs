@@ -490,3 +490,61 @@ fn test_stop_supervisor_behavior() {
     assert_eq!(cpu.sr, 0x2200);
     assert!(cpu.halted);
 }
+
+// ============================================================================
+// RTE Tests
+// ============================================================================
+
+#[test]
+fn test_rte_privilege_violation() {
+    let (mut cpu, mut memory) = create_cpu();
+
+    // RTE opcode
+    write_op(&mut memory, &[0x4E73]);
+
+    // Setup Stacks
+    cpu.ssp = 0x8000;
+    cpu.usp = 0xA000;
+
+    // Set User Mode
+    cpu.sr &= !flags::SUPERVISOR;
+    cpu.a[7] = cpu.usp;
+
+    // Set Vector 8 (Privilege Violation)
+    memory.write_long(32, 0x4000);
+
+    cpu.step_instruction(&mut memory);
+
+    assert_eq!(cpu.pc, 0x4000);
+    assert!(cpu.sr & flags::SUPERVISOR != 0);
+}
+
+#[test]
+fn test_rte_supervisor() {
+    let (mut cpu, mut memory) = create_cpu();
+
+    // RTE opcode
+    write_op(&mut memory, &[0x4E73]);
+
+    // Push stack frame for RTE (SR, PC)
+    // RTE pops SR (Word), then PC (Long)
+    // Initial SP is 0x8000 (from create_cpu)
+
+    let target_pc = 0x2000;
+    let target_sr = 0x0000; // User mode, no flags
+
+    // Manual Push
+    cpu.a[7] = cpu.a[7].wrapping_sub(4);
+    memory.write_long(cpu.a[7], target_pc);
+    cpu.a[7] = cpu.a[7].wrapping_sub(2);
+    memory.write_word(cpu.a[7], target_sr);
+
+    // CPU is already in supervisor mode from create_cpu()
+
+    cpu.step_instruction(&mut memory);
+
+    assert_eq!(cpu.pc, target_pc);
+    assert_eq!(cpu.sr, target_sr);
+    // Should now be in user mode because we popped 0x0000 into SR
+    assert_eq!(cpu.sr & flags::SUPERVISOR, 0);
+}

@@ -5,8 +5,7 @@
 //! Verifies standard and undocumented flags (X/Y).
 
 use super::*;
-use crate::memory::Memory;
-use crate::memory::{IoInterface, MemoryInterface};
+use crate::z80::test_utils::create_z80;
 
 // fast rng
 struct XorShift64 {
@@ -32,10 +31,6 @@ impl XorShift64 {
     }
 }
 
-fn z80_setup() -> Z80<crate::memory::Memory, crate::z80::test_utils::TestIo> {
-    let m = Memory::new(0x10000);
-    Z80::new(m, crate::z80::test_utils::TestIo::default())
-}
 
 // ============ Reference Models ============
 
@@ -523,7 +518,7 @@ fn ref_bit(bit: u8, val: u8, flags_in: u8) -> u8 {
 #[test]
 fn exhaustive_8bit_arithmetic() {
     let mut rng = XorShift64::new(0x1234567890ABCDEF);
-    let mut cpu = z80_setup();
+    let mut cpu = create_z80(&[]);
 
     // ADD A, r
     for i in 0..10000 {
@@ -591,7 +586,7 @@ fn exhaustive_8bit_arithmetic() {
 #[test]
 fn exhaustive_logic() {
     let mut rng = XorShift64::new(0x9876543210FEDCBA);
-    let mut cpu = z80_setup();
+    let mut cpu = create_z80(&[]);
     // AND
     for i in 0..10000 {
         let a = rng.next_u8();
@@ -639,7 +634,7 @@ fn exhaustive_logic() {
 #[test]
 fn exhaustive_inc_dec() {
     let mut rng = XorShift64::new(0xABCDEF1234567890);
-    let mut cpu = z80_setup();
+    let mut cpu = create_z80(&[]);
     // INC B
     for i in 0..10000 {
         let b = rng.next_u8();
@@ -670,7 +665,7 @@ fn exhaustive_inc_dec() {
 
 #[test]
 fn exhaustive_neg() {
-    let mut cpu = z80_setup();
+    let mut cpu = create_z80(&[]);
     // NEG A (0xED 0x44)
     // Testing all 256 values of A
     for a in 0..=255 {
@@ -695,7 +690,7 @@ fn exhaustive_neg() {
 #[test]
 fn exhaustive_16bit_arithmetic() {
     let mut rng = XorShift64::new(0xDEADBEEFCAFEBABE);
-    let mut cpu = z80_setup();
+    let mut cpu = create_z80(&[]);
     // ADD HL, BC
     for i in 0..10000 {
         let hl = rng.next_u16();
@@ -748,7 +743,7 @@ fn exhaustive_16bit_arithmetic() {
 #[test]
 fn exhaustive_shifts() {
     let mut rng = XorShift64::new(0x1122334455667788);
-    let mut cpu = z80_setup();
+    let mut cpu = create_z80(&[]);
     let types = [0, 1, 2, 3, 4, 5, 7];
     let type_names = ["RLC", "RRC", "RL", "RR", "SLA", "SRA", "SRL"];
     for (idx, &t) in types.iter().enumerate() {
@@ -772,7 +767,7 @@ fn exhaustive_shifts() {
 #[test]
 fn exhaustive_bit_register() {
     let mut rng = XorShift64::new(0x9988776655443322);
-    let mut cpu = z80_setup();
+    let mut cpu = create_z80(&[]);
     let registers = [0, 1, 2, 3, 4, 5, 7];
     let reg_names = ["B", "C", "D", "E", "H", "L", "A"];
     for (r_idx, &r) in registers.iter().enumerate() {
