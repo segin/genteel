@@ -10,7 +10,7 @@ This document outlines the architecture of the `genteel` emulator, providing a c
 - **Repository**: (To be added)
 - **Contact**: N/A
 - **License**: (To be determined)
-- **Date of Last Update**: 2026-01-07
+- **Date of Last Update**: 2026-02-18
 
 ## 1. High-level Architecture
 
@@ -84,7 +84,9 @@ The `genteel` emulator is composed of the following core components, each locate
 
 The `SharedBus` wrapper allows multiple components to share the same `Bus` state via `Rc<RefCell<Bus>>`.
 
-**Technologies**: Rust (Trait Objects, Interior Mutability)
+The `Bus` and all its sub-components support full state serialization/deserialization via `serde`, enabling save states and debugging snapshots.
+
+**Technologies**: Rust (Trait Objects, Interior Mutability, Serde)
 
 ### 3.5. I/O (`src/io/`)
 **Description**: This module handles all input and output, including the game controllers.
@@ -253,7 +255,7 @@ The debugging features will include:
 - **Register access**: Reading and writing the M68k CPU registers.
 - **Memory access**: Reading and writing to any part of the emulated memory map.
 
-This functionality will be provided by the `debugger` module. Each component of the emulator that holds state (like the CPU and memory) will implement the `Debuggable` trait, which allows the `debugger` module to access and modify its internal state.
+This functionality will be provided by the `debugger` module. Each component of the emulator that holds state (like the CPU and memory) will implement the `Debuggable` trait, which allows the `debugger` module to access and modify its internal state. The `Debuggable` trait leverages `serde_json::Value` for a flexible, schema-agnostic way to inspect and restore component state.
 ## 12. Z80 Architectural Nuances
 
 To achieve high compatibility with Sega Genesis software, the Z80 implementation must adhere to several undocumented behaviors:
