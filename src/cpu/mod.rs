@@ -8,7 +8,6 @@ pub mod decoder;
 pub mod instructions;
 pub mod ops;
 
-use crate::cpu::decoder::decode;
 use crate::cpu::instructions::{ArithmeticInstruction, BitSource, BitsInstruction, Condition, DataInstruction, Instruction, Size, SystemInstruction, DecodeCacheEntry};
 use crate::memory::MemoryInterface;
 
@@ -52,10 +51,19 @@ pub struct Cpu {
 
     // Instruction cache (Direct Mapped, 64K entries)
     pub decode_cache: Box<[DecodeCacheEntry]>,
+
+    // Static opcode lookup table (64K entries)
+    pub opcode_table: Box<[Instruction]>,
 }
 
 impl Cpu {
     pub fn new<M: MemoryInterface>(memory: &mut M) -> Self {
+        // Initialize the opcode lookup table
+        let mut opcode_table = Vec::with_capacity(65536);
+        for op in 0..=65535 {
+            opcode_table.push(crate::cpu::decoder::decode_uncached(op as u16));
+        }
+
         let mut cpu = Self {
             d: [0; 8],
             a: [0; 8],
@@ -69,6 +77,7 @@ impl Cpu {
             pending_exception: false,
             interrupt_pending_mask: 0,
             decode_cache: vec![DecodeCacheEntry::default(); 65536].into_boxed_slice(),
+            opcode_table: opcode_table.into_boxed_slice(),
         };
 
         // At startup, the supervisor stack pointer is read from address 0x00000000
@@ -301,7 +310,10 @@ impl Cpu {
             return 34;
         }
         self.pc = self.pc.wrapping_add(2);
-        let instr = decode(opcode);
+
+        // Optimized lookup using the static table in Cpu struct
+        // This avoids the function call and atomic check overhead of decode(opcode)
+        let instr = self.opcode_table[opcode as usize];
 
         let cycles = self.execute(instr, memory);
         self.cycles += cycles as u64;

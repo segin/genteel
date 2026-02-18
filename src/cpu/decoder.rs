@@ -22,7 +22,7 @@ pub fn decode(opcode: u16) -> Instruction {
     })[opcode as usize]
 }
 
-fn decode_uncached(opcode: u16) -> Instruction {
+pub(crate) fn decode_uncached(opcode: u16) -> Instruction {
     match (opcode >> 12) & 0x0F {
         0x0 => decode_group_0(opcode),
         0x1 => decode_move(opcode, Size::Byte),
