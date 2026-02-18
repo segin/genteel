@@ -779,6 +779,7 @@ impl Emulator {
         }
         Ok(())
     }
+    #[allow(dead_code)]
     fn log_debug(&self, frame_count: u64) {
         let bus = self.bus.borrow();
         let disp_en = if bus.vdp.display_enabled() {
