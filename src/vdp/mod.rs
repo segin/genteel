@@ -73,70 +73,6 @@ struct SpriteAttributes {
     base_tile: u16,
 }
 
-struct SpriteIterator<'a> {
-    vram: &'a [u8; 0x10000],
-    next_idx: u8,
-    count: usize,
-    max_sprites: usize,
-    sat_base: usize,
-}
-
-impl<'a> Iterator for SpriteIterator<'a> {
-    type Item = SpriteAttributes;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.count >= self.max_sprites {
-            return None;
-        }
-
-        // Check SAT boundary
-        if self.sat_base + (self.next_idx as usize * 8) + 8 > 0x10000 {
-            return None;
-        }
-
-        let addr = self.sat_base + (self.next_idx as usize * 8);
-
-        let cur_v = (((self.vram[addr] as u16) << 8) | (self.vram[addr + 1] as u16)) & 0x03FF;
-        let v_pos = cur_v.wrapping_sub(128);
-
-        let size = self.vram[addr + 2];
-        let h_size = ((size >> 2) & 0x03) + 1;
-        let v_size = (size & 0x03) + 1;
-
-        let link = self.vram[addr + 3] & 0x7F;
-
-        let attr_word = ((self.vram[addr + 4] as u16) << 8) | (self.vram[addr + 5] as u16);
-        let priority = (attr_word & 0x8000) != 0;
-        let palette = ((attr_word >> 13) & 0x03) as u8;
-        let v_flip = (attr_word & 0x1000) != 0;
-        let h_flip = (attr_word & 0x0800) != 0;
-        let base_tile = attr_word & 0x07FF;
-
-        let cur_h = (((self.vram[addr + 6] as u16) << 8) | (self.vram[addr + 7] as u16)) & 0x03FF;
-        let h_pos = cur_h.wrapping_sub(128);
-
-        let attr = SpriteAttributes {
-            v_pos,
-            h_pos,
-            h_size,
-            v_size,
-            priority,
-            palette,
-            v_flip,
-            h_flip,
-            base_tile,
-        };
-
-        self.count += 1;
-        self.next_idx = link;
-
-        if link == 0 {
-            self.count = self.max_sprites; // Stop after this one
-        }
-
-        Some(attr)
-    }
-}
 
 const NUM_REGISTERS: usize = 24;
 
@@ -683,23 +619,65 @@ impl Vdp {
         let sat_base = self.sprite_table_address() as usize;
         let max_sprites = if self.h40_mode() { 80 } else { 64 };
 
-        let iter = SpriteIterator {
-            vram: &self.vram,
-            next_idx: 0,
-            count: 0,
-            max_sprites,
-            sat_base,
-        };
+        let mut next_idx = 0u8;
+        let mut processed = 0;
 
-        for attr in iter {
-            let sprite_v_px = (attr.v_size as u16) * 8;
-            if line >= attr.v_pos && line < attr.v_pos + sprite_v_px {
-                sprites[count] = attr;
+        while processed < max_sprites {
+            // Check SAT boundary
+            if sat_base + (next_idx as usize * 8) + 8 > 0x10000 {
+                break;
+            }
+
+            let addr = sat_base + (next_idx as usize * 8);
+
+            // Fetch Y pos, Size, and Link first (first 4 bytes)
+            let cur_v = (((self.vram[addr] as u16) << 8) | (self.vram[addr + 1] as u16)) & 0x03FF;
+            let v_pos = cur_v.wrapping_sub(128);
+
+            let size = self.vram[addr + 2];
+            let link = self.vram[addr + 3] & 0x7F;
+
+            let v_size = (size & 0x03) + 1;
+            let sprite_v_px = (v_size as u16) * 8;
+
+            // Check visibility
+            if line >= v_pos && line < v_pos + sprite_v_px {
+                // Fetch remaining attributes only if visible
+                let h_size = ((size >> 2) & 0x03) + 1;
+
+                let attr_word = ((self.vram[addr + 4] as u16) << 8) | (self.vram[addr + 5] as u16);
+                let priority = (attr_word & 0x8000) != 0;
+                let palette = ((attr_word >> 13) & 0x03) as u8;
+                let v_flip = (attr_word & 0x1000) != 0;
+                let h_flip = (attr_word & 0x0800) != 0;
+                let base_tile = attr_word & 0x07FF;
+
+                let cur_h = (((self.vram[addr + 6] as u16) << 8) | (self.vram[addr + 7] as u16)) & 0x03FF;
+                let h_pos = cur_h.wrapping_sub(128);
+
+                sprites[count] = SpriteAttributes {
+                    v_pos,
+                    h_pos,
+                    h_size,
+                    v_size,
+                    priority,
+                    palette,
+                    v_flip,
+                    h_flip,
+                    base_tile,
+                };
                 count += 1;
-                // Safety check, though SpriteIterator limits iterations
+
                 if count >= 80 {
                     break;
                 }
+            }
+
+            next_idx = link;
+            processed += 1;
+
+            if next_idx == 0 {
+                break;
             }
         }
         (count, sprites)

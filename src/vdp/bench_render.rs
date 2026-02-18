@@ -81,3 +81,51 @@ fn bench_render_line_performance() {
         iterations, duration
     );
 }
+
+#[test]
+fn bench_render_line_sparse() {
+    let mut vdp = Vdp::new();
+    vdp.registers[1] = 0x40 | 0x04; // Display Enable, V30
+    vdp.registers[16] = 0x11; // 64x64 planes
+    vdp.registers[5] = 0x6A; // SAT at 0xD400
+
+    // Fill VRAM/CRAM
+    for i in 0..0x10000 { vdp.vram[i] = (i & 0xFF) as u8; }
+    for i in 0..64 { vdp.cram_cache[i] = (i as u16) * 0x0400 + 0x0020; }
+
+    let sat_base = 0xD400;
+    // Create 80 linked sprites
+    for i in 0..80 {
+        let addr = sat_base + (i * 8);
+
+        // V Pos:
+        // Sprites 0-9: Visible on line 100 (y=95 -> line 95..103)
+        // Sprites 10-79: Off-screen (y=0 -> line 0..8, or y=200 -> line 200..208)
+        let y = if i < 10 { 95 } else { 200 };
+        vdp.vram[addr] = 0x00;
+        vdp.vram[addr + 1] = (y + 128) as u8;
+
+        // Size: 0 (1x1)
+        vdp.vram[addr + 2] = 0x00;
+
+        // Link: i + 1. Last one (79) links to 0.
+        let link = if i == 79 { 0 } else { i + 1 };
+        vdp.vram[addr + 3] = link as u8;
+
+        // Attr
+        vdp.vram[addr + 4] = 0x00;
+        vdp.vram[addr + 5] = 0x00;
+
+        // H Pos
+        vdp.vram[addr + 6] = 0x00;
+        vdp.vram[addr + 7] = 128;
+    }
+
+    let start = Instant::now();
+    let iterations = 10000;
+    for _ in 0..iterations {
+        vdp.render_line(100);
+    }
+    let duration = start.elapsed();
+    println!("Render Line Sparse ({} iterations) took: {:?}", iterations, duration);
+}
