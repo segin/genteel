@@ -1306,4 +1306,50 @@ mod tests {
         assert!(secure_compare("p@sswöd", "p@sswöd"));
         assert!(!secure_compare("p@sswöd", "p@sswod"));
     }
+
+    #[test]
+    fn test_breakpoint_robustness() {
+        let mut server = create_test_server();
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+
+        // 1. Fill to capacity
+        for i in 0..MAX_BREAKPOINTS {
+            let cmd = format!("Z0,{:x},4", i);
+            assert_eq!(server.process_command(&cmd, &mut regs, &mut mem), "OK");
+        }
+        assert_eq!(server.breakpoints.len(), MAX_BREAKPOINTS);
+
+        // 2. Attempt to add new breakpoint (should fail)
+        let cmd_new = format!("Z0,{:x},4", MAX_BREAKPOINTS);
+        assert_eq!(
+            server.process_command(&cmd_new, &mut regs, &mut mem),
+            "E01"
+        );
+        assert_eq!(server.breakpoints.len(), MAX_BREAKPOINTS);
+
+        // 3. Attempt to add existing breakpoint (should succeed, no count change)
+        let cmd_existing = "Z0,0,4";
+        assert_eq!(
+            server.process_command(cmd_existing, &mut regs, &mut mem),
+            "OK"
+        );
+        assert_eq!(server.breakpoints.len(), MAX_BREAKPOINTS);
+
+        // 4. Remove a breakpoint
+        let cmd_remove = "z0,0,4";
+        assert_eq!(
+            server.process_command(cmd_remove, &mut regs, &mut mem),
+            "OK"
+        );
+        assert_eq!(server.breakpoints.len(), MAX_BREAKPOINTS - 1);
+
+        // 5. Add the new breakpoint again (should succeed now)
+        assert_eq!(
+            server.process_command(&cmd_new, &mut regs, &mut mem),
+            "OK"
+        );
+        assert_eq!(server.breakpoints.len(), MAX_BREAKPOINTS);
+        assert!(server.is_breakpoint(MAX_BREAKPOINTS as u32));
+    }
 }
