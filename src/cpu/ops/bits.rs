@@ -248,6 +248,28 @@ pub fn exec_shift<M: MemoryInterface>(
     6 + cycles + 2 * count_val
 }
 
+pub fn exec_shift_mem<M: MemoryInterface>(
+    cpu: &mut Cpu,
+    dst: AddressingMode,
+    left: bool,
+    arithmetic: bool,
+    memory: &mut M,
+) -> u32 {
+    // Memory shifts are always word size, count 1
+    let cycles = exec_shift(
+        cpu,
+        Size::Word,
+        dst,
+        ShiftCount::Immediate(1),
+        left,
+        arithmetic,
+        memory,
+    );
+    // V is always cleared for memory shifts
+    cpu.set_flag(flags::OVERFLOW, false);
+    cycles + 2 // Memory shifts take 8 cycles + EA (exec_shift returns 6 + cycles + 2*1 = 8 + cycles)
+}
+
 pub fn exec_rotate<M: MemoryInterface>(
     cpu: &mut Cpu,
     size: Size,
@@ -281,7 +303,7 @@ pub fn exec_rotate<M: MemoryInterface>(
         if effective_count == 0 {
             result = val;
             if count_val > 0 {
-                carry = (val & msb) != 0;
+                carry = (val & 1) != 0;
             }
         } else {
             result = ((val << effective_count) | (val >> (bits - effective_count))) & mask;
@@ -290,7 +312,7 @@ pub fn exec_rotate<M: MemoryInterface>(
     } else if effective_count == 0 {
         result = val;
         if count_val > 0 {
-            carry = (val & 1) != 0;
+            carry = (val & msb) != 0;
         }
     } else {
         result = ((val >> effective_count) | (val << (bits - effective_count))) & mask;
@@ -513,7 +535,7 @@ pub fn exec_tas<M: MemoryInterface>(cpu: &mut Cpu, dst: AddressingMode, memory: 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cpu::decoder::{AddressingMode, Size};
+    use crate::cpu::decoder::{AddressingMode, BitSource, ShiftCount, Size};
     use crate::cpu::flags;
     use crate::cpu::Cpu;
     use crate::memory::Memory;
