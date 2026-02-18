@@ -184,7 +184,6 @@ pub fn samples_per_frame() -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
     fn test_audio_buffer_new() {
         let buf = AudioBuffer::new(1024);
@@ -303,5 +302,71 @@ mod tests {
 
         assert_eq!(out2[0], 30);
         assert_eq!(buf.buffer[0], 30);
+    }
+
+    #[test]
+    fn test_pop_f32_precision_and_range() {
+        let mut buf = AudioBuffer::new(64);
+
+        // Test edge cases explicitly
+        let samples = [i16::MAX, i16::MIN, 0, 1, -1];
+        buf.push(&samples);
+
+        let mut out = [0.0f32; 5];
+        buf.pop_f32(&mut out);
+
+        // i16::MAX is 32767. 32767 / 32768.0 = 0.999969482421875
+        let expected_max = 32767.0 / 32768.0;
+        assert!((out[0] - expected_max).abs() < f32::EPSILON);
+
+        // i16::MIN is -32768. -32768 / 32768.0 = -1.0
+        assert!((out[1] - (-1.0)).abs() < f32::EPSILON);
+
+        // 0 / 32768.0 = 0.0
+        assert!((out[2] - 0.0).abs() < f32::EPSILON);
+
+        // 1 / 32768.0
+        assert!((out[3] - (1.0/32768.0)).abs() < f32::EPSILON);
+
+        // -1 / 32768.0
+        assert!((out[4] - (-1.0/32768.0)).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_pop_f32_underrun() {
+        let mut buf = AudioBuffer::new(64);
+        buf.push(&[1000]);
+
+        let mut out = [0.0f32; 3];
+        buf.pop_f32(&mut out);
+
+        // First sample should be valid
+        assert!((out[0] - (1000.0/32768.0)).abs() < f32::EPSILON);
+        // Rest should be silence (0.0)
+        assert_eq!(out[1], 0.0);
+        assert_eq!(out[2], 0.0);
+    }
+
+    #[test]
+    fn test_pop_f32_exhaustive() {
+        let mut buf = AudioBuffer::new(10);
+
+        // Test all possible i16 values to ensure no precision issues across the entire range
+        for sample in i16::MIN..=i16::MAX {
+            buf.push(&[sample]);
+
+            let mut out = [0.0f32; 1];
+            buf.pop_f32(&mut out);
+
+            let expected = sample as f32 / 32768.0;
+            assert!((out[0] - expected).abs() < f32::EPSILON, "Failed precision check for sample: {}", sample);
+
+            // Verify range
+            assert!(out[0] >= -1.0, "Failed lower bound check for sample: {}", sample);
+            assert!(out[0] < 1.0, "Failed upper bound check for sample: {}", sample);
+
+            // Ensure buffer state is clean
+            assert_eq!(buf.available(), 0);
+        }
     }
 }

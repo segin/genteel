@@ -9,21 +9,12 @@
 //! 5. Block instruction flag edge cases
 
 use super::*;
-use crate::memory::Memory;
-use crate::memory::{IoInterface, MemoryInterface};
-
-fn z80(program: &[u8]) -> Z80<crate::memory::Memory, crate::z80::test_utils::TestIo> {
-    let mut m = Memory::new(0x10000);
-    for (i, &b) in program.iter().enumerate() {
-        m.data[i] = b;
-    }
-    Z80::new(m, crate::z80::test_utils::TestIo::default())
-}
+use crate::z80::test_utils::create_z80;
 
 // ============ 1. IM 2 Vector Fetching ============
 #[test]
 fn torture_im2_vector_fetch() {
-    let mut c = z80(&[0xED, 0x5E]); // IM 2
+    let mut c = create_z80(&[0xED, 0x5E]); // IM 2
     c.i = 0x10;
     c.iff1 = true;
     c.step(); // IM 2
@@ -42,7 +33,7 @@ fn torture_im2_vector_fetch() {
 // ============ 2. EI Latency (Interrupt Shadow) ============
 #[test]
 fn torture_ei_latency_shadow() {
-    let mut c = z80(&[0xFB, 0x3C, 0x3C]); // EI; INC A; INC A
+    let mut c = create_z80(&[0xFB, 0x3C, 0x3C]); // EI; INC A; INC A
     c.iff1 = false;
     c.step(); // EI
     assert!(c.iff1);
@@ -67,7 +58,7 @@ fn torture_ei_latency_shadow() {
 // ============ 3. R Register Nuances ============
 #[test]
 fn torture_r_reg_bit7_preservation() {
-    let mut c = z80(&[0x00, 0x00]); // NOP; NOP
+    let mut c = create_z80(&[0x00, 0x00]); // NOP; NOP
     c.r = 0x80; // Bit 7 set
     c.step(); // Fetch NOP (increments R)
     assert_eq!(c.r & 0x80, 0x80); // Bit 7 MUST remain set
@@ -76,7 +67,7 @@ fn torture_r_reg_bit7_preservation() {
 
 #[test]
 fn torture_r_reg_7bit_wrap() {
-    let mut c = z80(&[0x00]);
+    let mut c = create_z80(&[0x00]);
     c.r = 0x7F; // Max for lower 7 bits
     c.step();
     assert_eq!(c.r & 0x7F, 0x00); // Should wrap to 0, not 0x80
@@ -85,7 +76,7 @@ fn torture_r_reg_7bit_wrap() {
 // ============ 4. MEMPTR (WZ) State Leakage ============
 #[test]
 fn torture_bit_hl_memptr_leakage() {
-    let mut c = z80(&[0xCB, 0x46]); // BIT 0, (HL)
+    let mut c = create_z80(&[0xCB, 0x46]); // BIT 0, (HL)
     c.memptr = 0x2800; // Bit 5 & 3 of high byte are 1
     c.set_hl(0x8000);
     c.memory.write_byte(0x8000 as u32, 0x00);
@@ -99,7 +90,7 @@ fn torture_bit_ix_ea_leakage() {
     // BIT 0, (IX+0x28)
     // EA = IX + 0x28. If high byte of EA is 0x28, X/Y flags come from bits 3/5 of 0x28.
     // 0x28 = 0010 1000. Bit 5=1, Bit 3=1.
-    let mut c = z80(&[0xDD, 0xCB, 0x28, 0x46]);
+    let mut c = create_z80(&[0xDD, 0xCB, 0x28, 0x46]);
     c.ix = 0x2800; // EA = 0x2800 + 0x28 = 0x2828. High byte is 0x28.
     c.memory.write_byte(0x2828 as u32, 0x00);
     c.step();
@@ -110,7 +101,7 @@ fn torture_bit_ix_ea_leakage() {
 // ============ 5. Block Instruction Flags ============
 #[test]
 fn torture_ldi_flags() {
-    let mut c = z80(&[0xED, 0xA0]); // LDI
+    let mut c = create_z80(&[0xED, 0xA0]); // LDI
     c.set_hl(0x1000);
     c.set_de(0x2000);
     c.set_bc(0x0002);
@@ -125,7 +116,7 @@ fn torture_ldi_flags() {
 // ============ 6. Undocumented Flag Leakage (SCF/CCF/Rotates) ============
 #[test]
 fn torture_flag_leakage_scf() {
-    let mut c = z80(&[0x37, 0x37]); // Two SCF instructions
+    let mut c = create_z80(&[0x37, 0x37]); // Two SCF instructions
     c.a = 0x28; // X=1 (bit 3), Y=1 (bit 5)
     c.step();
     assert!(c.get_flag(flags::X_FLAG));
@@ -139,7 +130,7 @@ fn torture_flag_leakage_scf() {
 
 #[test]
 fn torture_flag_leakage_ccf() {
-    let mut c = z80(&[0x3F]); // CCF
+    let mut c = create_z80(&[0x3F]); // CCF
     c.a = 0x28;
     c.step();
     assert!(c.get_flag(flags::X_FLAG));
@@ -148,7 +139,7 @@ fn torture_flag_leakage_ccf() {
 
 #[test]
 fn torture_flag_leakage_rotates() {
-    let mut c = z80(&[0x07, 0x0F, 0x17, 0x1F]); // RLCA, RRCA, RLA, RRA
+    let mut c = create_z80(&[0x07, 0x0F, 0x17, 0x1F]); // RLCA, RRCA, RLA, RRA
     c.a = 0x14; // bit 3 is 0, bit 5 is 0
     c.step(); // RLCA -> A becomes 0x28 (bit 3=1, bit 5=1)
     assert!(c.get_flag(flags::X_FLAG));
@@ -159,7 +150,7 @@ fn torture_flag_leakage_rotates() {
 #[test]
 fn torture_add_hl_memptr() {
     // ADD HL, BC; BIT 0, (HL)
-    let mut c = z80(&[0x09, 0xCB, 0x46]);
+    let mut c = create_z80(&[0x09, 0xCB, 0x46]);
     c.set_hl(0x2800); // MEMPTR should become 0x2801
     c.set_bc(0x0001);
     c.memory.write_byte(0x2801 as u32, 0x00);
