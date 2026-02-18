@@ -44,6 +44,7 @@ struct Framework {
     renderer: egui_wgpu::Renderer,
     gui_state: GuiState,
 }
+#[cfg(feature = "gui")]
 impl Framework {
     fn new(
         event_loop: &winit::event_loop::EventLoopWindowTarget<()>,
@@ -500,6 +501,7 @@ impl Emulator {
         // Clear raw bus pointer
         self.z80.memory.clear_raw_bus();
     }
+    #[allow(clippy::too_many_arguments)]
     fn sync_z80_static(
         z80: &mut Z80<Z80Bus, Z80Bus>,
         bus: &mut Bus,
@@ -554,8 +556,12 @@ impl Emulator {
             let _ = writer.write_samples(&bus.audio_buffer);
         }
         // Move samples to emulator buffer for frontend consumption
-        if self.audio_buffer.len() < 32768 {
-            self.audio_buffer.extend(bus.audio_buffer.iter());
+        let current_len = self.audio_buffer.len();
+        if current_len < 32768 {
+            let space = 32768 - current_len;
+            let count = std::cmp::min(space, bus.audio_buffer.len());
+            self.audio_buffer
+                .extend(bus.audio_buffer.iter().take(count));
         }
         bus.audio_buffer.clear();
     }
@@ -682,7 +688,6 @@ impl Emulator {
         }
         Ok(())
     }
-    #[cfg(feature = "gui")]
     fn log_debug(&self, frame_count: u64) {
         let bus = self.bus.borrow();
         let disp_en = if bus.vdp.display_enabled() {
@@ -1279,5 +1284,53 @@ mod tests {
         let _ = std::fs::remove_file(path);
         // Verify rejection
         assert!(result.is_err(), "Should reject large ROM file (>32MB)");
+    }
+
+    #[test]
+    fn test_headless_audio_buffer_growth() {
+        let mut emulator = Emulator::new();
+        // Run for 100 frames
+        let frames = 100;
+
+        // We can't easily check internal state during `run` because it takes `&mut self` and blocks.
+        // But we can check after.
+        emulator.run(frames);
+
+        // After run, buffer should be empty because it's cleared at the end of the loop
+        assert!(
+            emulator.audio_buffer.is_empty(),
+            "Audio buffer should be empty after headless run"
+        );
+
+        // Also check capacity to see if it grew excessively (though clear() keeps capacity)
+        println!(
+            "Audio buffer capacity: {}",
+            emulator.audio_buffer.capacity()
+        );
+        assert!(
+            emulator.audio_buffer.capacity() < 1000000,
+            "Capacity should be reasonable"
+        );
+    }
+
+    #[test]
+    fn test_step_frame_without_clear() {
+        let mut emulator = Emulator::new();
+        // Manually step 100 frames without clearing
+        for _ in 0..100 {
+            emulator.step_frame(None);
+        }
+
+        // Now buffer should have some data, but NOT unbounded if limited
+        let len = emulator.audio_buffer.len();
+        println!("Audio buffer length after 100 frames: {}", len);
+
+        // 100 frames * ~1470 samples/frame * 2 (stereo) = ~294,000 samples
+        // If limited to 32768, it should be around 32768.
+
+        assert_eq!(
+            len, 32768,
+            "Audio buffer should be strictly limited to 32768 even if not cleared"
+        );
     }
 }

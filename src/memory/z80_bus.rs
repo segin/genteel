@@ -7,6 +7,8 @@
 //! - 7F11h: SN76489 PSG
 //! - 8000h-FFFFh: Banked 68k Memory (32KB window)
 
+#![allow(clippy::explicit_auto_deref)]
+
 use super::bus::Bus;
 use super::{byte_utils, IoInterface, MemoryInterface, SharedBus};
 

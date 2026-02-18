@@ -4,6 +4,7 @@
 //! Connect with: `m68k-elf-gdb -ex "target remote :1234"`
 
 use std::collections::HashSet;
+#![allow(clippy::manual_is_multiple_of)]
 use std::io::{BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 

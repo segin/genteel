@@ -68,6 +68,12 @@ pub struct Bus {
     pub sample_rate: u32,
 }
 
+impl Default for Bus {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Bus {
     /// Create a new empty bus
     pub fn new() -> Self {
