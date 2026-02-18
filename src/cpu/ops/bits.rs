@@ -248,6 +248,28 @@ pub fn exec_shift<M: MemoryInterface>(
     6 + cycles + 2 * count_val
 }
 
+pub fn exec_shift_mem<M: MemoryInterface>(
+    cpu: &mut Cpu,
+    dst: AddressingMode,
+    left: bool,
+    arithmetic: bool,
+    memory: &mut M,
+) -> u32 {
+    // Memory shifts are always word size, count 1
+    let cycles = exec_shift(
+        cpu,
+        Size::Word,
+        dst,
+        ShiftCount::Immediate(1),
+        left,
+        arithmetic,
+        memory,
+    );
+    // V is always cleared for memory shifts
+    cpu.set_flag(flags::OVERFLOW, false);
+    cycles + 2 // Memory shifts take 8 cycles + EA (exec_shift returns 6 + cycles + 2*1 = 8 + cycles)
+}
+
 pub fn exec_rotate<M: MemoryInterface>(
     cpu: &mut Cpu,
     size: Size,
@@ -281,7 +303,7 @@ pub fn exec_rotate<M: MemoryInterface>(
         if effective_count == 0 {
             result = val;
             if count_val > 0 {
-                carry = (val & msb) != 0;
+                carry = (val & 1) != 0;
             }
         } else {
             result = ((val << effective_count) | (val >> (bits - effective_count))) & mask;
@@ -290,7 +312,7 @@ pub fn exec_rotate<M: MemoryInterface>(
     } else if effective_count == 0 {
         result = val;
         if count_val > 0 {
-            carry = (val & 1) != 0;
+            carry = (val & msb) != 0;
         }
     } else {
         result = ((val >> effective_count) | (val << (bits - effective_count))) & mask;
@@ -513,7 +535,7 @@ pub fn exec_tas<M: MemoryInterface>(cpu: &mut Cpu, dst: AddressingMode, memory: 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cpu::decoder::{AddressingMode, Size};
+    use crate::cpu::decoder::{AddressingMode, ShiftCount, Size};
     use crate::cpu::flags;
     use crate::cpu::Cpu;
     use crate::memory::Memory;
@@ -639,5 +661,108 @@ mod tests {
         assert!(cpu.get_flag(flags::NEGATIVE));
         assert!(!cpu.get_flag(flags::ZERO));
         assert_eq!(cycles, 8); // 4 (base) + 0 (DataReg) + 4 (AddrIndirect)
+    }
+
+    #[test]
+    fn test_exec_rotate_rol_byte() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x80; // 1000 0000
+
+        exec_rotate(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(1),
+            true, // left
+            false,
+            &mut memory,
+        );
+
+        // 1000 0000 -> 0000 0001 (0x01)
+        // Last shifted out: 1 (MSB of 0x80)
+        assert_eq!(cpu.d[0] & 0xFF, 0x01);
+        assert!(cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_exec_rotate_ror_byte() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x01; // 0000 0001
+
+        exec_rotate(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(1),
+            false, // right
+            false,
+            &mut memory,
+        );
+
+        // 0000 0001 -> 1000 0000 (0x80)
+        // Last shifted out: 1 (LSB of 0x01)
+        assert_eq!(cpu.d[0] & 0xFF, 0x80);
+        assert!(cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(cpu.get_flag(flags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_exec_rotate_rol_long_wrap() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x80000000;
+
+        exec_rotate(
+            &mut cpu,
+            Size::Long,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(32),
+            true, // left
+            false,
+            &mut memory,
+        );
+
+        // ROL #32 on Long should return same value
+        assert_eq!(cpu.d[0], 0x80000000);
+        // Flags update: Last bit shifted out.
+        // For ROL #32: Shift 32 times.
+        // Last shift (32nd) shifts bit at index 0 (of the value *before* that 32nd shift) to bit 1?
+        // Wait, shifting 1 bit left: bit 31 goes out.
+        // Shift 1: Out 31.
+        // Shift 2: Out 30.
+        // ...
+        // Shift 32: Out 0.
+        // Original value 0x80000000. Bit 0 is 0.
+        // So Carry should be 0.
+        assert!(!cpu.get_flag(flags::CARRY));
+    }
+
+    #[test]
+    fn test_exec_rotate_ror_long_wrap() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x00000001;
+
+        exec_rotate(
+            &mut cpu,
+            Size::Long,
+            AddressingMode::DataRegister(0),
+            ShiftCount::Immediate(32),
+            false, // right
+            false,
+            &mut memory,
+        );
+
+        // ROR #32 on Long should return same value
+        assert_eq!(cpu.d[0], 0x00000001);
+        // Flags update: Last bit shifted out.
+        // For ROR #32: Shift 32 times.
+        // Shift 1: Out 0.
+        // ...
+        // Shift 32: Out 31.
+        // Original value 0x00000001. Bit 31 is 0.
+        // So Carry should be 0.
+        assert!(!cpu.get_flag(flags::CARRY));
     }
 }
