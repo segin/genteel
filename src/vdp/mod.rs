@@ -14,8 +14,8 @@
 //! | 0xC00004-0xC00007| Control Port (commands/status) |
 //! | 0xC00008-0xC0000F| H/V Counter                    |
 use crate::debugger::Debuggable;
-use serde::Deserialize;
-use serde_json::{json, Value};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 // VDP Control Codes (bits 0-3)
 const VRAM_READ: u8 = 0x00;
@@ -61,7 +61,7 @@ const DMA_TYPE_BIT: u8 = 0x80; // 0=Transfer, 1=Fill/Copy
 const STATUS_VBLANK: u16 = 0x0008;
 const STATUS_VINT_PENDING: u16 = 0x0080;
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 struct SpriteAttributes {
     v_pos: u16,
     h_pos: u16,
@@ -75,7 +75,7 @@ struct SpriteAttributes {
 }
 
 struct SpriteIterator<'a> {
-    vram: &'a [u8; 0x10000],
+    vram: &'a [u8],
     next_idx: u8,
     count: usize,
     max_sprites: usize,
@@ -91,29 +91,33 @@ impl<'a> Iterator for SpriteIterator<'a> {
         }
 
         // Check SAT boundary
-        if self.sat_base + (self.next_idx as usize * 8) + 8 > 0x10000 {
+        if self.sat_base + (self.next_idx as usize * 8) + 8 > self.vram.len() {
             return None;
         }
 
         let addr = self.sat_base + (self.next_idx as usize * 8);
 
-        let cur_v = (((self.vram[addr] as u16) << 8) | (self.vram[addr + 1] as u16)) & 0x03FF;
+        // Optimization: Read all 8 bytes at once
+        let chunk: [u8; 8] = self.vram[addr..addr + 8].try_into().unwrap();
+        let data = u64::from_be_bytes(chunk);
+
+        let cur_v = ((data >> 48) as u16) & 0x03FF;
         let v_pos = cur_v.wrapping_sub(128);
 
-        let size = self.vram[addr + 2];
+        let size = (data >> 40) as u8;
         let h_size = ((size >> 2) & 0x03) + 1;
         let v_size = (size & 0x03) + 1;
 
-        let link = self.vram[addr + 3] & 0x7F;
+        let link = (data >> 32) as u8 & 0x7F;
 
-        let attr_word = ((self.vram[addr + 4] as u16) << 8) | (self.vram[addr + 5] as u16);
+        let attr_word = (data >> 16) as u16;
         let priority = (attr_word & 0x8000) != 0;
         let palette = ((attr_word >> 13) & 0x03) as u8;
         let v_flip = (attr_word & 0x1000) != 0;
         let h_flip = (attr_word & 0x0800) != 0;
         let base_tile = attr_word & 0x07FF;
 
-        let cur_h = (((self.vram[addr + 6] as u16) << 8) | (self.vram[addr + 7] as u16)) & 0x03FF;
+        let cur_h = (data as u16) & 0x03FF;
         let h_pos = cur_h.wrapping_sub(128);
 
         let attr = SpriteAttributes {
@@ -141,21 +145,25 @@ impl<'a> Iterator for SpriteIterator<'a> {
 
 const NUM_REGISTERS: usize = 24;
 
+fn default_cram_cache() -> [u16; 64] {
+    [0; 64]
+}
+
 /// Video Display Processor (VDP)
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Vdp {
     /// Video RAM (64KB) - stores tile patterns and nametables
-    pub vram: [u8; 0x10000],
+    pub vram: Box<[u8]>,
 
     /// Color RAM (128 bytes) - 64 colors, 2 bytes each (9-bit color)
-    /// Format: ----BBB-GGG-RRR- (each component 0-7)
-    pub cram: [u8; 128],
+    pub cram: Box<[u8]>,
 
     /// Cached RGB565 colors for faster lookup
+    #[serde(skip, default = "default_cram_cache")]
     pub cram_cache: [u16; 64],
 
     /// Vertical Scroll RAM (80 bytes) - 40 columns × 2 bytes
-    pub vsram: [u8; 80],
+    pub vsram: Box<[u8]>,
 
     /// VDP Registers (24 registers, but only first 24 are meaningful)
     pub registers: [u8; NUM_REGISTERS],
@@ -186,6 +194,7 @@ pub struct Vdp {
     pub is_pal: bool,
 
     /// Framebuffer (320x240 RGB565)
+    #[serde(skip)]
     pub framebuffer: Vec<u16>,
 }
 
@@ -198,10 +207,10 @@ impl Default for Vdp {
 impl Vdp {
     pub fn new() -> Self {
         Vdp {
-            vram: [0; 0x10000],
-            cram: [0; 128],
+            vram: vec![0; 0x10000].into_boxed_slice(),
+            cram: vec![0; 128].into_boxed_slice(),
             cram_cache: [0; 64],
-            vsram: [0; 80],
+            vsram: vec![0; 80].into_boxed_slice(),
             registers: [0; NUM_REGISTERS],
             control_pending: false,
             control_code: 0,
@@ -215,6 +224,28 @@ impl Vdp {
             v30_offset: 0,
             is_pal: false,
             framebuffer: vec![0; 320 * 240],
+        }
+    }
+
+    /// Reconstruct cram_cache from cram
+    pub fn reconstruct_cram_cache(&mut self) {
+        for i in 0..64 {
+            let addr = i * 2;
+            if addr + 1 < self.cram.len() {
+                let val = ((self.cram[addr + 1] as u16) << 8) | (self.cram[addr] as u16);
+
+                // Extract 3-bit components (bits 1-3, 5-7, 9-11)
+                let r3 = (val >> 1) & 0x07;
+                let g3 = (val >> 5) & 0x07;
+                let b3 = (val >> 9) & 0x07;
+
+                // Scale to RGB565 using bit repetition
+                let r5 = (r3 << 2) | (r3 >> 1);
+                let g6 = (g3 << 3) | g3;
+                let b5 = (b3 << 2) | (b3 >> 1);
+
+                self.cram_cache[i] = ((r5 as u16) << 11) | ((g6 as u16) << 5) | (b5 as u16);
+            }
         }
     }
 
@@ -300,17 +331,7 @@ impl Vdp {
                 }
                 let addr = (self.control_address & 0x7E) as usize;
 
-                // Extract 3-bit components (bits 1-3, 5-7, 9-11)
-                let r3 = (val >> 1) & 0x07;
-                let g3 = (val >> 5) & 0x07;
-                let b3 = (val >> 9) & 0x07;
-
-                // Scale to RGB565 using bit repetition
-                let r5 = (r3 << 2) | (r3 >> 1);
-                let g6 = (g3 << 3) | g3;
-                let b5 = (b3 << 2) | (b3 >> 1);
-
-                self.cram_cache[addr >> 1] = ((r5 as u16) << 11) | ((g6 as u16) << 5) | (b5 as u16);
+                self.cram_cache[addr >> 1] = Self::genesis_color_to_rgb565(val);
 
                 self.cram[addr] = (val & 0xFF) as u8;
                 self.cram[addr + 1] = (val >> 8) as u8;
@@ -372,8 +393,7 @@ impl Vdp {
             // When combined with CD1-CD0 from the first word, we get the 6-bit code.
             let high = ((value >> 4) & 0x0F) << 2;
             self.control_code = (self.control_code & 0x03) | high as u8;
-            self.control_address = (self.control_address & 0x3FFF)
-                | ((value & 0x03) << 14);
+            self.control_address = (self.control_address & 0x3FFF) | ((value & 0x03) << 14);
             self.control_pending = false;
 
             // DMA initiation check
@@ -397,6 +417,8 @@ impl Vdp {
 
     #[inline(always)]
     pub fn read_status(&mut self) -> u16 {
+        // Reading status clears the control pending flag (first word of command)
+        // This matches hardware behavior (verified against Genesis Plus GX)
         self.control_pending = false;
         let res = self.status;
         // Reading status clears the VInt pending bit
@@ -410,6 +432,20 @@ impl Vdp {
     }
 
     // Helper methods
+    pub(crate) fn genesis_color_to_rgb565(val: u16) -> u16 {
+        // Extract 3-bit components (bits 1-3, 5-7, 9-11)
+        let r3 = (val >> 1) & 0x07;
+        let g3 = (val >> 5) & 0x07;
+        let b3 = (val >> 9) & 0x07;
+
+        // Scale to RGB565 using bit repetition
+        let r5 = (r3 << 2) | (r3 >> 1);
+        let g6 = (g3 << 3) | g3;
+        let b5 = (b3 << 2) | (b3 >> 1);
+
+        ((r5 as u16) << 11) | ((g6 as u16) << 5) | (b5 as u16)
+    }
+
     fn auto_increment(&self) -> u8 {
         self.registers[REG_AUTO_INC]
     }
@@ -677,6 +713,93 @@ impl Vdp {
         self.render_sprites(active_sprites, fetch_line, draw_line, true);
     }
 
+    fn render_plane(
+        &mut self,
+        is_plane_a: bool,
+        fetch_line: u16,
+        draw_line: u16,
+        priority_filter: bool,
+    ) {
+        let plane_size = self.plane_size();
+        let (plane_w, plane_h) = plane_size;
+        let name_table_base = if is_plane_a {
+            self.plane_a_address()
+        } else {
+            self.plane_b_address()
+        };
+
+        let screen_width = self.screen_width();
+        let line_offset = (draw_line as usize) * 320;
+        let plane_w_mask = plane_w - 1;
+
+        // Fetch H-scroll once for the line (matching real hardware behavior for per-line/cell)
+        let (_, h_scroll) = self.get_scroll_values(is_plane_a, fetch_line, 0);
+
+        let mut screen_x: u16 = 0;
+
+        // Head Loop: Handle misalignment
+        while screen_x < screen_width {
+            let scrolled_h = screen_x.wrapping_sub(h_scroll);
+            let pixel_h = scrolled_h & 0x07;
+
+            if pixel_h == 0 {
+                break;
+            }
+
+            let processed = self.render_tile(
+                screen_x,
+                fetch_line,
+                line_offset,
+                h_scroll,
+                is_plane_a,
+                plane_w,
+                plane_h,
+                name_table_base,
+                plane_w_mask,
+                priority_filter,
+                screen_width,
+            );
+            screen_x += processed;
+        }
+
+        // Body Loop: Process 8 pixels at a time (Aligned)
+        while screen_x + 8 <= screen_width {
+            // pixel_h is known to be 0 here
+            self.render_tile(
+                screen_x,
+                fetch_line,
+                line_offset,
+                h_scroll,
+                is_plane_a,
+                plane_w,
+                plane_h,
+                name_table_base,
+                plane_w_mask,
+                priority_filter,
+                screen_width,
+            );
+            screen_x += 8;
+        }
+
+        // Tail Loop: Handle remaining pixels
+        while screen_x < screen_width {
+            let processed = self.render_tile(
+                screen_x,
+                fetch_line,
+                line_offset,
+                h_scroll,
+                is_plane_a,
+                plane_w,
+                plane_h,
+                name_table_base,
+                plane_w_mask,
+                priority_filter,
+                screen_width,
+            );
+            screen_x += processed;
+        }
+    }
+
     fn get_active_sprites(&self, line: u16) -> (usize, [SpriteAttributes; 80]) {
         let mut sprites = [SpriteAttributes::default(); 80];
         let mut count = 0;
@@ -707,7 +830,7 @@ impl Vdp {
     }
 
     fn render_sprite_scanline(
-        vram: &[u8; 0x10000],
+        vram: &[u8],
         framebuffer: &mut [u16],
         cram_cache: &[u16; 64],
         line: u16,
@@ -868,11 +991,20 @@ impl Vdp {
     fn fetch_tile_pattern(&self, tile_index: u16, pixel_v: u16, v_flip: bool) -> [u8; 4] {
         let row = if v_flip { 7 - pixel_v } else { pixel_v };
         let row_addr = (tile_index as usize * 32) + (row as usize * 4);
-        // Mask to 64KB boundary. Since each row fetch is 4 bytes and row_addr is a
-        // multiple of 4, masking with 0xFFFC ensures the slice never crosses
-        // the 64KB boundary.
-        let addr = row_addr & 0xFFFC;
-        self.vram[addr..addr + 4].try_into().unwrap()
+        // Mask to 64KB boundary and align to 4 bytes.
+        // We use (row_addr & 0xFFFF) to ensure we wrap within 64KB, and then mask with 0xFFFC
+        // to clear the bottom 2 bits for alignment. 0xFFFC effectively does both, but we make
+        // the wrapping explicit for clarity and safety against potential type width assumptions.
+        let addr = (row_addr & 0xFFFF) & 0xFFFC;
+
+        // SAFETY:
+        // 1. addr is explicitly masked to be <= 0xFFFC and 4-byte aligned.
+        // 2. self.vram is [u8; 0x10000].
+        // 3. Reading 4 bytes from addr <= 0xFFFC accesses bytes up to 0xFFFF, which is within bounds.
+        unsafe {
+            let ptr = self.vram.as_ptr().add(addr) as *const u32;
+            ptr.read_unaligned().to_ne_bytes()
+        }
     }
 
     fn draw_partial_tile_row(
@@ -919,170 +1051,125 @@ impl Vdp {
         let tile_index = entry & 0x07FF;
 
         let patterns = self.fetch_tile_pattern(tile_index, pixel_v, v_flip);
+
+        // Optimization: Skip empty rows
+        if u32::from_ne_bytes(patterns) == 0 {
+            return;
+        }
+
         let p0 = patterns[0];
         let p1 = patterns[1];
         let p2 = patterns[2];
         let p3 = patterns[3];
+
         let palette_base = (palette as usize) * 16;
 
         // SAFETY: Caller ensures dest_idx + 7 is within framebuffer bounds.
         // palette is 2 bits, so palette_base is max 48. col is 4 bits (0-15).
         // Max index is 63, which is within cram_cache bounds (64).
-        unsafe {
-            if h_flip {
-                let mut col = p3 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p3 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 1) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p2 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 2) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p2 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 3) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p1 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 4) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p1 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 5) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p0 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 6) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p0 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 7) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
+        // Get base pointers to avoid repeated offset calculations
+        let cram_ptr = self.cram_cache.as_ptr().add(palette_base);
+        let dest_ptr = self.framebuffer.as_mut_ptr().add(dest_idx);
+
+        if h_flip {
+            let mut col = p3 & 0x0F;
+            if col != 0 { *dest_ptr = *cram_ptr.add(col as usize); }
+            col = p3 >> 4;
+            if col != 0 { *dest_ptr.add(1) = *cram_ptr.add(col as usize); }
+
+            col = p2 & 0x0F;
+            if col != 0 { *dest_ptr.add(2) = *cram_ptr.add(col as usize); }
+            col = p2 >> 4;
+            if col != 0 { *dest_ptr.add(3) = *cram_ptr.add(col as usize); }
+
+            col = p1 & 0x0F;
+            if col != 0 { *dest_ptr.add(4) = *cram_ptr.add(col as usize); }
+            col = p1 >> 4;
+            if col != 0 { *dest_ptr.add(5) = *cram_ptr.add(col as usize); }
+
+            col = p0 & 0x0F;
+            if col != 0 { *dest_ptr.add(6) = *cram_ptr.add(col as usize); }
+            col = p0 >> 4;
+            if col != 0 { *dest_ptr.add(7) = *cram_ptr.add(col as usize); }
+        } else {
+            let mut col = p0 >> 4;
+            if col != 0 { *dest_ptr = *cram_ptr.add(col as usize); }
+            col = p0 & 0x0F;
+            if col != 0 { *dest_ptr.add(1) = *cram_ptr.add(col as usize); }
+
+            col = p1 >> 4;
+            if col != 0 { *dest_ptr.add(2) = *cram_ptr.add(col as usize); }
+            col = p1 & 0x0F;
+            if col != 0 { *dest_ptr.add(3) = *cram_ptr.add(col as usize); }
+
+            col = p2 >> 4;
+            if col != 0 { *dest_ptr.add(4) = *cram_ptr.add(col as usize); }
+            col = p2 & 0x0F;
+            if col != 0 { *dest_ptr.add(5) = *cram_ptr.add(col as usize); }
+
+            col = p3 >> 4;
+            if col != 0 { *dest_ptr.add(6) = *cram_ptr.add(col as usize); }
+            col = p3 & 0x0F;
+            if col != 0 { *dest_ptr.add(7) = *cram_ptr.add(col as usize); }
+        }
+    }
+
+    fn render_tile(
+        &mut self,
+        screen_x: u16,
+        fetch_line: u16,
+        line_offset: usize,
+        h_scroll: u16,
+        is_plane_a: bool,
+        plane_w: usize,
+        plane_h: usize,
+        name_table_base: usize,
+        plane_w_mask: usize,
+        priority_filter: bool,
+        screen_width: u16,
+    ) -> u16 {
+        // Horizontal position in plane
+        // The scroll value is subtracted from the horizontal position
+        let scrolled_h = screen_x.wrapping_sub(h_scroll);
+        let pixel_h = scrolled_h & 0x07;
+        let tile_h = ((scrolled_h >> 3) as usize) & plane_w_mask;
+
+        // Fetch V-scroll for this specific column (per-column VS support)
+        let (v_scroll, _) =
+            self.get_scroll_values(is_plane_a, fetch_line, (screen_x >> 3) as usize);
+
+        // Vertical position in plane
+        let scrolled_v = fetch_line.wrapping_add(v_scroll);
+        let tile_v = (scrolled_v as usize / 8) % plane_h;
+        let pixel_v = scrolled_v % 8;
+
+        let entry = self.fetch_nametable_entry(name_table_base, tile_v, tile_h, plane_w);
+        let tile_index = entry & 0x07FF;
+        let priority = (entry & 0x8000) != 0;
+
+        let pixels_left_in_tile = 8 - pixel_h;
+        let pixels_to_process = std::cmp::min(pixels_left_in_tile, screen_width - screen_x);
+
+        if priority == priority_filter && tile_index != 0 {
+            if pixels_to_process == 8 && pixel_h == 0 {
+                // Fast path for full aligned tile
+                unsafe {
+                    self.draw_full_tile_row(entry, pixel_v, line_offset + screen_x as usize);
                 }
             } else {
-                let mut col = p0 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p0 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 1) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p1 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 2) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p1 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 3) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p2 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 4) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p2 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 5) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p3 >> 4;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 6) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
-                col = p3 & 0x0F;
-                if col != 0 {
-                    *self.framebuffer.get_unchecked_mut(dest_idx + 7) =
-                        *self.cram_cache.get_unchecked(palette_base + col as usize);
-                }
+                self.draw_partial_tile_row(
+                    entry,
+                    pixel_v,
+                    pixel_h,
+                    pixels_to_process,
+                    line_offset + screen_x as usize,
+                );
             }
         }
+
+        pixels_to_process
     }
 
-    fn render_plane(
-        &mut self,
-        is_plane_a: bool,
-        fetch_line: u16,
-        draw_line: u16,
-        priority_filter: bool,
-    ) {
-        let (plane_w, plane_h) = self.plane_size();
-        let name_table_base = if is_plane_a {
-            self.plane_a_address()
-        } else {
-            self.plane_b_address()
-        };
-
-        let screen_width = self.screen_width();
-        let line_offset = (draw_line as usize) * 320;
-        let plane_w_mask = plane_w - 1;
-
-        // Fetch H-scroll once for the line (matching real hardware behavior for per-line/cell)
-        let (_, h_scroll) = self.get_scroll_values(is_plane_a, fetch_line, 0);
-
-        let mut screen_x: u16 = 0;
-
-        while screen_x < screen_width {
-            // Horizontal position in plane
-            // The scroll value is subtracted from the horizontal position
-            let scrolled_h = screen_x.wrapping_sub(h_scroll);
-            let pixel_h = (scrolled_h & 0x07) as u16;
-            let tile_h = ((scrolled_h >> 3) as usize) & plane_w_mask;
-
-            // Fetch V-scroll for this specific column (per-column VS support)
-            let (v_scroll, _) =
-                self.get_scroll_values(is_plane_a, fetch_line, (screen_x >> 3) as usize);
-
-            // Vertical position in plane
-            let scrolled_v = fetch_line.wrapping_add(v_scroll);
-            let tile_v = (scrolled_v as usize / 8) % plane_h;
-            let pixel_v = scrolled_v % 8;
-
-            let entry = self.fetch_nametable_entry(name_table_base, tile_v, tile_h, plane_w);
-            let tile_index = entry & 0x07FF;
-            let priority = (entry & 0x8000) != 0;
-
-            let pixels_left_in_tile = 8 - pixel_h;
-            let pixels_to_process = std::cmp::min(pixels_left_in_tile, screen_width - screen_x);
-
-            if priority == priority_filter && tile_index != 0 {
-                if pixels_to_process == 8 && pixel_h == 0 {
-                    // Fast path for full aligned tile
-                    unsafe {
-                        self.draw_full_tile_row(entry, pixel_v, line_offset + screen_x as usize);
-                    }
-                } else {
-                    self.draw_partial_tile_row(
-                        entry,
-                        pixel_v,
-                        pixel_h,
-                        pixels_to_process,
-                        line_offset + screen_x as usize,
-                    );
-                }
-            }
-
-            screen_x += pixels_to_process;
-        }
-    }
-
-    /// Internal VRAM word write (big-endian, used for DMA)
     pub fn write_vram_word(&mut self, addr: u16, value: u16) {
         let addr = addr as usize;
         if addr < 0x10000 {
@@ -1092,146 +1179,18 @@ impl Vdp {
     }
 }
 
-#[derive(Deserialize, Default)]
-struct VdpControlJsonState {
-    pending: Option<bool>,
-    code: Option<u8>,
-    address: Option<u16>,
-}
-
-#[derive(Deserialize, Default)]
-struct VdpJsonState {
-    status: Option<u16>,
-    h_counter: Option<u16>,
-    v_counter: Option<u16>,
-    dma_pending: Option<bool>,
-    registers: Option<Vec<u8>>,
-    control: Option<VdpControlJsonState>,
-    vram: Option<Vec<u8>>,
-    cram: Option<Vec<u8>>,
-    vsram: Option<Vec<u8>>,
-    line_counter: Option<u8>,
-    last_data_write: Option<u16>,
-    v30_offset: Option<u16>,
-    is_pal: Option<bool>,
-}
-
 impl Debuggable for Vdp {
     fn read_state(&self) -> Value {
-        json!({
-            "status": self.status,
-            "h_counter": self.h_counter,
-            "v_counter": self.v_counter,
-            "dma_pending": self.dma_pending,
-            "registers": self.registers,
-            "control": {
-                "pending": self.control_pending,
-                "code": self.control_code,
-                "address": self.control_address,
-            },
-            "vram": &self.vram[..],
-            "cram": &self.cram[..],
-            "vsram": &self.vsram[..],
-            "line_counter": self.line_counter,
-            "last_data_write": self.last_data_write,
-            "v30_offset": self.v30_offset,
-            "is_pal": self.is_pal
-        })
+        serde_json::to_value(self).unwrap()
     }
 
     fn write_state(&mut self, state: &Value) {
-        let json_state = VdpJsonState::deserialize(state).unwrap_or_else(|e| {
-            eprintln!("Error deserializing VDP state: {}", e);
-            VdpJsonState::default()
-        });
-
-        if let Some(status) = json_state.status {
-            self.status = status;
-        }
-        if let Some(h_counter) = json_state.h_counter {
-            self.h_counter = h_counter;
-        }
-        if let Some(v_counter) = json_state.v_counter {
-            self.v_counter = v_counter;
-        }
-        if let Some(dma_pending) = json_state.dma_pending {
-            self.dma_pending = dma_pending;
-        }
-
-        if let Some(registers) = json_state.registers {
-            for (i, val) in registers.iter().enumerate() {
-                if i < 24 {
-                    self.registers[i] = *val;
-                }
+        if let Ok(mut new_vdp) = serde_json::from_value::<Vdp>(state.clone()) {
+            if new_vdp.framebuffer.len() != 320 * 240 {
+                new_vdp.framebuffer.resize(320 * 240, 0);
             }
-        }
-
-        if let Some(control) = json_state.control {
-            if let Some(pending) = control.pending {
-                self.control_pending = pending;
-            }
-            if let Some(code) = control.code {
-                self.control_code = code;
-            }
-            if let Some(address) = control.address {
-                self.control_address = address;
-            }
-        }
-
-        if let Some(vram) = json_state.vram {
-            for (i, val) in vram.iter().enumerate() {
-                if i < self.vram.len() {
-                    self.vram[i] = *val;
-                }
-            }
-        }
-
-        if let Some(cram) = json_state.cram {
-            for (i, val) in cram.iter().enumerate() {
-                if i < self.cram.len() {
-                    self.cram[i] = *val;
-                }
-            }
-            // Reconstruct CRAM Cache
-            for i in 0..64 {
-                let addr = i * 2;
-                if addr + 1 < self.cram.len() {
-                    let val = ((self.cram[addr + 1] as u16) << 8) | (self.cram[addr] as u16);
-
-                    // Extract 3-bit components (bits 1-3, 5-7, 9-11)
-                    let r3 = (val >> 1) & 0x07;
-                    let g3 = (val >> 5) & 0x07;
-                    let b3 = (val >> 9) & 0x07;
-
-                    // Scale to RGB565 using bit repetition
-                    let r5 = (r3 << 2) | (r3 >> 1);
-                    let g6 = (g3 << 3) | g3;
-                    let b5 = (b3 << 2) | (b3 >> 1);
-
-                    self.cram_cache[i] = ((r5 as u16) << 11) | ((g6 as u16) << 5) | (b5 as u16);
-                }
-            }
-        }
-
-        if let Some(vsram) = json_state.vsram {
-            for (i, val) in vsram.iter().enumerate() {
-                if i < self.vsram.len() {
-                    self.vsram[i] = *val;
-                }
-            }
-        }
-
-        if let Some(line_counter) = json_state.line_counter {
-            self.line_counter = line_counter;
-        }
-        if let Some(last_data_write) = json_state.last_data_write {
-            self.last_data_write = last_data_write;
-        }
-        if let Some(v30_offset) = json_state.v30_offset {
-            self.v30_offset = v30_offset;
-        }
-        if let Some(is_pal) = json_state.is_pal {
-            self.is_pal = is_pal;
+            new_vdp.reconstruct_cram_cache();
+            *self = new_vdp;
         }
     }
 }
@@ -1283,6 +1242,7 @@ mod tests {
 
         vdp.line_counter = 42;
         vdp.last_data_write = 0xCAFE;
+        vdp.v_counter = 0x78;
         vdp.v30_offset = 123;
         vdp.is_pal = true;
 
@@ -1328,6 +1288,20 @@ mod tests {
 
         // Verify CRAM Cache
         assert_eq!(vdp2.cram_cache[1], 0xFFFF);
+    }
+
+    #[test]
+    fn test_genesis_color_to_rgb565() {
+        // Test White (0x0EEE) -> 0xFFFF
+        assert_eq!(Vdp::genesis_color_to_rgb565(0x0EEE), 0xFFFF);
+        // Test Black (0x0000) -> 0x0000
+        assert_eq!(Vdp::genesis_color_to_rgb565(0x0000), 0x0000);
+        // Test Red (0x000E) -> R=7, G=0, B=0 -> R5=31, G6=0, B5=0 -> 0xF800
+        assert_eq!(Vdp::genesis_color_to_rgb565(0x000E), 0xF800);
+        // Test Green (0x00E0) -> R=0, G=7, B=0 -> R5=0, G6=63, B5=0 -> 0x07E0
+        assert_eq!(Vdp::genesis_color_to_rgb565(0x00E0), 0x07E0);
+        // Test Blue (0x0E00) -> R=0, G=0, B=7 -> R5=0, G6=0, B5=31 -> 0x001F
+        assert_eq!(Vdp::genesis_color_to_rgb565(0x0E00), 0x001F);
     }
 }
 
