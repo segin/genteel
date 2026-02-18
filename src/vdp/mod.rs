@@ -1242,6 +1242,7 @@ mod tests {
 
         vdp.line_counter = 42;
         vdp.last_data_write = 0xCAFE;
+        vdp.v_counter = 0x78;
         vdp.v30_offset = 123;
         vdp.is_pal = true;
 

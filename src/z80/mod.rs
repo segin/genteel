@@ -9,6 +9,9 @@ use crate::memory::{IoInterface, MemoryInterface};
 #[cfg(test)]
 pub mod test_utils;
 
+pub mod op_cb;
+use op_cb::CbOps;
+
 /// Z80 Flag bits in the F register
 pub mod flags {
     pub const CARRY: u8 = 0b0000_0001; // C - Carry flag
@@ -20,9 +23,6 @@ pub mod flags {
     pub const ZERO: u8 = 0b0100_0000; // Z - Zero flag
     pub const SIGN: u8 = 0b1000_0000; // S - Sign flag
 }
-
-mod op_cb;
-use op_cb::CbOps;
 
 use crate::debugger::Debuggable;
 use serde::{Deserialize, Serialize};
@@ -227,13 +227,13 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
     }
 
     pub(crate) fn set_parity_flag(&mut self, value: u8) {
-        let parity = value.count_ones().is_multiple_of(2);
+        let parity = value.count_ones().count_ones() % 2 == 0;
         self.set_flag(flags::PARITY, parity);
     }
 
     // ========== Memory access helpers ==========
 
-    fn fetch_byte(&mut self) -> u8 {
+    pub(crate) fn fetch_byte(&mut self) -> u8 {
         let byte = self.memory.read_byte(self.pc as u32);
         self.pc = self.pc.wrapping_add(1);
 
@@ -250,11 +250,11 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         (high << 8) | low
     }
 
-    fn read_byte(&mut self, addr: u16) -> u8 {
+    pub(crate) fn read_byte(&mut self, addr: u16) -> u8 {
         self.memory.read_byte(addr as u32)
     }
 
-    fn write_byte(&mut self, addr: u16, value: u8) {
+    pub(crate) fn write_byte(&mut self, addr: u16, value: u8) {
         self.memory.write_byte(addr as u32, value);
     }
 
@@ -376,7 +376,8 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
 
         // P
-        if self.a.count_ones().is_multiple_of(2) {
+        let parity = self.a.count_ones() % 2 == 0;
+        if parity {
             f |= flags::PARITY;
         }
 
@@ -396,7 +397,8 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
 
         // P
-        if self.a.count_ones().is_multiple_of(2) {
+        let parity = self.a.count_ones() % 2 == 0;
+        if parity {
             f |= flags::PARITY;
         }
 
@@ -416,7 +418,8 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
 
         // P
-        if self.a.count_ones().is_multiple_of(2) {
+        let parity = self.a.count_ones() % 2 == 0;
+        if parity {
             f |= flags::PARITY;
         }
 
@@ -608,7 +611,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
 
     // ========== Helper to get/set register by index ==========
 
-    fn get_reg(&mut self, index: u8) -> u8 {
+    pub(crate) fn get_reg(&mut self, index: u8) -> u8 {
         match index {
             0 => self.b,
             1 => self.c,
@@ -622,7 +625,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
     }
 
-    fn set_reg(&mut self, index: u8, value: u8) {
+    pub(crate) fn set_reg(&mut self, index: u8, value: u8) {
         match index {
             0 => self.b = value,
             1 => self.c = value,
@@ -887,7 +890,6 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 // LD (nn), A
                 let addr = self.fetch_word();
                 self.write_byte(addr, self.a);
-                self.memptr = (self.a as u16) << 8 | addr.wrapping_add(1) & 0xFF;
                 self.memptr = ((self.a as u16) << 8) | (addr.wrapping_add(1) & 0xFF);
                 13
             }
@@ -1261,71 +1263,6 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         11
     }
 
-    // ========== CB Prefix (Bit operations) ==========
-
-    fn execute_cb_prefix(&mut self) -> u8 {
-        let opcode = self.fetch_byte();
-        let x = (opcode >> 6) & 0x03;
-        let y = (opcode >> 3) & 0x07;
-        let z = opcode & 0x07;
-
-        let val = self.get_reg(z);
-
-        match x {
-            0 => {
-                // Rotate/shift
-                let result = self.cb_rotate_shift(val, y);
-                self.set_reg(z, result);
-                if z == 6 {
-                    15
-                } else {
-                    8
-                }
-            }
-            1 => {
-                // BIT y, r
-                self.cb_bit(val, y);
-
-                if z != 6 {
-                    self.set_flag(flags::X_FLAG, (val & 0x08) != 0);
-                    self.set_flag(flags::Y_FLAG, (val & 0x20) != 0);
-                } else {
-                    // For (HL), X/Y come from MEMPTR (WZ) high byte.
-                    let h_memptr = (self.memptr >> 8) as u8;
-                    self.set_flag(flags::X_FLAG, (h_memptr & 0x08) != 0);
-                    self.set_flag(flags::Y_FLAG, (h_memptr & 0x20) != 0);
-                }
-
-                if z == 6 {
-                    12
-                } else {
-                    8
-                }
-            }
-            2 => {
-                // RES y, r
-                let result = self.cb_res(val, y);
-                self.set_reg(z, result);
-                if z == 6 {
-                    15
-                } else {
-                    8
-                }
-            }
-            3 => {
-                // SET y, r
-                let result = self.cb_set(val, y);
-                self.set_reg(z, result);
-                if z == 6 {
-                    15
-                } else {
-                    8
-                }
-            }
-            _ => 8,
-        }
-    }
-
     // ========== ED Prefix (Extended) ==========
 
     fn execute_ed_in_r_c(&mut self, y: u8) -> u8 {
@@ -1403,7 +1340,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
     }
 
-    fn execute_ed_ld_16(&mut self, p: u8, q: u8) -> u8 {
+    fn execute_ed_ld_rp_nn_indirect(&mut self, p: u8, q: u8) -> u8 {
         let nn = self.fetch_word();
         if q == 0 {
             // LD (nn), rp
@@ -1449,7 +1386,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         8
     }
 
-    fn execute_ed_misc(&mut self, y: u8) -> u8 {
+    fn execute_ed_ld_i_r_a_rrd_rld(&mut self, y: u8) -> u8 {
         match y {
             0 => {
                 // LD I, A
@@ -1509,6 +1446,21 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
     }
 
+    fn execute_ed_block(&mut self, y: u8, z: u8) -> u8 {
+        // Block instructions
+        if y >= 4 {
+            match z {
+                0 => self.execute_ldi_ldd(y),
+                1 => self.execute_cpi_cpd(y),
+                2 => self.execute_ini_ind(y),
+                3 => self.execute_outi_outd(y),
+                _ => 8,
+            }
+        } else {
+            8 // Invalid
+        }
+    }
+
     fn execute_ed_prefix(&mut self) -> u8 {
         let opcode = self.fetch_byte();
         let x = (opcode >> 6) & 0x03;
@@ -1522,27 +1474,14 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 0 => self.execute_ed_in_r_c(y),
                 1 => self.execute_ed_out_c_r(y),
                 2 => self.execute_ed_sbc_adc_hl_rp(p, q),
-                3 => self.execute_ed_ld_16(p, q),
+                3 => self.execute_ed_ld_rp_nn_indirect(p, q),
                 4 => self.execute_ed_neg(),
                 5 => self.execute_ed_retn_reti(q),
                 6 => self.execute_ed_im(y),
-                7 => self.execute_ed_misc(y),
+                7 => self.execute_ed_ld_i_r_a_rrd_rld(y),
                 _ => 8,
             },
-            2 => {
-                // Block instructions
-                if y >= 4 {
-                    match z {
-                        0 => self.execute_ldi_ldd(y),
-                        1 => self.execute_cpi_cpd(y),
-                        2 => self.execute_ini_ind(y),
-                        3 => self.execute_outi_outd(y),
-                        _ => 8,
-                    }
-                } else {
-                    8 // Invalid
-                }
-            }
+            2 => self.execute_ed_block(y, z),
             _ => 8, // NONI / NOP
         }
     }
@@ -2040,56 +1979,9 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         self.execute_index_prefix(false)
     }
 
-    fn execute_indexed_cb(&mut self, opcode: u8, addr: u16) -> u8 {
-        let x = (opcode >> 6) & 0x03;
-        let y = (opcode >> 3) & 0x07;
-        let z = opcode & 0x07;
-        let val = self.read_byte(addr);
-
-        match x {
-            0 => {
-                // Rotate/shift
-                let result = self.cb_rotate_shift(val, y);
-                self.write_byte(addr, result);
-                if z != 6 {
-                    self.set_reg(z, result);
-                }
-                23
-            }
-            1 => {
-                // BIT y, (IX/IY+d)
-                self.cb_bit(val, y);
-
-                // X/Y from High Byte of EA
-                let h_ea = (addr >> 8) as u8;
-                self.set_flag(flags::X_FLAG, (h_ea & 0x08) != 0);
-                self.set_flag(flags::Y_FLAG, (h_ea & 0x20) != 0);
-                20
-            }
-            2 => {
-                // RES y, (IX/IY+d)
-                let result = self.cb_res(val, y);
-                self.write_byte(addr, result);
-                if z != 6 {
-                    self.set_reg(z, result);
-                }
-                23
-            }
-            3 => {
-                // SET y, (IX/IY+d)
-                let result = self.cb_set(val, y);
-                self.write_byte(addr, result);
-                if z != 6 {
-                    self.set_reg(z, result);
-                }
-                23
-            }
-            _ => 20,
-        }
-    }
 }
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize)]
 struct Z80State {
     a: Option<u8>,
     f: Option<u8>,
@@ -2135,7 +2027,10 @@ impl<M: MemoryInterface, I: IoInterface> Debuggable for Z80<M, I> {
     }
 
     fn write_state(&mut self, state: &Value) {
-        let z80_state: Z80State = serde_json::from_value(state.clone()).unwrap_or_default();
+        let z80_state: Z80State = serde_json::from_value(state.clone()).unwrap_or_else(|_| {
+            let default: Z80State = serde_json::from_str("{}").unwrap();
+            default
+        });
 
         if let Some(v) = z80_state.a {
             self.a = v;

@@ -1068,11 +1068,3 @@ mod tests {
         );
     }
 }
-
-#[test]
-fn print_instruction_size() {
-    println!(
-        "Size of Instruction: {} bytes",
-        std::mem::size_of::<Instruction>()
-    );
-}

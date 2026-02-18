@@ -6,8 +6,9 @@ import random
 import string
 import unittest
 
-# Ensure we can import audit_tool from the parent directory
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Ensure we can import audit_tool from the scripts directory
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(os.path.join(project_root, 'scripts'))
 import audit_tool
 
 def generate_data(filename, size_mb):

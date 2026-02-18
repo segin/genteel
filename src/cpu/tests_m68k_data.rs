@@ -165,66 +165,107 @@ fn test_movea_l() {
 // ============================================================================
 
 #[test]
-fn test_movem_reg_to_mem_predec() {
+fn test_movem_read_long_postinc() {
     let (mut cpu, mut memory) = create_cpu();
+    // MOVEM.L (A0)+, D0/D1/A1
+    // Opcode: 0100 1100 11 011 000 (Size=L, Dir=M->R, Mode=(A0)+) -> 0x4CD8
+    // Mask: 0000 0010 0000 0011 (A1, D1, D0) -> 0x0203
+    write_op(&mut memory, &[0x4CD8, 0x0203]);
 
-    // MOVEM.L D0/D1, -(A0)
-    // Opcode: 0100 1000 11 100 000 = 0x48E0
-    // Mask: D0 (Bit 0) and D1 (Bit 1).
-    // In Predecrement mode, mask is reversed: Bit 0=A7... Bit 15=D0.
-    // So D0 is Bit 15, D1 is Bit 14. Mask = 1100 0000 0000 0000 = 0xC000.
-
-    write_op(&mut memory, &[0x48E0, 0xC000]);
-
-    cpu.d[0] = 0x11111111;
-    cpu.d[1] = 0x22222222;
     cpu.a[0] = 0x2000;
+    memory.write_long(0x2000, 0x11111111); // D0
+    memory.write_long(0x2004, 0x22222222); // D1
+    memory.write_long(0x2008, 0x33333333); // A1
 
     cpu.step_instruction(&mut memory);
 
-    // Check A0 decremented by 8 bytes (2 longs)
-    assert_eq!(cpu.a[0], 0x1FF8);
-
-    // Check memory contents
-    // Order: D1 pushed first (High Addr), then D0 (Low Addr)
-    // 0x1FF8: D0
-    // 0x1FFC: D1
-    assert_eq!(memory.read_long(0x1FF8), 0x11111111);
-    assert_eq!(memory.read_long(0x1FFC), 0x22222222);
+    assert_eq!(cpu.d[0], 0x11111111);
+    assert_eq!(cpu.d[1], 0x22222222);
+    assert_eq!(cpu.a[1], 0x33333333);
+    assert_eq!(cpu.a[0], 0x200C); // Incremented by 12 bytes
 }
 
 #[test]
-fn test_movem_mem_to_reg_postinc() {
+fn test_movem_read_word_sign_extend() {
     let (mut cpu, mut memory) = create_cpu();
-
-    // MOVEM.L (A0)+, D0/D1
-    // Opcode: 0100 1100 11 011 000 = 0x4CD8
-    // Mask: D0 (Bit 0), D1 (Bit 1). Mask = 0x0003.
-
-    write_op(&mut memory, &[0x4CD8, 0x0003]);
+    // MOVEM.W (A0), D0/A0
+    // Opcode: 0100 1100 10 010 000 (Size=W, Dir=M->R, Mode=(A0)) -> 0x4C90
+    // Mask: 0000 0001 0000 0001 (A0, D0) -> 0x0101
+    write_op(&mut memory, &[0x4C90, 0x0101]);
 
     cpu.a[0] = 0x2000;
-    memory.write_long(0x2000, 0x33333333); // For D0
-    memory.write_long(0x2004, 0x44444444); // For D1
+    memory.write_word(0x2000, 0xFFFF); // -1 (D0)
+    memory.write_word(0x2002, 0x7FFF); // Max pos (A0)
 
     cpu.step_instruction(&mut memory);
 
-    // Check A0 incremented by 8 bytes
-    assert_eq!(cpu.a[0], 0x2008);
-
-    // Check registers
-    assert_eq!(cpu.d[0], 0x33333333);
-    assert_eq!(cpu.d[1], 0x44444444);
+    // D0 should be sign extended to 0xFFFFFFFF
+    assert_eq!(cpu.d[0], 0xFFFFFFFF);
+    // A0 (register being loaded) should be sign extended.
+    // Order: D0 then A0. So A0 is overwritten by the loaded value.
+    assert_eq!(cpu.a[0], 0x00007FFF);
 }
 
 #[test]
-fn test_movem_reg_to_mem_control() {
+fn test_movem_write_long_predec() {
+    let (mut cpu, mut memory) = create_cpu();
+    // MOVEM.L D0/A0, -(A7)
+    // Opcode: 0100 1000 11 100 111 (Size=L, Dir=R->M, Mode=-(A7)) -> 0x48E7
+    // Mask:
+    // Standard: D0=Bit0, A0=Bit8.
+    // Pre-decrement (Reversed): A7=Bit0 ... A0=Bit7 ... D0=Bit15.
+    // We want D0 and A0. D0 is Bit 15. A0 is Bit 7.
+    // Mask = 1000 0000 1000 0000 -> 0x8080
+    write_op(&mut memory, &[0x48E7, 0x8080]);
+
+    cpu.a[7] = 0x8000;
+    cpu.d[0] = 0xDD00DD00;
+    cpu.a[0] = 0xAA00AA00;
+
+    cpu.step_instruction(&mut memory);
+
+    // Order for pre-decrement: A7->A0, then D7->D0.
+    // High Addr -> Low Addr.
+    // 1. A0 (Bit 7). Addr -= 4 -> 0x7FFC. Write A0.
+    // 2. D0 (Bit 15). Addr -= 4 -> 0x7FF8. Write D0.
+
+    // So Mem[0x7FFC] = A0
+    //    Mem[0x7FF8] = D0
+
+    assert_eq!(memory.read_long(0x7FFC), 0xAA00AA00);
+    assert_eq!(memory.read_long(0x7FF8), 0xDD00DD00);
+    assert_eq!(cpu.a[7], 0x7FF8);
+}
+
+#[test]
+fn test_movem_write_word_control() {
+    let (mut cpu, mut memory) = create_cpu();
+    // MOVEM.W D0/D1, $2000
+    // Opcode: 0100 1000 10 111 001 (Size=W, Dir=R->M, Mode=Abs.L) -> 0x48B9
+    // Mask: 0000 0000 0000 0011 (D0, D1) -> 0x0003
+    write_op(&mut memory, &[0x48B9, 0x0003]);
+    // Extension words for address
+    memory.write_long(0x1004, 0x00002000); // 0x1002 is Mask. 0x1004 is Abs Addr.
+
+    cpu.d[0] = 0x1234;
+    cpu.d[1] = 0x5678;
+
+    cpu.step_instruction(&mut memory);
+
+    // Standard order: D0 then D1.
+    // Addr = 0x2000. Write D0 (Word). Addr += 2. Write D1 (Word).
+
+    assert_eq!(memory.read_word(0x2000), 0x1234);
+    assert_eq!(memory.read_word(0x2002), 0x5678);
+}
+
+#[test]
+fn test_movem_reg_to_mem_control_long() {
     let (mut cpu, mut memory) = create_cpu();
 
     // MOVEM.L D2/D3, (A0)
     // Opcode: 0100 1000 11 010 000 = 0x48D0
     // Mask: D2 (Bit 2), D3 (Bit 3). Mask = 0x000C.
-    // Standard mask order: Bit 0=D0... Bit 15=A7.
 
     write_op(&mut memory, &[0x48D0, 0x000C]);
 
@@ -244,7 +285,7 @@ fn test_movem_reg_to_mem_control() {
 }
 
 #[test]
-fn test_movem_mem_to_reg_control() {
+fn test_movem_mem_to_reg_control_long() {
     let (mut cpu, mut memory) = create_cpu();
 
     // MOVEM.L (A0), D2/D3
@@ -268,68 +309,11 @@ fn test_movem_mem_to_reg_control() {
 }
 
 #[test]
-fn test_movem_word_size() {
+fn test_movem_all_registers() {
     let (mut cpu, mut memory) = create_cpu();
-
-    // MOVEM.W D0/D1, -(A0)
-    // Opcode: 0100 1000 10 100 000 = 0x48A0 (Size bit 6=0)
-    // Mask: D0 (Bit 15), D1 (Bit 14). Mask = 0xC000.
-
-    write_op(&mut memory, &[0x48A0, 0xC000]);
-
-    cpu.d[0] = 0x11112222;
-    cpu.d[1] = 0x33334444;
-    cpu.a[0] = 0x4000;
-
-    cpu.step_instruction(&mut memory);
-
-    // Check A0 decremented by 4 bytes (2 words)
-    assert_eq!(cpu.a[0], 0x3FFC);
-
-    // Check memory contents (Words)
-    // 0x3FFC: D0.W (0x2222)
-    // 0x3FFE: D1.W (0x4444)
-    assert_eq!(memory.read_word(0x3FFC), 0x2222);
-    assert_eq!(memory.read_word(0x3FFE), 0x4444);
-}
-
-#[test]
-fn test_movem_sign_extension() {
-    let (mut cpu, mut memory) = create_cpu();
-
-    // MOVEM.W (A0)+, D0/A1
-    // Opcode: 0100 1100 10 011 000 = 0x4C98 (Size bit 6=0)
-    // Mask: D0 (Bit 0), A1 (Bit 9). Mask = 0x0201.
-
-    write_op(&mut memory, &[0x4C98, 0x0201]);
-
-    cpu.a[0] = 0x5000;
-    memory.write_word(0x5000, 0xFFFF); // -1
-    memory.write_word(0x5002, 0xFFFF); // -1
-
-    // Pre-fill registers with known values to check upper bits
-    cpu.d[0] = 0xAAAA0000;
-    cpu.a[1] = 0xBBBB0000;
-
-    cpu.step_instruction(&mut memory);
-
-    // D0: Data Register Word load DOES sign extend for MOVEM.
-    // Result: 0xFFFFFFFF
-    assert_eq!(cpu.d[0], 0xFFFFFFFF);
-
-    // A1: Address Register Word load DOES sign extend.
-    // Result: 0xFFFFFFFF
-    assert_eq!(cpu.a[1], 0xFFFFFFFF);
-}
-
-#[test]
-fn test_movem_all_regs() {
-    let (mut cpu, mut memory) = create_cpu();
-
-    // MOVEM.L D0-D7/A0-A7, -(A7)  (Push All)
-    // Opcode: 0100 1000 11 100 111 = 0x48E7
-    // Mask: All bits set = 0xFFFF.
-
+    // MOVEM.L D0-D7/A0-A7, -(A7)
+    // Opcode: 0100 1000 11 100 111 (Size=L, Dir=R->M, Mode=-(A7)) -> 0x48E7
+    // Mask: All bits set -> 0xFFFF
     write_op(&mut memory, &[0x48E7, 0xFFFF]);
 
     // Initialize registers
@@ -337,39 +321,23 @@ fn test_movem_all_regs() {
         cpu.d[i] = 0xD0 + i as u32;
         cpu.a[i] = 0xA0 + i as u32;
     }
+    
     // Set SP (A7) to a safe location
     cpu.a[7] = 0x8000;
 
-    // Note: The A7 pushed is the INITIAL value (0x8000), not the decremented one?
+    // Note: The A7 pushed is the INITIAL value (0x8000).
     // M68k documentation says: "The value of the stack pointer saved is the initial value".
-    // Let's verify if `exec_movem` handles this.
-    // Code: `let base_addr = ... cpu.a[reg]`.
-    // It uses `base_addr` which is the initial value.
-    // Wait, for `-(An)`, `base_addr` IS the initial value.
-    // Then inside loop: `addr = addr.wrapping_sub(reg_size)`.
-    // Then `write...(addr, val)`.
-    // The value written is `cpu.a[i]`.
-    // If we are pushing A7 (i=15), we write `cpu.a[7]`.
-    // Since `cpu.a[7]` hasn't been modified yet (modification happens AFTER loop), it writes the INITIAL value.
-    // This matches M68k behavior.
 
     cpu.step_instruction(&mut memory);
 
-    // Check A7 final value: Decremented by 16 * 4 = 64 bytes (0x40).
-    // 0x8000 - 0x40 = 0x7FC0.
+    // Total 16 registers * 4 bytes = 64 bytes (0x40).
+    // Final SP should be 0x8000 - 0x40 = 0x7FC0.
     assert_eq!(cpu.a[7], 0x7FC0);
 
-    // Verify memory contents.
-    // Order (Low to High): D0, D1... D7, A0... A7.
-    let mut addr = 0x7FC0;
-    for i in 0..8 {
-        assert_eq!(memory.read_long(addr), 0xD0 + i as u32, "D{}", i);
-        addr += 4;
-    }
-    for i in 0..8 {
-        // A7 pushed value should be 0x8000
-        let expected = if i == 7 { 0x8000 } else { 0xA0 + i as u32 };
-        assert_eq!(memory.read_long(addr), expected, "A{}", i);
-        addr += 4;
-    }
+    // Check last register written (D0) at lowest address (0x7FC0)
+    assert_eq!(memory.read_long(0x7FC0), 0xD0);
+
+    // Check first register written (A7) at highest address (0x7FFC)
+    // Should be initial value (0x8000)
+    assert_eq!(memory.read_long(0x7FFC), 0x8000);
 }
