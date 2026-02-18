@@ -203,7 +203,7 @@ pub struct Emulator {
     pub bus: Rc<RefCell<Bus>>,
     pub input: InputManager,
     pub audio_buffer: Vec<i16>,
-    pub wav_writer: Option<wav_writer::WavWriter>,
+    pub wav_writer: Option<wav_writer::FileWavWriter>,
     pub internal_frame_count: u64,
     pub z80_last_bus_req: bool,
     pub z80_last_reset: bool,
