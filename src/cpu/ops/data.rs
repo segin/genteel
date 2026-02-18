@@ -126,7 +126,10 @@ pub fn exec_movep<M: MemoryInterface>(
     direction: bool,
     memory: &mut M,
 ) -> u32 {
-    let addr = cpu.a[an as usize];
+    let displacement = cpu.read_word(cpu.pc, memory) as i16;
+    cpu.pc = cpu.pc.wrapping_add(2);
+
+    let addr = cpu.a[an as usize].wrapping_add(displacement as i32 as u32);
     let mut cycles = match size {
         Size::Word => 16,
         Size::Long => 24,
