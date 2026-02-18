@@ -227,7 +227,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
     }
 
     pub(crate) fn set_parity_flag(&mut self, value: u8) {
-        let parity = value.count_ones() % 2 == 0;
+        let parity = value.count_ones().count_ones() % 2 == 0;
         self.set_flag(flags::PARITY, parity);
     }
 
@@ -1981,7 +1981,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
 
 }
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize)]
 struct Z80State {
     a: Option<u8>,
     f: Option<u8>,
@@ -2027,7 +2027,10 @@ impl<M: MemoryInterface, I: IoInterface> Debuggable for Z80<M, I> {
     }
 
     fn write_state(&mut self, state: &Value) {
-        let z80_state: Z80State = serde_json::from_value(state.clone()).unwrap_or_default();
+        let z80_state: Z80State = serde_json::from_value(state.clone()).unwrap_or_else(|_| {
+            let default: Z80State = serde_json::from_str("{}").unwrap();
+            default
+        });
 
         if let Some(v) = z80_state.a {
             self.a = v;
