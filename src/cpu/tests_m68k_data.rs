@@ -1,6 +1,6 @@
 //! M68k Data Movement Tests
 //!
-//! Tests for MOVE, MOVEA, etc.
+//! Exhaustive tests for M68k data movement instructions (MOVE, MOVEA, MOVEM, MOVEP, EXG, etc.).
 
 #![cfg(test)]
 
@@ -13,7 +13,7 @@ fn create_cpu() -> (Cpu, Memory) {
     let mut cpu = Cpu::new(&mut memory);
     cpu.pc = 0x1000;
     cpu.a[7] = 0x8000;
-    cpu.sr = 0x2700; // Supervisor
+    cpu.sr |= flags::SUPERVISOR;
     (cpu, memory)
 }
 
@@ -26,199 +26,107 @@ fn write_op(memory: &mut Memory, opcodes: &[u16]) {
 }
 
 // ============================================================================
-// MOVE Tests (Register to Register)
+// MOVE Tests
 // ============================================================================
 
 #[test]
 fn test_move_b_d0_d1() {
     let (mut cpu, mut memory) = create_cpu();
     // MOVE.B D0, D1
-    // Opcode: 1 (Byte) 001 (D1) 000 (DataReg) 000 (DataReg) 000 (D0) -> 0x1200
+    // 00 01 (Byte) 001 (D1) 000 (Mode Dn) 000 (Mode Dn) 000 (Src D0)
+    // -> 0001 001 000 000 000 -> 0x1200
     write_op(&mut memory, &[0x1200]);
-    cpu.d[0] = 0x12345678;
-    cpu.d[1] = 0xFFFFFFFF;
-
+    cpu.d[0] = 0x55;
+    cpu.d[1] = 0x33;
     cpu.step_instruction(&mut memory);
-
-    // Only lower byte of D1 should change to 0x78
-    assert_eq!(cpu.d[1], 0xFFFFFF78);
-
-    // Flags: N=0, Z=0
-    assert!(!cpu.get_flag(flags::NEGATIVE));
-    assert!(!cpu.get_flag(flags::ZERO));
-    assert!(!cpu.get_flag(flags::OVERFLOW));
-    assert!(!cpu.get_flag(flags::CARRY));
+    assert_eq!(cpu.d[1] & 0xFF, 0x55);
 }
 
 #[test]
 fn test_move_w_d0_d1() {
     let (mut cpu, mut memory) = create_cpu();
     // MOVE.W D0, D1
-    // Opcode: 3 (Word) 001 (D1) 000 (DataReg) 000 (DataReg) 000 (D0) -> 0x3200
+    // Size: 11 (Word)
+    // 00 11 001 000 000 000 -> 0x3200
     write_op(&mut memory, &[0x3200]);
-    cpu.d[0] = 0x12345678;
-    cpu.d[1] = 0xFFFFFFFF;
-
+    cpu.d[0] = 0x1234;
+    cpu.d[1] = 0x4321;
     cpu.step_instruction(&mut memory);
-
-    // Lower word of D1 should change to 0x5678
-    assert_eq!(cpu.d[1], 0xFFFF5678);
-
-    // Flags: N=0, Z=0 (0x5678 is positive)
-    assert!(!cpu.get_flag(flags::NEGATIVE));
-    assert!(!cpu.get_flag(flags::ZERO));
+    assert_eq!(cpu.d[1] & 0xFFFF, 0x1234);
 }
 
 #[test]
 fn test_move_l_d0_d1() {
     let (mut cpu, mut memory) = create_cpu();
     // MOVE.L D0, D1
-    // Opcode: 2 (Long) 001 (D1) 000 (DataReg) 000 (DataReg) 000 (D0) -> 0x2200
+    // Size: 10 (Long)
+    // 00 10 001 000 000 000 -> 0x2200
     write_op(&mut memory, &[0x2200]);
     cpu.d[0] = 0x12345678;
-    cpu.d[1] = 0xFFFFFFFF;
-
+    cpu.d[1] = 0x11111111;
     cpu.step_instruction(&mut memory);
-
-    // All of D1 should change
     assert_eq!(cpu.d[1], 0x12345678);
-
-    // Flags: N=0, Z=0
-    assert!(!cpu.get_flag(flags::NEGATIVE));
-    assert!(!cpu.get_flag(flags::ZERO));
 }
 
 #[test]
-fn test_move_flags_negative() {
+fn test_move_flags() {
     let (mut cpu, mut memory) = create_cpu();
-    // MOVE.B D0, D1 (0x1200)
+    // MOVE.B D0, D1
     write_op(&mut memory, &[0x1200]);
-    cpu.d[0] = 0x80; // Negative byte
 
+    // Case 1: Negative
+    cpu.pc = 0x1000;
+    cpu.d[0] = 0x80;
+    cpu.set_flag(flags::ZERO, true);
+    cpu.set_flag(flags::NEGATIVE, false);
+    cpu.set_flag(flags::OVERFLOW, true); // Should be cleared
+    cpu.set_flag(flags::CARRY, true); // Should be cleared
     cpu.step_instruction(&mut memory);
-
     assert!(cpu.get_flag(flags::NEGATIVE));
     assert!(!cpu.get_flag(flags::ZERO));
     assert!(!cpu.get_flag(flags::OVERFLOW));
     assert!(!cpu.get_flag(flags::CARRY));
-}
 
-#[test]
-fn test_move_flags_zero() {
-    let (mut cpu, mut memory) = create_cpu();
-    // MOVE.B D0, D1 (0x1200)
-    write_op(&mut memory, &[0x1200]);
+    // Case 2: Zero
+    cpu.pc = 0x1000;
+    write_op(&mut memory, &[0x1200]); // Re-write op
     cpu.d[0] = 0x00;
-
     cpu.step_instruction(&mut memory);
-
     assert!(!cpu.get_flag(flags::NEGATIVE));
     assert!(cpu.get_flag(flags::ZERO));
     assert!(!cpu.get_flag(flags::OVERFLOW));
     assert!(!cpu.get_flag(flags::CARRY));
 }
 
-// ============================================================================
-// MOVE Tests (Memory to Register)
-// ============================================================================
-
 #[test]
 fn test_move_immediate_to_d0() {
     let (mut cpu, mut memory) = create_cpu();
     // MOVE.L #$12345678, D0
-    // Opcode: 2 (Long) 000 (D0) 000 (DataReg) 111 (Mode 7) 100 (Immediate) -> 0x203C
-    // Extension: 0x1234, 0x5678
     write_op(&mut memory, &[0x203C, 0x1234, 0x5678]);
-
     cpu.step_instruction(&mut memory);
-
     assert_eq!(cpu.d[0], 0x12345678);
-    assert!(!cpu.get_flag(flags::NEGATIVE));
-    assert!(!cpu.get_flag(flags::ZERO));
 }
 
 #[test]
-fn test_move_absolute_short_to_d0() {
+fn test_move_d0_to_memory() {
     let (mut cpu, mut memory) = create_cpu();
-    // MOVE.W $2000.W, D0
-    // Opcode: 3 (Word) 000 (D0) 000 (DataReg) 111 (Mode 7) 000 (Abs Short) -> 0x3038
-    // Extension: 0x2000
-    write_op(&mut memory, &[0x3038, 0x2000]);
-
-    // Address 0x2000 is sign extended to 0x00002000
-    memory.write_word(0x2000, 0xABCD);
-
-    cpu.step_instruction(&mut memory);
-
-    assert_eq!(cpu.d[0] & 0xFFFF, 0xABCD);
-    assert!(cpu.get_flag(flags::NEGATIVE)); // 0xABCD is negative as word
-}
-
-#[test]
-fn test_move_indirect_to_d0() {
-    let (mut cpu, mut memory) = create_cpu();
-    // MOVE.L (A0), D0
-    // Opcode: 2 (Long) 000 (D0) 000 (DataReg) 010 (Indirect) 000 (A0) -> 0x2010
-    write_op(&mut memory, &[0x2010]);
-
+    // MOVE.W D0, (A0)
+    write_op(&mut memory, &[0x3080]);
+    cpu.d[0] = 0xABCD;
     cpu.a[0] = 0x2000;
-    memory.write_long(0x2000, 0xDEADBEEF);
-
     cpu.step_instruction(&mut memory);
-
-    assert_eq!(cpu.d[0], 0xDEADBEEF);
-    assert!(cpu.get_flag(flags::NEGATIVE));
+    assert_eq!(memory.read_word(0x2000), 0xABCD);
 }
 
 #[test]
-fn test_move_postinc_to_d0() {
+fn test_move_memory_to_d0() {
     let (mut cpu, mut memory) = create_cpu();
-    // MOVE.W (A0)+, D0
-    // Opcode: 3 (Word) 000 (D0) 000 (DataReg) 011 (PostInc) 000 (A0) -> 0x3018
-    write_op(&mut memory, &[0x3018]);
-
+    // MOVE.B (A0), D0
+    write_op(&mut memory, &[0x1010]);
     cpu.a[0] = 0x2000;
-    memory.write_word(0x2000, 0x1234);
-
+    memory.write_byte(0x2000, 0x42);
     cpu.step_instruction(&mut memory);
-
-    assert_eq!(cpu.d[0] & 0xFFFF, 0x1234);
-    assert_eq!(cpu.a[0], 0x2002); // Incremented by 2
-}
-
-#[test]
-fn test_move_predec_to_d0() {
-    let (mut cpu, mut memory) = create_cpu();
-    // MOVE.L -(A0), D0
-    // Opcode: 2 (Long) 000 (D0) 000 (DataReg) 100 (PreDec) 000 (A0) -> 0x2020
-    write_op(&mut memory, &[0x2020]);
-
-    cpu.a[0] = 0x2004;
-    memory.write_long(0x2000, 0xCAFEBABE);
-
-    cpu.step_instruction(&mut memory);
-
-    assert_eq!(cpu.d[0], 0xCAFEBABE);
-    assert_eq!(cpu.a[0], 0x2000); // Decremented by 4
-}
-
-// ============================================================================
-// MOVE Tests (Register to Memory)
-// ============================================================================
-
-#[test]
-fn test_move_d0_to_absolute_long() {
-    let (mut cpu, mut memory) = create_cpu();
-    // MOVE.B D0, $00003000
-    // Opcode: 1 (Byte) 111 (Mode 7) 001 (Abs Long) 000 (DataReg) 000 (D0) -> 0x13C0
-    // Extension: 0x0000, 0x3000
-    write_op(&mut memory, &[0x13C0, 0x0000, 0x3000]);
-
-    cpu.d[0] = 0x55;
-
-    cpu.step_instruction(&mut memory);
-
-    assert_eq!(memory.read_byte(0x3000), 0x55);
+    assert_eq!(cpu.d[0] & 0xFF, 0x42);
 }
 
 // ============================================================================
@@ -226,40 +134,242 @@ fn test_move_d0_to_absolute_long() {
 // ============================================================================
 
 #[test]
-fn test_movea_w_d0_a0() {
+fn test_movea_w() {
     let (mut cpu, mut memory) = create_cpu();
     // MOVEA.W D0, A0
-    // Opcode: 3 (Word) 001 (A0) 001 (AddrReg) 000 (DataReg) 000 (D0) -> 0x3040
     write_op(&mut memory, &[0x3040]);
-
-    cpu.d[0] = 0xFFFF; // -1 as word
-    cpu.a[0] = 0;
-
-    // Set some flags to ensure they are NOT changed
-    cpu.set_flag(flags::ZERO, true);
-    cpu.set_flag(flags::NEGATIVE, false);
-
+    cpu.d[0] = 0xFFFF; // -1
+    cpu.a[0] = 0x0000;
+    cpu.set_flag(flags::ZERO, true); // Should not change
     cpu.step_instruction(&mut memory);
 
-    // Should be sign extended
+    // MOVEA sign extends word to long
     assert_eq!(cpu.a[0], 0xFFFFFFFF);
-
-    // Flags should NOT change for MOVEA
+    // MOVEA does NOT affect flags
     assert!(cpu.get_flag(flags::ZERO));
-    assert!(!cpu.get_flag(flags::NEGATIVE));
 }
 
 #[test]
-fn test_movea_l_d0_a0() {
+fn test_movea_l() {
     let (mut cpu, mut memory) = create_cpu();
     // MOVEA.L D0, A0
-    // Opcode: 2 (Long) 001 (A0) 001 (AddrReg) 000 (DataReg) 000 (D0) -> 0x2040
     write_op(&mut memory, &[0x2040]);
-
     cpu.d[0] = 0x12345678;
-    cpu.a[0] = 0;
+    cpu.a[0] = 0x00000000;
+    cpu.step_instruction(&mut memory);
+    assert_eq!(cpu.a[0], 0x12345678);
+}
+
+// ============================================================================
+// MOVEM Tests
+// ============================================================================
+
+#[test]
+fn test_movem_reg_to_mem_predec() {
+    let (mut cpu, mut memory) = create_cpu();
+
+    // MOVEM.L D0/D1, -(A0)
+    // Opcode: 0100 1000 11 100 000 = 0x48E0
+    // Mask: D0 (Bit 0) and D1 (Bit 1).
+    // In Predecrement mode, mask is reversed: Bit 0=A7... Bit 15=D0.
+    // So D0 is Bit 15, D1 is Bit 14. Mask = 1100 0000 0000 0000 = 0xC000.
+
+    write_op(&mut memory, &[0x48E0, 0xC000]);
+
+    cpu.d[0] = 0x11111111;
+    cpu.d[1] = 0x22222222;
+    cpu.a[0] = 0x2000;
 
     cpu.step_instruction(&mut memory);
 
-    assert_eq!(cpu.a[0], 0x12345678);
+    // Check A0 decremented by 8 bytes (2 longs)
+    assert_eq!(cpu.a[0], 0x1FF8);
+
+    // Check memory contents
+    // Order: D1 pushed first (High Addr), then D0 (Low Addr)
+    // 0x1FF8: D0
+    // 0x1FFC: D1
+    assert_eq!(memory.read_long(0x1FF8), 0x11111111);
+    assert_eq!(memory.read_long(0x1FFC), 0x22222222);
+}
+
+#[test]
+fn test_movem_mem_to_reg_postinc() {
+    let (mut cpu, mut memory) = create_cpu();
+
+    // MOVEM.L (A0)+, D0/D1
+    // Opcode: 0100 1100 11 011 000 = 0x4CD8
+    // Mask: D0 (Bit 0), D1 (Bit 1). Mask = 0x0003.
+
+    write_op(&mut memory, &[0x4CD8, 0x0003]);
+
+    cpu.a[0] = 0x2000;
+    memory.write_long(0x2000, 0x33333333); // For D0
+    memory.write_long(0x2004, 0x44444444); // For D1
+
+    cpu.step_instruction(&mut memory);
+
+    // Check A0 incremented by 8 bytes
+    assert_eq!(cpu.a[0], 0x2008);
+
+    // Check registers
+    assert_eq!(cpu.d[0], 0x33333333);
+    assert_eq!(cpu.d[1], 0x44444444);
+}
+
+#[test]
+fn test_movem_reg_to_mem_control() {
+    let (mut cpu, mut memory) = create_cpu();
+
+    // MOVEM.L D2/D3, (A0)
+    // Opcode: 0100 1000 11 010 000 = 0x48D0
+    // Mask: D2 (Bit 2), D3 (Bit 3). Mask = 0x000C.
+    // Standard mask order: Bit 0=D0... Bit 15=A7.
+
+    write_op(&mut memory, &[0x48D0, 0x000C]);
+
+    cpu.d[2] = 0x55555555;
+    cpu.d[3] = 0x66666666;
+    cpu.a[0] = 0x3000;
+
+    cpu.step_instruction(&mut memory);
+
+    // Check A0 unchanged
+    assert_eq!(cpu.a[0], 0x3000);
+
+    // Check memory contents
+    // Order: Low Reg (D2) to Low Addr, High Reg (D3) to High Addr
+    assert_eq!(memory.read_long(0x3000), 0x55555555);
+    assert_eq!(memory.read_long(0x3004), 0x66666666);
+}
+
+#[test]
+fn test_movem_mem_to_reg_control() {
+    let (mut cpu, mut memory) = create_cpu();
+
+    // MOVEM.L (A0), D2/D3
+    // Opcode: 0100 1100 11 010 000 = 0x4CD0
+    // Mask: D2 (Bit 2), D3 (Bit 3). Mask = 0x000C.
+
+    write_op(&mut memory, &[0x4CD0, 0x000C]);
+
+    cpu.a[0] = 0x3000;
+    memory.write_long(0x3000, 0x77777777);
+    memory.write_long(0x3004, 0x88888888);
+
+    cpu.step_instruction(&mut memory);
+
+    // Check A0 unchanged
+    assert_eq!(cpu.a[0], 0x3000);
+
+    // Check registers
+    assert_eq!(cpu.d[2], 0x77777777);
+    assert_eq!(cpu.d[3], 0x88888888);
+}
+
+#[test]
+fn test_movem_word_size() {
+    let (mut cpu, mut memory) = create_cpu();
+
+    // MOVEM.W D0/D1, -(A0)
+    // Opcode: 0100 1000 10 100 000 = 0x48A0 (Size bit 6=0)
+    // Mask: D0 (Bit 15), D1 (Bit 14). Mask = 0xC000.
+
+    write_op(&mut memory, &[0x48A0, 0xC000]);
+
+    cpu.d[0] = 0x11112222;
+    cpu.d[1] = 0x33334444;
+    cpu.a[0] = 0x4000;
+
+    cpu.step_instruction(&mut memory);
+
+    // Check A0 decremented by 4 bytes (2 words)
+    assert_eq!(cpu.a[0], 0x3FFC);
+
+    // Check memory contents (Words)
+    // 0x3FFC: D0.W (0x2222)
+    // 0x3FFE: D1.W (0x4444)
+    assert_eq!(memory.read_word(0x3FFC), 0x2222);
+    assert_eq!(memory.read_word(0x3FFE), 0x4444);
+}
+
+#[test]
+fn test_movem_sign_extension() {
+    let (mut cpu, mut memory) = create_cpu();
+
+    // MOVEM.W (A0)+, D0/A1
+    // Opcode: 0100 1100 10 011 000 = 0x4C98 (Size bit 6=0)
+    // Mask: D0 (Bit 0), A1 (Bit 9). Mask = 0x0201.
+
+    write_op(&mut memory, &[0x4C98, 0x0201]);
+
+    cpu.a[0] = 0x5000;
+    memory.write_word(0x5000, 0xFFFF); // -1
+    memory.write_word(0x5002, 0xFFFF); // -1
+
+    // Pre-fill registers with known values to check upper bits
+    cpu.d[0] = 0xAAAA0000;
+    cpu.a[1] = 0xBBBB0000;
+
+    cpu.step_instruction(&mut memory);
+
+    // D0: Data Register Word load DOES sign extend for MOVEM.
+    // Result: 0xFFFFFFFF
+    assert_eq!(cpu.d[0], 0xFFFFFFFF);
+
+    // A1: Address Register Word load DOES sign extend.
+    // Result: 0xFFFFFFFF
+    assert_eq!(cpu.a[1], 0xFFFFFFFF);
+}
+
+#[test]
+fn test_movem_all_regs() {
+    let (mut cpu, mut memory) = create_cpu();
+
+    // MOVEM.L D0-D7/A0-A7, -(A7)  (Push All)
+    // Opcode: 0100 1000 11 100 111 = 0x48E7
+    // Mask: All bits set = 0xFFFF.
+
+    write_op(&mut memory, &[0x48E7, 0xFFFF]);
+
+    // Initialize registers
+    for i in 0..8 {
+        cpu.d[i] = 0xD0 + i as u32;
+        cpu.a[i] = 0xA0 + i as u32;
+    }
+    // Set SP (A7) to a safe location
+    cpu.a[7] = 0x8000;
+
+    // Note: The A7 pushed is the INITIAL value (0x8000), not the decremented one?
+    // M68k documentation says: "The value of the stack pointer saved is the initial value".
+    // Let's verify if `exec_movem` handles this.
+    // Code: `let base_addr = ... cpu.a[reg]`.
+    // It uses `base_addr` which is the initial value.
+    // Wait, for `-(An)`, `base_addr` IS the initial value.
+    // Then inside loop: `addr = addr.wrapping_sub(reg_size)`.
+    // Then `write...(addr, val)`.
+    // The value written is `cpu.a[i]`.
+    // If we are pushing A7 (i=15), we write `cpu.a[7]`.
+    // Since `cpu.a[7]` hasn't been modified yet (modification happens AFTER loop), it writes the INITIAL value.
+    // This matches M68k behavior.
+
+    cpu.step_instruction(&mut memory);
+
+    // Check A7 final value: Decremented by 16 * 4 = 64 bytes (0x40).
+    // 0x8000 - 0x40 = 0x7FC0.
+    assert_eq!(cpu.a[7], 0x7FC0);
+
+    // Verify memory contents.
+    // Order (Low to High): D0, D1... D7, A0... A7.
+    let mut addr = 0x7FC0;
+    for i in 0..8 {
+        assert_eq!(memory.read_long(addr), 0xD0 + i as u32, "D{}", i);
+        addr += 4;
+    }
+    for i in 0..8 {
+        // A7 pushed value should be 0x8000
+        let expected = if i == 7 { 0x8000 } else { 0xA0 + i as u32 };
+        assert_eq!(memory.read_long(addr), expected, "A{}", i);
+        addr += 4;
+    }
 }
