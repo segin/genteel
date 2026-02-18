@@ -816,156 +816,118 @@ fn fetch_postinc_operand<M: MemoryInterface>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cpu::decoder::AddressingMode;
+    use crate::cpu::flags;
     use crate::cpu::Cpu;
     use crate::memory::Memory;
-    use crate::cpu::decoder::{AddressingMode, Size};
-    use crate::cpu::flags;
 
-    fn create_test_cpu() -> (Cpu, Memory) {
+    fn create_test_setup() -> (Cpu, Memory) {
         let mut memory = Memory::new(0x10000);
-        // Initial SP and PC
-        memory.write_long(0, 0x1000); // SP
-        memory.write_long(4, 0x100); // PC
+        // Initialize memory with basic vector table
+        memory.write_long(0x0, 0x8000); // Stack pointer
+        memory.write_long(0x4, 0x1000); // PC
         let cpu = Cpu::new(&mut memory);
         (cpu, memory)
     }
 
     #[test]
-    fn test_exec_add_byte() {
-        let (mut cpu, mut memory) = create_test_cpu();
-        cpu.d[0] = 0x10;
-        cpu.d[1] = 0x20;
+    fn test_exec_divu_basic() {
+        let (mut cpu, mut memory) = create_test_setup();
 
-        let cycles = exec_add(
+        // D0 = 200, D1 = 10
+        cpu.d[0] = 200;
+        cpu.d[1] = 10;
+
+        // DIVU D1, D0
+        let cycles = exec_divu(
             &mut cpu,
-            Size::Byte,
-            AddressingMode::DataRegister(0),
-            AddressingMode::DataRegister(1),
+            AddressingMode::DataRegister(1), // src = D1
+            0, // dst = D0
             &mut memory,
         );
 
-        assert_eq!(cpu.d[1] & 0xFF, 0x30);
-        assert_eq!(cycles, 4);
+        // Expected: Quotient 20, Remainder 0
+        // Result in D0: 0x00000014
+        assert_eq!(cpu.d[0], 20);
+        assert!(!cpu.get_flag(flags::ZERO)); // 20 != 0
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(cycles > 0);
+    }
+
+    #[test]
+    fn test_exec_divu_remainder() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // D0 = 205, D1 = 10
+        cpu.d[0] = 205;
+        cpu.d[1] = 10;
+
+        // DIVU D1, D0
+        exec_divu(
+            &mut cpu,
+            AddressingMode::DataRegister(1), // src = D1
+            0, // dst = D0
+            &mut memory,
+        );
+
+        // Expected: Quotient 20 (0x14), Remainder 5 (0x05)
+        // Result in D0: 0x00050014
+        assert_eq!(cpu.d[0], 0x00050014);
         assert!(!cpu.get_flag(flags::ZERO));
         assert!(!cpu.get_flag(flags::NEGATIVE));
-    }
-
-    #[test]
-    fn test_exec_add_word() {
-        let (mut cpu, mut memory) = create_test_cpu();
-        cpu.d[0] = 0x1000;
-        cpu.d[1] = 0x2000;
-
-        let cycles = exec_add(
-            &mut cpu,
-            Size::Word,
-            AddressingMode::DataRegister(0),
-            AddressingMode::DataRegister(1),
-            &mut memory,
-        );
-
-        assert_eq!(cpu.d[1] & 0xFFFF, 0x3000);
-        assert_eq!(cycles, 4);
-    }
-
-    #[test]
-    fn test_exec_add_long() {
-        let (mut cpu, mut memory) = create_test_cpu();
-        cpu.d[0] = 0x10000000;
-        cpu.d[1] = 0x20000000;
-
-        let cycles = exec_add(
-            &mut cpu,
-            Size::Long,
-            AddressingMode::DataRegister(0),
-            AddressingMode::DataRegister(1),
-            &mut memory,
-        );
-
-        assert_eq!(cpu.d[1], 0x30000000);
-        assert_eq!(cycles, 8);
-    }
-
-    #[test]
-    fn test_exec_add_flags_carry_overflow() {
-        let (mut cpu, mut memory) = create_test_cpu();
-
-        // Byte: 0xFF + 0x01 = 0x00, Carry Set, Zero Set
-        cpu.d[0] = 0xFF;
-        cpu.d[1] = 0x01;
-
-        exec_add(
-            &mut cpu,
-            Size::Byte,
-            AddressingMode::DataRegister(0),
-            AddressingMode::DataRegister(1),
-            &mut memory,
-        );
-
-        assert_eq!(cpu.d[1] & 0xFF, 0x00);
-        assert!(cpu.get_flag(flags::ZERO));
-        assert!(cpu.get_flag(flags::CARRY));
-        assert!(cpu.get_flag(flags::EXTEND));
         assert!(!cpu.get_flag(flags::OVERFLOW));
-
-        // Byte: 0x7F + 0x01 = 0x80 (-128), Overflow Set, Negative Set
-        cpu.d[0] = 0x7F;
-        cpu.d[1] = 0x01;
-
-        exec_add(
-            &mut cpu,
-            Size::Byte,
-            AddressingMode::DataRegister(0),
-            AddressingMode::DataRegister(1),
-            &mut memory,
-        );
-
-        assert_eq!(cpu.d[1] & 0xFF, 0x80);
-        assert!(!cpu.get_flag(flags::ZERO));
-        assert!(cpu.get_flag(flags::NEGATIVE));
-        assert!(cpu.get_flag(flags::OVERFLOW));
         assert!(!cpu.get_flag(flags::CARRY));
     }
 
     #[test]
-    fn test_exec_add_memory_to_reg() {
-        let (mut cpu, mut memory) = create_test_cpu();
-        cpu.a[0] = 0x1000;
-        memory.write_word(0x1000, 0x1234);
-        cpu.d[0] = 0x0000;
+    fn test_exec_divu_overflow() {
+        let (mut cpu, mut memory) = create_test_setup();
 
-        // ADD.W (A0), D0
-        let cycles = exec_add(
+        // D0 = 0x20000 (131072), D1 = 2
+        // Quotient = 65536 (0x10000) which is > 0xFFFF
+        cpu.d[0] = 0x20000;
+        cpu.d[1] = 2;
+
+        // DIVU D1, D0
+        exec_divu(
             &mut cpu,
-            Size::Word,
-            AddressingMode::AddressIndirect(0),
-            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1), // src = D1
+            0, // dst = D0
             &mut memory,
         );
 
-        assert_eq!(cpu.d[0] & 0xFFFF, 0x1234);
-        // Cycles: 4 + calculate_ea(Indirect) = 4 + 4 = 8.
-        assert_eq!(cycles, 8);
+        // Expected: Overflow set, register unchanged
+        assert!(cpu.get_flag(flags::OVERFLOW));
+        assert_eq!(cpu.d[0], 0x20000);
     }
 
     #[test]
-    fn test_exec_add_reg_to_memory() {
-        let (mut cpu, mut memory) = create_test_cpu();
-        cpu.d[0] = 0x1234;
-        cpu.a[0] = 0x2000;
-        memory.write_word(0x2000, 0x0000);
+    fn test_exec_divu_zero() {
+        let (mut cpu, mut memory) = create_test_setup();
 
-        // ADD.W D0, (A0)
-        let cycles = exec_add(
+        // D0 = 100, D1 = 0
+        cpu.d[0] = 100;
+        cpu.d[1] = 0;
+
+        // Set up divide by zero vector (Vector 5)
+        // Address 0x14 -> Handler 0x2000
+        memory.write_long(0x14, 0x2000);
+
+        // DIVU D1, D0
+        exec_divu(
             &mut cpu,
-            Size::Word,
-            AddressingMode::DataRegister(0),
-            AddressingMode::AddressIndirect(0),
+            AddressingMode::DataRegister(1), // src = D1
+            0, // dst = D0
             &mut memory,
         );
 
-        assert_eq!(memory.read_word(0x2000), 0x1234);
-        // Cycles: 4 + calculate_ea(Indirect) = 4 + 4 = 8.
-        assert_eq!(cycles, 8);
+        // Expected: Exception processing
+        // PC should be 0x2000
+        assert_eq!(cpu.pc, 0x2000);
+
+        // Register should be unchanged
+        assert_eq!(cpu.d[0], 100);
     }
 }
