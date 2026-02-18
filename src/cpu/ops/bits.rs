@@ -689,6 +689,74 @@ mod tests {
     }
 
     #[test]
+    fn test_exec_or_immediate() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x00;
+        let pc = cpu.pc;
+        memory.write_word(pc, 0x00FF); // Immediate value 0xFF in low byte
+
+        // OR.B #$FF, D0
+        let cycles = exec_or(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::Immediate,
+            AddressingMode::DataRegister(0),
+            true,
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[0] & 0xFF, 0xFF);
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert_eq!(cpu.pc, pc + 2); // PC advanced by 2 bytes (1 word)
+        assert_eq!(cycles, 8);
+    }
+
+    #[test]
+    fn test_exec_or_patterns() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x55555555;
+        cpu.d[1] = 0xAAAAAAAA;
+
+        exec_or(
+            &mut cpu,
+            Size::Long,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            true,
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1], 0xFFFFFFFF);
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::ZERO));
+    }
+
+    #[test]
+    fn test_exec_or_flags_clear() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x1234;
+        cpu.d[1] = 0x4321;
+        // Pre-set flags
+        cpu.set_flag(flags::CARRY, true);
+        cpu.set_flag(flags::OVERFLOW, true);
+
+        exec_or(
+            &mut cpu,
+            Size::Word,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            true,
+            &mut memory,
+        );
+
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+    }
+
+    #[test]
     fn test_exec_btst_reg_zero() {
         let (mut cpu, mut memory) = create_test_setup();
         cpu.d[0] = 0x0000_0000;
