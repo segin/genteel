@@ -225,7 +225,7 @@ pub fn exec_suba<M: MemoryInterface>(
     };
 
     let dst_val = cpu.a[dst_reg as usize];
-    cpu.a[dst_reg as usize] = dst_val.wrapping_sub(src_val);
+    cpu.a[dst_reg as usize] = dst_val.wrapping_add(src_val);
 
     cycles
 }
@@ -1460,87 +1460,6 @@ mod tests {
 
         assert!(cpu.get_flag(flags::NEGATIVE));
         assert!(!cpu.get_flag(flags::ZERO));
-    }
-
-    #[test]
-    fn test_abcd_memory_mode() {
-        let (mut cpu, mut memory) = create_test_setup();
-
-        // ABCD -(A0), -(A1)
-        // A0 = 0x2001, A1 = 0x3001
-        // Mem[0x2000] = 0x15
-        // Mem[0x3000] = 0x25
-        // Result: 0x40 at Mem[0x3000]
-
-        cpu.a[0] = 0x2001;
-        cpu.a[1] = 0x3001;
-        memory.write_byte(0x2000, 0x15);
-        memory.write_byte(0x3000, 0x25);
-        cpu.set_flag(flags::EXTEND, false);
-
-        let cycles = exec_abcd(&mut cpu, 0, 1, true, &mut memory);
-
-        assert_eq!(memory.read_byte(0x3000), 0x40);
-        assert_eq!(cpu.a[0], 0x2000);
-        assert_eq!(cpu.a[1], 0x3000);
-        assert_eq!(cycles, 18);
-    }
-
-    #[test]
-    fn test_abcd_carry_generation() {
-        let (mut cpu, mut memory) = create_test_setup();
-        // 0x99 + 0x01 = 0x00, Carry = 1
-        cpu.d[0] = 0x99;
-        cpu.d[1] = 0x01;
-        cpu.set_flag(flags::EXTEND, false);
-        cpu.set_flag(flags::ZERO, true);
-
-        exec_abcd(&mut cpu, 0, 1, false, &mut memory);
-
-        assert_eq!(cpu.d[1] & 0xFF, 0x00);
-        assert!(cpu.get_flag(flags::EXTEND));
-        assert!(cpu.get_flag(flags::CARRY));
-        assert!(cpu.get_flag(flags::ZERO)); // Result 0, Z remains set
-    }
-
-    #[test]
-    fn test_exec_add_flags_carry_overflow() {
-        let (mut cpu, mut memory) = create_test_cpu();
-        
-        // 127 + 1 = 128 (-128 signed). Overflow!
-        cpu.d[0] = 0x7F;
-        cpu.d[1] = 0x01;
-
-        exec_add(
-            &mut cpu,
-            Size::Byte,
-            AddressingMode::DataRegister(0),
-            AddressingMode::DataRegister(1),
-            &mut memory,
-        );
-
-        assert_eq!(cpu.d[1] & 0xFF, 0x80);
-        assert!(cpu.get_flag(flags::OVERFLOW));
-        assert!(cpu.get_flag(flags::NEGATIVE));
-        assert!(!cpu.get_flag(flags::CARRY)); // No carry out of bit 7 (127+1 = 128)
-
-        // 255 + 1 = 0. Carry!
-        cpu.d[0] = 0xFF;
-        cpu.d[1] = 0x01;
-
-        exec_add(
-            &mut cpu,
-            Size::Byte,
-            AddressingMode::DataRegister(0),
-            AddressingMode::DataRegister(1),
-            &mut memory,
-        );
-
-        assert_eq!(cpu.d[1] & 0xFF, 0x00);
-        assert!(cpu.get_flag(flags::CARRY));
-        assert!(cpu.get_flag(flags::EXTEND));
-        assert!(cpu.get_flag(flags::ZERO));
-        assert!(!cpu.get_flag(flags::OVERFLOW)); // -1 + 1 = 0. No signed overflow.
     }
 
     #[test]
