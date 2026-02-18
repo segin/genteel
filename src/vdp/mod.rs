@@ -1037,9 +1037,9 @@ impl Vdp {
 
         let mut screen_x: u16 = 0;
 
-        while screen_x < screen_width {
+        // Head Loop: Handle unaligned start
+        while screen_x < screen_width && (screen_x.wrapping_sub(h_scroll) & 7) != 0 {
             // Horizontal position in plane
-            // The scroll value is subtracted from the horizontal position
             let scrolled_h = screen_x.wrapping_sub(h_scroll);
             let pixel_h = (scrolled_h & 0x07) as u16;
             let tile_h = ((scrolled_h >> 3) as usize) & plane_w_mask;
@@ -1061,20 +1061,75 @@ impl Vdp {
             let pixels_to_process = std::cmp::min(pixels_left_in_tile, screen_width - screen_x);
 
             if priority == priority_filter && tile_index != 0 {
-                if pixels_to_process == 8 && pixel_h == 0 {
-                    // Fast path for full aligned tile
-                    unsafe {
-                        self.draw_full_tile_row(entry, pixel_v, line_offset + screen_x as usize);
-                    }
-                } else {
-                    self.draw_partial_tile_row(
-                        entry,
-                        pixel_v,
-                        pixel_h,
-                        pixels_to_process,
-                        line_offset + screen_x as usize,
-                    );
+                self.draw_partial_tile_row(
+                    entry,
+                    pixel_v,
+                    pixel_h,
+                    pixels_to_process,
+                    line_offset + screen_x as usize,
+                );
+            }
+
+            screen_x += pixels_to_process;
+        }
+
+        // Body Loop: Handle aligned blocks of 8 pixels
+        while screen_x + 8 <= screen_width {
+            let scrolled_h = screen_x.wrapping_sub(h_scroll);
+            // We are aligned to tile boundaries here (pixel_h == 0)
+            let tile_h = ((scrolled_h >> 3) as usize) & plane_w_mask;
+
+            // Fetch V-scroll for this specific column
+            let (v_scroll, _) =
+                self.get_scroll_values(is_plane_a, fetch_line, (screen_x >> 3) as usize);
+
+            // Vertical position in plane
+            let scrolled_v = fetch_line.wrapping_add(v_scroll);
+            let tile_v = (scrolled_v as usize / 8) % plane_h;
+            let pixel_v = scrolled_v % 8;
+
+            let entry = self.fetch_nametable_entry(name_table_base, tile_v, tile_h, plane_w);
+            let tile_index = entry & 0x07FF;
+            let priority = (entry & 0x8000) != 0;
+
+            if priority == priority_filter && tile_index != 0 {
+                // Fast path for full aligned tile
+                // SAFETY: screen_x + 8 <= screen_width ensures we don't write out of bounds
+                unsafe {
+                    self.draw_full_tile_row(entry, pixel_v, line_offset + screen_x as usize);
                 }
+            }
+            screen_x += 8;
+        }
+
+        // Tail Loop: Handle remaining pixels
+        while screen_x < screen_width {
+            let scrolled_h = screen_x.wrapping_sub(h_scroll);
+            let pixel_h = (scrolled_h & 0x07) as u16;
+            let tile_h = ((scrolled_h >> 3) as usize) & plane_w_mask;
+
+            let (v_scroll, _) =
+                self.get_scroll_values(is_plane_a, fetch_line, (screen_x >> 3) as usize);
+
+            let scrolled_v = fetch_line.wrapping_add(v_scroll);
+            let tile_v = (scrolled_v as usize / 8) % plane_h;
+            let pixel_v = scrolled_v % 8;
+
+            let entry = self.fetch_nametable_entry(name_table_base, tile_v, tile_h, plane_w);
+            let tile_index = entry & 0x07FF;
+            let priority = (entry & 0x8000) != 0;
+
+            let pixels_left_in_tile = 8 - pixel_h;
+            let pixels_to_process = std::cmp::min(pixels_left_in_tile, screen_width - screen_x);
+
+            if priority == priority_filter && tile_index != 0 {
+                self.draw_partial_tile_row(
+                    entry,
+                    pixel_v,
+                    pixel_h,
+                    pixels_to_process,
+                    line_offset + screen_x as usize,
+                );
             }
 
             screen_x += pixels_to_process;
