@@ -1,8 +1,6 @@
-use super::Z80;
-use super::flags;
-use crate::memory::{MemoryInterface, IoInterface};
+use crate::memory::{IoInterface, MemoryInterface};
+use crate::z80::{flags, Z80};
 
-/// Trait for Z80 CB Prefix (Bit operations)
 pub trait CbOps {
     fn execute_cb_prefix(&mut self) -> u8;
     fn execute_indexed_cb(&mut self, opcode: u8, addr: u16) -> u8;
@@ -33,13 +31,13 @@ impl<M: MemoryInterface, I: IoInterface> CbOps for Z80<M, I> {
                 cb_bit(self, val, y);
 
                 if z != 6 {
-                    self.set_flag(flags::X_FLAG, (val & 0x08) != 0);
-                    self.set_flag(flags::Y_FLAG, (val & 0x20) != 0);
+                    let f = self.f & !(flags::X_FLAG | flags::Y_FLAG);
+                    self.f = f | (val & (flags::X_FLAG | flags::Y_FLAG));
                 } else {
                     // For (HL), X/Y come from MEMPTR (WZ) high byte.
                     let h_memptr = (self.memptr >> 8) as u8;
-                    self.set_flag(flags::X_FLAG, (h_memptr & 0x08) != 0);
-                    self.set_flag(flags::Y_FLAG, (h_memptr & 0x20) != 0);
+                    let f = self.f & !(flags::X_FLAG | flags::Y_FLAG);
+                    self.f = f | (h_memptr & (flags::X_FLAG | flags::Y_FLAG));
                 }
 
                 if z == 6 {
@@ -94,8 +92,8 @@ impl<M: MemoryInterface, I: IoInterface> CbOps for Z80<M, I> {
 
                 // X/Y from High Byte of EA
                 let h_ea = (addr >> 8) as u8;
-                self.set_flag(flags::X_FLAG, (h_ea & 0x08) != 0);
-                self.set_flag(flags::Y_FLAG, (h_ea & 0x20) != 0);
+                let f = self.f & !(flags::X_FLAG | flags::Y_FLAG);
+                self.f = f | (h_ea & (flags::X_FLAG | flags::Y_FLAG));
                 20
             }
             2 => {
@@ -120,8 +118,6 @@ impl<M: MemoryInterface, I: IoInterface> CbOps for Z80<M, I> {
         }
     }
 }
-
-// ========== Private Helper Functions ==========
 
 fn cb_rotate_shift<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, val: u8, y: u8) -> u8 {
     let result = match y {
