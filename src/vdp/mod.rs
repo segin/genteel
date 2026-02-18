@@ -1035,20 +1035,92 @@ impl Vdp {
         // Fetch H-scroll once for the line (matching real hardware behavior for per-line/cell)
         let (_, h_scroll) = self.get_scroll_values(is_plane_a, fetch_line, 0);
 
+        let mode3 = self.registers[REG_MODE3];
+        let full_screen_vscroll = (mode3 & 0x04) == 0;
+
         let mut screen_x: u16 = 0;
 
+        // --- HEAD: Handle initial partial tile if not aligned ---
+        {
+            let scrolled_h = screen_x.wrapping_sub(h_scroll);
+            let pixel_h = (scrolled_h & 0x07) as u16;
+
+            if pixel_h != 0 {
+                let tile_h = ((scrolled_h >> 3) as usize) & plane_w_mask;
+                let (v_scroll, _) =
+                    self.get_scroll_values(is_plane_a, fetch_line, (screen_x >> 3) as usize);
+                let scrolled_v = fetch_line.wrapping_add(v_scroll);
+                let tile_v = (scrolled_v as usize / 8) % plane_h;
+                let pixel_v = scrolled_v % 8;
+
+                let entry = self.fetch_nametable_entry(name_table_base, tile_v, tile_h, plane_w);
+                let tile_index = entry & 0x07FF;
+                let priority = (entry & 0x8000) != 0;
+
+                let pixels_left_in_tile = 8 - pixel_h;
+                let mut pixels_to_process =
+                    std::cmp::min(pixels_left_in_tile, screen_width - screen_x);
+
+                if !full_screen_vscroll {
+                    let dist_to_next_16 = 16 - (screen_x & 15);
+                    pixels_to_process = std::cmp::min(pixels_to_process, dist_to_next_16);
+                }
+
+                if priority == priority_filter && tile_index != 0 {
+                    self.draw_partial_tile_row(
+                        entry,
+                        pixel_v,
+                        pixel_h,
+                        pixels_to_process,
+                        line_offset + screen_x as usize,
+                    );
+                }
+                screen_x += pixels_to_process;
+            }
+        }
+
+        // --- BODY: Process full 8-pixel tiles ---
+        if full_screen_vscroll {
+            while screen_x + 8 <= screen_width {
+                let scrolled_h = screen_x.wrapping_sub(h_scroll);
+                let tile_h = ((scrolled_h >> 3) as usize) & plane_w_mask;
+
+                let (v_scroll, _) =
+                    self.get_scroll_values(is_plane_a, fetch_line, (screen_x >> 3) as usize);
+
+                let scrolled_v = fetch_line.wrapping_add(v_scroll);
+                let tile_v = (scrolled_v as usize / 8) % plane_h;
+                let pixel_v = scrolled_v % 8;
+
+                let entry = self.fetch_nametable_entry(name_table_base, tile_v, tile_h, plane_w);
+
+                let priority = (entry & 0x8000) != 0;
+                if priority != priority_filter {
+                    screen_x += 8;
+                    continue;
+                }
+
+                let tile_index = entry & 0x07FF;
+                if tile_index != 0 {
+                    // We know we are aligned and have 8 pixels
+                    unsafe {
+                        self.draw_full_tile_row(entry, pixel_v, line_offset + screen_x as usize);
+                    }
+                }
+
+                screen_x += 8;
+            }
+        }
+
+        // --- TAIL: Handle remaining pixels (or generic loop for 2-Cell mode) ---
         while screen_x < screen_width {
-            // Horizontal position in plane
-            // The scroll value is subtracted from the horizontal position
             let scrolled_h = screen_x.wrapping_sub(h_scroll);
             let pixel_h = (scrolled_h & 0x07) as u16;
             let tile_h = ((scrolled_h >> 3) as usize) & plane_w_mask;
 
-            // Fetch V-scroll for this specific column (per-column VS support)
             let (v_scroll, _) =
                 self.get_scroll_values(is_plane_a, fetch_line, (screen_x >> 3) as usize);
 
-            // Vertical position in plane
             let scrolled_v = fetch_line.wrapping_add(v_scroll);
             let tile_v = (scrolled_v as usize / 8) % plane_h;
             let pixel_v = scrolled_v % 8;
@@ -1058,23 +1130,22 @@ impl Vdp {
             let priority = (entry & 0x8000) != 0;
 
             let pixels_left_in_tile = 8 - pixel_h;
-            let pixels_to_process = std::cmp::min(pixels_left_in_tile, screen_width - screen_x);
+            let mut pixels_to_process =
+                std::cmp::min(pixels_left_in_tile, screen_width - screen_x);
+
+            if !full_screen_vscroll {
+                let dist_to_next_16 = 16 - (screen_x & 15);
+                pixels_to_process = std::cmp::min(pixels_to_process, dist_to_next_16);
+            }
 
             if priority == priority_filter && tile_index != 0 {
-                if pixels_to_process == 8 && pixel_h == 0 {
-                    // Fast path for full aligned tile
-                    unsafe {
-                        self.draw_full_tile_row(entry, pixel_v, line_offset + screen_x as usize);
-                    }
-                } else {
-                    self.draw_partial_tile_row(
-                        entry,
-                        pixel_v,
-                        pixel_h,
-                        pixels_to_process,
-                        line_offset + screen_x as usize,
-                    );
-                }
+                self.draw_partial_tile_row(
+                    entry,
+                    pixel_v,
+                    pixel_h,
+                    pixels_to_process,
+                    line_offset + screen_x as usize,
+                );
             }
 
             screen_x += pixels_to_process;
