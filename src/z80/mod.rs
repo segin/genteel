@@ -227,7 +227,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
     }
 
     pub(crate) fn set_parity_flag(&mut self, value: u8) {
-        let parity = value.count_ones().count_ones() % 2 == 0;
+        let parity = value.count_ones() % 2 == 0;
         self.set_flag(flags::PARITY, parity);
     }
 
@@ -1340,7 +1340,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
     }
 
-    fn execute_ed_ld_16(&mut self, p: u8, q: u8) -> u8 {
+    fn execute_ed_ld_rp_nn_indirect(&mut self, p: u8, q: u8) -> u8 {
         let nn = self.fetch_word();
         if q == 0 {
             // LD (nn), rp
@@ -1386,7 +1386,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         8
     }
 
-    fn execute_ed_misc(&mut self, y: u8) -> u8 {
+    fn execute_ed_ld_i_r_a_rrd_rld(&mut self, y: u8) -> u8 {
         match y {
             0 => {
                 // LD I, A
@@ -1446,6 +1446,21 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
     }
 
+    fn execute_ed_block(&mut self, y: u8, z: u8) -> u8 {
+        // Block instructions
+        if y >= 4 {
+            match z {
+                0 => self.execute_ldi_ldd(y),
+                1 => self.execute_cpi_cpd(y),
+                2 => self.execute_ini_ind(y),
+                3 => self.execute_outi_outd(y),
+                _ => 8,
+            }
+        } else {
+            8 // Invalid
+        }
+    }
+
     fn execute_ed_prefix(&mut self) -> u8 {
         let opcode = self.fetch_byte();
         let x = (opcode >> 6) & 0x03;
@@ -1459,27 +1474,14 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 0 => self.execute_ed_in_r_c(y),
                 1 => self.execute_ed_out_c_r(y),
                 2 => self.execute_ed_sbc_adc_hl_rp(p, q),
-                3 => self.execute_ed_ld_16(p, q),
+                3 => self.execute_ed_ld_rp_nn_indirect(p, q),
                 4 => self.execute_ed_neg(),
                 5 => self.execute_ed_retn_reti(q),
                 6 => self.execute_ed_im(y),
-                7 => self.execute_ed_misc(y),
+                7 => self.execute_ed_ld_i_r_a_rrd_rld(y),
                 _ => 8,
             },
-            2 => {
-                // Block instructions
-                if y >= 4 {
-                    match z {
-                        0 => self.execute_ldi_ldd(y),
-                        1 => self.execute_cpi_cpd(y),
-                        2 => self.execute_ini_ind(y),
-                        3 => self.execute_outi_outd(y),
-                        _ => 8,
-                    }
-                } else {
-                    8 // Invalid
-                }
-            }
+            2 => self.execute_ed_block(y, z),
             _ => 8, // NONI / NOP
         }
     }
