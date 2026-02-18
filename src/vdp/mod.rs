@@ -98,8 +98,11 @@ impl<'a> Iterator for SpriteIterator<'a> {
         let addr = self.sat_base + (self.next_idx as usize * 8);
 
         // Optimization: Read all 8 bytes at once
-        let chunk: [u8; 8] = self.vram[addr..addr + 8].try_into().unwrap();
-        let data = u64::from_be_bytes(chunk);
+        // SAFETY: We checked bounds above (addr + 8 <= self.vram.len())
+        let data = unsafe {
+            let ptr = self.vram.as_ptr().add(addr) as *const u64;
+            u64::from_be(ptr.read_unaligned())
+        };
 
         let cur_v = ((data >> 48) as u16) & 0x03FF;
         let v_pos = cur_v.wrapping_sub(128);
