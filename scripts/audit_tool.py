@@ -1,4 +1,17 @@
 #!/usr/bin/env python3
+"""
+Security & Quality Audit Tool for genteel.
+
+This script scans the repository for potential secrets, TODO items, and unsafe code blocks.
+It generates a JSON report and a CSV risk register.
+
+Usage:
+    Run from anywhere within the repository:
+    $ python3 scripts/audit_tool.py
+
+    The report will be generated in the `audit_reports/` directory at the project root.
+"""
+
 import os
 import re
 import json
@@ -25,7 +38,7 @@ def find_project_root():
             return None
         current_dir = parent_dir
 
-# Change to project root
+# Change to project root to ensure consistent paths
 project_root = find_project_root()
 if project_root:
     os.chdir(project_root)
@@ -35,24 +48,23 @@ else:
 
 REPORT_DIR = "audit_reports"
 FINDINGS_JSON = os.path.join(REPORT_DIR, "findings.json")
-FINDINGS_MD = os.path.join(REPORT_DIR, "FINDINGS.md")
-METRICS_JSON = os.path.join(REPORT_DIR, "metrics.json")
 RISK_CSV = os.path.join(REPORT_DIR, "RISK_REGISTER.csv")
 
 findings = []
 
-# Pre-compiled regex patterns at global scope for performance
+# Pre-compiled regex patterns at global scope for performance.
+# Note: String concatenation is used to prevent this script from detecting itself as a false positive.
 SECRET_PATTERNS = {
-    "Generic Secret": re.compile(r"(?i)secret\s*[:=]\s*['\"]"),
-    "API Key": re.compile(r"(?i)api[_-]?key\s*[:=]\s*['\"]"),
-    "Password": re.compile(r"(?i)password\s*[:=]\s*['\"]"),
-    "AWS Key": re.compile(r"AKIA[0-9A-Z]{16}"),
-    "Private Key": re.compile(r"-----BEGIN .* PRIVATE KEY-----"),
-    "Generic Token": re.compile(r"token\s*=\s*['\"][a-zA-Z0-9]{20,}['\"]")
+    "Generic Secret": re.compile(r"(?i)secret" + r"\s*[:=]\s*['\"]"),
+    "API Key": re.compile(r"(?i)api" + r"[_-]?key\s*[:=]\s*['\"]"),
+    "Password": re.compile(r"(?i)password" + r"\s*[:=]\s*['\"]"),
+    "AWS Key": re.compile(r"AKIA" + r"[0-9A-Z]{16}"),
+    "Private Key": re.compile(r"-----BEGIN .* PRIVATE " + r"KEY-----"),
+    "Generic Token": re.compile(r"token" + r"\s*=\s*['\"][a-zA-Z0-9]{20,}['\"]")
 }
 
-TODO_PATTERN = re.compile(r"(TODO|FIXME|XXX):")
-UNSAFE_PATTERN = re.compile(r"unsafe\s*\{")
+TODO_PATTERN = re.compile(r"(TODO|FIXME|XXX)" + r":")
+UNSAFE_PATTERN = re.compile(r"unsafe" + r"\s*\{")
 
 def add_finding(title, severity, description, file_path, line_number=None):
     findings.append({
@@ -66,11 +78,12 @@ def add_finding(title, severity, description, file_path, line_number=None):
 
 def get_tracked_files():
     try:
+        # Run git ls-files to get all tracked files
         out = subprocess.check_output(["git", "ls-files"], stderr=subprocess.STDOUT).decode("utf-8")
         files = out.splitlines()
         # Filter out target directories and audit reports
         return [f for f in files if not f.startswith("audit_reports/") and "/target/" not in f and not f.startswith("target/")]
-    except:
+    except Exception:
         # Fallback to manual scan if git fails
         files = []
         for root, _, filenames in os.walk("."):
@@ -78,7 +91,7 @@ def get_tracked_files():
                 continue
             for f in filenames:
                 if f.endswith((".rs", ".py", ".md", ".sh", ".toml")):
-                    files.append(os.path.join(root, f))
+                    files.append(os.path.relpath(os.path.join(root, f), "."))
         return files
 
 def scan_text_patterns():
@@ -128,14 +141,14 @@ def scan_text_patterns():
 
 def run_audit():
     print("🚀 Starting genteel security & quality audit...")
-    print(f"📂 Working directory: {os.getcwd()}")
+    print(f"📂 Project root: {os.getcwd()}")
     
     if not os.path.exists(REPORT_DIR):
         os.makedirs(REPORT_DIR)
 
     scan_text_patterns()
     
-    # Save Findings
+    # Save Findings (JSON)
     with open(FINDINGS_JSON, 'w') as f:
         json.dump(findings, f, indent=2)
     
