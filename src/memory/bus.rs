@@ -26,21 +26,23 @@ use crate::apu::Apu;
 use crate::debugger::Debuggable;
 use crate::io::Io;
 use crate::vdp::Vdp;
-use serde_json::{json, Value};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// Sega Genesis Memory Bus
 ///
 /// Routes memory accesses to the appropriate component based on address.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Bus {
     /// ROM data (up to 4MB)
+    #[serde(skip)]
     pub rom: Vec<u8>,
 
     /// Work RAM (64KB at 0xFF0000-0xFFFFFF, mirrored in 0xE00000-0xFFFFFF)
-    pub work_ram: [u8; 0x10000],
+    pub work_ram: Box<[u8]>,
 
     /// Z80 RAM (8KB at 0xA00000-0xA01FFF)
-    pub z80_ram: [u8; 0x2000],
+    pub z80_ram: Box<[u8]>,
 
     /// VDP Port access
     pub vdp: Vdp,
@@ -64,8 +66,15 @@ pub struct Bus {
 
     /// Audio synchronization
     pub audio_accumulator: f32,
+    #[serde(skip)]
     pub audio_buffer: Vec<i16>,
     pub sample_rate: u32,
+}
+
+impl Default for Bus {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Bus {
@@ -73,8 +82,8 @@ impl Bus {
     pub fn new() -> Self {
         Self {
             rom: Vec::new(),
-            work_ram: [0; 0x10000],
-            z80_ram: [0; 0x2000],
+            work_ram: vec![0; 0x10000].into_boxed_slice(),
+            z80_ram: vec![0; 0x2000].into_boxed_slice(),
             vdp: Vdp::new(),
             io: Io::new(),
             apu: Apu::new(),
@@ -113,78 +122,11 @@ impl Bus {
         let addr = address & 0xFFFFFF; // 24-bit address bus
 
         match addr {
-            // ROM: 0x000000-0x3FFFFF
-            0x000000..=0x3FFFFF => {
-                let rom_addr = addr as usize;
-                if rom_addr < self.rom.len() {
-                    self.rom[rom_addr]
-                } else {
-                    0xFF // Unmapped ROM area
-                }
-            }
-
-            // Z80 Address Space: 0xA00000-0xA0FFFF
-            0xA00000..=0xA01FFF => {
-                // Z80 RAM (8KB) - Only accessible if Z80 bus is requested (Z80 stopped)
-                if self.z80_bus_request {
-                    self.z80_ram[(addr & 0x1FFF) as usize]
-                } else {
-                    0xFF
-                }
-            }
-            // YM2612 from 68k: 0xA04000-0xA04003
-            0xA04000..=0xA04003 => self.apu.fm.read((addr & 3) as u8),
-            0xA02000..=0xA0FFFF => {
-                // Z80 area bank registers and other hardware
-                0xFF
-            }
-
-            // I/O Ports: 0xA10000-0xA1001F
-            0xA10000..=0xA1001F => self.io.read(addr),
-
-            // Z80 Bus Request: 0xA11100
-            0xA11100..=0xA11101 => {
-                if self.z80_bus_request {
-                    0x00
-                } else {
-                    0x01
-                }
-            }
-
-            // Z80 Reset: 0xA11200
-            0xA11200..=0xA11201 => {
-                if self.z80_reset {
-                    0x00
-                } else {
-                    0x01
-                }
-            }
-
-            // VDP Ports: 0xC00000-0xC0001F
-            0xC00000..=0xC00003 => {
-                // VDP data port
-                (self.vdp.read_data() >> 8) as u8 // Placeholder: usually word-only
-            }
-            0xC00004..=0xC00005 => {
-                // VDP status
-                (self.vdp.read_status() >> 8) as u8
-            }
-            0xC00006..=0xC00007 => (self.vdp.read_status() & 0xFF) as u8,
-            0xC00008..=0xC0000F => {
-                // HV counter
-                (self.vdp.read_hv_counter() >> 8) as u8 // Just a stub for byte read
-            }
-            // PSG: 0xC00010-0xC00011 (write-only, reads return FF)
-            0xC00010..=0xC00011 => 0xFF,
-            0xC00012..=0xC0001F => {
-                // Reserved
-                0xFF
-            }
-
-            // Work RAM: 0xE00000-0xFFFFFF (64KB mirrored)
-            0xE00000..=0xFFFFFF => self.work_ram[(addr & 0xFFFF) as usize],
-
-            // Unmapped regions
+            0x000000..=0x3FFFFF => self.read_rom(addr),
+            0xA00000..=0xA0FFFF => self.read_z80_area(addr),
+            0xA10000..=0xA1FFFF => self.read_io_area(addr),
+            0xC00000..=0xC0FFFF => self.read_vdp_area(addr),
+            0xE00000..=0xFFFFFF => self.read_ram(addr),
             _ => 0xFF,
         }
     }
@@ -194,18 +136,89 @@ impl Bus {
         let addr = address & 0xFFFFFF;
 
         match addr {
-            // ROM is read-only (writes are ignored)
-            0x000000..=0x3FFFFF => {}
+            0x000000..=0x3FFFFF => {} // ROM is read-only
+            0xA00000..=0xA0FFFF => self.write_z80_area(addr, value),
+            0xA10000..=0xA1FFFF => self.write_io_area(addr, value),
+            0xC00000..=0xC0FFFF => self.write_vdp_area(addr, value),
+            0xE00000..=0xFFFFFF => self.write_ram(addr, value),
+            _ => {}
+        }
+    }
 
-            // Z80 RAM
+    fn read_rom(&self, addr: u32) -> u8 {
+        let rom_addr = addr as usize;
+        if rom_addr < self.rom.len() {
+            self.rom[rom_addr]
+        } else {
+            0xFF // Unmapped ROM area
+        }
+    }
+
+    fn read_z80_area(&mut self, addr: u32) -> u8 {
+        match addr {
+            // Z80 RAM (8KB)
             0xA00000..=0xA01FFF => {
-                // Only accessible if Z80 bus is requested (Z80 stopped)
+                if self.z80_bus_request {
+                    self.z80_ram[(addr & 0x1FFF) as usize]
+                } else {
+                    0xFF
+                }
+            }
+            // YM2612
+            0xA04000..=0xA04003 => self.apu.fm.read((addr & 3) as u8),
+            _ => 0xFF,
+        }
+    }
+
+    fn read_io_area(&mut self, addr: u32) -> u8 {
+        match addr {
+            0xA10000..=0xA1001F => self.io.read(addr),
+            0xA11100..=0xA11101 => {
+                if self.z80_bus_request {
+                    0x00
+                } else {
+                    0x01
+                }
+            }
+            0xA11200..=0xA11201 => {
+                if self.z80_reset {
+                    0x00
+                } else {
+                    0x01
+                }
+            }
+            _ => 0xFF,
+        }
+    }
+
+    fn read_vdp_area(&mut self, addr: u32) -> u8 {
+        match addr {
+            0xC00000..=0xC00003 => (self.vdp.read_data() >> 8) as u8,
+            0xC00004..=0xC00007 => {
+                let val = self.vdp.read_status();
+                if (addr & 1) == 0 {
+                    (val >> 8) as u8
+                } else {
+                    (val & 0xFF) as u8
+                }
+            }
+            0xC00008..=0xC0000F => (self.vdp.read_hv_counter() >> 8) as u8,
+            0xC00010..=0xC00011 => 0xFF,
+            _ => 0xFF,
+        }
+    }
+
+    fn read_ram(&self, addr: u32) -> u8 {
+        self.work_ram[(addr & 0xFFFF) as usize]
+    }
+
+    fn write_z80_area(&mut self, addr: u32, value: u8) {
+        match addr {
+            0xA00000..=0xA01FFF => {
                 if self.z80_bus_request {
                     self.z80_ram[(addr & 0x1FFF) as usize] = value;
                 }
             }
-
-            // YM2612 FM Chip: 0xA04000-0xA04003
             0xA04000..=0xA04003 => {
                 let port = (addr & 2) >> 1;
                 let is_data = (addr & 1) != 0;
@@ -215,96 +228,37 @@ impl Bus {
                     self.apu.fm.write_address(port as u8, value);
                 }
             }
-
-            // Z80 area bank registers and other hardware
             0xA06000..=0xA060FF => {
-                // Update bank register (LSB shifts in)
                 let bit = (value as u32 & 1) << (self.z80_bank_bit + 15);
                 let mask = 1 << (self.z80_bank_bit + 15);
                 self.z80_bank_addr = (self.z80_bank_addr & !mask) | bit;
                 self.z80_bank_bit = (self.z80_bank_bit + 1) % 9;
             }
-
-            // I/O Ports
-            0xA10000..=0xA1001F => {
-                self.io.write(addr, value);
-            }
-
-            // Z80 Bus Request
-            0xA11100 => {
-                self.z80_bus_request = (value & 0x01) != 0;
-            }
-            0xA11101 => {
-                // Ignore writes to lower byte of Z80 bus request
-            }
-
-            // Z80 Reset
-            0xA11200 => {
-                self.z80_reset = (value & 0x01) == 0;
-                if self.z80_reset {
-                    self.z80_bank_bit = 0; // Hardware resets shift pointer
-                }
-            }
-            0xA11201 => {}
-
-            // VDP Ports
-            0xC00000..=0xC00003 => {
-                // VDP data port - placeholder (writes are usually words)
-            }
-            0xC00004..=0xC00007 => {
-                // VDP control port - placeholder
-            }
-            // PSG: 0xC00011
-            0xC00011 => {
-                self.apu.psg.write(value);
-            }
-
-            // Work RAM
-            0xE00000..=0xFFFFFF => {
-                let ram_addr = addr & 0xFFFF;
-                self.work_ram[ram_addr as usize] = value;
-            }
-
-            // Unmapped regions (writes ignored)
             _ => {}
         }
     }
 
-    /// Sync audio generation with CPU cycles
-    pub fn sync_audio(
-        &mut self,
-        m68k_cycles: u32,
-        z80: &mut crate::z80::Z80<crate::memory::Z80Bus, crate::memory::Z80Bus>,
-        z80_cycle_debt: &mut f32,
-    ) {
-        const Z80_CYCLES_PER_M68K_CYCLE: f32 = 3.58 / 7.67;
-        let z80_can_run = !self.z80_reset && !self.z80_bus_request;
-
-        // M68k Clock = 7,670,453 Hz
-        let cycles_per_sample = 7670453.0 / (self.sample_rate as f32);
-
-        self.audio_accumulator += m68k_cycles as f32;
-
-        while self.audio_accumulator >= cycles_per_sample {
-            self.audio_accumulator -= cycles_per_sample;
-
-            // Catch up Z80 before generating sample
-            if z80_can_run {
-                *z80_cycle_debt += cycles_per_sample * Z80_CYCLES_PER_M68K_CYCLE;
-                while *z80_cycle_debt >= 1.0 {
-                    let z80_cycles = z80.step();
-                    *z80_cycle_debt -= z80_cycles as f32;
+    fn write_io_area(&mut self, addr: u32, value: u8) {
+        match addr {
+            0xA10000..=0xA1001F => self.io.write(addr, value),
+            0xA11100 => self.z80_bus_request = (value & 0x01) != 0,
+            0xA11200 => {
+                self.z80_reset = (value & 0x01) == 0;
+                if self.z80_reset {
+                    self.z80_bank_bit = 0;
                 }
             }
-
-            let (l, r) = self.apu.step();
-
-            // Limit buffer size to ~20 frames
-            if self.audio_buffer.len() < 32768 {
-                self.audio_buffer.push(l);
-                self.audio_buffer.push(r);
-            }
+            _ => {}
         }
+    }
+
+    fn write_vdp_area(&mut self, addr: u32, value: u8) {
+        if addr == 0xC00011 { self.apu.psg.write(value) }
+    }
+
+    fn write_ram(&mut self, addr: u32, value: u8) {
+        let ram_addr = addr & 0xFFFF;
+        self.work_ram[ram_addr as usize] = value;
     }
 
     /// Read a word (16-bit, big-endian) from the memory map
@@ -328,17 +282,19 @@ impl Bus {
             }
         }
 
-        // VDP Data Port (Word access)
-        if (0xC00000..=0xC00003).contains(&addr) {
-            return self.vdp.read_data();
-        }
-        // VDP Control Port / Status
-        if (0xC00004..=0xC00007).contains(&addr) {
-            return self.vdp.read_status();
-        }
-        // VDP H/V Counter
-        if (0xC00008..=0xC0000F).contains(&addr) {
-            return self.vdp.read_hv_counter();
+        // VDP Ports
+        if (0xC00000..=0xC0001F).contains(&addr) {
+            let offset = addr & 0x1F;
+            if offset < 4 {
+                return self.vdp.read_data();
+            }
+            if offset < 8 {
+                return self.vdp.read_status();
+            }
+            if offset < 0x10 {
+                return self.vdp.read_hv_counter();
+            }
+            return 0xFFFF;
         }
 
         // Optimize Work RAM access (0xE00000-0xFFFFFF, 64KB mirrored)
@@ -358,20 +314,13 @@ impl Bus {
     pub fn write_word(&mut self, address: u32, value: u16) {
         let addr = address & 0xFFFFFF;
 
-        // VDP Data Port
-        if (0xC00000..=0xC00003).contains(&addr) {
-            self.vdp.write_data(value);
-            return;
-        }
-        // VDP Control Port
-        if (0xC00004..=0xC00007).contains(&addr) {
-            self.vdp.write_control(value);
-            if self.vdp.dma_pending {
-                if self.vdp.is_dma_transfer() {
-                    self.run_dma();
-                } else {
-                    self.vdp.execute_dma();
-                }
+        // VDP Ports
+        if (0xC00000..=0xC00007).contains(&addr) {
+            if (addr & 0x1F) < 4 {
+                self.vdp.write_data(value);
+            } else {
+                self.vdp.write_control(value);
+                self.handle_dma();
             }
             return;
         }
@@ -406,6 +355,19 @@ impl Bus {
             }
         }
 
+        // VDP Data Port (Long access = 2 word reads)
+        if addr == 0xC00000 {
+            let high = self.vdp.read_data();
+            let low = self.vdp.read_data();
+            return ((high as u32) << 16) | (low as u32);
+        }
+        // VDP Control Port (Long access)
+        if addr == 0xC00004 {
+            let high = self.vdp.read_status();
+            let low = self.vdp.read_status();
+            return ((high as u32) << 16) | (low as u32);
+        }
+
         // Optimize Work RAM access
         if addr >= 0xE00000 {
             let r_addr = (addr & 0xFFFF) as usize;
@@ -419,6 +381,21 @@ impl Bus {
             }
         }
 
+        // VDP Ports (Unaligned/Other)
+        if (0xC00000..=0xC0001F).contains(&addr) {
+            let offset = addr & 0x1F;
+            // VDP H/V Counter
+            if offset == 8 {
+                let high = self.vdp.read_hv_counter();
+                let low = self.vdp.read_hv_counter();
+                return ((high as u32) << 16) | (low as u32);
+            }
+            // Unaligned/Other VDP Access
+            let high = self.read_word(address);
+            let low = self.read_word(address.wrapping_add(2));
+            return ((high as u32) << 16) | (low as u32);
+        }
+
         let b0 = self.read_byte(address);
         let b1 = self.read_byte(address.wrapping_add(1));
         let b2 = self.read_byte(address.wrapping_add(2));
@@ -429,6 +406,25 @@ impl Bus {
     /// Write a long word (32-bit, big-endian) to the memory map
     pub fn write_long(&mut self, address: u32, value: u32) {
         let addr = address & 0xFFFFFF;
+
+        // VDP Data Port (Long access = 2 word writes)
+        if (0xC00000..=0xC00003).contains(&addr) {
+            let high = (value >> 16) as u16;
+            let low = (value & 0xFFFF) as u16;
+            self.vdp.write_data(high);
+            self.vdp.write_data(low);
+            return;
+        }
+
+        // VDP Control Port (Long access)
+        if (0xC00004..=0xC00007).contains(&addr) {
+            let (high, low) = byte_utils::split_u32_to_u16(value);
+            self.vdp.write_control(high);
+            self.handle_dma();
+            self.vdp.write_control(low);
+            self.handle_dma();
+            return;
+        }
 
         // Optimize Work RAM access
         if addr >= 0xE00000 {
@@ -448,6 +444,16 @@ impl Bus {
         self.write_byte(address.wrapping_add(1), b1);
         self.write_byte(address.wrapping_add(2), b2);
         self.write_byte(address.wrapping_add(3), b3);
+    }
+
+    fn handle_dma(&mut self) {
+        if self.vdp.dma_pending {
+            if self.vdp.is_dma_transfer() {
+                self.run_dma();
+            } else {
+                self.vdp.execute_dma();
+            }
+        }
     }
 
     fn run_dma(&mut self) {
@@ -495,28 +501,58 @@ impl MemoryInterface for Bus {
 
 impl Debuggable for Bus {
     fn read_state(&self) -> Value {
-        json!({
-            "z80_bus_request": self.z80_bus_request,
-            "z80_reset": self.z80_reset,
-            "z80_bank_addr": self.z80_bank_addr,
-            "vdp": self.vdp.read_state(),
-            "io": self.io.read_state(),
-            "apu": self.apu.read_state(),
-        })
+        serde_json::to_value(self).unwrap()
     }
 
     fn write_state(&mut self, state: &Value) {
-        if let Some(req) = state["z80_bus_request"].as_bool() {
-            self.z80_bus_request = req;
+        if let Ok(mut new_bus) = serde_json::from_value::<Bus>(state.clone()) {
+            new_bus.rom = std::mem::take(&mut self.rom);
+            if new_bus.vdp.framebuffer.len() != 320 * 240 {
+                new_bus.vdp.framebuffer.resize(320 * 240, 0);
+            }
+            new_bus.vdp.reconstruct_cram_cache();
+            *self = new_bus;
         }
-        if let Some(reset) = state["z80_reset"].as_bool() {
-            self.z80_reset = reset;
-        }
-        if let Some(bank) = state["z80_bank_addr"].as_u64() {
-            self.z80_bank_addr = bank as u32;
-        }
-        self.vdp.write_state(&state["vdp"]);
-        self.io.write_state(&state["io"]);
-        self.apu.write_state(&state["apu"]);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_bus_state_serialization() {
+        std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024) // 16MB
+            .spawn(|| {
+                let mut bus = Bus::new();
+
+                // Modify state
+                bus.z80_bus_request = true;
+                bus.z80_reset = false;
+                bus.z80_bank_addr = 0x12345;
+
+                // Serialize
+                let state_value = bus.read_state();
+
+                // Create new bus
+                let mut new_bus = Bus::new();
+
+                // Deserialize
+                new_bus.write_state(&state_value);
+
+                // Assert equality
+                assert_eq!(new_bus.z80_bus_request, true);
+                assert_eq!(new_bus.z80_reset, false);
+                assert_eq!(new_bus.z80_bank_addr, 0x12345);
+
+                // Verify VDP/IO/APU keys exist in JSON
+                assert!(state_value.get("vdp").is_some());
+                assert!(state_value.get("io").is_some());
+                assert!(state_value.get("apu").is_some());
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }
