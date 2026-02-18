@@ -139,12 +139,17 @@ impl AddressingMode {
         }
     }
 
-    /// Returns true if this mode is valid as a destination
-    pub fn is_valid_destination(&self) -> bool {
+    /// Returns true if this mode is "Alterable" (excluding PC-relative and Immediate)
+    pub fn is_alterable(&self) -> bool {
         !matches!(
             self,
             AddressingMode::PcDisplacement | AddressingMode::PcIndex | AddressingMode::Immediate
         )
+    }
+
+    /// Returns true if this mode is "Data Alterable" (Alterable and not Address Register Direct)
+    pub fn is_data_alterable(&self) -> bool {
+        self.is_alterable() && !matches!(self, AddressingMode::AddressRegister(_))
     }
 
     /// Returns the number of extension words needed for this addressing mode

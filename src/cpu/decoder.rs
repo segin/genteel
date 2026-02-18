@@ -215,7 +215,7 @@ fn decode_move(opcode: u16, size: Size) -> Instruction {
         }
     };
 
-    if !dst.is_valid_destination() {
+    if !dst.is_alterable() {
         return Instruction::System(SystemInstruction::Unimplemented { opcode });
     }
 
@@ -373,14 +373,7 @@ fn decode_group_4_arithmetic(opcode: u16) -> Option<Instruction> {
     // NBCD
     if opcode & 0xFFC0 == 0x4800 {
         if let Some(dst) = AddressingMode::from_mode_reg(mode, reg) {
-            // NBCD <ea>. <ea> must be Data Alterable.
-            if !matches!(
-                dst,
-                AddressingMode::AddressRegister(_)
-                    | AddressingMode::Immediate
-                    | AddressingMode::PcDisplacement
-                    | AddressingMode::PcIndex
-            ) {
+            if dst.is_data_alterable() {
                 return Some(Instruction::Arithmetic(ArithmeticInstruction::Nbcd { dst }));
             }
         }
