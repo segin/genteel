@@ -1513,4 +1513,27 @@ mod tests {
         assert!(!cpu.get_flag(flags::ZERO));
         assert!(!cpu.get_flag(flags::NEGATIVE));
     }
+
+    #[test]
+    fn test_exec_rotate_memory() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.a[0] = 0x2000;
+        memory.write_word(0x2000, 0x8000);
+
+        // ROL.W (A0)
+        let _cycles = exec_rotate(
+            &mut cpu,
+            Size::Word,
+            AddressingMode::AddressIndirect(0),
+            ShiftCount::Immediate(1),
+            true, // left
+            false,
+            &mut memory,
+        );
+
+        assert_eq!(memory.read_word(0x2000), 0x0001);
+        assert!(cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::ZERO));
+    }
 }
