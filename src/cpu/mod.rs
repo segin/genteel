@@ -558,7 +558,7 @@ impl Cpu {
     }
 
     pub fn read_word<M: MemoryInterface>(&mut self, addr: u32, memory: &mut M) -> u16 {
-        if addr % 2 != 0 {
+        if !addr.is_multiple_of(2) {
             self.process_exception(3, memory);
             return 0;
         }
@@ -566,7 +566,7 @@ impl Cpu {
     }
 
     pub fn read_long<M: MemoryInterface>(&mut self, addr: u32, memory: &mut M) -> u32 {
-        if addr % 2 != 0 {
+        if !addr.is_multiple_of(2) {
             self.process_exception(3, memory);
             return 0;
         }
@@ -579,7 +579,7 @@ impl Cpu {
     }
 
     pub fn write_word<M: MemoryInterface>(&mut self, addr: u32, val: u16, memory: &mut M) {
-        if addr % 2 != 0 {
+        if !addr.is_multiple_of(2) {
             self.process_exception(3, memory);
             return;
         }
@@ -588,7 +588,7 @@ impl Cpu {
     }
 
     pub fn write_long<M: MemoryInterface>(&mut self, addr: u32, val: u32, memory: &mut M) {
-        if addr % 2 != 0 {
+        if !addr.is_multiple_of(2) {
             self.process_exception(3, memory);
             return;
         }

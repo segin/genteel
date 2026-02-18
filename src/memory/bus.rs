@@ -71,6 +71,12 @@ pub struct Bus {
     pub sample_rate: u32,
 }
 
+impl Default for Bus {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Bus {
     /// Create a new empty bus
     pub fn new() -> Self {
@@ -247,10 +253,7 @@ impl Bus {
     }
 
     fn write_vdp_area(&mut self, addr: u32, value: u8) {
-        match addr {
-            0xC00011 => self.apu.psg.write(value),
-            _ => {}
-        }
+        if addr == 0xC00011 { self.apu.psg.write(value) }
     }
 
     fn write_ram(&mut self, addr: u32, value: u8) {

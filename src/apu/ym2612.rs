@@ -236,7 +236,7 @@ impl Ym2612 {
             _ => {
                 self.registers[bank_idx][addr as usize] = val;
                 // Update cached phase increment if frequency registers are written
-                if (addr >= 0xA0 && addr <= 0xA2) || (addr >= 0xA4 && addr <= 0xA6) {
+                if (0xA0..=0xA2).contains(&addr) || (0xA4..=0xA6).contains(&addr) {
                     let ch_offset = (addr & 0x03) as usize;
                     let ch = if bank == Bank::Bank0 {
                         ch_offset

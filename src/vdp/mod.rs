@@ -244,7 +244,7 @@ impl Vdp {
                 let g6 = (g3 << 3) | g3;
                 let b5 = (b3 << 2) | (b3 >> 1);
 
-                self.cram_cache[i] = ((r5 as u16) << 11) | ((g6 as u16) << 5) | (b5 as u16);
+                self.cram_cache[i] = (r5 << 11) | (g6 << 5) | b5;
             }
         }
     }
@@ -443,7 +443,7 @@ impl Vdp {
         let g6 = (g3 << 3) | g3;
         let b5 = (b3 << 2) | (b3 >> 1);
 
-        ((r5 as u16) << 11) | ((g6 as u16) << 5) | (b5 as u16)
+        (r5 << 11) | (g6 << 5) | b5
     }
 
     fn auto_increment(&self) -> u8 {
@@ -939,7 +939,7 @@ impl Vdp {
         // Vertical Scroll (Bits 2 of Mode 3: 0=Full Screen, 1=2-Cell Strips)
         let v_scroll = if (mode3 & 0x04) != 0 {
             // 2-Cell (16-pixel) strips. Each entry in VSRAM is 2 bytes and handles 2 cells.
-            let strip_idx = (tile_h >> 1) as usize;
+            let strip_idx = tile_h >> 1;
             let vs_addr = (strip_idx * 4) + (if is_plane_a { 0 } else { 2 });
             if vs_addr + 1 < self.vsram.len() {
                 (((self.vsram[vs_addr] as u16) << 8) | (self.vsram[vs_addr + 1] as u16)) & 0x03FF

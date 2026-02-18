@@ -227,7 +227,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
     }
 
     pub(crate) fn set_parity_flag(&mut self, value: u8) {
-        let parity = value.count_ones().count_ones() % 2 == 0;
+        let parity = value.count_ones().is_multiple_of(2);
         self.set_flag(flags::PARITY, parity);
     }
 
@@ -376,7 +376,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
 
         // P
-        let parity = self.a.count_ones() % 2 == 0;
+        let parity = self.a.count_ones().is_multiple_of(2);
         if parity {
             f |= flags::PARITY;
         }
@@ -397,7 +397,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
 
         // P
-        let parity = self.a.count_ones() % 2 == 0;
+        let parity = self.a.count_ones().is_multiple_of(2);
         if parity {
             f |= flags::PARITY;
         }
@@ -418,7 +418,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
 
         // P
-        let parity = self.a.count_ones() % 2 == 0;
+        let parity = self.a.count_ones().is_multiple_of(2);
         if parity {
             f |= flags::PARITY;
         }
@@ -1928,7 +1928,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
             0x21 | 0x22 | 0x2A => self.execute_index_load_store_16(opcode, is_ix),
             0x23 | 0x2B => self.execute_index_inc_dec_16(opcode, is_ix),
             0x24 | 0x25 | 0x26 | 0x2C | 0x2D | 0x2E => self.execute_index_8bit_halves(opcode, is_ix),
-            0x34 | 0x35 | 0x36 => self.execute_index_mem_8bit(opcode, is_ix),
+            0x34..=0x36 => self.execute_index_mem_8bit(opcode, is_ix),
 
             // Specific ALU ops
             0x86 | 0x8E | 0x96 | 0x9E | 0xA6 | 0xAE | 0xB6 | 0xBE => {

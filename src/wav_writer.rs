@@ -54,7 +54,7 @@ impl<W: Write + Seek> WavWriter<W> {
     }
 
     pub fn write_samples(&mut self, samples: &[i16]) -> std::io::Result<()> {
-        if samples.len() % (self.channels as usize) != 0 {
+        if !samples.len().is_multiple_of(self.channels as usize) {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
                 "Sample count not aligned with channel count",

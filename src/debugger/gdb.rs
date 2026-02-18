@@ -556,7 +556,7 @@ impl GdbServer {
         };
 
         let data = parts[1];
-        if data.len() % 2 != 0 {
+        if !data.len().is_multiple_of(2) {
             return "E01".to_string();
         }
 
@@ -647,7 +647,7 @@ impl GdbServer {
     }
 
     fn handle_monitor_command(&mut self, cmd_hex: &str) -> String {
-        if cmd_hex.len() % 2 != 0 {
+        if !cmd_hex.len().is_multiple_of(2) {
             return "E01".to_string();
         }
 

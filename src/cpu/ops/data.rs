@@ -103,21 +103,15 @@ pub fn exec_exg(cpu: &mut Cpu, rx: u8, ry: u8, mode: u8) -> u32 {
     match mode {
         0x08 => {
             // Data registers
-            let tmp = cpu.d[rx as usize];
-            cpu.d[rx as usize] = cpu.d[ry as usize];
-            cpu.d[ry as usize] = tmp;
+            cpu.d.swap(rx as usize, ry as usize);
         }
         0x09 => {
             // Address registers
-            let tmp = cpu.a[rx as usize];
-            cpu.a[rx as usize] = cpu.a[ry as usize];
-            cpu.a[ry as usize] = tmp;
+            cpu.a.swap(rx as usize, ry as usize);
         }
         0x11 => {
             // Data and Address register
-            let tmp = cpu.d[rx as usize];
-            cpu.d[rx as usize] = cpu.a[ry as usize];
-            cpu.a[ry as usize] = tmp;
+            std::mem::swap(&mut cpu.d[rx as usize], &mut cpu.a[ry as usize]);
         }
         _ => {}
     }
@@ -288,7 +282,7 @@ pub fn exec_movem<M: MemoryInterface>(
 
 pub fn exec_swap(cpu: &mut Cpu, reg: u8) -> u32 {
     let val = cpu.d[reg as usize];
-    let swapped = (val >> 16) | (val << 16);
+    let swapped = val.rotate_left(16);
     cpu.d[reg as usize] = swapped;
 
     cpu.update_nz_flags(swapped, Size::Long);
