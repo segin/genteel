@@ -742,3 +742,5 @@ mod tests_m68k_data_unit;
 mod tests_m68k_torture;
 #[cfg(test)]
 mod tests_cache;
+#[cfg(test)]
+mod tests_decoder_shift;
