@@ -44,6 +44,7 @@ struct Framework {
     renderer: egui_wgpu::Renderer,
     gui_state: GuiState,
 }
+#[cfg(feature = "gui")]
 impl Framework {
     fn new(
         event_loop: &winit::event_loop::EventLoopWindowTarget<()>,
@@ -202,13 +203,14 @@ pub struct Emulator {
     pub bus: Rc<RefCell<Bus>>,
     pub input: InputManager,
     pub audio_buffer: Vec<i16>,
-    pub wav_writer: Option<wav_writer::WavWriter>,
+    pub wav_writer: Option<wav_writer::FileWavWriter>,
     pub internal_frame_count: u64,
     pub z80_last_bus_req: bool,
     pub z80_last_reset: bool,
     pub z80_trace_count: u32,
     pub input_mapping: InputMapping,
     pub debug: bool,
+    pub allowed_paths: Vec<std::path::PathBuf>,
 }
 impl Default for Emulator {
     fn default() -> Self {
@@ -240,15 +242,8 @@ impl Emulator {
             z80_trace_count: 0,
             input_mapping: InputMapping::default(),
             debug: false,
+            allowed_paths: Vec::new(),
         };
-        // Optimization: Use raw pointer for Z80 bus access to bypass RefCell
-        // Safety: The bus is owned by Rc in Emulator, so it will remain valid.
-        // We ensure no conflicting borrows occur during Z80 execution (in sync_z80).
-        unsafe {
-            let bus_ptr = emulator.bus.as_ptr();
-            emulator.z80.memory.set_raw_bus(bus_ptr);
-            emulator.z80.io.set_raw_bus(bus_ptr);
-        }
         {
             let mut bus = emulator.bus.borrow_mut();
             emulator.cpu.reset(&mut *bus);
@@ -256,7 +251,38 @@ impl Emulator {
         emulator.z80.reset();
         emulator
     }
+    /// Add a path to the whitelist of allowed ROM directories.
+    /// If no paths are added, `load_rom` will fail (secure by default).
+    /// The path is canonicalized before addition.
+    pub fn add_allowed_path<P: AsRef<std::path::Path>>(&mut self, path: P) -> std::io::Result<()> {
+        let canonical = path.as_ref().canonicalize()?;
+        self.allowed_paths.push(canonical);
+        Ok(())
+    }
+
     pub fn load_rom(&mut self, path: &str) -> std::io::Result<()> {
+        // Security: Validate path against whitelist
+        let path_obj = std::path::Path::new(path);
+        let canonical_path = path_obj.canonicalize()?;
+
+        if self.allowed_paths.is_empty() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "ROM loading is restricted. No allowed paths configured.",
+            ));
+        }
+
+        let allowed = self.allowed_paths.iter().any(|allowed_base| {
+            canonical_path.starts_with(allowed_base)
+        });
+
+        if !allowed {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!("Access denied to ROM path: {:?}", canonical_path),
+            ));
+        }
+
         let data = if path.to_lowercase().ends_with(".zip") {
             // Extract ROM from zip file
             Self::load_rom_from_zip(path)?
@@ -351,6 +377,7 @@ impl Emulator {
     pub fn step_frame_internal(&mut self) {
         self.internal_frame_count += 1;
         if self.debug {
+            #[cfg(feature = "gui")]
             self.log_debug(self.internal_frame_count);
         }
         // Genesis timing constants (NTSC):
@@ -392,15 +419,79 @@ impl Emulator {
             bus.vdp.render_line(line);
         }
     }
+    fn sync_audio_static(
+        bus_rc: &Rc<RefCell<Bus>>,
+        m68k_cycles: u32,
+        z80: &mut Z80<Z80Bus, Z80Bus>,
+        z80_cycle_debt: &mut f32,
+    ) {
+        // 1. Update accumulator (needs lock)
+        let (cycles_per_sample, needs_samples, z80_can_run) = {
+            let mut bus = bus_rc.borrow_mut();
+            let cycles_per_sample = 7670453.0 / (bus.sample_rate as f32);
+            bus.audio_accumulator += m68k_cycles as f32;
+
+            let needs_samples = bus.audio_accumulator >= cycles_per_sample;
+            let z80_can_run = !bus.z80_reset && !bus.z80_bus_request;
+            (cycles_per_sample, needs_samples, z80_can_run)
+        };
+
+        if !needs_samples {
+            return;
+        }
+
+        // Loop based on accumulator state
+        loop {
+            // Check if we still need to process samples
+            let should_run_cycle = {
+                let bus = bus_rc.borrow();
+                bus.audio_accumulator >= cycles_per_sample
+            };
+
+            if !should_run_cycle {
+                break;
+            }
+
+            // Decrement accumulator (needs lock)
+            {
+                let mut bus = bus_rc.borrow_mut();
+                bus.audio_accumulator -= cycles_per_sample;
+            }
+
+            // Catch up Z80 (NO LOCK held here)
+            // Z80::step() will internally acquire the lock via SharedBus
+            if z80_can_run {
+                const Z80_CYCLES_PER_M68K_CYCLE: f32 = 3.58 / 7.67;
+                *z80_cycle_debt += cycles_per_sample * Z80_CYCLES_PER_M68K_CYCLE;
+                while *z80_cycle_debt >= 1.0 {
+                    let z80_cycles = z80.step();
+                    *z80_cycle_debt -= z80_cycles as f32;
+                }
+            }
+
+            // APU step (Needs LOCK)
+            {
+                let mut bus = bus_rc.borrow_mut();
+                let (l, r) = bus.apu.step();
+                if bus.audio_buffer.len() < 32768 {
+                    bus.audio_buffer.push(l);
+                    bus.audio_buffer.push(r);
+                }
+            }
+        }
+    }
+
     fn run_cpu_batch_static(
         cpu: &mut Cpu,
-        bus: &mut Bus,
+        bus_rc: &Rc<RefCell<Bus>>,
         max_cycles: u32,
         z80: &mut Z80<Z80Bus, Z80Bus>,
         z80_cycle_debt: &mut f32,
     ) -> CpuBatchResult {
-        let initial_req = bus.z80_bus_request;
-        let initial_rst = bus.z80_reset;
+        let (initial_req, initial_rst) = {
+            let bus = bus_rc.borrow();
+            (bus.z80_bus_request, bus.z80_reset)
+        };
         let mut pending_cycles = 0;
         loop {
             if pending_cycles >= max_cycles {
@@ -409,18 +500,28 @@ impl Emulator {
                     z80_change: None,
                 };
             }
-            let m68k_cycles = cpu.step_instruction(bus);
-            bus.sync_audio(m68k_cycles, z80, z80_cycle_debt);
+            let m68k_cycles = {
+                let mut bus = bus_rc.borrow_mut();
+                cpu.step_instruction(&mut *bus)
+            };
+
+            Self::sync_audio_static(bus_rc, m68k_cycles, z80, z80_cycle_debt);
+
             // Check for Z80 state change
-            if bus.z80_bus_request != initial_req || bus.z80_reset != initial_rst {
+            let (req, rst) = {
+                let bus = bus_rc.borrow();
+                (bus.z80_bus_request, bus.z80_reset)
+            };
+
+            if req != initial_req || rst != initial_rst {
                 return CpuBatchResult {
                     cycles: pending_cycles, // cycles accumulated *before* this instruction
                     z80_change: Some(Z80Change {
                         instruction_cycles: m68k_cycles,
                         old_req: initial_req,
                         old_rst: initial_rst,
-                        new_req: bus.z80_bus_request,
-                        new_rst: bus.z80_reset,
+                        new_req: req,
+                        new_rst: rst,
                     }),
                 };
             }
@@ -431,19 +532,13 @@ impl Emulator {
         const CYCLES_PER_LINE: u32 = 488;
         const BATCH_SIZE: u32 = 128;
         let mut cycles_scanline: u32 = 0;
-        // Hoist borrow out of the loop
-        let mut bus_guard = self.bus.borrow_mut();
-        let bus = &mut *bus_guard;
-        // Set raw bus pointer for Z80 optimization
-        unsafe {
-            self.z80.memory.set_raw_bus(bus);
-        }
+
         while cycles_scanline < CYCLES_PER_LINE {
             let remaining = CYCLES_PER_LINE - cycles_scanline;
             let limit = std::cmp::min(remaining, BATCH_SIZE);
             let result = Self::run_cpu_batch_static(
                 &mut self.cpu,
-                bus,
+                &self.bus,
                 limit,
                 &mut self.z80,
                 z80_cycle_debt,
@@ -451,6 +546,7 @@ impl Emulator {
             // If state changed, revert to old state temporarily so we can sync the batch cycles
             // with the state that was active during those cycles.
             if let Some(change) = result.z80_change {
+                let mut bus = self.bus.borrow_mut();
                 bus.z80_bus_request = change.old_req;
                 bus.z80_reset = change.old_rst;
             }
@@ -458,7 +554,7 @@ impl Emulator {
                 let trigger_vint = line == active_lines && cycles_scanline < 10;
                 Self::sync_z80_static(
                     &mut self.z80,
-                    bus,
+                    &self.bus,
                     result.cycles,
                     trigger_vint,
                     z80_cycle_debt,
@@ -474,16 +570,18 @@ impl Emulator {
             if let Some(change) = result.z80_change {
                 // Now apply the new state for the instruction that caused the change
                 {
+                    let mut bus = self.bus.borrow_mut();
                     bus.z80_bus_request = change.new_req;
                     bus.z80_reset = change.new_rst;
                 }
                 let trigger_vint = line == active_lines && cycles_scanline < 10;
                 // Step one instruction with NEW state, and sync audio for it
                 let m68k_cycles = change.instruction_cycles;
-                bus.sync_audio(m68k_cycles, &mut self.z80, z80_cycle_debt);
+                Self::sync_audio_static(&self.bus, m68k_cycles, &mut self.z80, z80_cycle_debt);
+
                 Self::sync_z80_static(
                     &mut self.z80,
-                    bus,
+                    &self.bus,
                     m68k_cycles,
                     trigger_vint,
                     z80_cycle_debt,
@@ -497,12 +595,10 @@ impl Emulator {
                 cycles_scanline += m68k_cycles;
             }
         }
-        // Clear raw bus pointer
-        self.z80.memory.clear_raw_bus();
     }
     fn sync_z80_static(
         z80: &mut Z80<Z80Bus, Z80Bus>,
-        bus: &mut Bus,
+        bus_rc: &Rc<RefCell<Bus>>,
         _m68k_cycles: u32,
         trigger_vint: bool,
         _z80_cycle_debt: &mut f32,
@@ -515,6 +611,7 @@ impl Emulator {
     ) {
         // Z80 execution state
         let (z80_can_run, z80_is_reset) = {
+            let bus = bus_rc.borrow();
             let prev = *z80_last_bus_req;
             if debug && bus.z80_bus_request != prev {
                 eprintln!(
@@ -682,7 +779,6 @@ impl Emulator {
         }
         Ok(())
     }
-    #[cfg(feature = "gui")]
     fn log_debug(&self, frame_count: u64) {
         let bus = self.bus.borrow();
         let disp_en = if bus.vdp.display_enabled() {
@@ -1074,6 +1170,16 @@ fn main() {
     // Load ROM if provided
     if let Some(ref path) = rom_path {
         println!("Loading ROM: {}", path);
+
+        // Security: Whitelist the directory containing the ROM
+        if let Ok(canonical) = std::path::Path::new(path).canonicalize() {
+            if let Some(parent) = canonical.parent() {
+                if let Err(e) = emulator.add_allowed_path(parent) {
+                    eprintln!("Warning: Failed to whitelist ROM directory: {}", e);
+                }
+            }
+        }
+
         if let Err(e) = emulator.load_rom(path) {
             eprintln!("Failed to load ROM: {}", e);
             return;
@@ -1274,10 +1380,53 @@ mod tests {
         let data = vec![0u8; size];
         std::fs::write(path, &data).unwrap();
         let mut emulator = Emulator::new();
+        // Must whitelist the path first
+        emulator.add_allowed_path(".").unwrap();
         let result = emulator.load_rom(path);
         // Cleanup
         let _ = std::fs::remove_file(path);
         // Verify rejection
         assert!(result.is_err(), "Should reject large ROM file (>32MB)");
+    }
+
+    #[test]
+    fn test_path_traversal_protection() {
+        let dummy_rom = "dummy_traversal.bin";
+        std::fs::write(dummy_rom, b"dummy rom content").unwrap();
+
+        let mut emulator = Emulator::new();
+
+        // 1. Should fail without whitelist (Secure by Default)
+        let result = emulator.load_rom(dummy_rom);
+        assert!(result.is_err(), "Should fail without whitelisted path");
+        assert_eq!(
+            result.as_ref().err().unwrap().kind(),
+            std::io::ErrorKind::PermissionDenied
+        );
+
+        // 2. Should fail if whitelist doesn't cover the file
+        // Whitelist a different directory (e.g., system temp)
+        let temp_dir = std::env::temp_dir();
+        // Only if temp_dir exists and is different from CWD
+        if let Ok(_) = emulator.add_allowed_path(&temp_dir) {
+             let result = emulator.load_rom(dummy_rom);
+             // Assuming dummy_rom is in CWD and not in temp_dir
+             // If CWD == temp_dir, this test is weak but passes.
+             // Usually CWD is project root.
+             // We can check canonical paths to be sure.
+             let cwd = std::env::current_dir().unwrap().canonicalize().unwrap();
+             let temp = temp_dir.canonicalize().unwrap();
+             if !cwd.starts_with(&temp) {
+                 assert!(result.is_err(), "Should fail if path not in whitelist");
+             }
+        }
+
+        // 3. Should succeed if whitelisted
+        emulator.add_allowed_path(".").unwrap();
+        let result = emulator.load_rom(dummy_rom);
+        assert!(result.is_ok(), "Should succeed if path is whitelisted");
+
+        // Cleanup
+        let _ = std::fs::remove_file(dummy_rom);
     }
 }
