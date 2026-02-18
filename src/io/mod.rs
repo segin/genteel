@@ -25,10 +25,11 @@
 //! | 0xA1001F  | Expansion serial control           |
 
 use crate::debugger::Debuggable;
-use serde_json::{json, Value};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// Button state for a Genesis controller
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct ControllerState {
     /// D-pad Up
     pub up: bool,
@@ -90,7 +91,7 @@ impl ControllerState {
 }
 
 /// Controller type
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum ControllerType {
     /// No controller connected
     None,
@@ -102,7 +103,7 @@ pub enum ControllerType {
 }
 
 /// A controller port
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ControllerPort {
     /// Type of controller connected
     pub controller_type: ControllerType,
@@ -113,9 +114,9 @@ pub struct ControllerPort {
     /// TH (bit 6) state from control writes
     pub th_state: bool,
     /// Counter for 6-button protocol
-    th_counter: u8,
+    pub(crate) th_counter: u8,
     /// Timer for 6-button reset (cycles since last TH transition)
-    th_timer: u32,
+    pub(crate) th_timer: u32,
 }
 
 impl ControllerPort {
@@ -205,6 +206,11 @@ impl ControllerPort {
 
     /// Read 6-button controller data
     fn read_6button(&self) -> u8 {
+        // If TH=1, standard 3-button logic applies
+        if self.th_state {
+            return self.read_3button();
+        }
+
         match self.th_counter {
             3 => self.read_cycle3(),
             5 => self.read_extra_buttons(),
@@ -215,11 +221,6 @@ impl ControllerPort {
 
     /// Read data for cycle 3 (controller identification)
     fn read_cycle3(&self) -> u8 {
-        // If TH=1, standard 3-button logic applies
-        if self.th_state {
-            return self.read_3button();
-        }
-
         // Fourth cycle: TH=0 returns controller ID in low nibble
         // Note: Original implementation returns Active High (1=Pressed) for Up/Down
         // and sets bits 2-3 to 1. This behavior is preserved here.
@@ -235,11 +236,6 @@ impl ControllerPort {
 
     /// Read data for cycle 5 (extra buttons X, Y, Z, Mode)
     fn read_extra_buttons(&self) -> u8 {
-        // If TH=1, standard 3-button logic applies
-        if self.th_state {
-            return self.read_3button();
-        }
-
         // Sixth cycle: TH=0 returns X, Y, Z, Mode
         // Note: Original implementation returns Active High (1=Pressed) for these buttons.
         // This behavior is preserved here.
@@ -294,7 +290,7 @@ impl Default for ControllerPort {
 }
 
 /// I/O subsystem managing all controller ports
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Io {
     /// Controller port 1
     pub port1: ControllerPort,
@@ -379,16 +375,13 @@ impl Io {
 
 impl Debuggable for Io {
     fn read_state(&self) -> Value {
-        json!({
-            "version": self.version,
-            "port1_control": self.port1.control,
-            "port2_control": self.port2.control,
-            "expansion_control": self.expansion.control,
-        })
+        serde_json::to_value(self).unwrap()
     }
 
-    fn write_state(&mut self, _state: &Value) {
-        // Simple stub for now
+    fn write_state(&mut self, state: &Value) {
+        if let Ok(new_io) = serde_json::from_value(state.clone()) {
+            *self = new_io;
+        }
     }
 }
 
@@ -562,7 +555,9 @@ mod tests {
         assert_eq!(port.th_counter, 1);
         assert_eq!(port.th_timer, 1000);
 
-        port.update(500);
+        // Multiple small updates summing to 1500
+        port.update(250);
+        port.update(250);
         assert_eq!(port.th_counter, 1);
         assert_eq!(port.th_timer, 1500);
 
@@ -571,11 +566,26 @@ mod tests {
         assert_eq!(port.th_counter, 0);
         assert_eq!(port.th_timer, 1501);
 
-        // Verify write_data resets th_timer
+        // Verify write_data resets th_timer on falling edge
         port.write_data(0x40); // TH high
-        port.write_data(0x00); // TH low
+        port.write_data(0x00); // TH low (Cnt=1)
         assert_eq!(port.th_counter, 1);
         assert_eq!(port.th_timer, 0);
+
+        port.update(1000);
+        port.write_data(0x00); // Falling edge again (TH was already 0, but this shouldn't reset timer)
+        // Wait, write_data check: if self.th_state && !new_th
+        // Current th_state is false. new_th is false. So no reset.
+        assert_eq!(port.th_timer, 1000);
+
+        port.write_data(0x40); // TH high
+        port.write_data(0x00); // Falling edge - SHOULD reset
+        assert_eq!(port.th_counter, 2);
+        assert_eq!(port.th_timer, 0);
+
+        // Verify timeout even if TH is high
+        port.update(1501);
+        assert_eq!(port.th_counter, 0);
     }
 
     #[test]
@@ -611,5 +621,79 @@ mod tests {
         // Verify no changes from invalid ports
         assert_eq!(io.port1.controller_type, ControllerType::SixButton);
         assert_eq!(io.port2.controller_type, ControllerType::None);
+    }
+
+    #[test]
+    fn test_6button_timeout_boundary() {
+        let mut port = ControllerPort::new(ControllerType::SixButton);
+
+        // Initial state
+        port.write_data(0x00); // TH low, increments counter to 1
+        assert_eq!(port.th_counter, 1);
+        assert_eq!(port.th_timer, 0);
+
+        // Case 1: Exact boundary (1500 cycles)
+        // Add 1500 cycles (exactly the threshold)
+        port.update(1500);
+        assert_eq!(port.th_timer, 1500);
+        assert_eq!(port.th_counter, 1, "Counter should NOT reset at exactly 1500 cycles");
+
+        // Case 2: Cross boundary (1501 cycles)
+        // Add 1 more cycle to exceed threshold
+        port.update(1);
+        assert_eq!(port.th_timer, 1501);
+        assert_eq!(port.th_counter, 0, "Counter SHOULD reset at 1501 cycles");
+
+        // Reset
+        port.write_data(0x40); // TH high
+        port.write_data(0x00); // TH low
+        assert_eq!(port.th_counter, 1);
+        assert_eq!(port.th_timer, 0);
+
+        // Case 3: Large update (2000 cycles at once)
+        port.update(2000);
+        assert_eq!(port.th_timer, 2000);
+        assert_eq!(port.th_counter, 0, "Counter SHOULD reset with single large update");
+    }
+
+    #[test]
+    fn test_non_6button_no_timeout() {
+        let mut port = ControllerPort::new(ControllerType::ThreeButton);
+
+        // Ensure initial state
+        assert_eq!(port.th_timer, 0);
+
+        // Attempt update with large cycle count
+        port.update(2000);
+
+        // Timer should not have incremented because it's not a 6-button controller
+        assert_eq!(port.th_timer, 0, "Timer should not increment for non-6-button controller");
+
+        // Verify same for None type
+        let mut port_none = ControllerPort::new(ControllerType::None);
+        port_none.update(2000);
+        assert_eq!(port_none.th_timer, 0, "Timer should not increment for None controller");
+    }
+
+    #[test]
+    fn test_io_update() {
+        let mut io = Io::new();
+        io.set_controller_type(1, ControllerType::SixButton);
+
+        // Initially 0
+        assert_eq!(io.port1.th_counter, 0);
+
+        // Toggle TH (write to control port).
+        // For port 1, data is at 0xA10003.
+        // th_state starts true (high).
+        // Writing 0x00 sets TH low -> falling edge -> increments counter.
+        io.write(0xA10003, 0x00);
+        assert_eq!(io.port1.th_counter, 1);
+
+        // Update IO with cycles > 1500
+        io.update(1501);
+
+        // Should be reset
+        assert_eq!(io.port1.th_counter, 0);
     }
 }
