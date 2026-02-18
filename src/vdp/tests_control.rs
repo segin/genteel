@@ -107,3 +107,16 @@ fn test_control_state_machine() {
         "Next write should be treated as first word of new command"
     );
 }
+
+#[test]
+fn test_read_status_side_effects() {
+    let mut vdp = Vdp::new();
+
+    // Verify that reading status clears the control pending flag.
+    // This is crucial for games that poll status and might interrupt a command sequence.
+    vdp.write_control(0x4000);
+    assert!(vdp.is_control_pending(), "Control pending flag should be set");
+
+    vdp.read_status();
+    assert!(!vdp.is_control_pending(), "Read status MUST clear control pending flag");
+}
