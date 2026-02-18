@@ -82,13 +82,27 @@ impl AudioBuffer {
 
     /// Push samples into the buffer
     pub fn push(&mut self, samples: &[i16]) {
-        for &sample in samples {
-            if self.available < self.buffer.len() {
-                self.buffer[self.write_pos] = sample;
-                self.write_pos = (self.write_pos + 1) % self.buffer.len();
-                self.available += 1;
-            }
+        let space_available = self.buffer.len() - self.available;
+        let count = samples.len().min(space_available);
+
+        if count == 0 {
+            return;
         }
+
+        let first_chunk = count.min(self.buffer.len() - self.write_pos);
+        let second_chunk = count - first_chunk;
+
+        // Copy first chunk
+        self.buffer[self.write_pos..self.write_pos + first_chunk]
+            .copy_from_slice(&samples[..first_chunk]);
+
+        // Copy second chunk (if any)
+        if second_chunk > 0 {
+            self.buffer[..second_chunk].copy_from_slice(&samples[first_chunk..count]);
+        }
+
+        self.write_pos = (self.write_pos + count) % self.buffer.len();
+        self.available += count;
     }
 
     /// Pop samples from the buffer into destination
@@ -304,4 +318,5 @@ mod tests {
         assert_eq!(out2[0], 30);
         assert_eq!(buf.buffer[0], 30);
     }
+
 }
