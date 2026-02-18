@@ -44,6 +44,7 @@ struct Framework {
     renderer: egui_wgpu::Renderer,
     gui_state: GuiState,
 }
+#[cfg(feature = "gui")]
 impl Framework {
     fn new(
         event_loop: &winit::event_loop::EventLoopWindowTarget<()>,
@@ -682,7 +683,6 @@ impl Emulator {
         }
         Ok(())
     }
-    #[cfg(feature = "gui")]
     fn log_debug(&self, frame_count: u64) {
         let bus = self.bus.borrow();
         let disp_en = if bus.vdp.display_enabled() {
@@ -1279,5 +1279,40 @@ mod tests {
         let _ = std::fs::remove_file(path);
         // Verify rejection
         assert!(result.is_err(), "Should reject large ROM file (>32MB)");
+    }
+
+    #[test]
+    fn test_headless_audio_buffer_growth() {
+        let mut emulator = Emulator::new();
+        // Run for 100 frames
+        let frames = 100;
+
+        // We can't easily check internal state during `run` because it takes `&mut self` and blocks.
+        // But we can check after.
+        emulator.run(frames);
+
+        // After run, buffer should be empty because it's cleared at the end of the loop
+        assert!(emulator.audio_buffer.is_empty(), "Audio buffer should be empty after headless run");
+
+        // Also check capacity to see if it grew excessively (though clear() keeps capacity)
+        // With 100 frames, it should definitely not need > 1MB capacity if properly cleared.
+        assert!(emulator.audio_buffer.capacity() < 1000000, "Capacity should be reasonable");
+    }
+
+    #[test]
+    fn test_step_frame_without_clear() {
+        let mut emulator = Emulator::new();
+        // Manually step 100 frames without clearing
+        for _ in 0..100 {
+            emulator.step_frame(None);
+        }
+
+        // Now buffer should have some data
+        let len = emulator.audio_buffer.len();
+        // 100 frames * ~1470 samples/frame * 2 (stereo) = ~294,000 samples
+        // If limited to 32768, it should be limited to roughly 32768 + one frame.
+
+        assert!(len > 0, "Audio buffer should have samples");
+        assert!(len < 32768 + 3000, "Audio buffer should be limited to ~32K + margin. Found: {}", len);
     }
 }
