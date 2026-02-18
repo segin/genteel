@@ -28,10 +28,14 @@ const CRAM_READ: u8 = 0x08;
 const REG_MODE1: usize = 0;
 const REG_MODE2: usize = 1;
 const REG_PLANE_A: usize = 2;
-const REG_MODE3: usize = 11;
+#[allow(dead_code)]
+const REG_WINDOW: usize = 3;
 const REG_PLANE_B: usize = 4;
 const REG_SPRITE_TABLE: usize = 5;
+#[allow(dead_code)] // Mode 4 only
+const REG_SPRITE_PATTERN: usize = 6;
 const REG_BG_COLOR: usize = 7;
+const REG_MODE3: usize = 11;
 const REG_MODE4: usize = 12;
 const REG_HSCROLL: usize = 13;
 const REG_AUTO_INC: usize = 15;
