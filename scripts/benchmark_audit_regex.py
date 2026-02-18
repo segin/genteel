@@ -1,14 +1,17 @@
 import time
 import re
 import os
+import sys
 import random
 import string
 
-FILENAME = "benchmark_data.txt"
+# Calculate repository root
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+FILENAME = os.path.join(REPO_ROOT, "benchmark_data.txt")
 FILE_SIZE_MB = 50
 
 def generate_data():
-    print(f"[*] Generating {FILE_SIZE_MB}MB test file...")
+    print(f"[*] Generating {FILE_SIZE_MB}MB test file at {FILENAME}...")
     chunk_size = 1024 * 1024 # 1MB
     chars = string.ascii_letters + string.digits + " \n\t"
 
@@ -99,6 +102,10 @@ def scan_fast():
     return duration
 
 if __name__ == "__main__":
+    if not os.path.exists("Cargo.toml"):
+        print("Error: This script must be run from the repository root.")
+        sys.exit(1)
+
     if not os.path.exists(FILENAME):
         generate_data()
 
