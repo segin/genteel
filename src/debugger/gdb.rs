@@ -6,6 +6,7 @@
 use std::collections::HashSet;
 use std::io::{BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::time::{Duration, Instant};
 
 /// Default GDB server port
 pub const DEFAULT_PORT: u16 = 1234;
@@ -69,6 +70,10 @@ pub struct GdbServer {
     password: Option<String>,
     /// Whether the client is authenticated
     authenticated: bool,
+    /// Number of failed authentication attempts
+    auth_failed_attempts: u32,
+    /// Timestamp until which authentication is locked out
+    auth_lockout_until: Option<Instant>,
 }
 
 impl GdbServer {
@@ -107,6 +112,8 @@ impl GdbServer {
             no_ack_mode: false,
             password: final_password,
             authenticated,
+            auth_failed_attempts: 0,
+            auth_lockout_until: None,
         })
     }
 
@@ -536,7 +543,7 @@ impl GdbServer {
         };
 
         let data = parts[1];
-        if data.len() % 2 != 0 {
+        if !data.len().is_multiple_of(2) {
             return "E01".to_string();
         }
 
@@ -569,6 +576,14 @@ impl GdbServer {
             Ok(a) => a,
             Err(_) => return "E01".to_string(),
         };
+
+        if self.breakpoints.len() >= MAX_BREAKPOINTS && !self.breakpoints.contains(&addr) {
+            eprintln!(
+                "⚠️  SECURITY ALERT: Maximum number of breakpoints ({}) reached.",
+                MAX_BREAKPOINTS
+            );
+            return "E01".to_string();
+        }
 
         self.breakpoints.insert(addr);
         "OK".to_string()
@@ -619,7 +634,7 @@ impl GdbServer {
     }
 
     fn handle_monitor_command(&mut self, cmd_hex: &str) -> String {
-        if cmd_hex.len() % 2 != 0 {
+        if !cmd_hex.len().is_multiple_of(2) {
             return "E01".to_string();
         }
 
@@ -635,12 +650,33 @@ impl GdbServer {
 
         let cmd = String::from_utf8_lossy(&bytes);
         if let Some(stripped) = cmd.strip_prefix("auth ") {
+            // Check for lockout
+            if let Some(lockout_time) = self.auth_lockout_until {
+                if Instant::now() < lockout_time {
+                    return "E01".to_string();
+                } else {
+                    // Lockout expired
+                    self.auth_lockout_until = None;
+                    self.auth_failed_attempts = 0;
+                }
+            }
+
             let provided_pass = stripped.trim();
             if let Some(ref correct_pass) = self.password {
                 if constant_time_eq(provided_pass, correct_pass) {
                     self.authenticated = true;
+                    self.auth_failed_attempts = 0;
+                    self.auth_lockout_until = None;
                     return "OK".to_string();
                 } else {
+                    self.auth_failed_attempts += 1;
+                    if self.auth_failed_attempts >= MAX_AUTH_ATTEMPTS {
+                        self.auth_lockout_until = Some(Instant::now() + AUTH_LOCKOUT_DURATION);
+                        eprintln!(
+                            "⚠️  SECURITY ALERT: GDB authentication lockout active for {}s",
+                            AUTH_LOCKOUT_DURATION.as_secs()
+                        );
+                    }
                     return "E01".to_string(); // Invalid password
                 }
             } else {
@@ -724,6 +760,8 @@ mod tests {
             no_ack_mode: false,
             password: None,
             authenticated: true,
+            auth_failed_attempts: 0,
+            auth_lockout_until: None,
         }
     }
 
@@ -1162,6 +1200,36 @@ mod tests {
     }
 
     #[test]
+    fn test_breakpoint_limit() {
+        let mut server = create_test_server();
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+
+        // Fill up breakpoints
+        for i in 0..MAX_BREAKPOINTS {
+            let cmd = format!("Z0,{:x},4", i);
+            assert_eq!(server.process_command(&cmd, &mut regs, &mut mem), "OK");
+        }
+
+        // Verify full
+        assert_eq!(server.breakpoints.len(), MAX_BREAKPOINTS);
+
+        // Try adding one more (new)
+        let cmd_overflow = format!("Z0,{:x},4", MAX_BREAKPOINTS);
+        assert_eq!(
+            server.process_command(&cmd_overflow, &mut regs, &mut mem),
+            "E01"
+        );
+
+        // Verify existing one still works (idempotent)
+        let cmd_existing = "Z0,0,4";
+        assert_eq!(
+            server.process_command(cmd_existing, &mut regs, &mut mem),
+            "OK"
+        );
+    }
+
+    #[test]
     fn test_breakpoint_edge_cases() {
         let mut server = create_test_server();
         let mut regs = GdbRegisters::default();
@@ -1181,5 +1249,59 @@ mod tests {
             "OK"
         );
         assert_eq!(server.process_command("Z1,1000,4", &mut regs, &mut mem), "");
+    }
+
+    #[test]
+    fn test_authentication_lockout() {
+        let password = "secret".to_string();
+        let mut server = GdbServer::new(0, Some(password)).unwrap();
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+
+        fn to_hex(s: &str) -> String {
+            s.bytes().map(|b| format!("{:02x}", b)).collect()
+        }
+
+        let wrong_packet = format!("qRcmd,{}", to_hex("auth wrong"));
+        let right_packet = format!("qRcmd,{}", to_hex("auth secret"));
+
+        // 1. Fail MAX_AUTH_ATTEMPTS times
+        for _ in 0..MAX_AUTH_ATTEMPTS {
+            assert_eq!(
+                server.process_command(&wrong_packet, &mut regs, &mut mem),
+                "E01"
+            );
+            assert!(!server.authenticated);
+        }
+
+        // 2. Lockout should be active now. Even correct password should fail.
+        assert!(server.auth_lockout_until.is_some());
+        assert_eq!(
+            server.process_command(&right_packet, &mut regs, &mut mem),
+            "E01"
+        );
+        assert!(!server.authenticated);
+    }
+
+    #[test]
+    fn test_secure_compare() {
+        // Equal strings
+        assert!(secure_compare("password", "password"));
+        assert!(secure_compare("", ""));
+        assert!(secure_compare("123456", "123456"));
+
+        // Unequal strings, same length
+        assert!(!secure_compare("password", "passworf"));
+        assert!(!secure_compare("123456", "123457"));
+        assert!(!secure_compare("a", "b"));
+
+        // Unequal strings, different length
+        assert!(!secure_compare("password", "pass"));
+        assert!(!secure_compare("pass", "password"));
+        assert!(!secure_compare("", "a"));
+
+        // Unicode
+        assert!(secure_compare("p@sswöd", "p@sswöd"));
+        assert!(!secure_compare("p@sswöd", "p@sswod"));
     }
 }
