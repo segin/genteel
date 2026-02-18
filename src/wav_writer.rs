@@ -1,10 +1,9 @@
 use std::fs::File;
 use std::io::{BufWriter, Seek, SeekFrom, Write};
 
-pub struct WavWriter<W: Write + Seek> {
+pub struct WavWriter<W: Write + Seek = BufWriter<File>> {
     writer: W,
     data_size: u32,
-    #[allow(dead_code)] // Stored for potential future use or debugging
     channels: u16,
 }
 
@@ -50,7 +49,17 @@ impl<W: Write + Seek> WavWriter<W> {
         })
     }
 
+    pub fn channels(&self) -> u16 {
+        self.channels
+    }
+
     pub fn write_samples(&mut self, samples: &[i16]) -> std::io::Result<()> {
+        if samples.len() % (self.channels as usize) != 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Sample count not aligned with channel count",
+            ));
+        }
         for &sample in samples {
             self.writer.write_all(&sample.to_le_bytes())?;
         }
@@ -63,9 +72,6 @@ impl<W: Write + Seek> WavWriter<W> {
 
         // Total file size = 36 + data_size
         // 36 comes from: 4 (WAVE) + 24 (fmt chunk) + 8 (data header)
-        // RIFF header size (4) + Size (4) are not included in the Size field value itself,
-        // but the Size field covers everything after it.
-        // File size = 44 + data_size
         // RIFF Size = File size - 8 = 36 + data_size
         let file_size = 36 + self.data_size;
 
@@ -98,8 +104,9 @@ mod tests {
         let mut buffer = Vec::new();
         {
             let writer = Cursor::new(&mut buffer);
-            let _wav = WavWriter::new_with_writer(writer, 44100, 2).unwrap();
-        } // _wav dropped
+            let wav = WavWriter::new_with_writer(writer, 44100, 2).unwrap();
+            assert_eq!(wav.channels(), 2);
+        } // wav dropped
 
         // Check RIFF header
         assert_eq!(&buffer[0..4], b"RIFF");
@@ -131,14 +138,14 @@ mod tests {
     #[test]
     fn test_wav_sample_writing() {
         let mut buffer = Vec::new();
-        let samples = vec![0, 100, -100, 32767, -32768];
+        let samples = vec![i16::MIN, 0, i16::MAX];
 
         {
             let writer = Cursor::new(&mut buffer);
             let mut wav = WavWriter::new_with_writer(writer, 44100, 1).unwrap();
 
             wav.write_samples(&samples).unwrap();
-            assert_eq!(wav.data_size, 10); // 5 samples * 2 bytes
+            assert_eq!(wav.data_size, 6); // 3 samples * 2 bytes
         } // wav dropped here
 
         // Verify samples are written after header (44 bytes)
@@ -154,11 +161,22 @@ mod tests {
     }
 
     #[test]
+    fn test_write_samples_unaligned() {
+        let mut buffer = Vec::new();
+        let cursor = Cursor::new(&mut buffer);
+        let mut writer = WavWriter::new_with_writer(cursor, 44100, 2).unwrap();
+        let samples = vec![0, 0, 100]; // 3 samples, 2 channels => unaligned
+        let result = writer.write_samples(&samples);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
     fn test_wav_finalize() {
         let mut buffer = Vec::new();
         let writer = Cursor::new(&mut buffer);
         {
-            let mut wav = WavWriter::new_with_writer(writer, 44100, 1).unwrap();
+            let mut wav = WavWriter::new_with_writer(writer, 44100, 2).unwrap();
             let samples = vec![0; 10]; // 20 bytes
             wav.write_samples(&samples).unwrap();
         } // wav dropped here, finalize called
