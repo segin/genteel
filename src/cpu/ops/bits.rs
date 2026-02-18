@@ -535,7 +535,7 @@ pub fn exec_tas<M: MemoryInterface>(cpu: &mut Cpu, dst: AddressingMode, memory: 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cpu::decoder::{AddressingMode, BitSource, ShiftCount, Size};
+    use crate::cpu::decoder::{AddressingMode, Size};
     use crate::cpu::flags;
     use crate::cpu::Cpu;
     use crate::memory::Memory;
