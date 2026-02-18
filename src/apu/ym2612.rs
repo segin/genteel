@@ -247,8 +247,6 @@ impl Ym2612 {
                 }
             }
         }
-            }
-        }
     }
 
     fn handle_timer_control(&mut self, val: u8) {
