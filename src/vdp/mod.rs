@@ -396,6 +396,7 @@ impl Vdp {
 
     #[inline(always)]
     pub fn read_status(&mut self) -> u16 {
+        // Reading the status register clears the write pending flag
         self.control_pending = false;
         let res = self.status;
         // Reading status clears the VInt pending bit
