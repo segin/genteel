@@ -10,6 +10,7 @@ This document provides AI-specific operational context for working on the `gente
 - **Run**: `cargo run`
 - **Check**: `cargo clippy`
 - **Format**: `cargo fmt`
+- **Audit**: `python3 scripts/audit_tool.py`
 
 ## Agent Operating Principles
 
@@ -72,6 +73,8 @@ cargo test test_name
 - Use `cargo clippy` to check for common issues
 - Prefer functional patterns where possible
 - Document public APIs with rustdoc comments
+- Use block comments `/* ... */` for multi-line comments.
+- Always reference Pull Requests by their number (e.g., PR #123), never by branch name.
 - Keep functions small and focused
 
 ## Security Considerations
@@ -79,6 +82,7 @@ cargo test test_name
 - Bounds-check all memory accesses (emulator runs untrusted ROM code)
 - Handle invalid/malformed instructions gracefully
 - The debugger interface uses local network sockets - restrict access appropriately
+- Run the audit tool (`python3 scripts/audit_tool.py`) periodically to detect secrets and unsafe patterns.
 
 ## Agent Capabilities
 
