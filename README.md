@@ -60,20 +60,20 @@ cargo test
 
 ## Development Tools
 
-The project includes Python scripts in the `scripts/` directory to assist with development and code quality.
+The repository includes tools in the `scripts/` directory to assist with development and code quality.
 
-### Security & Quality Audit
-Run the audit tool to scan for potential secrets, unsafe code, and technical debt:
-```bash
-python3 scripts/audit.py
-```
-This generates reports in the `audit_reports/` directory.
+### Code Audit Tool
 
-### Regex Benchmark
-To benchmark the performance of regex patterns used in the audit tool:
+The repository includes a static analysis tool in `scripts/audit_tool.py` to check for:
+- Potential secrets (API keys, private keys, etc.)
+- Technical debt (`TODO`, `FIXME`, `XXX` tags)
+- Usage of `unsafe` blocks
+
+To run the audit:
 ```bash
-python3 scripts/benchmark_audit_regex.py
+python3 scripts/audit_tool.py
 ```
+Reports are generated in the `audit_reports/` directory.
 
 ## Status
 

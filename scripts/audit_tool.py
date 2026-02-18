@@ -6,33 +6,48 @@ This script scans the repository for potential secrets, TODO items, and unsafe c
 It generates a JSON report and a CSV risk register.
 
 Usage:
-    Run from the repository root:
+    Run from anywhere within the repository:
     $ python3 scripts/audit_tool.py
 
-    The report will be generated in the `audit_reports/` directory.
+    The report will be generated in the `audit_reports/` directory at the project root.
 """
 
 import os
-import sys
 import re
 import json
 import csv
-import sys
 import subprocess
+import sys
 from datetime import datetime
 
 # =============================================================================
 # Security & Quality Audit Tool for genteel
 # =============================================================================
 
-if not os.path.exists("Cargo.toml"):
-    print("Error: This script must be run from the repository root.", file=sys.stderr)
+def find_project_root():
+    """
+    Finds the project root directory by looking for .git or Cargo.toml.
+    Returns the path to the root directory.
+    """
+    current_dir = os.path.abspath(os.path.dirname(__file__))
+    while True:
+        if os.path.exists(os.path.join(current_dir, ".git")) or os.path.exists(os.path.join(current_dir, "Cargo.toml")):
+            return current_dir
+        parent_dir = os.path.dirname(current_dir)
+        if parent_dir == current_dir:
+            return None
+        current_dir = parent_dir
+
+# Change to project root to ensure consistent paths
+project_root = find_project_root()
+if project_root:
+    os.chdir(project_root)
+else:
+    print("Error: Could not find project root (looking for .git or Cargo.toml)")
     sys.exit(1)
 
 REPORT_DIR = "audit_reports"
 FINDINGS_JSON = os.path.join(REPORT_DIR, "findings.json")
-FINDINGS_MD = os.path.join(REPORT_DIR, "FINDINGS.md")
-METRICS_JSON = os.path.join(REPORT_DIR, "metrics.json")
 RISK_CSV = os.path.join(REPORT_DIR, "RISK_REGISTER.csv")
 
 findings = []
@@ -63,12 +78,12 @@ def add_finding(title, severity, description, file_path, line_number=None):
 
 def get_tracked_files():
     try:
-        # Check if run from root or scripts dir, but prefer running git from CWD
+        # Run git ls-files to get all tracked files
         out = subprocess.check_output(["git", "ls-files"], stderr=subprocess.STDOUT).decode("utf-8")
         files = out.splitlines()
         # Filter out target directories and audit reports
         return [f for f in files if not f.startswith("audit_reports/") and "/target/" not in f and not f.startswith("target/")]
-    except:
+    except Exception:
         # Fallback to manual scan if git fails
         files = []
         for root, _, filenames in os.walk("."):
@@ -76,7 +91,7 @@ def get_tracked_files():
                 continue
             for f in filenames:
                 if f.endswith((".rs", ".py", ".md", ".sh", ".toml")):
-                    files.append(os.path.join(root, f))
+                    files.append(os.path.relpath(os.path.join(root, f), "."))
         return files
 
 def scan_text_patterns():
@@ -126,16 +141,14 @@ def scan_text_patterns():
 
 def run_audit():
     print("🚀 Starting genteel security & quality audit...")
+    print(f"📂 Project root: {os.getcwd()}")
     
-    # Ensure we are running from the root directory or adjust
-    # For now, assume CWD is root.
-
     if not os.path.exists(REPORT_DIR):
         os.makedirs(REPORT_DIR)
 
     scan_text_patterns()
     
-    # Save Findings
+    # Save Findings (JSON)
     with open(FINDINGS_JSON, 'w') as f:
         json.dump(findings, f, indent=2)
     
@@ -157,7 +170,4 @@ def run_audit():
     print(f"📄 Reports available in {REPORT_DIR}/")
 
 if __name__ == "__main__":
-    if not os.path.exists("Cargo.toml"):
-        print("Error: This script must be run from the repository root.")
-        sys.exit(1)
     run_audit()
