@@ -386,6 +386,8 @@ impl Ym2612 {
         self.registers[0][0x28]
     }
 
+    /// Updates the cached phase increment based on current frequency registers.
+    /// This optimization avoids expensive calculations in the hot `generate_sample` loop.
     fn update_phase_inc(&mut self, ch: usize) {
         let (block, f_num) = self.get_frequency(ch);
         if f_num == 0 {
