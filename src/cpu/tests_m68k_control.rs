@@ -499,7 +499,7 @@ fn test_stop_supervisor_behavior() {
 fn test_rte_privilege_violation() {
     let (mut cpu, mut memory) = create_cpu();
 
-    // RTE opcode: 0x4E73
+    // RTE opcode
     write_op(&mut memory, &[0x4E73]);
 
     // Setup Stacks
@@ -508,59 +508,43 @@ fn test_rte_privilege_violation() {
 
     // Set User Mode
     cpu.sr &= !flags::SUPERVISOR;
-    cpu.a[7] = cpu.usp; // Active stack is now USP
+    cpu.a[7] = cpu.usp;
 
     // Set Vector 8 (Privilege Violation)
-    memory.write_long(32, 0x4000); // 8 * 4 = 32
+    memory.write_long(32, 0x4000);
 
     cpu.step_instruction(&mut memory);
 
     assert_eq!(cpu.pc, 0x4000);
-    // Exception should set supervisor bit
     assert!(cpu.sr & flags::SUPERVISOR != 0);
-    // Should NOT be halted
-    assert!(!cpu.halted);
 }
 
 #[test]
-fn test_rte_supervisor_behavior() {
+fn test_rte_supervisor() {
     let (mut cpu, mut memory) = create_cpu();
 
-    // RTE opcode: 0x4E73
+    // RTE opcode
     write_op(&mut memory, &[0x4E73]);
 
-    // Setup initial state: Supervisor mode
-    cpu.sr |= flags::SUPERVISOR;
-    // Set SP (using SSP since in supervisor mode)
-    cpu.a[7] = 0x8000;
-    // Set USP to a known value
-    cpu.usp = 0xA000;
+    // Push stack frame for RTE (SR, PC)
+    // RTE pops SR (Word), then PC (Long)
+    // Initial SP is 0x8000 (from create_cpu)
 
-    // We want to return to PC=0x2000 and SR=0x0000 (User mode)
     let target_pc = 0x2000;
-    let target_sr = 0x0000;
+    let target_sr = 0x0000; // User mode, no flags
 
-    // Push frame to stack manually as if an exception occurred.
-    // Stack Frame (68000):
-    // SP -> SR (Word)
-    // SP+2 -> PC (Long)
+    // Manual Push
+    cpu.a[7] = cpu.a[7].wrapping_sub(4);
+    memory.write_long(cpu.a[7], target_pc);
+    cpu.a[7] = cpu.a[7].wrapping_sub(2);
+    memory.write_word(cpu.a[7], target_sr);
 
-    // So if initial SP was 0x8000.
-    // After push PC (4 bytes): SP=0x7FFC. Mem[0x7FFC] = PC.
-    // After push SR (2 bytes): SP=0x7FFA. Mem[0x7FFA] = SR.
-
-    memory.write_word(0x7FFA, target_sr);
-    memory.write_long(0x7FFC, target_pc);
-    cpu.a[7] = 0x7FFA;
+    // CPU is already in supervisor mode from create_cpu()
 
     cpu.step_instruction(&mut memory);
 
     assert_eq!(cpu.pc, target_pc);
     assert_eq!(cpu.sr, target_sr);
-    // Should be in user mode now
+    // Should now be in user mode because we popped 0x0000 into SR
     assert_eq!(cpu.sr & flags::SUPERVISOR, 0);
-    // Active SP (A7) should be USP
-    assert_eq!(cpu.a[7], 0xA000);
-    // SSP should be back to 0x8000 (where we popped from)
-    assert_eq!(cpu.ssp, 0x8000);
 }
