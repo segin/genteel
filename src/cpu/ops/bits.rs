@@ -1015,6 +1015,85 @@ mod tests {
     }
 
     #[test]
+    fn test_exec_btst_imm_zero() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x7FFFFFFF; // Bit 31 is 0
+
+        // BTST #31, D0
+        // Immediate bit number 31 at PC
+        memory.write_word(cpu.pc, 31);
+
+        exec_btst(
+            &mut cpu,
+            BitSource::Immediate,
+            AddressingMode::DataRegister(0),
+            &mut memory,
+        );
+
+        // Bit 31 is 0. Z flag should be 1 (true).
+        assert!(cpu.get_flag(flags::ZERO));
+    }
+
+    #[test]
+    fn test_exec_btst_imm_one() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x80000000; // Bit 31 is 1
+
+        // BTST #31, D0
+        memory.write_word(cpu.pc, 31);
+
+        exec_btst(
+            &mut cpu,
+            BitSource::Immediate,
+            AddressingMode::DataRegister(0),
+            &mut memory,
+        );
+
+        // Bit 31 is 1. Z flag should be 0 (false).
+        assert!(!cpu.get_flag(flags::ZERO));
+    }
+
+    #[test]
+    fn test_exec_btst_mem_zero() {
+        let (mut cpu, mut memory) = create_test_setup();
+        let addr = 0x2000;
+        memory.write_byte(addr, 0x7F); // Bit 7 is 0
+        cpu.a[0] = addr;
+
+        // BTST #7, (A0)
+        memory.write_word(cpu.pc, 7);
+
+        exec_btst(
+            &mut cpu,
+            BitSource::Immediate,
+            AddressingMode::AddressIndirect(0),
+            &mut memory,
+        );
+
+        assert!(cpu.get_flag(flags::ZERO));
+    }
+
+    #[test]
+    fn test_exec_btst_mem_one() {
+        let (mut cpu, mut memory) = create_test_setup();
+        let addr = 0x2000;
+        memory.write_byte(addr, 0x80); // Bit 7 is 1
+        cpu.a[0] = addr;
+
+        // BTST #7, (A0)
+        memory.write_word(cpu.pc, 7);
+
+        exec_btst(
+            &mut cpu,
+            BitSource::Immediate,
+            AddressingMode::AddressIndirect(0),
+            &mut memory,
+        );
+
+        assert!(!cpu.get_flag(flags::ZERO));
+    }
+
+    #[test]
     fn test_exec_eor_byte() {
         let (mut cpu, mut memory) = create_test_setup();
         cpu.d[0] = 0x000000FF;
