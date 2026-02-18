@@ -10,7 +10,18 @@ Genteel is an instrumentable Sega Mega Drive/Genesis emulator designed to be dri
 
 ## Getting Started
 
-(Coming soon)
+To get started with Genteel, first clone the repository:
+
+```bash
+git clone https://github.com/segin/genteel.git
+cd genteel
+```
+
+Follow the building instructions below for your platform. Once built, you can run the emulator by providing a path to a Sega Mega Drive/Genesis ROM file:
+
+```bash
+cargo run -- path/to/your/rom.bin
+```
 
 ## Building from Source
 
@@ -46,6 +57,23 @@ Genteel features a comprehensive test suite including unit tests, property-based
 ```bash
 cargo test
 ```
+
+## Development Tools
+
+The repository includes tools in the `scripts/` directory to assist with development and code quality.
+
+### Code Audit Tool
+
+The repository includes a static analysis tool in `scripts/audit_tool.py` to check for:
+- Potential secrets (API keys, private keys, etc.)
+- Technical debt (`TODO`, `FIXME`, `XXX` tags)
+- Usage of `unsafe` blocks
+
+To run the audit:
+```bash
+python3 scripts/audit_tool.py
+```
+Reports are generated in the `audit_reports/` directory.
 
 ## Status
 
