@@ -499,19 +499,47 @@ impl MemoryInterface for Bus {
     }
 }
 
+#[derive(Serialize, Deserialize)]
+struct BusState {
+    z80_bus_request: Option<bool>,
+    z80_reset: Option<bool>,
+    z80_bank_addr: Option<u32>,
+    z80_bank_bit: Option<u8>,
+    tmss_unlocked: Option<bool>,
+}
+
 impl Debuggable for Bus {
     fn read_state(&self) -> Value {
-        serde_json::to_value(self).unwrap()
+        serde_json::to_value(BusState {
+            z80_bus_request: Some(self.z80_bus_request),
+            z80_reset: Some(self.z80_reset),
+            z80_bank_addr: Some(self.z80_bank_addr),
+            z80_bank_bit: Some(self.z80_bank_bit),
+            tmss_unlocked: Some(self.tmss_unlocked),
+        })
+        .unwrap()
     }
 
     fn write_state(&mut self, state: &Value) {
-        if let Ok(mut new_bus) = serde_json::from_value::<Bus>(state.clone()) {
-            new_bus.rom = std::mem::take(&mut self.rom);
-            if new_bus.vdp.framebuffer.len() != 320 * 240 {
-                new_bus.vdp.framebuffer.resize(320 * 240, 0);
-            }
-            new_bus.vdp.reconstruct_cram_cache();
-            *self = new_bus;
+        let bus_state: BusState = serde_json::from_value(state.clone()).unwrap_or_else(|_| {
+            let default: BusState = serde_json::from_str("{}").unwrap();
+            default
+        });
+
+        if let Some(v) = bus_state.z80_bus_request {
+            self.z80_bus_request = v;
+        }
+        if let Some(v) = bus_state.z80_reset {
+            self.z80_reset = v;
+        }
+        if let Some(v) = bus_state.z80_bank_addr {
+            self.z80_bank_addr = v;
+        }
+        if let Some(v) = bus_state.z80_bank_bit {
+            self.z80_bank_bit = v;
+        }
+        if let Some(v) = bus_state.tmss_unlocked {
+            self.tmss_unlocked = v;
         }
     }
 }
@@ -522,6 +550,7 @@ mod tests {
 
     #[test]
     fn test_bus_state_serialization() {
+        use serde_json::json;
         std::thread::Builder::new()
             .stack_size(16 * 1024 * 1024) // 16MB
             .spawn(|| {
@@ -531,25 +560,48 @@ mod tests {
                 bus.z80_bus_request = true;
                 bus.z80_reset = false;
                 bus.z80_bank_addr = 0x12345;
+                bus.tmss_unlocked = true;
 
                 // Serialize
                 let state_value = bus.read_state();
 
+                // Verify keys exist
+                assert!(state_value.get("z80_bus_request").is_some());
+                assert!(state_value.get("z80_reset").is_some());
+                assert!(state_value.get("z80_bank_addr").is_some());
+                assert!(state_value.get("z80_bank_bit").is_some());
+                assert!(state_value.get("tmss_unlocked").is_some());
+
+                // Verify VDP/IO/APU keys do NOT exist (since we are using manual partial serialization)
+                assert!(state_value.get("vdp").is_none());
+                assert!(state_value.get("io").is_none());
+                assert!(state_value.get("apu").is_none());
+
                 // Create new bus
                 let mut new_bus = Bus::new();
 
-                // Deserialize
+                // Deserialize (Full state update from read_state)
                 new_bus.write_state(&state_value);
 
                 // Assert equality
                 assert_eq!(new_bus.z80_bus_request, true);
                 assert_eq!(new_bus.z80_reset, false);
                 assert_eq!(new_bus.z80_bank_addr, 0x12345);
+                assert_eq!(new_bus.tmss_unlocked, true);
 
-                // Verify VDP/IO/APU keys exist in JSON
-                assert!(state_value.get("vdp").is_some());
-                assert!(state_value.get("io").is_some());
-                assert!(state_value.get("apu").is_some());
+                // Test Partial Update
+                let partial_state = json!({
+                    "z80_bus_request": false,
+                    "z80_bank_addr": 0x54321
+                });
+                new_bus.write_state(&partial_state);
+
+                // Verify partial update applied
+                assert_eq!(new_bus.z80_bus_request, false);
+                assert_eq!(new_bus.z80_bank_addr, 0x54321);
+                // Verify other fields remained unchanged
+                assert_eq!(new_bus.z80_reset, false); // From previous write_state
+                assert_eq!(new_bus.tmss_unlocked, true); // From previous write_state
             })
             .unwrap()
             .join()
