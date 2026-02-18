@@ -1,6 +1,6 @@
 //! M68k Data Movement Tests
 //!
-//! Exhaustive tests for M68k data movement operations, specifically MOVEM.
+//! Exhaustive tests for M68k data movement instructions (MOVE, MOVEA, MOVEM, MOVEP, EXG, etc.).
 
 #![cfg(test)]
 
@@ -23,6 +23,141 @@ fn write_op(memory: &mut Memory, opcodes: &[u16]) {
         memory.write_word(addr, op);
         addr += 2;
     }
+}
+
+// ============================================================================
+// MOVE Tests
+// ============================================================================
+
+#[test]
+fn test_move_b_d0_d1() {
+    let (mut cpu, mut memory) = create_cpu();
+    // MOVE.B D0, D1
+    // 00 01 (Byte) 001 (D1) 000 (Mode Dn) 000 (Mode Dn) 000 (Src D0)
+    // -> 0001 001 000 000 000 -> 0x1200
+    write_op(&mut memory, &[0x1200]);
+    cpu.d[0] = 0x55;
+    cpu.d[1] = 0x33;
+    cpu.step_instruction(&mut memory);
+    assert_eq!(cpu.d[1] & 0xFF, 0x55);
+}
+
+#[test]
+fn test_move_w_d0_d1() {
+    let (mut cpu, mut memory) = create_cpu();
+    // MOVE.W D0, D1
+    // Size: 11 (Word)
+    // 00 11 001 000 000 000 -> 0x3200
+    write_op(&mut memory, &[0x3200]);
+    cpu.d[0] = 0x1234;
+    cpu.d[1] = 0x4321;
+    cpu.step_instruction(&mut memory);
+    assert_eq!(cpu.d[1] & 0xFFFF, 0x1234);
+}
+
+#[test]
+fn test_move_l_d0_d1() {
+    let (mut cpu, mut memory) = create_cpu();
+    // MOVE.L D0, D1
+    // Size: 10 (Long)
+    // 00 10 001 000 000 000 -> 0x2200
+    write_op(&mut memory, &[0x2200]);
+    cpu.d[0] = 0x12345678;
+    cpu.d[1] = 0x11111111;
+    cpu.step_instruction(&mut memory);
+    assert_eq!(cpu.d[1], 0x12345678);
+}
+
+#[test]
+fn test_move_flags() {
+    let (mut cpu, mut memory) = create_cpu();
+    // MOVE.B D0, D1
+    write_op(&mut memory, &[0x1200]);
+
+    // Case 1: Negative
+    cpu.pc = 0x1000;
+    cpu.d[0] = 0x80;
+    cpu.set_flag(flags::ZERO, true);
+    cpu.set_flag(flags::NEGATIVE, false);
+    cpu.set_flag(flags::OVERFLOW, true); // Should be cleared
+    cpu.set_flag(flags::CARRY, true); // Should be cleared
+    cpu.step_instruction(&mut memory);
+    assert!(cpu.get_flag(flags::NEGATIVE));
+    assert!(!cpu.get_flag(flags::ZERO));
+    assert!(!cpu.get_flag(flags::OVERFLOW));
+    assert!(!cpu.get_flag(flags::CARRY));
+
+    // Case 2: Zero
+    cpu.pc = 0x1000;
+    write_op(&mut memory, &[0x1200]); // Re-write op
+    cpu.d[0] = 0x00;
+    cpu.step_instruction(&mut memory);
+    assert!(!cpu.get_flag(flags::NEGATIVE));
+    assert!(cpu.get_flag(flags::ZERO));
+    assert!(!cpu.get_flag(flags::OVERFLOW));
+    assert!(!cpu.get_flag(flags::CARRY));
+}
+
+#[test]
+fn test_move_immediate_to_d0() {
+    let (mut cpu, mut memory) = create_cpu();
+    // MOVE.L #$12345678, D0
+    write_op(&mut memory, &[0x203C, 0x1234, 0x5678]);
+    cpu.step_instruction(&mut memory);
+    assert_eq!(cpu.d[0], 0x12345678);
+}
+
+#[test]
+fn test_move_d0_to_memory() {
+    let (mut cpu, mut memory) = create_cpu();
+    // MOVE.W D0, (A0)
+    write_op(&mut memory, &[0x3080]);
+    cpu.d[0] = 0xABCD;
+    cpu.a[0] = 0x2000;
+    cpu.step_instruction(&mut memory);
+    assert_eq!(memory.read_word(0x2000), 0xABCD);
+}
+
+#[test]
+fn test_move_memory_to_d0() {
+    let (mut cpu, mut memory) = create_cpu();
+    // MOVE.B (A0), D0
+    write_op(&mut memory, &[0x1010]);
+    cpu.a[0] = 0x2000;
+    memory.write_byte(0x2000, 0x42);
+    cpu.step_instruction(&mut memory);
+    assert_eq!(cpu.d[0] & 0xFF, 0x42);
+}
+
+// ============================================================================
+// MOVEA Tests
+// ============================================================================
+
+#[test]
+fn test_movea_w() {
+    let (mut cpu, mut memory) = create_cpu();
+    // MOVEA.W D0, A0
+    write_op(&mut memory, &[0x3040]);
+    cpu.d[0] = 0xFFFF; // -1
+    cpu.a[0] = 0x0000;
+    cpu.set_flag(flags::ZERO, true); // Should not change
+    cpu.step_instruction(&mut memory);
+
+    // MOVEA sign extends word to long
+    assert_eq!(cpu.a[0], 0xFFFFFFFF);
+    // MOVEA does NOT affect flags
+    assert!(cpu.get_flag(flags::ZERO));
+}
+
+#[test]
+fn test_movea_l() {
+    let (mut cpu, mut memory) = create_cpu();
+    // MOVEA.L D0, A0
+    write_op(&mut memory, &[0x2040]);
+    cpu.d[0] = 0x12345678;
+    cpu.a[0] = 0x00000000;
+    cpu.step_instruction(&mut memory);
+    assert_eq!(cpu.a[0], 0x12345678);
 }
 
 // ============================================================================
@@ -67,13 +202,7 @@ fn test_movem_read_word_sign_extend() {
     // D0 should be sign extended to 0xFFFFFFFF
     assert_eq!(cpu.d[0], 0xFFFFFFFF);
     // A0 (register being loaded) should be sign extended.
-    // Wait, the instruction loads A0 from memory, overwriting the pointer?
-    // "If the effective address register is also a destination register, the register is updated with the data from memory."
-    // But does it update A0 (pointer) after reading?
-    // Since mode is (A0), the effective address is calculated using initial A0.
-    // Then registers are loaded.
-    // Order: D0 then A0.
-    // So A0 is overwritten by the loaded value.
+    // Order: D0 then A0. So A0 is overwritten by the loaded value.
     assert_eq!(cpu.a[0], 0x00007FFF);
 }
 
@@ -85,8 +214,7 @@ fn test_movem_write_long_predec() {
     // Mask:
     // Standard: D0=Bit0, A0=Bit8.
     // Pre-decrement (Reversed): A7=Bit0 ... A0=Bit7 ... D0=Bit15.
-    // We want D0 and A0.
-    // D0 is Bit 15. A0 is Bit 7.
+    // We want D0 and A0. D0 is Bit 15. A0 is Bit 7.
     // Mask = 1000 0000 1000 0000 -> 0x8080
     write_op(&mut memory, &[0x48E7, 0x8080]);
 
@@ -98,12 +226,8 @@ fn test_movem_write_long_predec() {
 
     // Order for pre-decrement: A7->A0, then D7->D0.
     // High Addr -> Low Addr.
-    // 1. A0 (Bit 7) is encountered first?
-    //    Loop 15 down to 0.
-    //    i=8 (A0). Mask bit 7 set.
-    //    Addr -= 4 -> 0x7FFC. Write A0.
-    // 2. D0 (Bit 15). Mask bit 15 set.
-    //    Addr -= 4 -> 0x7FF8. Write D0.
+    // 1. A0 (Bit 7). Addr -= 4 -> 0x7FFC. Write A0.
+    // 2. D0 (Bit 15). Addr -= 4 -> 0x7FF8. Write D0.
 
     // So Mem[0x7FFC] = A0
     //    Mem[0x7FF8] = D0
@@ -123,25 +247,65 @@ fn test_movem_write_word_control() {
     // Extension words for address
     memory.write_long(0x1004, 0x00002000); // 0x1002 is Mask. 0x1004 is Abs Addr.
 
-    // Correct instruction layout:
-    // 0x1000: Opcode
-    // 0x1002: Mask
-    // 0x1004: Address High
-    // 0x1006: Address Low
-
     cpu.d[0] = 0x1234;
     cpu.d[1] = 0x5678;
 
     cpu.step_instruction(&mut memory);
 
     // Standard order: D0 then D1.
-    // Addr = 0x2000.
-    // Write D0 (Word) at 0x2000.
-    // Addr += 2 -> 0x2002.
-    // Write D1 (Word) at 0x2002.
+    // Addr = 0x2000. Write D0 (Word). Addr += 2. Write D1 (Word).
 
     assert_eq!(memory.read_word(0x2000), 0x1234);
     assert_eq!(memory.read_word(0x2002), 0x5678);
+}
+
+#[test]
+fn test_movem_reg_to_mem_control_long() {
+    let (mut cpu, mut memory) = create_cpu();
+
+    // MOVEM.L D2/D3, (A0)
+    // Opcode: 0100 1000 11 010 000 = 0x48D0
+    // Mask: D2 (Bit 2), D3 (Bit 3). Mask = 0x000C.
+
+    write_op(&mut memory, &[0x48D0, 0x000C]);
+
+    cpu.d[2] = 0x55555555;
+    cpu.d[3] = 0x66666666;
+    cpu.a[0] = 0x3000;
+
+    cpu.step_instruction(&mut memory);
+
+    // Check A0 unchanged
+    assert_eq!(cpu.a[0], 0x3000);
+
+    // Check memory contents
+    // Order: Low Reg (D2) to Low Addr, High Reg (D3) to High Addr
+    assert_eq!(memory.read_long(0x3000), 0x55555555);
+    assert_eq!(memory.read_long(0x3004), 0x66666666);
+}
+
+#[test]
+fn test_movem_mem_to_reg_control_long() {
+    let (mut cpu, mut memory) = create_cpu();
+
+    // MOVEM.L (A0), D2/D3
+    // Opcode: 0100 1100 11 010 000 = 0x4CD0
+    // Mask: D2 (Bit 2), D3 (Bit 3). Mask = 0x000C.
+
+    write_op(&mut memory, &[0x4CD0, 0x000C]);
+
+    cpu.a[0] = 0x3000;
+    memory.write_long(0x3000, 0x77777777);
+    memory.write_long(0x3004, 0x88888888);
+
+    cpu.step_instruction(&mut memory);
+
+    // Check A0 unchanged
+    assert_eq!(cpu.a[0], 0x3000);
+
+    // Check registers
+    assert_eq!(cpu.d[2], 0x77777777);
+    assert_eq!(cpu.d[3], 0x88888888);
 }
 
 #[test]
@@ -152,71 +316,17 @@ fn test_movem_all_registers() {
     // Mask: All bits set -> 0xFFFF
     write_op(&mut memory, &[0x48E7, 0xFFFF]);
 
-    cpu.a[7] = 0x8000;
-
     // Initialize registers
     for i in 0..8 {
         cpu.d[i] = 0xD0 + i as u32;
         cpu.a[i] = 0xA0 + i as u32;
     }
-    // Note: A7 is 0x8000 initially, but we overwrote it in loop above.
-    // Reset A7 to 0x8000 for stack pointer
+    
+    // Set SP (A7) to a safe location
     cpu.a[7] = 0x8000;
-    // But wait, we want to save A7?
-    // In MOVEM -(A7), the value of A7 saved is the INITIAL value minus 4? Or the value after decrement?
-    // "For the predecrement addressing mode, the value saved is the initial value minus the size of the operation."
-    // Wait, let's check M68k behavior for pushing SP.
-    // If A7 is in the list.
-    // The loop processes registers.
-    // Order: A7, A6 ... A0, D7 ... D0.
-    // 1. A7 is processed first.
-    //    A7 decremented by 4 -> 0x7FFC.
-    //    Write A7. Which value? The decremented value? Or the initial?
-    //    Actually, usually `movem` pushing SP pushes the value *before* the instruction?
-    //    No, for `-(An)` mode, the register is updated *before* writing?
-    //    But if `An` is also in the list?
-    //    M68k User Manual: "If the effective address is specified by the predecrement mode, and the register used is also moved to memory, the value written is the initial register value minus the size of the operation."
-    //    Wait, "minus the size of the operation" (4 bytes).
-    //    So if SP=0x8000.
-    //    It pushes (0x8000 - 0) or (0x8000 - 4)?
-    //    Actually, since A7 is the stack pointer, and it's being predecremented *for the push*, the value at `0x7FFC` is written.
-    //    The value WRITTEN to memory is the *initial* A7?
-    //    Let's check `exec_movem` implementation details.
 
-    // Implementation:
-    // let mut addr = base_addr; (For predec, base_addr is initial A7).
-    // Loop ...
-    //   addr = addr - 4;
-    //   val = cpu.a[i];
-    //   write(addr, val);
-    //   if let PreDec(reg) = ea { cpu.a[reg] = addr; } (Updates A7 at the end? Or during loop?)
-    // No, `cpu.a[reg] = addr` is done AFTER loop?
-    // Wait, the code:
-    /*
-        if is_predec {
-            for i in (0..16).rev() {
-                if (mask & ...) {
-                    addr = addr.wrapping_sub(reg_size);
-                    let val = ...;
-                    cpu.write(addr, val);
-                }
-            }
-            if let AddressingMode::AddressPreDecrement(reg) = ea {
-                cpu.a[reg as usize] = addr;
-            }
-        }
-    */
-    // So `cpu.a[7]` is NOT updated until the loop finishes.
-    // Inside the loop, `val` is read from `cpu.a[i]`.
-    // So it reads the INITIAL `cpu.a[7]` (0x8000).
-    // So it writes 0x8000 to memory.
-
-    // Let's verify this behavior against M68k spec.
-    // "If the addressing mode is predecrement ... the value written is the initial value of the register."
-    // Actually there is some nuance. "Bus Error Exception Stack Frame" etc.
-    // Generally, pushing SP onto stack via `MOVEM.L SP, -(SP)`?
-    // M68k manual says: "The value written for An is the initial value of An."
-    // So my implementation (reading `cpu.a[7]` which hasn't been modified yet) seems correct.
+    // Note: The A7 pushed is the INITIAL value (0x8000).
+    // M68k documentation says: "The value of the stack pointer saved is the initial value".
 
     cpu.step_instruction(&mut memory);
 
