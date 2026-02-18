@@ -508,16 +508,18 @@ fn test_rte_privilege_violation() {
 
     // Set User Mode
     cpu.sr &= !flags::SUPERVISOR;
-    cpu.a[7] = cpu.usp;
+    cpu.a[7] = cpu.usp; // Active stack is now USP
 
     // Set Vector 8 (Privilege Violation)
-    memory.write_long(32, 0x4000);
+    memory.write_long(32, 0x4000); // 8 * 4 = 32
 
     cpu.step_instruction(&mut memory);
 
     assert_eq!(cpu.pc, 0x4000);
     // Exception should set supervisor bit
     assert!(cpu.sr & flags::SUPERVISOR != 0);
+    // Should NOT be halted
+    assert!(!cpu.halted);
 }
 
 #[test]
