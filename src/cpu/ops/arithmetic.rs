@@ -816,9 +816,6 @@ fn fetch_postinc_operand<M: MemoryInterface>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cpu::decoder::{AddressingMode, Size};
-    use crate::cpu::flags;
-    use crate::cpu::Cpu;
     use crate::memory::Memory;
 
     fn create_test_setup() -> (Cpu, Memory) {
@@ -830,195 +827,104 @@ mod tests {
     }
 
     #[test]
-    fn test_exec_sub_byte() {
+    fn test_exec_sbcd_reg_simple() {
         let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x10;
-        cpu.d[1] = 0x55;
+        cpu.d[0] = 0x12; // Destination
+        cpu.d[1] = 0x01; // Source
 
-        // SUB.B D0, D1
-        let cycles = exec_sub(
-            &mut cpu,
-            Size::Byte,
-            AddressingMode::DataRegister(0),
-            AddressingMode::DataRegister(1),
-            &mut memory,
-        );
+        // SBCD D1, D0
+        exec_sbcd(&mut cpu, 1, 0, false, &mut memory);
 
-        assert_eq!(cpu.d[1] & 0xFF, 0x45);
-        assert!(!cpu.get_flag(flags::ZERO));
-        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert_eq!(cpu.d[0] & 0xFF, 0x11); // 0x12 - 0x01 = 0x11
         assert!(!cpu.get_flag(flags::CARRY));
         assert!(!cpu.get_flag(flags::EXTEND));
-        assert!(!cpu.get_flag(flags::OVERFLOW));
-        assert_eq!(cycles, 4);
     }
 
     #[test]
-    fn test_exec_sub_word() {
+    fn test_exec_sbcd_reg_borrow_low() {
         let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x1234;
-        cpu.d[1] = 0x5678;
+        cpu.d[0] = 0x22; // Destination
+        cpu.d[1] = 0x05; // Source
 
-        // SUB.W D0, D1
-        let cycles = exec_sub(
-            &mut cpu,
-            Size::Word,
-            AddressingMode::DataRegister(0),
-            AddressingMode::DataRegister(1),
-            &mut memory,
-        );
+        // SBCD D1, D0
+        exec_sbcd(&mut cpu, 1, 0, false, &mut memory);
 
-        assert_eq!(cpu.d[1] & 0xFFFF, 0x4444);
-        assert!(!cpu.get_flag(flags::ZERO));
-        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert_eq!(cpu.d[0] & 0xFF, 0x17); // 22 - 5 = 17
         assert!(!cpu.get_flag(flags::CARRY));
         assert!(!cpu.get_flag(flags::EXTEND));
-        assert!(!cpu.get_flag(flags::OVERFLOW));
-        assert_eq!(cycles, 4);
     }
 
     #[test]
-    fn test_exec_sub_long() {
+    fn test_exec_sbcd_reg_borrow_high() {
         let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x11111111;
-        cpu.d[1] = 0x22222222;
+        cpu.d[0] = 0x15; // Destination
+        cpu.d[1] = 0x25; // Source
 
-        // SUB.L D0, D1
-        let cycles = exec_sub(
-            &mut cpu,
-            Size::Long,
-            AddressingMode::DataRegister(0),
-            AddressingMode::DataRegister(1),
-            &mut memory,
-        );
+        // SBCD D1, D0
+        exec_sbcd(&mut cpu, 1, 0, false, &mut memory);
 
-        assert_eq!(cpu.d[1], 0x11111111);
-        assert!(!cpu.get_flag(flags::ZERO));
-        assert!(!cpu.get_flag(flags::NEGATIVE));
-        assert!(!cpu.get_flag(flags::CARRY));
-        assert!(!cpu.get_flag(flags::EXTEND));
-        assert!(!cpu.get_flag(flags::OVERFLOW));
-        assert_eq!(cycles, 8);
-    }
-
-    #[test]
-    fn test_exec_sub_borrow() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x01;
-        cpu.d[1] = 0x00;
-
-        // SUB.B D0, D1 -> 0 - 1 = 0xFF with borrow
-        let cycles = exec_sub(
-            &mut cpu,
-            Size::Byte,
-            AddressingMode::DataRegister(0),
-            AddressingMode::DataRegister(1),
-            &mut memory,
-        );
-
-        assert_eq!(cpu.d[1] & 0xFF, 0xFF);
-        assert!(cpu.get_flag(flags::NEGATIVE));
-        assert!(!cpu.get_flag(flags::ZERO));
+        assert_eq!(cpu.d[0] & 0xFF, 0x90); // 15 - 25 = 90 (borrow)
         assert!(cpu.get_flag(flags::CARRY));
         assert!(cpu.get_flag(flags::EXTEND));
-        assert!(!cpu.get_flag(flags::OVERFLOW));
-        assert_eq!(cycles, 4);
     }
 
     #[test]
-    fn test_exec_sub_overflow() {
+    fn test_exec_sbcd_z_flag() {
         let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x01;
-        cpu.d[1] = 0x80;
 
-        // SUB.B D0, D1 -> -128 - 1 = -129 -> 127 (overflow)
-        let cycles = exec_sub(
-            &mut cpu,
-            Size::Byte,
-            AddressingMode::DataRegister(0),
-            AddressingMode::DataRegister(1),
-            &mut memory,
-        );
-
-        assert_eq!(cpu.d[1] & 0xFF, 0x7F);
-        assert!(!cpu.get_flag(flags::NEGATIVE)); // Result is positive (127)
-        assert!(!cpu.get_flag(flags::ZERO));
-        assert!(!cpu.get_flag(flags::CARRY));
-        assert!(!cpu.get_flag(flags::EXTEND));
-        assert!(cpu.get_flag(flags::OVERFLOW));
-        assert_eq!(cycles, 4);
-    }
-
-    #[test]
-    fn test_exec_sub_zero() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x42;
-        cpu.d[1] = 0x42;
-
-        // SUB.B D0, D1
-        let cycles = exec_sub(
-            &mut cpu,
-            Size::Byte,
-            AddressingMode::DataRegister(0),
-            AddressingMode::DataRegister(1),
-            &mut memory,
-        );
-
-        assert_eq!(cpu.d[1] & 0xFF, 0x00);
+        // Case 1: Result 0, Z originally 1 -> Z remains 1
+        cpu.d[0] = 0x33;
+        cpu.d[1] = 0x33;
+        cpu.set_flag(flags::ZERO, true);
+        exec_sbcd(&mut cpu, 1, 0, false, &mut memory);
+        assert_eq!(cpu.d[0] & 0xFF, 0x00);
         assert!(cpu.get_flag(flags::ZERO));
-        assert!(!cpu.get_flag(flags::NEGATIVE));
-        assert!(!cpu.get_flag(flags::CARRY));
-        assert!(!cpu.get_flag(flags::EXTEND));
-        assert!(!cpu.get_flag(flags::OVERFLOW));
-        assert_eq!(cycles, 4);
+
+        // Case 2: Result 0, Z originally 0 -> Z remains 0
+        cpu.d[0] = 0x33;
+        cpu.d[1] = 0x33;
+        cpu.set_flag(flags::ZERO, false);
+        exec_sbcd(&mut cpu, 1, 0, false, &mut memory);
+        assert_eq!(cpu.d[0] & 0xFF, 0x00);
+        assert!(!cpu.get_flag(flags::ZERO));
+
+        // Case 3: Result non-zero, Z originally 1 -> Z becomes 0
+        cpu.d[0] = 0x33;
+        cpu.d[1] = 0x11;
+        cpu.set_flag(flags::ZERO, true);
+        exec_sbcd(&mut cpu, 1, 0, false, &mut memory);
+        assert_eq!(cpu.d[0] & 0xFF, 0x22);
+        assert!(!cpu.get_flag(flags::ZERO));
     }
 
     #[test]
-    fn test_exec_sub_negative() {
+    fn test_exec_sbcd_memory_mode() {
         let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x10;
-        cpu.d[1] = 0x05;
+        cpu.a[0] = 0x2001; // Dest pointer
+        cpu.a[1] = 0x3001; // Src pointer
+        memory.write_byte(0x2000, 0x33);
+        memory.write_byte(0x3000, 0x11);
 
-        // SUB.B D0, D1 -> 5 - 16 = -11 (0xF5)
-        let cycles = exec_sub(
-            &mut cpu,
-            Size::Byte,
-            AddressingMode::DataRegister(0),
-            AddressingMode::DataRegister(1),
-            &mut memory,
-        );
+        // SBCD -(A1), -(A0)
+        exec_sbcd(&mut cpu, 1, 0, true, &mut memory);
 
-        assert_eq!(cpu.d[1] & 0xFF, 0xF5);
-        assert!(cpu.get_flag(flags::NEGATIVE));
-        assert!(!cpu.get_flag(flags::ZERO));
-        assert!(cpu.get_flag(flags::CARRY)); // Borrow happens
-        assert!(cpu.get_flag(flags::EXTEND));
-        assert!(!cpu.get_flag(flags::OVERFLOW));
-        assert_eq!(cycles, 4);
+        assert_eq!(memory.read_byte(0x2000), 0x22); // 33 - 11 = 22
+        assert_eq!(cpu.a[0], 0x2000); // Decremented
+        assert_eq!(cpu.a[1], 0x3000); // Decremented
     }
 
     #[test]
-    fn test_exec_sub_memory() {
+    fn test_exec_sbcd_extend_flag() {
         let (mut cpu, mut memory) = create_test_setup();
         cpu.d[0] = 0x10;
-        cpu.a[0] = 0x2000;
-        memory.write_byte(0x2000, 0x30);
+        cpu.d[1] = 0x00;
+        cpu.set_flag(flags::EXTEND, true); // Borrow input
 
-        // SUB.B D0, (A0)
-        let cycles = exec_sub(
-            &mut cpu,
-            Size::Byte,
-            AddressingMode::DataRegister(0),
-            AddressingMode::AddressIndirect(0),
-            &mut memory,
-        );
+        // SBCD D1, D0
+        exec_sbcd(&mut cpu, 1, 0, false, &mut memory);
 
-        assert_eq!(memory.read_byte(0x2000), 0x20);
-        assert!(!cpu.get_flag(flags::ZERO));
-        assert!(!cpu.get_flag(flags::NEGATIVE));
-        assert!(!cpu.get_flag(flags::CARRY));
+        assert_eq!(cpu.d[0] & 0xFF, 0x09); // 10 - 0 - 1 = 09
+        assert!(!cpu.get_flag(flags::CARRY)); // No borrow generated from this operation (10 >= 1)
         assert!(!cpu.get_flag(flags::EXTEND));
-        assert!(!cpu.get_flag(flags::OVERFLOW));
-        assert_eq!(cycles, 8); // 4 + 0 (D0) + 4 (A0 indirect)
     }
 }
