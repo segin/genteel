@@ -1,17 +1,8 @@
 #![cfg(test)]
 
 use super::*;
-use crate::memory::Memory;
-use crate::z80::test_utils::TestIo;
+use crate::z80::test_utils::create_z80;
 use proptest::prelude::*;
-
-fn create_z80(program: &[u8]) -> Z80<Box<Memory>, Box<TestIo>> {
-    let mut memory = Memory::new(0x10000);
-    for (i, &byte) in program.iter().enumerate() {
-        memory.data[i] = byte;
-    }
-    Z80::new(Box::new(memory), Box::new(TestIo::default()))
-}
 
 #[test]
 fn test_ex_sp_hl_memptr_and_flags() {

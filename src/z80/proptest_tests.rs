@@ -2,29 +2,15 @@
 //! Property-based tests for Z80 CPU using proptest
 
 use super::*;
-use crate::memory::Memory;
-use crate::memory::{IoInterface, MemoryInterface};
+use crate::z80::test_utils::create_z80;
 use proptest::prelude::*;
-
-fn create_z80_with_program(
-    program: &[u8],
-) -> Z80<Box<crate::memory::Memory>, Box<crate::z80::test_utils::TestIo>> {
-    let mut memory = Memory::new(0x10000);
-    for (i, &byte) in program.iter().enumerate() {
-        memory.data[i] = byte;
-    }
-    Z80::new(
-        Box::new(memory),
-        Box::new(crate::z80::test_utils::TestIo::default()),
-    )
-}
 
 proptest! {
     // ==================== Register Pair Invariants ====================
 
     #[test]
     fn prop_bc_roundtrip(val in 0u16..=0xFFFF) {
-        let mut z80 = create_z80_with_program(&[]);
+        let mut z80 = create_z80(&[]);
         z80.set_bc(val);
         prop_assert_eq!(z80.bc(), val);
         prop_assert_eq!(z80.b, (val >> 8) as u8);
@@ -33,21 +19,21 @@ proptest! {
 
     #[test]
     fn prop_de_roundtrip(val in 0u16..=0xFFFF) {
-        let mut z80 = create_z80_with_program(&[]);
+        let mut z80 = create_z80(&[]);
         z80.set_de(val);
         prop_assert_eq!(z80.de(), val);
     }
 
     #[test]
     fn prop_hl_roundtrip(val in 0u16..=0xFFFF) {
-        let mut z80 = create_z80_with_program(&[]);
+        let mut z80 = create_z80(&[]);
         z80.set_hl(val);
         prop_assert_eq!(z80.hl(), val);
     }
 
     #[test]
     fn prop_af_roundtrip(val in 0u16..=0xFFFF) {
-        let mut z80 = create_z80_with_program(&[]);
+        let mut z80 = create_z80(&[]);
         z80.set_af(val);
         prop_assert_eq!(z80.af(), val);
     }
@@ -56,7 +42,7 @@ proptest! {
 
     #[test]
     fn prop_ld_bc_nn(low in 0u8..=255, high in 0u8..=255) {
-        let mut z80 = create_z80_with_program(&[0x01, low, high]);
+        let mut z80 = create_z80(&[0x01, low, high]);
         z80.step();
         let expected = ((high as u16) << 8) | (low as u16);
         prop_assert_eq!(z80.bc(), expected);
@@ -65,7 +51,7 @@ proptest! {
 
     #[test]
     fn prop_ld_de_nn(low in 0u8..=255, high in 0u8..=255) {
-        let mut z80 = create_z80_with_program(&[0x11, low, high]);
+        let mut z80 = create_z80(&[0x11, low, high]);
         z80.step();
         let expected = ((high as u16) << 8) | (low as u16);
         prop_assert_eq!(z80.de(), expected);
@@ -73,7 +59,7 @@ proptest! {
 
     #[test]
     fn prop_ld_hl_nn(low in 0u8..=255, high in 0u8..=255) {
-        let mut z80 = create_z80_with_program(&[0x21, low, high]);
+        let mut z80 = create_z80(&[0x21, low, high]);
         z80.step();
         let expected = ((high as u16) << 8) | (low as u16);
         prop_assert_eq!(z80.hl(), expected);
@@ -81,7 +67,7 @@ proptest! {
 
     #[test]
     fn prop_ld_sp_nn(low in 0u8..=255, high in 0u8..=255) {
-        let mut z80 = create_z80_with_program(&[0x31, low, high]);
+        let mut z80 = create_z80(&[0x31, low, high]);
         z80.step();
         let expected = ((high as u16) << 8) | (low as u16);
         prop_assert_eq!(z80.sp, expected);
@@ -91,7 +77,7 @@ proptest! {
 
     #[test]
     fn prop_inc_bc_adds_one(val in 0u16..=0xFFFF) {
-        let mut z80 = create_z80_with_program(&[0x03]);
+        let mut z80 = create_z80(&[0x03]);
         z80.set_bc(val);
         z80.step();
         prop_assert_eq!(z80.bc(), val.wrapping_add(1));
@@ -99,7 +85,7 @@ proptest! {
 
     #[test]
     fn prop_dec_bc_subtracts_one(val in 0u16..=0xFFFF) {
-        let mut z80 = create_z80_with_program(&[0x0B]);
+        let mut z80 = create_z80(&[0x0B]);
         z80.set_bc(val);
         z80.step();
         prop_assert_eq!(z80.bc(), val.wrapping_sub(1));
@@ -107,7 +93,7 @@ proptest! {
 
     #[test]
     fn prop_inc_de_adds_one(val in 0u16..=0xFFFF) {
-        let mut z80 = create_z80_with_program(&[0x13]);
+        let mut z80 = create_z80(&[0x13]);
         z80.set_de(val);
         z80.step();
         prop_assert_eq!(z80.de(), val.wrapping_add(1));
@@ -115,7 +101,7 @@ proptest! {
 
     #[test]
     fn prop_inc_hl_adds_one(val in 0u16..=0xFFFF) {
-        let mut z80 = create_z80_with_program(&[0x23]);
+        let mut z80 = create_z80(&[0x23]);
         z80.set_hl(val);
         z80.step();
         prop_assert_eq!(z80.hl(), val.wrapping_add(1));
@@ -123,7 +109,7 @@ proptest! {
 
     #[test]
     fn prop_inc_sp_adds_one(val in 0u16..=0xFFFF) {
-        let mut z80 = create_z80_with_program(&[0x33]);
+        let mut z80 = create_z80(&[0x33]);
         z80.sp = val;
         z80.step();
         prop_assert_eq!(z80.sp, val.wrapping_add(1));
@@ -133,7 +119,7 @@ proptest! {
 
     #[test]
     fn prop_inc_a(val in 0u8..=255) {
-        let mut z80 = create_z80_with_program(&[0x3C]);
+        let mut z80 = create_z80(&[0x3C]);
         z80.a = val;
         z80.step();
         prop_assert_eq!(z80.a, val.wrapping_add(1));
@@ -143,7 +129,7 @@ proptest! {
 
     #[test]
     fn prop_dec_a(val in 0u8..=255) {
-        let mut z80 = create_z80_with_program(&[0x3D]);
+        let mut z80 = create_z80(&[0x3D]);
         z80.a = val;
         z80.step();
         prop_assert_eq!(z80.a, val.wrapping_sub(1));
@@ -151,7 +137,7 @@ proptest! {
 
     #[test]
     fn prop_inc_b(val in 0u8..=255) {
-        let mut z80 = create_z80_with_program(&[0x04]);
+        let mut z80 = create_z80(&[0x04]);
         z80.b = val;
         z80.step();
         prop_assert_eq!(z80.b, val.wrapping_add(1));
@@ -161,7 +147,7 @@ proptest! {
 
     #[test]
     fn prop_add_a_b(a in 0u8..=255, b in 0u8..=255) {
-        let mut z80 = create_z80_with_program(&[0x80]);
+        let mut z80 = create_z80(&[0x80]);
         z80.a = a;
         z80.b = b;
         z80.step();
@@ -172,7 +158,7 @@ proptest! {
 
     #[test]
     fn prop_sub_a_b(a in 0u8..=255, b in 0u8..=255) {
-        let mut z80 = create_z80_with_program(&[0x90]);
+        let mut z80 = create_z80(&[0x90]);
         z80.a = a;
         z80.b = b;
         z80.step();
@@ -182,7 +168,7 @@ proptest! {
 
     #[test]
     fn prop_and_a_b(a in 0u8..=255, b in 0u8..=255) {
-        let mut z80 = create_z80_with_program(&[0xA0]);
+        let mut z80 = create_z80(&[0xA0]);
         z80.a = a;
         z80.b = b;
         z80.step();
@@ -193,7 +179,7 @@ proptest! {
 
     #[test]
     fn prop_or_a_b(a in 0u8..=255, b in 0u8..=255) {
-        let mut z80 = create_z80_with_program(&[0xB0]);
+        let mut z80 = create_z80(&[0xB0]);
         z80.a = a;
         z80.b = b;
         z80.step();
@@ -202,7 +188,7 @@ proptest! {
 
     #[test]
     fn prop_xor_a_b(a in 0u8..=255, b in 0u8..=255) {
-        let mut z80 = create_z80_with_program(&[0xA8]);
+        let mut z80 = create_z80(&[0xA8]);
         z80.a = a;
         z80.b = b;
         z80.step();
@@ -211,7 +197,7 @@ proptest! {
 
     #[test]
     fn prop_cp_does_not_modify_a(a in 0u8..=255, b in 0u8..=255) {
-        let mut z80 = create_z80_with_program(&[0xB8]);
+        let mut z80 = create_z80(&[0xB8]);
         z80.a = a;
         z80.b = b;
         z80.step();
@@ -222,7 +208,7 @@ proptest! {
 
     #[test]
     fn prop_nop_only_advances_pc(a in 0u8..=255, b in 0u8..=255, c in 0u8..=255) {
-        let mut z80 = create_z80_with_program(&[0x00]);
+        let mut z80 = create_z80(&[0x00]);
         z80.a = a;
         z80.b = b;
         z80.c = c;
@@ -239,7 +225,7 @@ proptest! {
 
     #[test]
     fn prop_ld_b_c_copies(val in 0u8..=255) {
-        let mut z80 = create_z80_with_program(&[0x41]);
+        let mut z80 = create_z80(&[0x41]);
         z80.c = val;
         z80.step();
         prop_assert_eq!(z80.b, val);
@@ -247,7 +233,7 @@ proptest! {
 
     #[test]
     fn prop_ld_a_b_copies(val in 0u8..=255) {
-        let mut z80 = create_z80_with_program(&[0x78]);
+        let mut z80 = create_z80(&[0x78]);
         z80.b = val;
         z80.step();
         prop_assert_eq!(z80.a, val);
@@ -257,7 +243,7 @@ proptest! {
 
     #[test]
     fn prop_rlca_carry_is_bit_7(val in 0u8..=255) {
-        let mut z80 = create_z80_with_program(&[0x07]);
+        let mut z80 = create_z80(&[0x07]);
         z80.a = val;
         z80.step();
         prop_assert_eq!(z80.get_flag(flags::CARRY), (val & 0x80) != 0);
@@ -265,7 +251,7 @@ proptest! {
 
     #[test]
     fn prop_rrca_carry_is_bit_0(val in 0u8..=255) {
-        let mut z80 = create_z80_with_program(&[0x0F]);
+        let mut z80 = create_z80(&[0x0F]);
         z80.a = val;
         z80.step();
         prop_assert_eq!(z80.get_flag(flags::CARRY), (val & 0x01) != 0);
@@ -275,7 +261,7 @@ proptest! {
 
     #[test]
     fn prop_push_pop_bc_roundtrip(val in 0u16..=0xFFFF) {
-        let mut z80 = create_z80_with_program(&[0xC5, 0xC1]); // PUSH BC, POP BC
+        let mut z80 = create_z80(&[0xC5, 0xC1]); // PUSH BC, POP BC
         z80.sp = 0x8000;
         z80.set_bc(val);
         z80.step(); // PUSH
@@ -287,7 +273,7 @@ proptest! {
 
     #[test]
     fn prop_push_pop_af_roundtrip(val in 0u16..=0xFFFF) {
-        let mut z80 = create_z80_with_program(&[0xF5, 0xF1]); // PUSH AF, POP AF
+        let mut z80 = create_z80(&[0xF5, 0xF1]); // PUSH AF, POP AF
         z80.sp = 0x8000;
         z80.set_af(val);
         z80.step(); // PUSH
@@ -302,7 +288,7 @@ proptest! {
     #[test]
     fn prop_cb_set_bit(bit in 0u8..8, val in 0u8..=255) {
         let opcode = 0xC0 | (bit << 3); // SET bit, A
-        let mut z80 = create_z80_with_program(&[0xCB, opcode | 0x07]);
+        let mut z80 = create_z80(&[0xCB, opcode | 0x07]);
         z80.a = val;
         z80.step();
         prop_assert_eq!(z80.a, val | (1 << bit));
@@ -311,7 +297,7 @@ proptest! {
     #[test]
     fn prop_cb_res_bit(bit in 0u8..8, val in 0u8..=255) {
         let opcode = 0x80 | (bit << 3); // RES bit, A
-        let mut z80 = create_z80_with_program(&[0xCB, opcode | 0x07]);
+        let mut z80 = create_z80(&[0xCB, opcode | 0x07]);
         z80.a = val;
         z80.step();
         prop_assert_eq!(z80.a, val & !(1 << bit));
@@ -320,7 +306,7 @@ proptest! {
     #[test]
     fn prop_cb_bit_test(bit in 0u8..8, val in 0u8..=255) {
         let opcode = 0x40 | (bit << 3); // BIT bit, A
-        let mut z80 = create_z80_with_program(&[0xCB, opcode | 0x07]);
+        let mut z80 = create_z80(&[0xCB, opcode | 0x07]);
         z80.a = val;
         z80.step();
         let bit_set = (val >> bit) & 1 != 0;
@@ -331,7 +317,7 @@ proptest! {
 
     #[test]
     fn prop_ld_ix_nn(low in 0u8..=255, high in 0u8..=255) {
-        let mut z80 = create_z80_with_program(&[0xDD, 0x21, low, high]);
+        let mut z80 = create_z80(&[0xDD, 0x21, low, high]);
         z80.step();
         let expected = ((high as u16) << 8) | (low as u16);
         prop_assert_eq!(z80.ix, expected);
@@ -339,7 +325,7 @@ proptest! {
 
     #[test]
     fn prop_ld_iy_nn(low in 0u8..=255, high in 0u8..=255) {
-        let mut z80 = create_z80_with_program(&[0xFD, 0x21, low, high]);
+        let mut z80 = create_z80(&[0xFD, 0x21, low, high]);
         z80.step();
         let expected = ((high as u16) << 8) | (low as u16);
         prop_assert_eq!(z80.iy, expected);
@@ -347,7 +333,7 @@ proptest! {
 
     #[test]
     fn prop_inc_ix(val in 0u16..=0xFFFF) {
-        let mut z80 = create_z80_with_program(&[0xDD, 0x23]);
+        let mut z80 = create_z80(&[0xDD, 0x23]);
         z80.ix = val;
         z80.step();
         prop_assert_eq!(z80.ix, val.wrapping_add(1));
@@ -355,7 +341,7 @@ proptest! {
 
     #[test]
     fn prop_dec_iy(val in 0u16..=0xFFFF) {
-        let mut z80 = create_z80_with_program(&[0xFD, 0x2B]);
+        let mut z80 = create_z80(&[0xFD, 0x2B]);
         z80.iy = val;
         z80.step();
         prop_assert_eq!(z80.iy, val.wrapping_sub(1));
