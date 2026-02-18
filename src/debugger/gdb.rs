@@ -683,6 +683,10 @@ impl GdbServer {
                     return "OK".to_string();
                 } else {
                     self.auth_failed_attempts += 1;
+                    eprintln!(
+                        "⚠️  SECURITY ALERT: Failed GDB authentication attempt ({}/{})",
+                        self.auth_failed_attempts, MAX_AUTH_ATTEMPTS
+                    );
                     if self.auth_failed_attempts >= MAX_AUTH_ATTEMPTS {
                         self.auth_lockout_until = Some(Instant::now() + AUTH_LOCKOUT_DURATION);
                         eprintln!(
