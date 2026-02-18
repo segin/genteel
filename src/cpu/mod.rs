@@ -295,13 +295,37 @@ impl Cpu {
         }
 
         let pc = self.pc;
-        let opcode = self.read_word(pc, memory);
-        if self.pending_exception {
-            self.cycles += 34;
-            return 34;
-        }
-        self.pc = self.pc.wrapping_add(2);
-        let instr = decode(opcode);
+
+        // ROM/Cartridge space - Cacheable
+        // Index: (PC / 2) & 0xFFFF. Maps 0-128KB repeating or just lower bits.
+        // Since we check entry.pc == pc, aliasing is handled safely.
+        let cache_index = ((pc >> 1) & 0xFFFF) as usize;
+
+        // Safety: cache size is 65536, index is masked to 0xFFFF.
+        // Using safe indexing instead of get_unchecked to prevent potential security issues
+        let entry = self.decode_cache[cache_index];
+
+        let instr = if entry.pc == pc {
+            // Cache Hit
+            self.pc = self.pc.wrapping_add(2);
+            entry.instruction
+        } else {
+            // Cache Miss
+            let opcode = self.read_word(pc, memory);
+            if self.pending_exception {
+                self.cycles += 34;
+                return 34;
+            }
+            self.pc = self.pc.wrapping_add(2);
+            let decoded = decode(opcode);
+
+            // Update cache
+            self.decode_cache[cache_index] = DecodeCacheEntry {
+                pc,
+                instruction: decoded,
+            };
+            decoded
+        };
 
         let cycles = self.execute(instr, memory);
         self.cycles += cycles as u64;
