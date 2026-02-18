@@ -25,26 +25,34 @@ pub fn decode(opcode: u16) -> Instruction {
 fn decode_uncached(opcode: u16) -> Instruction {
     match (opcode >> 12) & 0x0F {
         0x0 => decode_group_0(opcode),
-        0x1 => decode_move(opcode, Size::Byte),
-        0x2 => decode_move(opcode, Size::Long),
-        0x3 => decode_move(opcode, Size::Word),
+        0x1 => decode_move_byte(opcode),
+        0x2 => decode_move_long(opcode),
+        0x3 => decode_move_word(opcode),
         0x4 => decode_group_4(opcode),
         0x5 => decode_group_5(opcode),
         0x6 => decode_group_6(opcode),
         0x7 => decode_moveq(opcode),
         0x8 => decode_group_8(opcode),
         0x9 => decode_sub(opcode),
-        0xA => Instruction::System(SystemInstruction::LineA { opcode }),
+        0xA => decode_line_a(opcode),
         0xB => decode_group_b(opcode),
         0xC => decode_group_c(opcode),
         0xD => decode_add(opcode),
         0xE => decode_shifts(opcode),
-        0xF => Instruction::System(SystemInstruction::LineF { opcode }),
+        0xF => decode_line_f(opcode),
         _ => unreachable!(),
     }
 }
 
 // === Group decoders ===
+
+fn decode_line_a(opcode: u16) -> Instruction {
+    Instruction::LineA { opcode }
+}
+
+fn decode_line_f(opcode: u16) -> Instruction {
+    Instruction::LineF { opcode }
+}
 
 fn decode_group_0(opcode: u16) -> Instruction {
     if (opcode & 0x0100) != 0 {
@@ -1066,5 +1074,41 @@ mod tests {
             decode(0x483B),
             Instruction::System(SystemInstruction::Unimplemented { opcode: 0x483B })
         );
+    }
+
+    #[test]
+    fn test_decode_groups_dispatch() {
+        // Group 0: ORI.B #<data>, D0 (0x0000)
+        assert!(matches!(decode(0x0000), Instruction::OrI { .. }));
+        // Group 1: MOVE.B D0, D1 (0x1200)
+        assert!(matches!(decode(0x1200), Instruction::Move { size: Size::Byte, .. }));
+        // Group 2: MOVE.L D0, D1 (0x2200)
+        assert!(matches!(decode(0x2200), Instruction::Move { size: Size::Long, .. }));
+        // Group 3: MOVE.W D0, D1 (0x3200)
+        assert!(matches!(decode(0x3200), Instruction::Move { size: Size::Word, .. }));
+        // Group 4: CLR.W D0 (0x4240)
+        assert!(matches!(decode(0x4240), Instruction::Clr { .. }));
+        // Group 5: ADDQ.W #1, D0 (0x5240)
+        assert!(matches!(decode(0x5240), Instruction::AddQ { .. }));
+        // Group 6: BRA <disp> (0x6000)
+        assert!(matches!(decode(0x6000), Instruction::Bra { .. }));
+        // Group 7: MOVEQ #0, D0 (0x7000)
+        assert!(matches!(decode(0x7000), Instruction::MoveQ { .. }));
+        // Group 8: DIVU.W D1, D0 (0x80C1)
+        assert!(matches!(decode(0x80C1), Instruction::DivU { .. }));
+        // Group 9: SUB.W D0, D1 (0x9240)
+        assert!(matches!(decode(0x9240), Instruction::Sub { .. }));
+        // Group A: Line A (0xA000)
+        assert!(matches!(decode(0xA000), Instruction::LineA { .. }));
+        // Group B: CMP.W D0, D1 (0xB240)
+        assert!(matches!(decode(0xB240), Instruction::Cmp { .. }));
+        // Group C: AND.W D0, D1 (0xC240)
+        assert!(matches!(decode(0xC240), Instruction::And { .. }));
+        // Group D: ADD.W D0, D1 (0xD240)
+        assert!(matches!(decode(0xD240), Instruction::Add { .. }));
+        // Group E: ASL.W #1, D0 (0xE340)
+        assert!(matches!(decode(0xE340), Instruction::Asl { .. }));
+        // Group F: Line F (0xF000)
+        assert!(matches!(decode(0xF000), Instruction::LineF { .. }));
     }
 }
