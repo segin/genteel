@@ -1,7 +1,6 @@
 use crate::cpu::addressing::{calculate_ea, EffectiveAddress};
 use crate::cpu::decoder::{AddressingMode, Size};
-use crate::cpu::flags;
-use crate::cpu::Cpu;
+use crate::cpu::{flags, Cpu};
 use crate::memory::MemoryInterface;
 
 pub fn exec_move<M: MemoryInterface>(
@@ -11,35 +10,24 @@ pub fn exec_move<M: MemoryInterface>(
     dst: AddressingMode,
     memory: &mut M,
 ) -> u32 {
-    let mut cycles = 4u32;
+    let mut cycles = match size {
+        Size::Byte | Size::Word => 4,
+        Size::Long => 4, // MOVE.L is also 4 cycles for reg-reg
+    };
 
-    // Calculate source EA
     let (src_ea, src_cycles) = calculate_ea(src, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     cycles += src_cycles;
-    if cpu.pending_exception {
-        return cycles;
-    }
+    let val = cpu.cpu_read_ea(src_ea, size, memory);
 
-    // Read source value
-    let value = cpu.cpu_read_ea(src_ea, size, memory);
-    if cpu.pending_exception {
-        return cycles;
-    }
-
-    // Calculate destination EA
     let (dst_ea, dst_cycles) = calculate_ea(dst, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     cycles += dst_cycles;
-    if cpu.pending_exception {
-        return cycles;
-    }
 
-    // Write to destination
-    cpu.cpu_write_ea(dst_ea, size, value, memory);
-
-    // Update flags
-    cpu.update_nz_flags(value, size);
+    // MOVE flags: N and Z set according to data, V and C always cleared.
+    cpu.update_nz_flags(val, size);
     cpu.set_flag(flags::OVERFLOW, false);
     cpu.set_flag(flags::CARRY, false);
+
+    cpu.cpu_write_ea(dst_ea, size, val, memory);
 
     cycles
 }
@@ -51,31 +39,31 @@ pub fn exec_movea<M: MemoryInterface>(
     dst_reg: u8,
     memory: &mut M,
 ) -> u32 {
-    let mut cycles = 4u32;
-
-    let (src_ea, src_cycles) = calculate_ea(src, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
-    cycles += src_cycles;
-
-    let value = cpu.cpu_read_ea(src_ea, size, memory);
-
-    // Sign-extend to 32 bits for word size
-    let value = match size {
-        Size::Word => (value as i16) as i32 as u32,
-        Size::Long => value,
-        Size::Byte => value, // Should not happen for MOVEA
+    let cycles = match size {
+        Size::Word => 4,
+        Size::Long => 4,
+        _ => 4,
     };
 
-    cpu.a[dst_reg as usize] = value;
+    let (src_ea, src_cycles) = calculate_ea(src, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
+    let total_cycles = cycles + src_cycles;
 
-    // MOVEA does not affect flags
-    cycles
+    let val = match size {
+        Size::Word => (cpu.cpu_read_ea(src_ea, size, memory) as i16) as i32 as u32,
+        Size::Long => cpu.cpu_read_ea(src_ea, size, memory),
+        _ => cpu.cpu_read_ea(src_ea, size, memory),
+    };
+
+    cpu.a[dst_reg as usize] = val;
+
+    total_cycles
 }
 
 pub fn exec_moveq(cpu: &mut Cpu, dst_reg: u8, data: i8) -> u32 {
-    let value = data as i32 as u32;
-    cpu.d[dst_reg as usize] = value;
+    let val = data as i32 as u32;
+    cpu.d[dst_reg as usize] = val;
 
-    cpu.update_nz_flags(value, Size::Long);
+    cpu.update_nz_flags(val, Size::Long);
     cpu.set_flag(flags::OVERFLOW, false);
     cpu.set_flag(flags::CARRY, false);
 
@@ -94,23 +82,40 @@ pub fn exec_lea<M: MemoryInterface>(
         cpu.a[dst_reg as usize] = addr;
     }
 
+    // LEA does not affect flags
     4 + cycles
 }
 
-pub fn exec_clr<M: MemoryInterface>(
-    cpu: &mut Cpu,
-    size: Size,
-    dst: AddressingMode,
-    memory: &mut M,
-) -> u32 {
-    let (dst_ea, cycles) = calculate_ea(dst, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
+pub fn exec_pea<M: MemoryInterface>(cpu: &mut Cpu, src: AddressingMode, memory: &mut M) -> u32 {
+    let (ea, cycles) = calculate_ea(src, Size::Long, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
 
-    cpu.cpu_write_ea(dst_ea, size, 0, memory);
+    if let EffectiveAddress::Memory(addr) = ea {
+        cpu.a[7] = cpu.a[7].wrapping_sub(4);
+        cpu.write_long(cpu.a[7], addr, memory);
+    }
 
-    // CLR always sets Z=1, N=0, V=0, C=0
-    cpu.sr = (cpu.sr & !0x000F) | flags::ZERO;
+    // PEA does not affect flags
+    // Cycles: 12 + ea_cycles (standard 68000)
+    12 + cycles
+}
 
-    4 + cycles
+pub fn exec_exg(cpu: &mut Cpu, rx: u8, ry: u8, mode: u8) -> u32 {
+    match mode {
+        0x08 => {
+            // Data registers
+            cpu.d.swap(rx as usize, ry as usize);
+        }
+        0x09 => {
+            // Address registers
+            cpu.a.swap(rx as usize, ry as usize);
+        }
+        0x11 => {
+            // Data and Address register
+            std::mem::swap(&mut cpu.d[rx as usize], &mut cpu.a[ry as usize]);
+        }
+        _ => {}
+    }
+    6
 }
 
 pub fn exec_movep<M: MemoryInterface>(
@@ -118,47 +123,53 @@ pub fn exec_movep<M: MemoryInterface>(
     size: Size,
     reg: u8,
     an: u8,
-    reg_to_mem: bool,
+    direction: bool,
     memory: &mut M,
 ) -> u32 {
-    let disp = cpu.read_word(cpu.pc, memory) as i16;
-    cpu.pc = cpu.pc.wrapping_add(2);
+    let addr = cpu.a[an as usize];
+    let mut cycles = match size {
+        Size::Word => 16,
+        Size::Long => 24,
+        _ => 0,
+    };
 
-    let addr = cpu.a[an as usize].wrapping_add(disp as u32);
-
-    match size {
-        Size::Word => {
-            if reg_to_mem {
-                let val = cpu.d[reg as usize] as u16;
-                cpu.write_byte(addr, (val >> 8) as u8, memory);
-                cpu.write_byte(addr.wrapping_add(2), val as u8, memory);
-            } else {
-                let hi = memory.read_byte(addr);
-                let lo = memory.read_byte(addr.wrapping_add(2));
-                let val = ((hi as u16) << 8) | (lo as u16);
-                cpu.d[reg as usize] = (cpu.d[reg as usize] & 0xFFFF0000) | (val as u32);
+    if direction {
+        // Register to memory
+        let val = cpu.d[reg as usize];
+        match size {
+            Size::Word => {
+                memory.write_byte(addr, (val >> 8) as u8);
+                memory.write_byte(addr.wrapping_add(2), (val & 0xFF) as u8);
             }
-            16
-        }
-        Size::Long => {
-            if reg_to_mem {
-                let val = cpu.d[reg as usize];
-                cpu.write_byte(addr, (val >> 24) as u8, memory);
-                cpu.write_byte(addr.wrapping_add(2), (val >> 16) as u8, memory);
-                cpu.write_byte(addr.wrapping_add(4), (val >> 8) as u8, memory);
-                cpu.write_byte(addr.wrapping_add(6), val as u8, memory);
-            } else {
-                let b3 = memory.read_byte(addr);
-                let b2 = memory.read_byte(addr.wrapping_add(2));
-                let b1 = memory.read_byte(addr.wrapping_add(4));
-                let b0 = memory.read_byte(addr.wrapping_add(6));
-                cpu.d[reg as usize] =
-                    ((b3 as u32) << 24) | ((b2 as u32) << 16) | ((b1 as u32) << 8) | (b0 as u32);
+            Size::Long => {
+                memory.write_byte(addr, (val >> 24) as u8);
+                memory.write_byte(addr.wrapping_add(2), (val >> 16) as u8);
+                memory.write_byte(addr.wrapping_add(4), (val >> 8) as u8);
+                memory.write_byte(addr.wrapping_add(6), (val & 0xFF) as u8);
             }
-            24
+            _ => cycles = 0,
         }
-        _ => 4, // Should not happen for MOVEC
+    } else {
+        // Memory to register
+        let mut val = 0u32;
+        match size {
+            Size::Word => {
+                val |= (memory.read_byte(addr) as u32) << 8;
+                val |= memory.read_byte(addr.wrapping_add(2)) as u32;
+                cpu.d[reg as usize] = (cpu.d[reg as usize] & 0xFFFF0000) | val;
+            }
+            Size::Long => {
+                val |= (memory.read_byte(addr) as u32) << 24;
+                val |= (memory.read_byte(addr.wrapping_add(2)) as u32) << 16;
+                val |= (memory.read_byte(addr.wrapping_add(4)) as u32) << 8;
+                val |= memory.read_byte(addr.wrapping_add(6)) as u32;
+                cpu.d[reg as usize] = val;
+            }
+            _ => cycles = 0,
+        }
     }
+
+    cycles
 }
 
 pub fn exec_movem<M: MemoryInterface>(
@@ -241,10 +252,9 @@ pub fn exec_movem<M: MemoryInterface>(
         for i in 0..16 {
             if (mask & (1 << i)) != 0 {
                 if i < 8 {
-                    // Data register: Word load affects only lower 16 bits, Long load affects all
+                    // Data register: Word load is sign-extended to 32 bits, Long load is normal
                     if size == Size::Word {
-                        let val = cpu.read_word(addr, memory);
-                        cpu.d[i] = (cpu.d[i] & 0xFFFF0000) | (val as u32);
+                        cpu.d[i] = cpu.read_word(addr, memory) as i16 as i32 as u32;
                     } else {
                         cpu.d[i] = cpu.read_long(addr, memory);
                     }
@@ -270,56 +280,12 @@ pub fn exec_movem<M: MemoryInterface>(
     cycles
 }
 
-pub fn exec_pea<M: MemoryInterface>(cpu: &mut Cpu, src: AddressingMode, memory: &mut M) -> u32 {
-    let mut cycles = 12u32;
-    let (src_ea, src_cycles) =
-        calculate_ea(src, Size::Long, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
-    cycles += src_cycles;
-
-    let addr = match src_ea {
-        EffectiveAddress::Memory(a) => a,
-        _ => 0, // Should not happen for control addressing modes
-    };
-
-    cpu.push_long(addr, memory);
-    cycles
-}
-
-pub fn exec_exg(cpu: &mut Cpu, rx: u8, ry: u8, mode: u8) -> u32 {
-    // Mode comes from bits 3-7 of opcode.
-    // 01000 (8): Dx, Dy
-    // 01001 (9): Ax, Ay
-    // 10001 (17): Dx, Ay
-
-    match mode {
-        0x08 => {
-            // Dx, Dy
-            cpu.d.swap(rx as usize, ry as usize);
-        }
-        0x09 => {
-            // Ax, Ay
-            cpu.a.swap(rx as usize, ry as usize);
-        }
-        0x11 => {
-            // Dx, Ay
-            std::mem::swap(&mut cpu.d[rx as usize], &mut cpu.a[ry as usize]);
-        }
-        _ => {
-            // Should not happen if decoder is correct
-            #[cfg(debug_assertions)]
-            eprintln!("Invalid EXG mode: {:02X}", mode);
-        }
-    }
-
-    6
-}
-
 pub fn exec_swap(cpu: &mut Cpu, reg: u8) -> u32 {
     let val = cpu.d[reg as usize];
-    let result = val.rotate_left(16);
-    cpu.d[reg as usize] = result;
+    let swapped = val.rotate_left(16);
+    cpu.d[reg as usize] = swapped;
 
-    cpu.update_nz_flags(result, Size::Long);
+    cpu.update_nz_flags(swapped, Size::Long);
     cpu.set_flag(flags::OVERFLOW, false);
     cpu.set_flag(flags::CARRY, false);
 
@@ -329,11 +295,16 @@ pub fn exec_swap(cpu: &mut Cpu, reg: u8) -> u32 {
 pub fn exec_ext(cpu: &mut Cpu, size: Size, reg: u8) -> u32 {
     let val = cpu.d[reg as usize];
     let result = match size {
-        Size::Word => (val as i8) as i16 as u32 & 0xFFFF | (val & 0xFFFF0000),
+        Size::Word => (val as i8) as i16 as u16 as u32,
         Size::Long => (val as i16) as i32 as u32,
-        Size::Byte => val, // Should not happen
+        _ => val,
     };
-    cpu.d[reg as usize] = result;
+
+    match size {
+        Size::Word => cpu.d[reg as usize] = (cpu.d[reg as usize] & 0xFFFF0000) | result,
+        Size::Long => cpu.d[reg as usize] = result,
+        _ => {}
+    }
 
     cpu.update_nz_flags(result, size);
     cpu.set_flag(flags::OVERFLOW, false);

@@ -14,8 +14,10 @@
 //! Second byte (for frequency) has bit 7 clear and contains:
 //! - Bits 5-0: Additional frequency data
 
+use serde::{Deserialize, Serialize};
+
 /// Square wave tone channel
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ToneChannel {
     /// 10-bit frequency divider (higher = lower pitch)
     pub frequency: u16,
@@ -28,7 +30,7 @@ pub struct ToneChannel {
 }
 
 /// Noise channel
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NoiseChannel {
     /// Noise mode: false = periodic, true = white
     pub white_noise: bool,
@@ -55,7 +57,7 @@ impl Default for NoiseChannel {
 }
 
 /// SN76489 PSG chip state
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Psg {
     /// Three tone channels
     pub tones: [ToneChannel; 3],
