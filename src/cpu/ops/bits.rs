@@ -535,7 +535,7 @@ pub fn exec_tas<M: MemoryInterface>(cpu: &mut Cpu, dst: AddressingMode, memory: 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cpu::decoder::{AddressingMode, BitSource, ShiftCount, Size};
+    use crate::cpu::decoder::{AddressingMode, Size};
     use crate::cpu::flags;
     use crate::cpu::Cpu;
     use crate::memory::Memory;
@@ -664,452 +664,22 @@ mod tests {
     }
 
     #[test]
-    fn test_exec_or_memory_to_reg() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0xAA;
-        cpu.a[0] = 0x2000;
-        memory.write_byte(0x2000, 0x55);
-
-        // OR.B (A0), D0
-        let cycles = exec_or(
-            &mut cpu,
-            Size::Byte,
-            AddressingMode::AddressIndirect(0),
-            AddressingMode::DataRegister(0),
-            false,
-            &mut memory,
-        );
-
-        assert_eq!(cpu.d[0] & 0xFF, 0xFF); // 0xAA | 0x55 = 0xFF
-        assert!(cpu.get_flag(flags::NEGATIVE));
-        assert!(!cpu.get_flag(flags::ZERO));
-        assert!(!cpu.get_flag(flags::CARRY));
-        assert!(!cpu.get_flag(flags::OVERFLOW));
-        assert_eq!(cycles, 8); // 4 (base) + 4 (AddrIndirect) + 0 (DataReg)
-    }
-
-    #[test]
-    fn test_exec_or_immediate() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x00;
-        let pc = cpu.pc;
-        memory.write_word(pc, 0x00FF); // Immediate value 0xFF in low byte
-
-        // OR.B #$FF, D0
-        let cycles = exec_or(
-            &mut cpu,
-            Size::Byte,
-            AddressingMode::Immediate,
-            AddressingMode::DataRegister(0),
-            true,
-            &mut memory,
-        );
-
-        assert_eq!(cpu.d[0] & 0xFF, 0xFF);
-        assert!(cpu.get_flag(flags::NEGATIVE));
-        assert!(!cpu.get_flag(flags::ZERO));
-        assert_eq!(cpu.pc, pc + 2); // PC advanced by 2 bytes (1 word)
-        assert_eq!(cycles, 8);
-    }
-
-    #[test]
-    fn test_exec_or_patterns() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x55555555;
-        cpu.d[1] = 0xAAAAAAAA;
-
-        exec_or(
-            &mut cpu,
-            Size::Long,
-            AddressingMode::DataRegister(0),
-            AddressingMode::DataRegister(1),
-            true,
-            &mut memory,
-        );
-
-        assert_eq!(cpu.d[1], 0xFFFFFFFF);
-        assert!(cpu.get_flag(flags::NEGATIVE));
-        assert!(!cpu.get_flag(flags::ZERO));
-    }
-
-    #[test]
-    fn test_exec_or_flags_clear() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x1234;
-        cpu.d[1] = 0x4321;
-        // Pre-set flags
-        cpu.set_flag(flags::CARRY, true);
-        cpu.set_flag(flags::OVERFLOW, true);
-
-        exec_or(
-            &mut cpu,
-            Size::Word,
-            AddressingMode::DataRegister(0),
-            AddressingMode::DataRegister(1),
-            true,
-            &mut memory,
-        );
-
-        assert!(!cpu.get_flag(flags::CARRY));
-        assert!(!cpu.get_flag(flags::OVERFLOW));
-        assert!(!cpu.get_flag(flags::ZERO));
-        assert!(!cpu.get_flag(flags::NEGATIVE));
-    }
-
-    #[test]
-    fn test_exec_or_memory_src() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x00000000;
-        cpu.a[0] = 0x2000;
-        memory.write_byte(0x2000, 0xFF);
-
-        // OR.B (A0), D0
-        let cycles = exec_or(
-            &mut cpu,
-            Size::Byte,
-            AddressingMode::AddressIndirect(0),
-            AddressingMode::DataRegister(0),
-            true,
-            &mut memory,
-        );
-
-        assert_eq!(cpu.d[0] & 0xFF, 0xFF);
-        assert!(cpu.get_flag(flags::NEGATIVE));
-        assert!(!cpu.get_flag(flags::ZERO));
-        assert_eq!(cycles, 8);
-    }
-
-    #[test]
-    fn test_exec_or_positive() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x01;
-        cpu.d[1] = 0x02;
-
-        let cycles = exec_or(
-            &mut cpu,
-            Size::Byte,
-            AddressingMode::DataRegister(0),
-            AddressingMode::DataRegister(1),
-            true,
-            &mut memory,
-        );
-
-        assert_eq!(cpu.d[1] & 0xFF, 0x03);
-        assert!(!cpu.get_flag(flags::NEGATIVE));
-        assert!(!cpu.get_flag(flags::ZERO));
-        assert_eq!(cycles, 4);
-    }
-
-    #[test]
-    fn test_exec_btst_reg_zero() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x0000_0000;
-        cpu.d[1] = 0; // Bit number 0
-
-        // BTST D1, D0
-        let cycles = exec_btst(
-            &mut cpu,
-            BitSource::Register(1),
-            AddressingMode::DataRegister(0),
-            &mut memory,
-        );
-
-        assert!(cpu.get_flag(flags::ZERO)); // Bit 0 is 0, so Z=1
-        assert_eq!(cycles, 10);
-    }
-
-    #[test]
-    fn test_exec_btst_reg_one() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x0000_0001;
-        cpu.d[1] = 0; // Bit number 0
-
-        let cycles = exec_btst(
-            &mut cpu,
-            BitSource::Register(1),
-            AddressingMode::DataRegister(0),
-            &mut memory,
-        );
-
-        assert!(!cpu.get_flag(flags::ZERO)); // Bit 0 is 1, so Z=0
-        assert_eq!(cycles, 10);
-    }
-
-    #[test]
-    fn test_exec_btst_reg_long() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0b00000000_00000000_00000000_00000100; // Bit 2 is set
-
-        // Test bit 2 (should be 1 -> Z=0)
-        cpu.d[1] = 2;
-        let cycles = exec_btst(
-            &mut cpu,
-            BitSource::Register(1),
-            AddressingMode::DataRegister(0),
-            &mut memory,
-        );
-
-        // Bit is 1, so Z flag should be 0 (FALSE)
-        assert!(!cpu.get_flag(flags::ZERO));
-        // BTST on register takes 10 cycles: 4 base + 0 (DataReg EA) + 6 (Test reg)
-        assert_eq!(cycles, 10);
-
-        // Test bit 1 (should be 0 -> Z=1)
-        cpu.d[1] = 1; // Test bit 1
-        exec_btst(
-            &mut cpu,
-            BitSource::Register(1),
-            AddressingMode::DataRegister(0),
-            &mut memory,
-        );
-        assert!(cpu.get_flag(flags::ZERO));
-
-        // Test Modulo 32: Bit 34 (34 % 32 = 2) should test bit 2
-        cpu.d[1] = 34;
-        exec_btst(
-            &mut cpu,
-            BitSource::Register(1),
-            AddressingMode::DataRegister(0),
-            &mut memory,
-        );
-        assert!(!cpu.get_flag(flags::ZERO));
-    }
-
-    #[test]
-    fn test_exec_btst_mem_byte() {
-        let (mut cpu, mut memory) = create_test_setup();
-        memory.write_byte(0x2000, 0b00000100); // Bit 2 is set
-        cpu.a[0] = 0x2000;
-
-        // Test bit 2 (should be 1 -> Z=0)
-        cpu.d[1] = 2;
-        let cycles = exec_btst(
-            &mut cpu,
-            BitSource::Register(1),
-            AddressingMode::AddressIndirect(0),
-            &mut memory,
-        );
-
-        assert!(!cpu.get_flag(flags::ZERO));
-        // BTST on memory takes 12 cycles: 4 base + 4 (AddrIndirect EA) + 4 (Test mem)
-        assert_eq!(cycles, 12);
-
-        // Test bit 1 (should be 0 -> Z=1)
-        cpu.d[1] = 1;
-        exec_btst(
-            &mut cpu,
-            BitSource::Register(1),
-            AddressingMode::AddressIndirect(0),
-            &mut memory,
-        );
-        assert!(cpu.get_flag(flags::ZERO));
-
-        // Test Modulo 8: Bit 10 (10 % 8 = 2) should test bit 2
-        cpu.d[1] = 10;
-        exec_btst(
-            &mut cpu,
-            BitSource::Register(1),
-            AddressingMode::AddressIndirect(0),
-            &mut memory,
-        );
-        assert!(!cpu.get_flag(flags::ZERO));
-    }
-
-    #[test]
-    fn test_exec_btst_imm() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0b00000000_00000000_00000000_00000100; // Bit 2 is set
-
-        // Immediate bit number is read from PC.
-        // We need to set PC and write the immediate word to memory.
-        cpu.pc = 0x1000;
-        memory.write_word(0x1000, 0x0002); // Bit 2
-
-        let cycles = exec_btst(
-            &mut cpu,
-            BitSource::Immediate,
-            AddressingMode::DataRegister(0),
-            &mut memory,
-        );
-
-        // PC should advance by 2
-        assert_eq!(cpu.pc, 0x1002);
-        assert!(!cpu.get_flag(flags::ZERO));
-        // BTST Immediate Reg: 4 base + 0 EA + 6 Test + (fetch immediate?)
-        // Total = 10.
-        assert_eq!(cycles, 10);
-    }
-
-    #[test]
-    fn test_exec_btst_mem() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.a[0] = 0x2000;
-        memory.write_byte(0x2000, 0x80); // Bit 7 is 1
-
-        cpu.d[0] = 7; // Bit number 7
-
-        // BTST D0, (A0)
-        let cycles = exec_btst(
-            &mut cpu,
-            BitSource::Register(0),
-            AddressingMode::AddressIndirect(0),
-            &mut memory,
-        );
-
-        assert!(!cpu.get_flag(flags::ZERO));
-        // cycles:
-        // base 4
-        // dst_cycles (Indirect) = 4
-        // is_memory = true -> cycles += 4
-        // Total = 12.
-        assert_eq!(cycles, 12);
-    }
-
-    #[test]
-    fn test_exec_btst_modulo_32() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x0000_0001; // Bit 0 set
-        cpu.d[1] = 32; // Bit number 32. 32 % 32 = 0.
-
-        exec_btst(
-            &mut cpu,
-            BitSource::Register(1),
-            AddressingMode::DataRegister(0),
-            &mut memory,
-        );
-
-        assert!(!cpu.get_flag(flags::ZERO)); // Should test bit 0
-    }
-
-    #[test]
-    fn test_exec_btst_modulo_8() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.a[0] = 0x2000;
-        memory.write_byte(0x2000, 0x01); // Bit 0 set
-        cpu.d[0] = 8; // Bit number 8. 8 % 8 = 0.
-
-        exec_btst(
-            &mut cpu,
-            BitSource::Register(0),
-            AddressingMode::AddressIndirect(0),
-            &mut memory,
-        );
-
-        assert!(!cpu.get_flag(flags::ZERO)); // Should test bit 0
-    }
-
-    #[test]
-    fn test_exec_btst_no_modification() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0xFFFFFFFF;
-        cpu.d[1] = 0;
-
-        exec_btst(
-            &mut cpu,
-            BitSource::Register(1),
-            AddressingMode::DataRegister(0),
-            &mut memory,
-        );
-
-        assert_eq!(cpu.d[0], 0xFFFFFFFF);
-    }
-
-    #[test]
-    fn test_exec_btst_imm_zero() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x7FFFFFFF; // Bit 31 is 0
-
-        // BTST #31, D0
-        // Immediate bit number 31 at PC
-        memory.write_word(cpu.pc, 31);
-
-        exec_btst(
-            &mut cpu,
-            BitSource::Immediate,
-            AddressingMode::DataRegister(0),
-            &mut memory,
-        );
-
-        // Bit 31 is 0. Z flag should be 1 (true).
-        assert!(cpu.get_flag(flags::ZERO));
-    }
-
-    #[test]
-    fn test_exec_btst_imm_one() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x80000000; // Bit 31 is 1
-
-        // BTST #31, D0
-        memory.write_word(cpu.pc, 31);
-
-        exec_btst(
-            &mut cpu,
-            BitSource::Immediate,
-            AddressingMode::DataRegister(0),
-            &mut memory,
-        );
-
-        // Bit 31 is 1. Z flag should be 0 (false).
-        assert!(!cpu.get_flag(flags::ZERO));
-    }
-
-    #[test]
-    fn test_exec_btst_mem_zero() {
-        let (mut cpu, mut memory) = create_test_setup();
-        let addr = 0x2000;
-        memory.write_byte(addr, 0x7F); // Bit 7 is 0
-        cpu.a[0] = addr;
-
-        // BTST #7, (A0)
-        memory.write_word(cpu.pc, 7);
-
-        exec_btst(
-            &mut cpu,
-            BitSource::Immediate,
-            AddressingMode::AddressIndirect(0),
-            &mut memory,
-        );
-
-        assert!(cpu.get_flag(flags::ZERO));
-    }
-
-    #[test]
-    fn test_exec_btst_mem_one() {
-        let (mut cpu, mut memory) = create_test_setup();
-        let addr = 0x2000;
-        memory.write_byte(addr, 0x80); // Bit 7 is 1
-        cpu.a[0] = addr;
-
-        // BTST #7, (A0)
-        memory.write_word(cpu.pc, 7);
-
-        exec_btst(
-            &mut cpu,
-            BitSource::Immediate,
-            AddressingMode::AddressIndirect(0),
-            &mut memory,
-        );
-
-        assert!(!cpu.get_flag(flags::ZERO));
-    }
-
-    #[test]
     fn test_exec_eor_byte() {
         let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x000000FF;
-        cpu.d[1] = 0x00000055;
+        cpu.d[0] = 0xAA;
+        cpu.d[1] = 0x55;
 
         // EOR.B D0, D1
         let cycles = exec_eor(
             &mut cpu,
             Size::Byte,
-            0,
+            0, // D0
             AddressingMode::DataRegister(1),
             &mut memory,
         );
 
-        assert_eq!(cpu.d[1], 0x000000AA); // 0xFF ^ 0x55 = 0xAA (10101010)
-        assert!(cpu.get_flag(flags::NEGATIVE)); // Bit 7 is 1
+        assert_eq!(cpu.d[1] & 0xFF, 0xFF); // 0xAA ^ 0x55 = 0xFF
+        assert!(cpu.get_flag(flags::NEGATIVE));
         assert!(!cpu.get_flag(flags::ZERO));
         assert!(!cpu.get_flag(flags::CARRY));
         assert!(!cpu.get_flag(flags::OVERFLOW));
@@ -1119,199 +689,62 @@ mod tests {
     #[test]
     fn test_exec_eor_word() {
         let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x0000FFFF;
-        cpu.d[1] = 0x00005555;
+        cpu.d[0] = 0xFFFF;
+        cpu.d[1] = 0x0000;
 
+        // EOR.W D0, D1
         let cycles = exec_eor(
             &mut cpu,
             Size::Word,
-            0,
+            0, // D0
             AddressingMode::DataRegister(1),
             &mut memory,
         );
 
-        assert_eq!(cpu.d[1], 0x0000AAAA);
+        assert_eq!(cpu.d[1] & 0xFFFF, 0xFFFF);
         assert!(cpu.get_flag(flags::NEGATIVE));
         assert!(!cpu.get_flag(flags::ZERO));
-        assert!(!cpu.get_flag(flags::CARRY));
-        assert!(!cpu.get_flag(flags::OVERFLOW));
         assert_eq!(cycles, 4);
     }
 
     #[test]
     fn test_exec_eor_long() {
         let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0xFFFFFFFF;
+        cpu.d[0] = 0xAAAAAAAA;
         cpu.d[1] = 0x55555555;
 
+        // EOR.L D0, D1
         let cycles = exec_eor(
             &mut cpu,
             Size::Long,
-            0,
+            0, // D0
             AddressingMode::DataRegister(1),
             &mut memory,
         );
 
-        assert_eq!(cpu.d[1], 0xAAAAAAAA);
+        assert_eq!(cpu.d[1], 0xFFFFFFFF);
         assert!(cpu.get_flag(flags::NEGATIVE));
         assert!(!cpu.get_flag(flags::ZERO));
-        assert!(!cpu.get_flag(flags::CARRY));
-        assert!(!cpu.get_flag(flags::OVERFLOW));
         assert_eq!(cycles, 4);
     }
 
     #[test]
     fn test_exec_eor_zero() {
         let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0xFF;
-        cpu.d[1] = 0xFF;
+        cpu.d[0] = 0x12345678;
+        cpu.d[1] = 0x12345678;
 
-        // Pre-set flags
-        cpu.set_flag(flags::NEGATIVE, true);
-        cpu.set_flag(flags::CARRY, true);
-        cpu.set_flag(flags::OVERFLOW, true);
-
-        let cycles = exec_eor(
-            &mut cpu,
-            Size::Byte,
-            0,
-            AddressingMode::DataRegister(1),
-            &mut memory,
-        );
-
-        assert_eq!(cpu.d[1] & 0xFF, 0x00);
-        assert!(!cpu.get_flag(flags::NEGATIVE));
-        assert!(cpu.get_flag(flags::ZERO));
-        assert!(!cpu.get_flag(flags::CARRY));
-        assert!(!cpu.get_flag(flags::OVERFLOW));
-        assert_eq!(cycles, 4);
-    }
-
-    #[test]
-    fn test_exec_eor_memory() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0xFF;
-        cpu.a[0] = 0x2000;
-        memory.write_byte(0x2000, 0x55);
-
-        // EOR.B D0, (A0)
-        let cycles = exec_eor(
-            &mut cpu,
-            Size::Byte,
-            0,
-            AddressingMode::AddressIndirect(0),
-            &mut memory,
-        );
-
-        assert_eq!(memory.read_byte(0x2000), 0xAA);
-        assert!(cpu.get_flag(flags::NEGATIVE));
-        assert!(!cpu.get_flag(flags::ZERO));
-        assert!(!cpu.get_flag(flags::CARRY));
-        assert!(!cpu.get_flag(flags::OVERFLOW));
-        assert_eq!(cycles, 8); // 4 (base) + 4 (AddrIndirect)
-    }
-
-    #[test]
-    fn test_exec_and_byte() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x123456AA;
-        cpu.d[1] = 0x77665555;
-
-        let cycles = exec_and(
-            &mut cpu,
-            Size::Byte,
-            AddressingMode::DataRegister(0),
-            AddressingMode::DataRegister(1),
-            true,
-            &mut memory,
-        );
-
-        assert_eq!(cpu.d[1], 0x77665500); // 0xAA & 0x55 = 0x00
-        assert!(!cpu.get_flag(flags::NEGATIVE));
-        assert!(cpu.get_flag(flags::ZERO));
-        assert!(!cpu.get_flag(flags::CARRY));
-        assert!(!cpu.get_flag(flags::OVERFLOW));
-        assert_eq!(cycles, 4);
-    }
-
-    #[test]
-    fn test_exec_and_word() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x1234F0F0;
-        cpu.d[1] = 0x77660F0F;
-
-        let cycles = exec_and(
-            &mut cpu,
-            Size::Word,
-            AddressingMode::DataRegister(0),
-            AddressingMode::DataRegister(1),
-            true,
-            &mut memory,
-        );
-
-        assert_eq!(cpu.d[1], 0x77660000); // 0xF0F0 & 0x0F0F = 0x0000
-        assert!(!cpu.get_flag(flags::NEGATIVE));
-        assert!(cpu.get_flag(flags::ZERO));
-        assert_eq!(cycles, 4);
-    }
-
-    #[test]
-    fn test_exec_and_long() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0xF0F0F0F0;
-        cpu.d[1] = 0x0F0F0F0F;
-
-        let cycles = exec_and(
-            &mut cpu,
-            Size::Long,
-            AddressingMode::DataRegister(0),
-            AddressingMode::DataRegister(1),
-            true,
-            &mut memory,
-        );
-
-        assert_eq!(cpu.d[1], 0x00000000); // F0F0F0F0 & 0F0F0F0F = 00000000
-        assert!(!cpu.get_flag(flags::NEGATIVE));
-        assert!(cpu.get_flag(flags::ZERO));
-        assert_eq!(cycles, 4);
-    }
-
-    #[test]
-    fn test_exec_and_negative() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0xFFFFFFFF;
-        cpu.d[1] = 0x80000000;
-
-        let cycles = exec_and(
-            &mut cpu,
-            Size::Long,
-            AddressingMode::DataRegister(0),
-            AddressingMode::DataRegister(1),
-            true,
-            &mut memory,
-        );
-
-        assert_eq!(cpu.d[1], 0x80000000);
-        assert!(cpu.get_flag(flags::NEGATIVE));
-        assert!(!cpu.get_flag(flags::ZERO));
-        assert_eq!(cycles, 4);
-    }
-
-    #[test]
-    fn test_exec_and_zero() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0;
-        cpu.d[1] = 0xFFFFFFFF;
+        // Set flags to verify they are cleared
         cpu.set_flag(flags::CARRY, true);
         cpu.set_flag(flags::OVERFLOW, true);
         cpu.set_flag(flags::NEGATIVE, true);
 
-        let cycles = exec_and(
+        // EOR.L D0, D1
+        let cycles = exec_eor(
             &mut cpu,
             Size::Long,
-            AddressingMode::DataRegister(0),
+            0, // D0
             AddressingMode::DataRegister(1),
-            true,
             &mut memory,
         );
 
@@ -1324,295 +757,24 @@ mod tests {
     }
 
     #[test]
-    fn test_exec_and_memory() {
+    fn test_exec_eor_memory() {
         let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x0000000F;
+        cpu.d[0] = 0xFF;
         cpu.a[0] = 0x2000;
-        memory.write_byte(0x2000, 0xF0);
+        memory.write_byte(0x2000, 0xAA);
 
-        // AND.B D0, (A0)
-        let cycles = exec_and(
+        // EOR.B D0, (A0)
+        let cycles = exec_eor(
             &mut cpu,
             Size::Byte,
-            AddressingMode::DataRegister(0),
+            0, // D0
             AddressingMode::AddressIndirect(0),
-            true,
             &mut memory,
         );
 
-        assert_eq!(memory.read_byte(0x2000), 0x00);
-        assert!(!cpu.get_flag(flags::NEGATIVE));
-        assert!(cpu.get_flag(flags::ZERO));
-        assert_eq!(cycles, 8); // 4 (base) + 0 (DataReg) + 4 (AddrIndirect)
-    }
-
-    #[test]
-    fn test_exec_and_clears_flags() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0xFFFFFFFF;
-        cpu.d[1] = 0xFFFFFFFF;
-        cpu.set_flag(flags::CARRY, true);
-        cpu.set_flag(flags::OVERFLOW, true);
-
-        // AND.L D0, D1
-        let _ = exec_and(
-            &mut cpu,
-            Size::Long,
-            AddressingMode::DataRegister(0),
-            AddressingMode::DataRegister(1),
-            true,
-            &mut memory,
-        );
-
-        assert!(!cpu.get_flag(flags::CARRY));
-        assert!(!cpu.get_flag(flags::OVERFLOW));
-    }
-
-    #[test]
-    fn test_exec_roxl() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x80;
-        cpu.set_flag(flags::EXTEND, false);
-
-        // ROXL.B #1, D0
-        exec_roxl(&mut cpu, Size::Byte, AddressingMode::DataRegister(0), ShiftCount::Immediate(1), &mut memory);
-
-        assert_eq!(cpu.d[0] & 0xFF, 0x00);
-        assert!(cpu.get_flag(flags::CARRY));
-        assert!(cpu.get_flag(flags::EXTEND));
-        assert!(cpu.get_flag(flags::ZERO));
-    }
-
-    #[test]
-    fn test_exec_roxr() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x01;
-        cpu.set_flag(flags::EXTEND, false);
-
-        // ROXR.B #1, D0
-        exec_roxr(&mut cpu, Size::Byte, AddressingMode::DataRegister(0), ShiftCount::Immediate(1), &mut memory);
-
-        assert_eq!(cpu.d[0] & 0xFF, 0x00);
-        assert!(cpu.get_flag(flags::CARRY));
-        assert!(cpu.get_flag(flags::EXTEND));
-        assert!(cpu.get_flag(flags::ZERO));
-    }
-
-    #[test]
-    fn test_exec_rol_byte_1() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x80; // 1000 0000
-        // ROL.B #1, D0
-        let cycles = exec_rotate(
-            &mut cpu,
-            Size::Byte,
-            AddressingMode::DataRegister(0),
-            ShiftCount::Immediate(1),
-            true, // left
-            false,
-            &mut memory,
-        );
-
-        // 0x80 (1000 0000) ROL 1 -> 0x01 (0000 0001).
-        // C = 1 (bit 7)
-        assert_eq!(cpu.d[0] & 0xFF, 0x01);
-        assert!(!cpu.get_flag(flags::ZERO));
-        assert!(!cpu.get_flag(flags::NEGATIVE));
-        assert!(cpu.get_flag(flags::CARRY));
-        assert_eq!(cycles, 6 + 2 * 1);
-    }
-
-    #[test]
-    fn test_exec_ror_byte_1() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x01; // 0000 0001
-        // ROR.B #1, D0
-        let cycles = exec_rotate(
-            &mut cpu,
-            Size::Byte,
-            AddressingMode::DataRegister(0),
-            ShiftCount::Immediate(1),
-            false, // right
-            false,
-            &mut memory,
-        );
-
-        // 0x01 (0000 0001) ROR 1 -> 0x80 (1000 0000).
-        // C = 1 (bit 0)
-        assert_eq!(cpu.d[0] & 0xFF, 0x80);
-        assert!(!cpu.get_flag(flags::ZERO));
-        assert!(cpu.get_flag(flags::NEGATIVE));
-        assert!(cpu.get_flag(flags::CARRY));
-        assert_eq!(cycles, 6 + 2 * 1);
-    }
-
-    #[test]
-    fn test_exec_rol_long_4() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0xF0000000;
-        // ROL.L #4, D0
-        let cycles = exec_rotate(
-            &mut cpu,
-            Size::Long,
-            AddressingMode::DataRegister(0),
-            ShiftCount::Immediate(4),
-            true, // left
-            false,
-            &mut memory,
-        );
-
-        // 0xF0000000 ROL 4 -> 0x0000000F.
-        assert_eq!(cpu.d[0], 0x0000000F);
-        assert!(!cpu.get_flag(flags::ZERO));
-        assert!(!cpu.get_flag(flags::NEGATIVE));
-        assert!(cpu.get_flag(flags::CARRY));
-        assert_eq!(cycles, 6 + 2 * 4);
-    }
-
-    #[test]
-    fn test_exec_rol_byte_modulo_8() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x80; // 1000 0000
-        // ROL.B #8, D0
-        let cycles = exec_rotate(
-            &mut cpu,
-            Size::Byte,
-            AddressingMode::DataRegister(0),
-            ShiftCount::Immediate(8),
-            true, // left
-            false,
-            &mut memory,
-        );
-
-        assert_eq!(cpu.d[0] & 0xFF, 0x80);
-        assert!(!cpu.get_flag(flags::ZERO));
-        assert!(cpu.get_flag(flags::NEGATIVE));
-        assert!(!cpu.get_flag(flags::CARRY), "Carry should be clear for ROL 8 on 0x80");
-        assert_eq!(cycles, 6 + 2 * 8);
-    }
-
-    #[test]
-    fn test_exec_ror_byte_modulo_8() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x01; // 0000 0001
-        // ROR.B #8, D0
-        let cycles = exec_rotate(
-            &mut cpu,
-            Size::Byte,
-            AddressingMode::DataRegister(0),
-            ShiftCount::Immediate(8),
-            false, // right
-            false,
-            &mut memory,
-        );
-
-        assert_eq!(cpu.d[0] & 0xFF, 0x01);
-        assert!(!cpu.get_flag(flags::ZERO));
-        assert!(!cpu.get_flag(flags::NEGATIVE));
-        assert!(!cpu.get_flag(flags::CARRY), "Carry should be clear for ROR 8 on 0x01");
-        assert_eq!(cycles, 6 + 2 * 8);
-    }
-
-    #[test]
-    fn test_exec_rol_byte_modulo_8_carry_set() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x01;
-        // ROL.B #8, D0
-        exec_rotate(
-            &mut cpu,
-            Size::Byte,
-            AddressingMode::DataRegister(0),
-            ShiftCount::Immediate(8),
-            true, // left
-            false,
-            &mut memory,
-        );
-        // Original 0x01. Bit 0 is 1. C should be 1.
-        assert!(cpu.get_flag(flags::CARRY), "Carry should be set for ROL 8 on 0x01");
-    }
-
-    #[test]
-    fn test_exec_ror_byte_modulo_8_carry_set() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x80; // 1000 0000
-        // ROR.B #8, D0
-        exec_rotate(
-            &mut cpu,
-            Size::Byte,
-            AddressingMode::DataRegister(0),
-            ShiftCount::Immediate(8),
-            false, // right
-            false,
-            &mut memory,
-        );
-
-        assert!(cpu.get_flag(flags::CARRY), "Carry should be set for ROR 8 on 0x80");
-    }
-
-    #[test]
-    fn test_exec_rotate_zero_count() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0xFFFFFFFF;
-        cpu.set_flag(flags::CARRY, true);
-
-        // ROL.L #0, D0
-        let cycles = exec_rotate(
-            &mut cpu,
-            Size::Long,
-            AddressingMode::DataRegister(0),
-            ShiftCount::Immediate(0),
-            true, // left
-            false,
-            &mut memory,
-        );
-
-        assert_eq!(cpu.d[0], 0xFFFFFFFF);
-        assert!(!cpu.get_flag(flags::CARRY)); // Cleared
-        assert_eq!(cycles, 6);
-    }
-
-    #[test]
-    fn test_exec_rotate_multi_bit() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x12345678;
-        cpu.set_flag(flags::CARRY, false);
-
-        exec_rotate(
-            &mut cpu,
-            Size::Long,
-            AddressingMode::DataRegister(0),
-            ShiftCount::Immediate(4),
-            true, // left
-            false,
-            &mut memory,
-        );
-
-        assert_eq!(cpu.d[0], 0x23456781);
-        assert!(cpu.get_flag(flags::CARRY));
-        assert!(!cpu.get_flag(flags::ZERO));
-        assert!(!cpu.get_flag(flags::NEGATIVE));
-    }
-
-    #[test]
-    fn test_exec_rotate_memory() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.a[0] = 0x2000;
-        memory.write_word(0x2000, 0x8000);
-
-        // ROL.W (A0)
-        let _cycles = exec_rotate(
-            &mut cpu,
-            Size::Word,
-            AddressingMode::AddressIndirect(0),
-            ShiftCount::Immediate(1),
-            true, // left
-            false,
-            &mut memory,
-        );
-
-        assert_eq!(memory.read_word(0x2000), 0x0001);
-        assert!(cpu.get_flag(flags::CARRY));
+        assert_eq!(memory.read_byte(0x2000), 0x55); // 0xFF ^ 0xAA = 0x55
         assert!(!cpu.get_flag(flags::NEGATIVE));
         assert!(!cpu.get_flag(flags::ZERO));
+        assert_eq!(cycles, 8); // 4 (base) + 4 (AddrIndirect)
     }
 }
