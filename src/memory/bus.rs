@@ -270,8 +270,8 @@ impl Bus {
         if addr <= 0x3FFFFF {
             let idx = addr as usize;
             if idx + 1 < self.rom.len() {
-                // Verified safe: Use idiomatic from_be_bytes
-                return u16::from_be_bytes(self.rom[idx..idx + 2].try_into().unwrap());
+                let bytes = &self.rom[idx..idx + 2];
+                return u16::from_be_bytes(bytes.try_into().unwrap());
             } else if idx < self.rom.len() {
                 // Partial read at end of ROM
                 let high = self.rom[idx];
@@ -350,8 +350,8 @@ impl Bus {
         if addr <= 0x3FFFFF {
             let idx = addr as usize;
             if idx + 3 < self.rom.len() {
-                // Verified safe: Use idiomatic from_be_bytes
-                return u32::from_be_bytes(self.rom[idx..idx + 4].try_into().unwrap());
+                let bytes = &self.rom[idx..idx + 4];
+                return u32::from_be_bytes(bytes.try_into().unwrap());
             }
         }
 
