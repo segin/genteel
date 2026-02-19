@@ -14,6 +14,15 @@ pub const DEFAULT_PORT: u16 = 1234;
 /// Maximum GDB packet size to prevent unbounded memory consumption
 pub const MAX_PACKET_SIZE: usize = 4096;
 
+/// Maximum number of breakpoints
+pub const MAX_BREAKPOINTS: usize = 1024;
+
+/// Maximum number of failed authentication attempts
+pub const MAX_AUTH_ATTEMPTS: u32 = 5;
+
+/// Duration for authentication lockout
+pub const AUTH_LOCKOUT_DURATION: Duration = Duration::from_secs(30);
+
 /// Constant-time string comparison to prevent timing attacks
 fn constant_time_eq(a: &str, b: &str) -> bool {
     let a_bytes = a.as_bytes();

@@ -25,9 +25,9 @@ pub fn decode(opcode: u16) -> Instruction {
 fn decode_uncached(opcode: u16) -> Instruction {
     match (opcode >> 12) & 0x0F {
         0x0 => decode_group_0(opcode),
-        0x1 => decode_move_byte(opcode),
-        0x2 => decode_move_long(opcode),
-        0x3 => decode_move_word(opcode),
+        0x1 => decode_move(opcode, Size::Byte),
+        0x2 => decode_move(opcode, Size::Long),
+        0x3 => decode_move(opcode, Size::Word),
         0x4 => decode_group_4(opcode),
         0x5 => decode_group_5(opcode),
         0x6 => decode_group_6(opcode),
@@ -47,11 +47,11 @@ fn decode_uncached(opcode: u16) -> Instruction {
 // === Group decoders ===
 
 fn decode_line_a(opcode: u16) -> Instruction {
-    Instruction::LineA { opcode }
+    Instruction::System(SystemInstruction::LineA { opcode })
 }
 
 fn decode_line_f(opcode: u16) -> Instruction {
-    Instruction::LineF { opcode }
+    Instruction::System(SystemInstruction::LineF { opcode })
 }
 
 fn decode_group_0(opcode: u16) -> Instruction {

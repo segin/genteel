@@ -108,25 +108,6 @@ pub struct Z80<M: MemoryInterface, I: IoInterface> {
     pub debug: bool,
 }
 
-macro_rules! z_dispatch {
-    ($z:expr, $self:ident, $y:expr, [
-        $f0:ident, $f1:ident, $f2:ident, $f3:ident,
-        $f4:ident, $f5:ident, $f6:ident, $f7:ident
-    ]) => {
-        match $z {
-            0 => $self.$f0($y),
-            1 => $self.$f1($y),
-            2 => $self.$f2($y),
-            3 => $self.$f3($y),
-            4 => $self.$f4($y),
-            5 => $self.$f5($y),
-            6 => $self.$f6($y),
-            7 => $self.$f7($y),
-            _ => 4,
-        }
-    };
-}
-
 impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
     pub fn new(memory: M, io: I) -> Self {
         Self {
@@ -773,12 +754,14 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         let x = (opcode >> 6) & 0x03;
         let y = (opcode >> 3) & 0x07;
         let z = opcode & 0x07;
+        let p = y >> 1;
+        let q = y & 1;
 
         let t_states = match x {
-            0 => self.execute_x0(y, z),
+            0 => self.execute_x0(opcode, y, z, p, q),
             1 => self.execute_x1(y, z),
             2 => self.execute_x2(y, z),
-            3 => self.execute_x3(y, z),
+            3 => self.execute_x3(opcode, y, z, p, q),
             _ => 4,
         };
 
@@ -786,13 +769,13 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         t_states
     }
 
-    fn execute_x0(&mut self, _opcode: u8, y: u8, z: u8, p: u8, q: u8) -> u8 {
+    fn execute_x0(&mut self, _opcode: u8, y: u8, z: u8, _p: u8, _q: u8) -> u8 {
         dispatch_z!(
             z,
             self.execute_x0_control_misc(y),
-            self.execute_x0_load_add_hl(p, q),
-            self.execute_x0_load_indirect(p, q),
-            self.execute_x0_inc_dec_rp(p, q),
+            self.execute_x0_load_add_hl(y),
+            self.execute_x0_load_indirect(y),
+            self.execute_x0_inc_dec_rp(y),
             self.execute_x0_inc_r(y),
             self.execute_x0_dec_r(y),
             self.execute_x0_ld_r_n(y),
@@ -1090,15 +1073,15 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
     }
 
-    fn execute_x3(&mut self, _opcode: u8, y: u8, z: u8, p: u8, q: u8) -> u8 {
+    fn execute_x3(&mut self, _opcode: u8, y: u8, z: u8, _p: u8, _q: u8) -> u8 {
         dispatch_z!(
             z,
             self.execute_x3_ret_cc(y),
-            self.execute_x3_pop_ret_exx(p, q),
+            self.execute_x3_pop_ret_exx(y),
             self.execute_x3_jp_cc(y),
             self.execute_x3_jp_out_ex_di_ei(y),
             self.execute_x3_call_cc(y),
-            self.execute_x3_push_call_prefixes(p, q),
+            self.execute_x3_push_call_prefixes(y),
             self.execute_x3_alu_n(y),
             self.execute_x3_rst(y)
         )
@@ -1283,6 +1266,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
 
     // ========== ED Prefix (Extended) ==========
 
+    #[allow(dead_code)]
     fn execute_ed_in_r_c(&mut self, y: u8) -> u8 {
         // IN r, (C)
         let port = self.bc();
@@ -1297,6 +1281,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         12
     }
 
+    #[allow(dead_code)]
     fn execute_ed_out_c_r(&mut self, y: u8) -> u8 {
         // OUT (C), r
         let port = self.bc();
@@ -1305,6 +1290,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         12
     }
 
+    #[allow(dead_code)]
     fn execute_ed_sbc_adc_hl_rp(&mut self, p: u8, q: u8) -> u8 {
         if q == 0 {
             // SBC HL, rp
@@ -1358,6 +1344,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
     }
 
+    #[allow(dead_code)]
     fn execute_ed_ld_rp_nn_indirect(&mut self, p: u8, q: u8) -> u8 {
         let nn = self.fetch_word();
         if q == 0 {
@@ -1372,6 +1359,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         20
     }
 
+    #[allow(dead_code)]
     fn execute_ed_neg(&mut self) -> u8 {
         // NEG
         let a = self.a;
@@ -1380,6 +1368,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         8
     }
 
+    #[allow(dead_code)]
     fn execute_ed_retn_reti(&mut self, q: u8) -> u8 {
         if q == 0 {
             // RETN
@@ -1393,6 +1382,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
     }
 
+    #[allow(dead_code)]
     fn execute_ed_im(&mut self, y: u8) -> u8 {
         // IM y
         self.im = match y & 0x03 {
@@ -1404,6 +1394,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         8
     }
 
+    #[allow(dead_code)]
     fn execute_ed_ld_i_r_a_rrd_rld(&mut self, y: u8) -> u8 {
         match y {
             0 => {

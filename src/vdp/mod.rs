@@ -14,8 +14,8 @@
 //! | 0xC00004-0xC00007| Control Port (commands/status) |
 //! | 0xC00008-0xC0000F| H/V Counter                    |
 use crate::debugger::Debuggable;
-use serde::Deserialize;
-use serde_json::{json, Value};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 // VDP Control Codes (bits 0-3)
 const VRAM_READ: u8 = 0x00;
