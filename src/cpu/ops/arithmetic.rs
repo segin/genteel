@@ -930,4 +930,153 @@ mod tests {
         // Register should be unchanged
         assert_eq!(cpu.d[0], 100);
     }
+
+    #[test]
+    fn test_exec_sub_basic() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // D0 = 20, D1 = 10
+        cpu.d[0] = 20;
+        cpu.d[1] = 10;
+
+        // SUB.B D1, D0
+        exec_sub(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(1), // src = D1
+            AddressingMode::DataRegister(0), // dst = D0
+            &mut memory,
+        );
+
+        // Expected: 20 - 10 = 10
+        // Result in D0: 10
+        assert_eq!(cpu.d[0], 10);
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::EXTEND));
+    }
+
+    #[test]
+    fn test_exec_sub_word() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // D0 = 0x1234, D1 = 0x0234
+        cpu.d[0] = 0x1234;
+        cpu.d[1] = 0x0234;
+
+        // SUB.W D1, D0
+        exec_sub(
+            &mut cpu,
+            Size::Word,
+            AddressingMode::DataRegister(1), // src = D1
+            AddressingMode::DataRegister(0), // dst = D0
+            &mut memory,
+        );
+
+        // Expected: 0x1234 - 0x0234 = 0x1000
+        assert_eq!(cpu.d[0], 0x1000);
+    }
+
+    #[test]
+    fn test_exec_sub_long() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // D0 = 0x12345678, D1 = 0x11111111
+        cpu.d[0] = 0x12345678;
+        cpu.d[1] = 0x11111111;
+
+        // SUB.L D1, D0
+        exec_sub(
+            &mut cpu,
+            Size::Long,
+            AddressingMode::DataRegister(1), // src = D1
+            AddressingMode::DataRegister(0), // dst = D0
+            &mut memory,
+        );
+
+        // Expected: 0x12345678 - 0x11111111 = 0x01234567
+        assert_eq!(cpu.d[0], 0x01234567);
+    }
+
+    #[test]
+    fn test_exec_sub_borrow() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // D0 = 10, D1 = 20
+        cpu.d[0] = 10;
+        cpu.d[1] = 20;
+
+        // SUB.B D1, D0
+        exec_sub(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(1), // src = D1
+            AddressingMode::DataRegister(0), // dst = D0
+            &mut memory,
+        );
+
+        // Expected: 10 - 20 = -10 (0xF6 in byte)
+        // Borrow occurred
+        assert_eq!(cpu.d[0] & 0xFF, 0xF6);
+        assert!(cpu.get_flag(flags::CARRY));
+        assert!(cpu.get_flag(flags::EXTEND));
+        assert!(cpu.get_flag(flags::NEGATIVE));
+    }
+
+    #[test]
+    fn test_exec_sub_overflow() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // D0 = -128 (0x80), D1 = 1
+        // -128 - 1 = -129 (Underflow/Overflow for signed byte)
+        cpu.d[0] = 0x80;
+        cpu.d[1] = 1;
+
+        // SUB.B D1, D0
+        exec_sub(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(1), // src = D1
+            AddressingMode::DataRegister(0), // dst = D0
+            &mut memory,
+        );
+
+        // Expected: 0x80 - 1 = 0x7F
+        assert_eq!(cpu.d[0] & 0xFF, 0x7F);
+        assert!(cpu.get_flag(flags::OVERFLOW));
+        assert!(!cpu.get_flag(flags::NEGATIVE)); // Result is positive
+    }
+
+    #[test]
+    fn test_exec_sub_zero_negative() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // Case 1: Result is Zero
+        cpu.d[0] = 42;
+        cpu.d[1] = 42;
+        exec_sub(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(1),
+            AddressingMode::DataRegister(0),
+            &mut memory,
+        );
+        assert!(cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+
+        // Case 2: Result is Negative
+        cpu.d[0] = 10;
+        cpu.d[1] = 20;
+        exec_sub(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(1),
+            AddressingMode::DataRegister(0),
+            &mut memory,
+        );
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(cpu.get_flag(flags::NEGATIVE));
+    }
 }
