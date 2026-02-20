@@ -930,4 +930,97 @@ mod tests {
         // Register should be unchanged
         assert_eq!(cpu.d[0], 100);
     }
+
+    #[test]
+    fn test_exec_muls_basic() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // D0 = 20, D1 = 100
+        cpu.d[0] = 20;
+        cpu.d[1] = 100;
+
+        // MULS D0, D1
+        exec_muls(
+            &mut cpu,
+            AddressingMode::DataRegister(0), // src = D0
+            1, // dst = D1
+            &mut memory,
+        );
+
+        // Result: 2000
+        assert_eq!(cpu.d[1], 2000);
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert!(!cpu.get_flag(flags::CARRY));
+    }
+
+    #[test]
+    fn test_exec_muls_negative() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // Case 1: Positive * Negative
+        // D0 = 10, D1 = -5 (0xFFFB)
+        cpu.d[0] = 10;
+        cpu.d[1] = 0xFFFB;
+
+        // MULS D0, D1
+        exec_muls(
+            &mut cpu,
+            AddressingMode::DataRegister(0),
+            1,
+            &mut memory,
+        );
+
+        // Result: -50 (0xFFFFFFCE)
+        assert_eq!(cpu.d[1], 0xFFFFFFCE);
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert!(!cpu.get_flag(flags::CARRY));
+
+        // Case 2: Negative * Negative
+        // D2 = -10 (0xFFF6), D3 = -5 (0xFFFB)
+        cpu.d[2] = 0xFFF6;
+        cpu.d[3] = 0xFFFB;
+
+        // MULS D2, D3
+        exec_muls(
+            &mut cpu,
+            AddressingMode::DataRegister(2),
+            3,
+            &mut memory,
+        );
+
+        // Result: 50
+        assert_eq!(cpu.d[3], 50);
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert!(!cpu.get_flag(flags::CARRY));
+    }
+
+    #[test]
+    fn test_exec_muls_zero() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // D0 = 0, D1 = 12345
+        cpu.d[0] = 0;
+        cpu.d[1] = 12345;
+
+        // MULS D0, D1
+        exec_muls(
+            &mut cpu,
+            AddressingMode::DataRegister(0),
+            1,
+            &mut memory,
+        );
+
+        // Result: 0
+        assert_eq!(cpu.d[1], 0);
+        assert!(cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert!(!cpu.get_flag(flags::CARRY));
+    }
 }
