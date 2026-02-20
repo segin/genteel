@@ -20,6 +20,13 @@ The project uses the `log` crate for structured output.
 - **Verbose**: Use `RUST_LOG=debug cargo run -- --debug` to see detailed execution traces.
 - **Release**: Most high-frequency logs are disabled in release builds to maintain performance.
 
+### In-Game Debugging
+When running with the GUI enabled, a **Performance & Debug** window is available. It shows:
+- Frontend FPS and frame times
+- Internal emulation frame count
+- Real-time Program Counter (PC) for both M68k and Z80
+- VDP Status and Display state
+
 ## Agent Operating Principles
 
 ### 1. Keep ARCHITECTURE.md in Sync

@@ -37,6 +37,15 @@ struct GuiState {
     integer_scaling: bool,
 }
 #[cfg(feature = "gui")]
+struct DebugInfo {
+    m68k_pc: u32,
+    z80_pc: u16,
+    frame_count: u64,
+    vdp_status: u16,
+    display_enabled: bool,
+}
+
+#[cfg(feature = "gui")]
 struct Framework {
     egui_ctx: egui::Context,
     egui_state: egui_winit::State,
@@ -92,7 +101,7 @@ impl Framework {
     fn scale_factor(&mut self, scale_factor: f32) {
         self.screen_descriptor.pixels_per_point = scale_factor;
     }
-    fn prepare(&mut self, window: &winit::window::Window) {
+    fn prepare(&mut self, window: &winit::window::Window, debug_info: &DebugInfo) {
         let raw_input = self.egui_state.take_egui_input(window);
         self.egui_ctx.begin_frame(raw_input);
         // Draw the GUI
@@ -115,6 +124,21 @@ impl Framework {
                 });
             });
         });
+
+        egui::Window::new("Performance & Debug").show(&self.egui_ctx, |ui| {
+            let dt = self.egui_ctx.input(|i| i.stable_dt);
+            let fps = if dt > 0.0 { 1.0 / dt } else { 0.0 };
+            ui.label(format!("Frontend FPS: {:.1}", fps));
+            ui.label(format!("Frame Time: {:.2}ms", dt * 1000.0));
+            ui.separator();
+            ui.label(format!("Internal Frames: {}", debug_info.frame_count));
+            ui.label(format!("M68k PC: {:06X}", debug_info.m68k_pc));
+            ui.label(format!("Z80 PC: {:04X}", debug_info.z80_pc));
+            ui.separator();
+            ui.label(format!("VDP Display: {}", if debug_info.display_enabled { "ENABLED" } else { "DISABLED" }));
+            ui.label(format!("VDP Status: {:04X}", debug_info.vdp_status));
+        });
+
         if self.gui_state.show_settings {
             egui::Window::new("Settings").show(&self.egui_ctx, |ui| {
                 ui.heading("Video");
@@ -977,8 +1001,21 @@ impl Emulator {
                                 self.step_frame(Some(input.clone()));
                                 // Process audio
                                 self.process_audio(&audio_buffer);
+
+                                // Collect debug info
+                                let debug_info = {
+                                    let bus = self.bus.borrow();
+                                    DebugInfo {
+                                        m68k_pc: self.cpu.pc,
+                                        z80_pc: self.z80.pc,
+                                        frame_count: self.internal_frame_count,
+                                        vdp_status: bus.vdp.read_status(),
+                                        display_enabled: bus.vdp.display_enabled(),
+                                    }
+                                };
+
                                 // Update egui
-                                framework.prepare(window);
+                                framework.prepare(window, &debug_info);
                                 // Render
                                 let bus = self.bus.borrow();
                                 frontend::rgb565_to_rgba8(&bus.vdp.framebuffer, pixels.frame_mut());
