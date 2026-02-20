@@ -187,13 +187,23 @@ impl Bus {
                     0x01
                 }
             }
+            0xA14000..=0xA14003 => if self.tmss_unlocked { 0x01 } else { 0x00 },
             _ => 0xFF,
         }
     }
 
     fn read_vdp_area(&mut self, addr: u32) -> u8 {
         match addr {
-            0xC00000..=0xC00003 => (self.vdp.read_data() >> 8) as u8,
+            0xC00000..=0xC00003 => {
+                // Byte read from data port (even=hi, odd=lo)
+                // Note: Real hardware behavior for byte reads is complex, 
+                // but usually we return the appropriate byte of the last data word.
+                if (addr & 1) == 0 {
+                    (self.vdp.read_data() >> 8) as u8
+                } else {
+                    (self.vdp.read_data() & 0xFF) as u8
+                }
+            }
             0xC00004..=0xC00007 => {
                 let val = self.vdp.read_status();
                 if (addr & 1) == 0 {
@@ -248,12 +258,31 @@ impl Bus {
                     self.z80_bank_bit = 0;
                 }
             }
+            0xA14000..=0xA14003 => {
+                // TMSS Unlock: Write 'SEGA' (long) to $A14000
+                // We'll approximate this by checking for individual byte writes if needed,
+                // but usually games write it as a long. See write_long.
+            }
             _ => {}
         }
     }
 
     fn write_vdp_area(&mut self, addr: u32, value: u8) {
-        if addr == 0xC00011 { self.apu.psg.write(value) }
+        match addr & 0x1F {
+            0x00..=0x03 => {
+                // Data Port Byte Write: duplicate byte to both halves
+                let val16 = ((value as u16) << 8) | (value as u16);
+                self.vdp.write_data(val16);
+            }
+            0x04..=0x07 => {
+                // Control Port Byte Write: duplicate byte to both halves
+                let val16 = ((value as u16) << 8) | (value as u16);
+                self.vdp.write_control(val16);
+                self.handle_dma();
+            }
+            0x11 => self.apu.psg.write(value),
+            _ => {}
+        }
     }
 
     fn write_ram(&mut self, addr: u32, value: u8) {
@@ -423,6 +452,14 @@ impl Bus {
             self.handle_dma();
             self.vdp.write_control(low);
             self.handle_dma();
+            return;
+        }
+
+        // TMSS Unlock
+        if (0xA14000..=0xA14003).contains(&addr) {
+            if value == 0x53454741 { // "SEGA"
+                self.tmss_unlocked = true;
+            }
             return;
         }
 
