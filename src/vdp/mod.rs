@@ -789,10 +789,9 @@ impl Vdp {
         let pixel_v = scrolled_v % 8;
 
         let entry = self.fetch_nametable_entry(name_table_base, tile_v, tile_h, plane_w);
-        let tile_index = entry & 0x07FF;
         let priority = (entry & 0x8000) != 0;
 
-        if priority == priority_filter && tile_index != 0 {
+        if priority == priority_filter {
             if pixels_to_process == 8 && pixel_h == 0 {
                 // Fast path for full aligned tile
                 unsafe {
@@ -1134,20 +1133,15 @@ impl Vdp {
 }
 
 #[derive(Deserialize)]
-struct VdpControlJsonState {
-    pending: Option<bool>,
-    code: Option<u8>,
-    address: Option<u16>,
-}
-
-#[derive(Deserialize)]
 struct VdpJsonState {
     status: Option<u16>,
     h_counter: Option<u16>,
     v_counter: Option<u16>,
     dma_pending: Option<bool>,
     registers: Option<Vec<u8>>,
-    control: Option<VdpControlJsonState>,
+    control_pending: Option<bool>,
+    control_code: Option<u8>,
+    control_address: Option<u16>,
     vram: Option<Vec<u8>>,
     cram: Option<Vec<u8>>,
     vsram: Option<Vec<u8>>,
@@ -1192,16 +1186,14 @@ impl Debuggable for Vdp {
             }
         }
 
-        if let Some(control) = json_state.control {
-            if let Some(pending) = control.pending {
-                self.control_pending = pending;
-            }
-            if let Some(code) = control.code {
-                self.control_code = code;
-            }
-            if let Some(address) = control.address {
-                self.control_address = address;
-            }
+        if let Some(pending) = json_state.control_pending {
+            self.control_pending = pending;
+        }
+        if let Some(code) = json_state.control_code {
+            self.control_code = code;
+        }
+        if let Some(address) = json_state.control_address {
+            self.control_address = address;
         }
 
         if let Some(vram) = json_state.vram {
@@ -1377,3 +1369,5 @@ mod tests_bulk_write;
 
 #[cfg(test)]
 mod bench_render;
+#[cfg(test)]
+mod test_repro_white_screen;

@@ -1293,24 +1293,24 @@ mod tests {
     }
 
     #[test]
-    fn test_secure_compare() {
+    fn test_constant_time_eq_extended() {
         // Equal strings
-        assert!(secure_compare("password", "password"));
-        assert!(secure_compare("", ""));
-        assert!(secure_compare("123456", "123456"));
+        assert!(constant_time_eq("password", "password"));
+        assert!(constant_time_eq("", ""));
+        assert!(constant_time_eq("123456", "123456"));
 
         // Unequal strings, same length
-        assert!(!secure_compare("password", "passworf"));
-        assert!(!secure_compare("123456", "123457"));
-        assert!(!secure_compare("a", "b"));
+        assert!(!constant_time_eq("password", "passworf"));
+        assert!(!constant_time_eq("123456", "123457"));
+        assert!(!constant_time_eq("a", "b"));
 
         // Unequal strings, different length
-        assert!(!secure_compare("password", "pass"));
-        assert!(!secure_compare("pass", "password"));
-        assert!(!secure_compare("", "a"));
+        assert!(!constant_time_eq("password", "pass"));
+        assert!(!constant_time_eq("pass", "password"));
+        assert!(!constant_time_eq("", "a"));
 
         // Unicode
-        assert!(secure_compare("p@sswöd", "p@sswöd"));
-        assert!(!secure_compare("p@sswöd", "p@sswod"));
+        assert!(constant_time_eq("p@sswöd", "p@sswöd"));
+        assert!(!constant_time_eq("p@sswöd", "p@sswod"));
     }
 }
