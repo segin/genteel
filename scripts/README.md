@@ -4,7 +4,7 @@ This directory contains utility scripts for development, testing, and auditing o
 
 ## Scripts
 
-### `audit_tool.py` (or `audit.py`)
+### `audit_tool.py`
 
 A security and quality audit tool that scans the codebase for:
 *   Potential secrets (API keys, tokens, etc.)
@@ -13,7 +13,13 @@ A security and quality audit tool that scans the codebase for:
 
 **Usage:**
 
-Run this script from the **repository root**:
+Run this script from the **repository root** using `make`:
+
+```bash
+make audit
+```
+
+Or manually:
 
 ```bash
 python3 scripts/audit_tool.py
@@ -29,7 +35,13 @@ A benchmarking script used to compare the performance of regex scanning methods 
 
 **Usage:**
 
-Run this script from the **repository root**:
+Run this script from the **repository root** using `make`:
+
+```bash
+make benchmark
+```
+
+Or manually:
 
 ```bash
 python3 scripts/benchmark_audit_regex.py

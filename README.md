@@ -67,6 +67,10 @@ The repository includes a Python-based security and quality audit tool located i
 
 To run the audit:
 ```bash
+make audit
+```
+Or manually:
+```bash
 python3 scripts/audit_tool.py
 ```
 
