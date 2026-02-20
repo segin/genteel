@@ -14,9 +14,9 @@
 - [x] Task: Expand PSG implementation. 2eb2ebd
     - [x] Write tests for PSG square wave and noise channels.
     - [x] Implement missing PSG channels in `src/apu/psg.rs`.
-- [~] Task: Expand YM2612 implementation.
-    - [ ] Write tests for multiple YM2612 channels and operators.
-    - [ ] Implement missing YM2612 features in `src/apu/ym2612.rs`.
+- [~] Task: Expand YM2612 implementation. e2ba305
+    - [x] Write tests for multiple YM2612 channels and operators.
+    - [x] Implement missing YM2612 features in `src/apu/ym2612.rs`.
 - [ ] Task: Conductor - User Manual Verification 'Phase 2: Audio Channel Expansion' (Protocol in workflow.md)
 
 ## Phase 3: Final Integration and Testing
