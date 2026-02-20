@@ -120,4 +120,41 @@ mod tests {
         apu.write_fm_data(Bank::Bank0, 0xF0); // Key on Ch 1
         assert_eq!(apu.fm.registers[0][0x28], 0xF0);
     }
+
+    #[test]
+    fn test_debuggable_implementation() {
+        let mut apu = Apu::new();
+
+        // 1. Modify State
+        // PSG: Channel 0 Volume = 0 (Max), Freq = 0x123
+        apu.write_psg(0x90); // Vol 0
+        apu.write_psg(0x83); // Freq Low 3
+        apu.write_psg(0x12); // Freq High 0x12
+
+        // FM: Write to Bank 0, Reg 0x30, Data 0x77
+        apu.write_fm_addr(Bank::Bank0, 0x30);
+        apu.write_fm_data(Bank::Bank0, 0x77);
+
+        // 2. Read State
+        let state = apu.read_state();
+
+        // Verify JSON structure
+        assert!(state.get("psg").is_some());
+        assert!(state.get("fm").is_some());
+
+        // 3. Write State to New Instance
+        let mut new_apu = Apu::new();
+        new_apu.write_state(&state);
+
+        // 4. Verify Restoration
+        // PSG
+        assert_eq!(new_apu.psg.tones[0].volume, 0);
+        assert_eq!(new_apu.psg.tones[0].frequency, 0x123);
+
+        // FM
+        assert_eq!(new_apu.fm.registers[0][0x30], 0x77);
+
+        // Full State Equality Check (via JSON representation)
+        assert_eq!(apu.read_state(), new_apu.read_state());
+    }
 }
