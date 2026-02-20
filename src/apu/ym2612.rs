@@ -391,8 +391,20 @@ impl Ym2612 {
         if f_num == 0 {
             self.phase_inc[ch] = 0.0;
         } else {
+            // Internal YM2612 frequency formula:
+            // F_internal = (clock / (144 * 2^2)) * (f_num / 2^10) * 2^block
+            // For a 7.67MHz clock, this gives approx 53kHz max frequency.
+            // We need the increment per output sample (44.1kHz).
+            
             let freq_mult = (1 << block) as f32;
-            self.phase_inc[ch] = (f_num as f32 * freq_mult) / 200000.0;
+            // (f_num * freq_mult) / (2^10 * 144) is the frequency in internal ticks
+            // But we simplify: YM2612 clock is 7670453 Hz.
+            // One sample is 144 clock cycles.
+            // phase_inc = (f_num * 2^(block-1)) / (2^11 * 44100 / 53267) -- roughly.
+            // Let's use a more standard approach: 
+            // inc = (F_internal) / F_sample_rate
+            let f_internal = (f_num as f32 * freq_mult * 7670453.0) / (144.0 * 1024.0 * 8.0);
+            self.phase_inc[ch] = f_internal / 44100.0;
         }
     }
 }

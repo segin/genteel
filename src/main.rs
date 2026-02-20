@@ -540,7 +540,7 @@ impl Emulator {
             // APU step (Needs LOCK)
             {
                 let mut bus = bus_rc.borrow_mut();
-                let (l, r) = bus.apu.step();
+                let (l, r) = bus.apu.step(cycles_per_sample as u32);
                 if bus.audio_buffer.len() < 32768 {
                     bus.audio_buffer.push(l);
                     bus.audio_buffer.push(r);

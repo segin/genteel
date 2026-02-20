@@ -157,70 +157,82 @@ impl Psg {
         }
     }
 
-    /// Step the PSG and generate a sample
-    pub fn step(&mut self) -> i16 {
-        let mut output: i32 = 0;
+    /// Step the PSG by a number of clock cycles and return an averaged sample.
+    /// The PSG is clocked at ~3.58 MHz on the Genesis.
+    pub fn step_cycles(&mut self, cycles: u32) -> i16 {
+        if cycles == 0 {
+            return self.current_sample();
+        }
 
-        // Process tone channels
-        for tone in &mut self.tones {
-            if tone.frequency > 0 {
-                if tone.counter == 0 {
-                    tone.counter = tone.frequency;
-                    tone.output = !tone.output;
-                } else {
-                    tone.counter -= 1;
+        let mut total_output: i32 = 0;
+
+        for _ in 0..cycles {
+            // Process tone channels
+            for tone in &mut self.tones {
+                if tone.frequency > 0 {
+                    if tone.counter == 0 {
+                        tone.counter = tone.frequency;
+                        tone.output = !tone.output;
+                    } else {
+                        tone.counter -= 1;
+                    }
                 }
             }
 
-            if tone.output && tone.volume < 15 {
-                // Volume table: 2dB per step, 0 = max, 15 = off
-                let vol = VOLUME_TABLE[tone.volume as usize];
-                output += vol as i32;
+            // Process noise channel
+            let noise_freq = match self.noise.shift_rate {
+                0 => 0x10,                    // N/512
+                1 => 0x20,                    // N/1024
+                2 => 0x40,                    // N/2048
+                3 => self.tones[2].frequency, // Tone 2 frequency
+                _ => 0x10,
+            };
+
+            if noise_freq > 0 {
+                if self.noise.counter == 0 {
+                    self.noise.counter = noise_freq;
+
+                    // Shift LFSR
+                    let feedback = if self.noise.white_noise {
+                        // White noise: XOR bits 0 and 3
+                        (self.noise.lfsr & 1) ^ ((self.noise.lfsr >> 3) & 1)
+                    } else {
+                        // Periodic noise: just bit 0
+                        self.noise.lfsr & 1
+                    };
+
+                    self.noise.lfsr = (self.noise.lfsr >> 1) | (feedback << 14);
+                } else {
+                    self.noise.counter -= 1;
+                }
             }
+
+            total_output += self.current_sample() as i32;
         }
 
-        // Process noise channel
-        let noise_freq = match self.noise.shift_rate {
-            0 => 0x10,                    // N/512
-            1 => 0x20,                    // N/1024
-            2 => 0x40,                    // N/2048
-            3 => self.tones[2].frequency, // Tone 2 frequency
-            _ => 0x10,
-        };
+        (total_output / cycles as i32) as i16
+    }
 
-        if noise_freq > 0 {
-            if self.noise.counter == 0 {
-                self.noise.counter = noise_freq;
+    /// Generate a single instantaneous sample from current state
+    fn current_sample(&self) -> i16 {
+        let mut output: i32 = 0;
 
-                // Shift LFSR on rising edge of the internal clock
-                // In actual hardware, the noise shifter is clocked by the tone generator's output.
-                // Here we toggle a virtual clock and shift only when it goes true.
-                // We'll use bit 15 of counter as a hack or just toggle.
-                // Simpler: actual PSG shifts noise LFSR when the noise divider wraps.
-                // The noise divider is clocked by the input clock.
-
-                // Shift LFSR
-                let feedback = if self.noise.white_noise {
-                    // White noise: XOR bits 0 and 3
-                    (self.noise.lfsr & 1) ^ ((self.noise.lfsr >> 3) & 1)
-                } else {
-                    // Periodic noise: just bit 0
-                    self.noise.lfsr & 1
-                };
-
-                self.noise.lfsr = (self.noise.lfsr >> 1) | (feedback << 14);
-            } else {
-                self.noise.counter -= 1;
+        for tone in &self.tones {
+            if tone.output && tone.volume < 15 {
+                output += VOLUME_TABLE[tone.volume as usize] as i32;
             }
         }
 
         if (self.noise.lfsr & 1) != 0 && self.noise.volume < 15 {
-            let vol = VOLUME_TABLE[self.noise.volume as usize];
-            output += vol as i32;
+            output += VOLUME_TABLE[self.noise.volume as usize] as i32;
         }
 
-        // Clamp to i16 range
         output.clamp(i16::MIN as i32, i16::MAX as i32) as i16
+    }
+
+    /// Step the PSG and generate a sample (legacy, now 1 cycle)
+    pub fn step(&mut self) -> i16 {
+        self.step_cycles(1)
     }
 }
 
