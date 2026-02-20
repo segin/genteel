@@ -10,6 +10,9 @@
 pub mod psg;
 pub mod ym2612;
 
+#[cfg(test)]
+mod tests_psg_expansion;
+
 use crate::debugger::Debuggable;
 use psg::Psg;
 use serde::{Deserialize, Serialize};

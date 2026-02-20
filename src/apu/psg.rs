@@ -192,6 +192,13 @@ impl Psg {
             if self.noise.counter == 0 {
                 self.noise.counter = noise_freq;
 
+                // Shift LFSR on rising edge of the internal clock
+                // In actual hardware, the noise shifter is clocked by the tone generator's output.
+                // Here we toggle a virtual clock and shift only when it goes true.
+                // We'll use bit 15 of counter as a hack or just toggle.
+                // Simpler: actual PSG shifts noise LFSR when the noise divider wraps.
+                // The noise divider is clocked by the input clock.
+
                 // Shift LFSR
                 let feedback = if self.noise.white_noise {
                     // White noise: XOR bits 0 and 3

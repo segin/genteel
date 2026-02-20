@@ -11,7 +11,7 @@
 - [x] Task: Conductor - User Manual Verification 'Phase 1: VDP Background Rendering' (Protocol in workflow.md) efca1fa
 
 ## Phase 2: Audio Channel Expansion
-- [ ] Task: Expand PSG implementation.
+- [~] Task: Expand PSG implementation.
     - [ ] Write tests for PSG square wave and noise channels.
     - [ ] Implement missing PSG channels in `src/apu/psg.rs`.
 - [ ] Task: Expand YM2612 implementation.
