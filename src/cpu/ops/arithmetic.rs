@@ -102,11 +102,8 @@ pub fn exec_addq<M: MemoryInterface>(
     let (dst_ea, dst_cycles) = calculate_ea(dst, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     cycles += dst_cycles;
 
-    if matches!(dst, AddressingMode::AddressRegister(_)) {
-        let reg = match dst {
-            AddressingMode::AddressRegister(r) => r as usize,
-            _ => unreachable!(),
-        };
+    if let AddressingMode::AddressRegister(reg) = dst {
+        let reg = reg as usize;
         let val = cpu.a[reg];
         let add_val = if data == 0 { 8 } else { data as u32 };
         cpu.a[reg] = val.wrapping_add(add_val);
@@ -272,11 +269,8 @@ pub fn exec_subq<M: MemoryInterface>(
     let (dst_ea, dst_cycles) = calculate_ea(dst, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     cycles += dst_cycles;
 
-    if matches!(dst, AddressingMode::AddressRegister(_)) {
-        let reg = match dst {
-            AddressingMode::AddressRegister(r) => r as usize,
-            _ => unreachable!(),
-        };
+    if let AddressingMode::AddressRegister(reg) = dst {
+        let reg = reg as usize;
         let val = cpu.a[reg];
         let sub_val = if data == 0 { 8 } else { data as u32 };
         cpu.a[reg] = val.wrapping_sub(sub_val);
