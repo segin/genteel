@@ -12,6 +12,8 @@ pub mod ym2612;
 
 #[cfg(test)]
 mod tests_psg_expansion;
+#[cfg(test)]
+mod tests_ym2612_expansion;
 
 use crate::debugger::Debuggable;
 use psg::Psg;
