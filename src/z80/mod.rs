@@ -1266,7 +1266,6 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
 
     // ========== ED Prefix (Extended) ==========
 
-    #[allow(dead_code)]
     fn execute_ed_in_r_c(&mut self, y: u8) -> u8 {
         // IN r, (C)
         let port = self.bc();
@@ -1281,7 +1280,6 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         12
     }
 
-    #[allow(dead_code)]
     fn execute_ed_out_c_r(&mut self, y: u8) -> u8 {
         // OUT (C), r
         let port = self.bc();
@@ -1290,76 +1288,6 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         12
     }
 
-    #[allow(dead_code)]
-    fn execute_ed_sbc_adc_hl_rp(&mut self, p: u8, q: u8) -> u8 {
-        if q == 0 {
-            // SBC HL, rp
-            let hl = self.hl() as u32;
-            let rp = self.get_rp(p) as u32;
-            let c = if self.get_flag(flags::CARRY) { 1u32 } else { 0 };
-            let result = hl.wrapping_sub(rp).wrapping_sub(c);
-
-            self.set_flag(flags::CARRY, result > 0xFFFF);
-            self.set_flag(flags::ADD_SUB, true);
-            self.set_flag(flags::ZERO, (result & 0xFFFF) == 0);
-            self.set_flag(flags::SIGN, (result & 0x8000) != 0);
-            // Half borrow: (HL & 0xFFF) - (RP & 0xFFF) - C < 0
-            let h_check = (hl & 0xFFF).wrapping_sub(rp & 0xFFF).wrapping_sub(c);
-            self.set_flag(flags::HALF_CARRY, h_check > 0xFFF);
-            // P/V: Overflow
-            let overflow = ((hl ^ rp) & (hl ^ result) & 0x8000) != 0;
-            self.set_flag(flags::PARITY, overflow);
-
-            // X/Y from High Byte
-            let h_res = (result >> 8) as u8;
-            self.set_flag(flags::X_FLAG, (h_res & 0x08) != 0);
-            self.set_flag(flags::Y_FLAG, (h_res & 0x20) != 0);
-
-            self.set_hl(result as u16);
-            15
-        } else {
-            // ADC HL, rp
-            let hl = self.hl() as u32;
-            let rp = self.get_rp(p) as u32;
-            let c = if self.get_flag(flags::CARRY) { 1u32 } else { 0 };
-            let result = hl + rp + c;
-
-            self.set_flag(flags::CARRY, result > 0xFFFF);
-            self.set_flag(flags::ADD_SUB, false);
-            self.set_flag(flags::ZERO, (result & 0xFFFF) == 0);
-            self.set_flag(flags::SIGN, (result & 0x8000) != 0);
-            // Half carry: Carry from bit 11
-            self.set_flag(flags::HALF_CARRY, ((hl & 0xFFF) + (rp & 0xFFF) + c) > 0xFFF);
-            // P/V: Overflow
-            let overflow = (!(hl ^ rp) & (hl ^ result) & 0x8000) != 0;
-            self.set_flag(flags::PARITY, overflow);
-
-            // X/Y from High Byte
-            let h_res = (result >> 8) as u8;
-            self.set_flag(flags::X_FLAG, (h_res & 0x08) != 0);
-            self.set_flag(flags::Y_FLAG, (h_res & 0x20) != 0);
-
-            self.set_hl(result as u16);
-            15
-        }
-    }
-
-    #[allow(dead_code)]
-    fn execute_ed_ld_rp_nn_indirect(&mut self, p: u8, q: u8) -> u8 {
-        let nn = self.fetch_word();
-        if q == 0 {
-            // LD (nn), rp
-            self.write_word(nn, self.get_rp(p));
-        } else {
-            // LD rp, (nn)
-            let val = self.read_word(nn);
-            self.set_rp(p, val);
-        }
-        self.memptr = nn.wrapping_add(1);
-        20
-    }
-
-    #[allow(dead_code)]
     fn execute_ed_neg(&mut self) -> u8 {
         // NEG
         let a = self.a;
@@ -1368,7 +1296,6 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         8
     }
 
-    #[allow(dead_code)]
     fn execute_ed_retn_reti(&mut self, q: u8) -> u8 {
         if q == 0 {
             // RETN
@@ -1382,7 +1309,6 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
     }
 
-    #[allow(dead_code)]
     fn execute_ed_im(&mut self, y: u8) -> u8 {
         // IM y
         self.im = match y & 0x03 {
@@ -1394,105 +1320,22 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         8
     }
 
-    #[allow(dead_code)]
-    fn execute_ed_ld_i_r_a_rrd_rld(&mut self, y: u8) -> u8 {
-        match y {
-            0 => {
-                // LD I, A
-                self.i = self.a;
-                9
-            }
-            1 => {
-                // LD R, A
-                self.r = self.a;
-                9
-            }
-            2 => {
-                // LD A, I
-                self.a = self.i;
-                self.set_sz_flags(self.a);
-                self.set_flag(flags::PARITY, self.iff2);
-                self.set_flag(flags::HALF_CARRY, false);
-                self.set_flag(flags::ADD_SUB, false);
-                9
-            }
-            3 => {
-                // LD A, R
-                self.a = self.r;
-                self.set_sz_flags(self.a);
-                self.set_flag(flags::PARITY, self.iff2);
-                self.set_flag(flags::HALF_CARRY, false);
-                self.set_flag(flags::ADD_SUB, false);
-                9
-            }
-            4 => {
-                // RRD
-                let hl = self.hl();
-                let m = self.read_byte(hl);
-                let new_m = (self.a << 4) | (m >> 4);
-                self.a = (self.a & 0xF0) | (m & 0x0F);
-                self.write_byte(hl, new_m);
-                self.set_sz_flags(self.a);
-                self.set_parity_flag(self.a);
-                self.set_flag(flags::HALF_CARRY, false);
-                self.set_flag(flags::ADD_SUB, false);
-                18
-            }
-            5 => {
-                // RLD
-                let hl = self.hl();
-                let m = self.read_byte(hl);
-                let new_m = (m << 4) | (self.a & 0x0F);
-                self.a = (self.a & 0xF0) | (m >> 4);
-                self.write_byte(hl, new_m);
-                self.set_sz_flags(self.a);
-                self.set_parity_flag(self.a);
-                self.set_flag(flags::HALF_CARRY, false);
-                self.set_flag(flags::ADD_SUB, false);
-                18
-            }
-            _ => 8,
-        }
-    }
-
     fn execute_ed_block(&mut self, y: u8, z: u8) -> u8 {
         // Block instructions
         if y >= 4 {
-            match z {
-                0 => self.execute_ldi_ldd(y),
-                1 => self.execute_cpi_cpd(y),
-                2 => self.execute_ini_ind(y),
-                3 => self.execute_outi_outd(y),
-                _ => 8,
-            }
+            dispatch_z!(
+                z,
+                self.execute_ldi_ldd(y),
+                self.execute_cpi_cpd(y),
+                self.execute_ini_ind(y),
+                self.execute_outi_outd(y),
+                8, // 4
+                8, // 5
+                8, // 6
+                8  // 7
+            )
         } else {
             8 // Invalid
-        }
-    }
-
-    fn execute_ed_in_out(&mut self, y: u8, z: u8) -> u8 {
-        match z {
-            0 => {
-                // IN r, (C)
-                let port = self.bc();
-                let val = self.read_port(port);
-                if y != 6 {
-                    self.set_reg(y, val);
-                }
-                self.set_sz_flags(val);
-                self.set_parity_flag(val);
-                self.set_flag(flags::HALF_CARRY, false);
-                self.set_flag(flags::ADD_SUB, false);
-                12
-            }
-            1 => {
-                // OUT (C), r
-                let port = self.bc();
-                let val = if y == 6 { 0 } else { self.get_reg(y) };
-                self.write_port(port, val);
-                12
-            }
-            _ => 8,
         }
     }
 
@@ -1632,42 +1475,17 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         let q = y & 0x01;
 
         match x {
-            1 => match z {
-                0 | 1 => self.execute_ed_in_out(y, z),
-                2 => self.execute_ed_sbc_adc_hl(p, q),
-                3 => self.execute_ed_ld_rp_nn(p, q),
-                4 => {
-                    // NEG
-                    let a = self.a;
-                    self.a = 0;
-                    self.sub_a(a, false, true);
-                    8
-                }
-                5 => {
-                    if q == 0 {
-                        // RETN
-                        self.iff1 = self.iff2;
-                        self.pc = self.pop();
-                        14
-                    } else {
-                        // RETI
-                        self.pc = self.pop();
-                        14
-                    }
-                }
-                6 => {
-                    // IM y
-                    self.im = match y & 0x03 {
-                        0 | 1 => 0,
-                        2 => 1,
-                        3 => 2,
-                        _ => 0,
-                    };
-                    8
-                }
-                7 => self.execute_ed_misc(y),
-                _ => 8,
-            },
+            1 => dispatch_z!(
+                z,
+                self.execute_ed_in_r_c(y),
+                self.execute_ed_out_c_r(y),
+                self.execute_ed_sbc_adc_hl(p, q),
+                self.execute_ed_ld_rp_nn(p, q),
+                self.execute_ed_neg(),
+                self.execute_ed_retn_reti(q),
+                self.execute_ed_im(y),
+                self.execute_ed_misc(y)
+            ),
             2 => self.execute_ed_block(y, z),
             _ => 8, // NONI / NOP
         }
