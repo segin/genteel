@@ -1,0 +1,8 @@
+{
+  "track_id": "rendering_audio_20260220",
+  "type": "feature",
+  "status": "new",
+  "created_at": "2026-02-20T07:44:37Z",
+  "updated_at": "2026-02-20T07:44:37Z",
+  "description": "Implement VDP background rendering (Plane A/B) and expand audio channel support for PSG and YM2612."
+}
