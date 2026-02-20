@@ -247,6 +247,12 @@ impl Emulator {
         {
             let mut bus = emulator.bus.borrow_mut();
             emulator.cpu.reset(&mut *bus);
+            // Set up raw bus pointer for Z80 performance and to avoid RefCell deadlocks
+            unsafe {
+                let bus_ptr: *mut Bus = &mut *bus;
+                emulator.z80.memory.set_raw_bus(bus_ptr);
+                emulator.z80.io.set_raw_bus(bus_ptr);
+            }
         }
         emulator.z80.reset();
         emulator
@@ -614,8 +620,8 @@ impl Emulator {
             let bus = bus_rc.borrow();
             let prev = *z80_last_bus_req;
             if debug && bus.z80_bus_request != prev {
-                eprintln!(
-                    "DEBUG: Bus Req Changed: {} -> {} at 68k PC={:06X}",
+                log::debug!(
+                    "Bus Req Changed: {} -> {} at 68k PC={:06X}",
                     prev, bus.z80_bus_request, cpu_pc
                 );
             }
@@ -1147,6 +1153,7 @@ impl Config {
     }
 }
 fn main() {
+    env_logger::init();
     let config = Config::from_args(std::env::args());
     if config.show_help {
         print_usage();

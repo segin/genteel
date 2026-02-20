@@ -5,12 +5,20 @@ This document provides AI-specific operational context for working on the `gente
 ## Quick Reference
 
 - **Language**: Rust
-- **Build**: `cargo build`
+- **Build**: `cargo build` (debug) or `cargo build --release` (release)
+- **Generate Builds**: `python3 scripts/generate_builds.py` (Linux + Windows)
 - **Test**: `cargo test`
 - **Run**: `cargo run`
 - **Check**: `cargo clippy`
 - **Format**: `cargo fmt`
 - **Audit**: `python3 scripts/audit_tool.py`
+
+## Logging and Debugging
+
+The project uses the `log` crate for structured output.
+- **Default**: Errors and warnings are shown.
+- **Verbose**: Use `RUST_LOG=debug cargo run -- --debug` to see detailed execution traces.
+- **Release**: Most high-frequency logs are disabled in release builds to maintain performance.
 
 ## Agent Operating Principles
 
