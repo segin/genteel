@@ -29,6 +29,7 @@ const MAX_SCRIPT_SIZE: u64 = 50 * 1024 * 1024;
 pub struct FrameInput {
     pub p1: ControllerState,
     pub p2: ControllerState,
+    pub command: Option<String>,
 }
 
 /// An input script containing frame-indexed inputs
@@ -109,7 +110,18 @@ impl InputScript {
                 ControllerState::default()
             };
 
-            script.frames.insert(frame, FrameInput { p1, p2 });
+            let command = if parts.len() > 3 {
+                let cmd = parts[3].trim();
+                if cmd.is_empty() {
+                    None
+                } else {
+                    Some(cmd.to_string())
+                }
+            } else {
+                None
+            };
+
+            script.frames.insert(frame, FrameInput { p1, p2, command });
             script.max_frame = script.max_frame.max(frame);
         }
 
@@ -199,10 +211,14 @@ impl InputManager {
     pub fn advance_frame(&mut self) -> FrameInput {
         let input = if let Some(script) = &self.script {
             if let Some(frame_input) = script.get(self.current_frame) {
-                self.last_input = frame_input.clone();
-                frame_input.clone()
+                let out = frame_input.clone();
+                // Update last_input but EXCLUDE command for hold behavior
+                self.last_input.p1 = out.p1;
+                self.last_input.p2 = out.p2;
+                self.last_input.command = None;
+                out
             } else {
-                // No input for this frame - hold last input
+                // No input for this frame - hold last input (which has None command)
                 self.last_input.clone()
             }
         } else {

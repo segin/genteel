@@ -409,6 +409,29 @@ impl Emulator {
                 *ctrl = frame_input.p2;
             }
         }
+
+        // Handle commands (e.g., SCREENSHOT <path>)
+        if let Some(cmd) = frame_input.command {
+            let parts: Vec<&str> = cmd.split_whitespace().collect();
+            if !parts.is_empty() {
+                match parts[0].to_uppercase().as_str() {
+                    "SCREENSHOT" => {
+                        if parts.len() > 1 {
+                            let path = parts[1];
+                            if let Err(e) = self.save_screenshot(path) {
+                                eprintln!("Script Error: Failed to save screenshot to {}: {}", path, e);
+                            } else {
+                                println!("Script: Saved screenshot to {}", path);
+                            }
+                        }
+                    }
+                    _ => {
+                        eprintln!("Script Warning: Unknown command '{}'", parts[0]);
+                    }
+                }
+            }
+        }
+
         self.step_frame_internal();
     }
     pub fn step_frame_internal(&mut self) {
@@ -728,15 +751,64 @@ impl Emulator {
             bus.vdp.line_counter = bus.vdp.registers[10];
         }
     }
-    /// Run headless for N frames (for TAS/testing)
-    pub fn run(&mut self, frames: u32) {
-        println!("Running {} frames headless...", frames);
-        for _ in 0..frames {
+    /// Run headless for N frames (or until script ends if N is None)
+    pub fn run(&mut self, frames: Option<u32>, screenshot_path: Option<String>) {
+        match frames {
+            Some(n) => println!("Running {} frames headless...", n),
+            None => println!("Running headless until script ends..."),
+        }
+
+        let mut current = 0;
+        loop {
+            if let Some(n) = frames {
+                if current >= n {
+                    break;
+                }
+            } else if self.input.is_complete() {
+                // Only stop if a script was actually loaded and it's done
+                break;
+            }
+
             self.step_frame(None);
             // Clear audio buffer in headless mode to prevent memory leak
             self.audio_buffer.clear();
+            current += 1;
+
+            // Log every 600 frames (approx 10 seconds)
+            if self.debug && current % 600 == 0 {
+                self.log_debug(current as u64);
+            }
+        }
+
+        if let Some(path) = screenshot_path {
+            if let Err(e) = self.save_screenshot(&path) {
+                eprintln!("Failed to save final screenshot: {}", e);
+            } else {
+                println!("Final screenshot saved to: {}", path);
+            }
         }
         println!("Done.");
+    }
+
+    pub fn save_screenshot(&self, path: &str) -> Result<(), String> {
+        let bus = self.bus.borrow();
+        let fb = &bus.vdp.framebuffer;
+        let mut rgb_data = Vec::with_capacity(fb.len() * 3);
+        for &pixel in fb {
+            let r5 = ((pixel >> 11) & 0x1F) as u8;
+            let g6 = ((pixel >> 5) & 0x3F) as u8;
+            let b5 = (pixel & 0x1F) as u8;
+            rgb_data.push((r5 << 3) | (r5 >> 2));
+            rgb_data.push((g6 << 2) | (g6 >> 4));
+            rgb_data.push((b5 << 3) | (b5 >> 2));
+        }
+        image::save_buffer(
+            path,
+            &rgb_data,
+            320,
+            240,
+            image::ExtendedColorType::Rgb8,
+        ).map_err(|e| e.to_string())
     }
     /// Run with GDB debugger attached
     pub fn run_with_gdb(&mut self, port: u16, password: Option<String>) -> std::io::Result<()> {
@@ -1086,6 +1158,7 @@ fn print_usage() {
     println!("Options:");
     println!("  --script <path>  Load TAS input script");
     println!("  --headless <n>   Run N frames without display");
+    println!("  --screenshot <path> Save screenshot after headless run");
     println!("  --gdb [port]     Start GDB server (default port: 1234)");
     println!("  --gdb-password <pwd> Set password for GDB server");
     println!("  --dump-audio <file> Dump audio output to WAV file");
@@ -1131,7 +1204,9 @@ impl GdbMemory for BusGdbMemory {
 struct Config {
     rom_path: Option<String>,
     script_path: Option<String>,
+    headless: bool,
     headless_frames: Option<u32>,
+    screenshot_path: Option<String>,
     gdb_port: Option<u16>,
     gdb_password: Option<String>,
     dump_audio_path: Option<String>,
@@ -1155,9 +1230,18 @@ impl Config {
                     config.script_path = iter.next();
                 }
                 "--headless" => {
-                    if let Some(next) = iter.next() {
-                        config.headless_frames = next.parse().ok();
+                    config.headless = true;
+                    if let Some(next) = iter.peek() {
+                        if !next.starts_with('-') {
+                            if let Ok(n) = next.parse::<u32>() {
+                                config.headless_frames = Some(n);
+                                iter.next(); // consume
+                            }
+                        }
                     }
+                }
+                "--screenshot" => {
+                    config.screenshot_path = iter.next();
                 }
                 "--gdb" => {
                     let mut port = debugger::DEFAULT_PORT;
@@ -1217,7 +1301,6 @@ fn main() {
     }
     let rom_path = config.rom_path;
     let script_path = config.script_path;
-    let headless_frames = config.headless_frames;
     let gdb_port = config.gdb_port;
     let dump_audio_path = config.dump_audio_path;
     let mut emulator = Emulator::new();
@@ -1265,8 +1348,8 @@ fn main() {
         if let Err(e) = emulator.run_with_gdb(port, config.gdb_password) {
             eprintln!("GDB server error: {}", e);
         }
-    } else if let Some(frames) = headless_frames {
-        emulator.run(frames);
+    } else if config.headless {
+        emulator.run(config.headless_frames, config.screenshot_path);
     } else {
         // Interactive mode with SDL2 window
         #[cfg(feature = "gui")]
@@ -1402,6 +1485,18 @@ mod tests {
         ];
         let config = Config::from_args(args);
         assert_eq!(config.headless_frames, Some(60));
+        assert_eq!(config.rom_path, Some("rom.bin".to_string()));
+        let args = vec![
+            "genteel".to_string(),
+            "--headless".to_string(),
+            "1200".to_string(),
+            "--screenshot".to_string(),
+            "final.png".to_string(),
+            "rom.bin".to_string(),
+        ];
+        let config = Config::from_args(args);
+        assert_eq!(config.headless_frames, Some(1200));
+        assert_eq!(config.screenshot_path, Some("final.png".to_string()));
         assert_eq!(config.rom_path, Some("rom.bin".to_string()));
         let args = vec![
             "genteel".to_string(),

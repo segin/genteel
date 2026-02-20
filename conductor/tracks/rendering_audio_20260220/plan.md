@@ -20,6 +20,10 @@
 - [ ] Task: Conductor - User Manual Verification 'Phase 2: Audio Channel Expansion' (Protocol in workflow.md)
 
 ## Phase 3: Final Integration and Testing
+- [~] Task: Add non-interactive screenshot and duration support.
+    - [x] Add `image` crate dependency.
+    - [ ] Implement `save_screenshot` in `Emulator`.
+    - [ ] Add `--screenshot <path>` and improved `--headless` CLI support.
 - [ ] Task: Verify overall system stability and performance.
 - [ ] Task: Fix any remaining rendering or audio artifacts.
 - [ ] Task: Conductor - User Manual Verification 'Phase 3: Final Integration and Testing' (Protocol in workflow.md)

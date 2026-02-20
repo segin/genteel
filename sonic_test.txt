@@ -1,0 +1,4 @@
+# frame,p1,p2,command
+0,........,........
+600,........,........,SCREENSHOT sonic_10s.png
+1200,........,........,SCREENSHOT sonic_20s.png
