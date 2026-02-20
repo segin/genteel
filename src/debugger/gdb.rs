@@ -24,18 +24,34 @@ pub const MAX_AUTH_ATTEMPTS: u32 = 5;
 pub const AUTH_LOCKOUT_DURATION: Duration = Duration::from_secs(30);
 
 /// Constant-time string comparison to prevent timing attacks
+///
+/// This function executes in constant time relative to `MAX_PASSWORD_CHECK_LEN`
+/// regardless of the input lengths, unless the length exceeds the maximum.
+const MAX_PASSWORD_CHECK_LEN: usize = 4096;
+
 fn constant_time_eq(a: &str, b: &str) -> bool {
     let a_bytes = a.as_bytes();
     let b_bytes = b.as_bytes();
-    if a_bytes.len() != b_bytes.len() {
+
+    if a_bytes.len() > MAX_PASSWORD_CHECK_LEN || b_bytes.len() > MAX_PASSWORD_CHECK_LEN {
         return false;
     }
 
-    a_bytes
-        .iter()
-        .zip(b_bytes)
-        .fold(0, |acc, (x, y)| acc | (x ^ y))
-        == 0
+    let mut result = 0;
+
+    // Accumulate length difference
+    // We use XOR so that if lengths differ, result will be non-zero (mostly).
+    // But to be precise, we can just track if length is different.
+    let len_diff = (a_bytes.len() as isize) - (b_bytes.len() as isize);
+
+    for i in 0..MAX_PASSWORD_CHECK_LEN {
+        // Read bytes safely without branching on secret data
+        let a_byte = *a_bytes.get(i).unwrap_or(&0);
+        let b_byte = *b_bytes.get(i).unwrap_or(&0);
+        result |= a_byte ^ b_byte;
+    }
+
+    result == 0 && len_diff == 0
 }
 
 /// GDB stop reasons
@@ -1312,5 +1328,38 @@ mod tests {
         // Unicode
         assert!(constant_time_eq("p@sswöd", "p@sswöd"));
         assert!(!constant_time_eq("p@sswöd", "p@sswod"));
+    }
+
+    #[test]
+    fn test_constant_time_eq_length_agnostic() {
+        // Test passwords longer than MAX_PASSWORD_CHECK_LEN
+        let long_pass_a = "a".repeat(MAX_PASSWORD_CHECK_LEN + 1);
+        let long_pass_b = "a".repeat(MAX_PASSWORD_CHECK_LEN + 1);
+        // Should return false because we reject > MAX_PASSWORD_CHECK_LEN
+        assert!(!constant_time_eq(&long_pass_a, &long_pass_b));
+
+        // Test passwords with same prefix but different lengths
+        // "pass" vs "password"
+        assert!(!constant_time_eq("pass", "password"));
+
+        // "password" vs "pass"
+        assert!(!constant_time_eq("password", "pass"));
+
+        // "abc" vs "abc\0" (zero padding check)
+        assert!(!constant_time_eq("abc", "abc\0"));
+
+        // "abc\0" vs "abc"
+        assert!(!constant_time_eq("abc\0", "abc"));
+
+        // "abc" vs "abd"
+        assert!(!constant_time_eq("abc", "abd"));
+
+        // Max length boundary
+        let max_pass_a = "a".repeat(MAX_PASSWORD_CHECK_LEN);
+        let max_pass_b = "a".repeat(MAX_PASSWORD_CHECK_LEN);
+        assert!(constant_time_eq(&max_pass_a, &max_pass_b));
+
+        let max_pass_c = "b".repeat(MAX_PASSWORD_CHECK_LEN);
+        assert!(!constant_time_eq(&max_pass_a, &max_pass_c));
     }
 }
