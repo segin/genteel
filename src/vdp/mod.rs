@@ -29,14 +29,30 @@ const CRAM_READ: u8 = 0x08;
 const REG_MODE1: usize = 0;
 const REG_MODE2: usize = 1;
 const REG_PLANE_A: usize = 2;
-const REG_MODE3: usize = 11;
+#[allow(dead_code)]
+const REG_WINDOW: usize = 3;
 const REG_PLANE_B: usize = 4;
 const REG_SPRITE_TABLE: usize = 5;
+#[allow(dead_code)]
+const REG_SPRITE_PATTERN: usize = 6;
 const REG_BG_COLOR: usize = 7;
+#[allow(dead_code)]
+const REG_UNUSED_8: usize = 8;
+#[allow(dead_code)]
+const REG_UNUSED_9: usize = 9;
+#[allow(dead_code)]
+const REG_H_INT_COUNTER: usize = 10;
+const REG_MODE3: usize = 11;
 const REG_MODE4: usize = 12;
 const REG_HSCROLL: usize = 13;
+#[allow(dead_code)]
+const REG_UNUSED_14: usize = 14;
 const REG_AUTO_INC: usize = 15;
 const REG_PLANE_SIZE: usize = 16;
+#[allow(dead_code)]
+const REG_WINDOW_H_POS: usize = 17;
+#[allow(dead_code)]
+const REG_WINDOW_V_POS: usize = 18;
 const REG_DMA_LEN_LO: usize = 19;
 const REG_DMA_LEN_HI: usize = 20;
 const REG_DMA_SRC_LO: usize = 21;
