@@ -256,6 +256,7 @@ impl Bus {
                 self.z80_reset = (value & 0x01) == 0;
                 if self.z80_reset {
                     self.z80_bank_bit = 0;
+                    self.z80_bank_addr = 0;
                 }
             }
             0xA14000..=0xA14003 => {

@@ -111,7 +111,7 @@ pub struct Ym2612 {
 
 impl Ym2612 {
     pub fn new() -> Self {
-        Self {
+        let mut ym = Self {
             registers: [[0; 256]; 2],
             address: [0; 2],
             status: 0,
@@ -122,7 +122,13 @@ impl Ym2612 {
             phase_inc: [0.0; 6],
             dac_value: 0x80,
             dac_enabled: false,
+        };
+        // Initialize panning to both L/R on (0xC0) for all channels
+        for i in 0..3 {
+            ym.registers[0][0xB4 + i] = 0xC0;
+            ym.registers[1][0xB4 + i] = 0xC0;
         }
+        ym
     }
 
     pub fn reset(&mut self) {
@@ -304,11 +310,11 @@ impl Ym2612 {
 
             // Panning for Channel 6
             let pan = self.registers[1][0xB6];
-            if (pan & 0x80) != 0 {
-                left += dac_f;
+            if (pan & 0x80) != 0 || pan == 0 {
+                left += dac_f * 0.2; // Scale to match FM
             }
-            if (pan & 0x40) != 0 {
-                right += dac_f;
+            if (pan & 0x40) != 0 || pan == 0 {
+                right += dac_f * 0.2;
             }
         }
 
