@@ -1002,24 +1002,22 @@ impl Emulator {
                                 // Process audio
                                 self.process_audio(&audio_buffer);
 
-                                // Collect debug info
+                                // Collect debug info and render
                                 let debug_info = {
-                                    let bus = self.bus.borrow();
-                                    DebugInfo {
+                                    let mut bus = self.bus.borrow_mut();
+                                    let info = DebugInfo {
                                         m68k_pc: self.cpu.pc,
                                         z80_pc: self.z80.pc,
                                         frame_count: self.internal_frame_count,
                                         vdp_status: bus.vdp.read_status(),
                                         display_enabled: bus.vdp.display_enabled(),
-                                    }
+                                    };
+                                    frontend::rgb565_to_rgba8(&bus.vdp.framebuffer, pixels.frame_mut());
+                                    info
                                 };
 
                                 // Update egui
                                 framework.prepare(window, &debug_info);
-                                // Render
-                                let bus = self.bus.borrow();
-                                frontend::rgb565_to_rgba8(&bus.vdp.framebuffer, pixels.frame_mut());
-                                drop(bus);
                                 if let Err(e) =
                                     pixels.render_with(|encoder, render_target, context| {
                                         // Render the board
