@@ -664,6 +664,103 @@ mod tests {
     }
 
     #[test]
+    fn test_exec_or_flags_positive() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.d[0] = 0x00;
+        cpu.d[1] = 0x7F; // Positive signed byte
+
+        // Set flags to ensure they are cleared correctly
+        cpu.set_flag(flags::NEGATIVE, true);
+        cpu.set_flag(flags::ZERO, true);
+        cpu.set_flag(flags::CARRY, true);
+        cpu.set_flag(flags::OVERFLOW, true);
+
+        let cycles = exec_or(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            true,
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1] & 0xFF, 0x7F);
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert_eq!(cycles, 4);
+    }
+
+    #[test]
+    fn test_exec_or_post_increment() {
+        let (mut cpu, mut memory) = create_test_setup();
+        // Setup A0 to point to 0x2000
+        cpu.a[0] = 0x2000;
+        // Write value to memory at 0x2000
+        memory.write_byte(0x2000, 0x11);
+
+        // Setup D0 with 0x22
+        cpu.d[0] = 0x22;
+
+        // OR.B (A0)+, D0
+        let cycles = exec_or(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::AddressPostIncrement(0),
+            AddressingMode::DataRegister(0),
+            true,
+            &mut memory,
+        );
+
+        // Result: 0x11 | 0x22 = 0x33
+        assert_eq!(cpu.d[0] & 0xFF, 0x33);
+        // A0 should be incremented by 1 (Byte size)
+        assert_eq!(cpu.a[0], 0x2001);
+
+        assert_eq!(cycles, 8);
+    }
+
+    #[test]
+    fn test_exec_or_complex_patterns() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // Pattern 1: Alternating bits
+        cpu.d[0] = 0xAAAAAAAA;
+        cpu.d[1] = 0x55555555;
+
+        exec_or(
+            &mut cpu,
+            Size::Long,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            true,
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1], 0xFFFFFFFF);
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::ZERO));
+
+        // Pattern 2: Sparse bits
+        cpu.d[2] = 0x00010001;
+        cpu.d[3] = 0x10001000;
+
+        exec_or(
+            &mut cpu,
+            Size::Long,
+            AddressingMode::DataRegister(2),
+            AddressingMode::DataRegister(3),
+            true,
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[3], 0x10011001);
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::ZERO));
+    }
+
+    #[test]
     fn test_exec_lsl() {
         let (mut cpu, mut memory) = create_test_setup();
 
