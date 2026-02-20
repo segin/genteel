@@ -225,7 +225,7 @@ pub fn exec_suba<M: MemoryInterface>(
     };
 
     let dst_val = cpu.a[dst_reg as usize];
-    cpu.a[dst_reg as usize] = dst_val.wrapping_add(src_val);
+    cpu.a[dst_reg as usize] = dst_val.wrapping_sub(src_val);
 
     cycles
 }
@@ -816,7 +816,7 @@ fn fetch_postinc_operand<M: MemoryInterface>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cpu::decoder::AddressingMode;
+    use crate::cpu::decoder::{AddressingMode, Size};
     use crate::cpu::flags;
     use crate::cpu::Cpu;
     use crate::memory::Memory;
@@ -929,6 +929,116 @@ mod tests {
 
         // Register should be unchanged
         assert_eq!(cpu.d[0], 100);
+    }
+
+    #[test]
+    fn test_exec_add_byte() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        cpu.d[0] = 0x10;
+        cpu.d[1] = 0x20;
+
+        let cycles = exec_add(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0), // src = D0
+            AddressingMode::DataRegister(1), // dst = D1
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[1], 0x30);
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::EXTEND));
+        assert!(cycles > 0);
+    }
+
+    #[test]
+    fn test_exec_add_word_overflow() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        cpu.d[0] = 0x7FFF; // Max positive signed 16-bit
+        cpu.d[1] = 0x0001;
+
+        exec_add(
+            &mut cpu,
+            Size::Word,
+            AddressingMode::DataRegister(0), // src = D0
+            AddressingMode::DataRegister(1), // dst = D1
+            &mut memory,
+        );
+
+        // Result: 0x8000 (-32768)
+        assert_eq!(cpu.d[1] & 0xFFFF, 0x8000);
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert!(cpu.get_flag(flags::OVERFLOW)); // Signed overflow occurred
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::EXTEND));
+    }
+
+    #[test]
+    fn test_exec_add_long_carry() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        cpu.d[0] = 0xFFFFFFFF;
+        cpu.d[1] = 0x00000001;
+
+        exec_add(
+            &mut cpu,
+            Size::Long,
+            AddressingMode::DataRegister(0), // src = D0
+            AddressingMode::DataRegister(1), // dst = D1
+            &mut memory,
+        );
+
+        // Result: 0x00000000 (with carry)
+        assert_eq!(cpu.d[1], 0);
+        assert!(cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert!(cpu.get_flag(flags::CARRY));
+        assert!(cpu.get_flag(flags::EXTEND));
+    }
+
+    #[test]
+    fn test_exec_add_memory_to_register() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        memory.write_word(0x2000, 0x1234);
+        cpu.a[0] = 0x2000;
+        cpu.d[0] = 0x1111;
+
+        exec_add(
+            &mut cpu,
+            Size::Word,
+            AddressingMode::AddressIndirect(0), // src = (A0)
+            AddressingMode::DataRegister(0),    // dst = D0
+            &mut memory,
+        );
+
+        assert_eq!(cpu.d[0] & 0xFFFF, 0x2345);
+    }
+
+    #[test]
+    fn test_exec_add_register_to_memory() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        memory.write_byte(0x3000, 0x20);
+        cpu.a[0] = 0x3000;
+        cpu.d[0] = 0x10;
+
+        exec_add(
+            &mut cpu,
+            Size::Byte,
+            AddressingMode::DataRegister(0),    // src = D0
+            AddressingMode::AddressIndirect(0), // dst = (A0)
+            &mut memory,
+        );
+
+        let val = memory.read_byte(0x3000);
+        assert_eq!(val, 0x30);
     }
 
     #[test]
