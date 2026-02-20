@@ -1,6 +1,6 @@
 # Implementation Plan: Rendering and Audio Expansion
 
-## Phase 1: VDP Background Rendering
+## Phase 1: VDP Background Rendering [checkpoint: efca1fa]
 - [x] Task: Analyze existing VDP rendering logic and identify why it outputs white. 4aebeee
 - [x] Task: Implement Plane A background rendering. 4aebeee
     - [x] Write tests for Plane A tile fetching and rendering.
@@ -8,7 +8,7 @@
 - [x] Task: Implement Plane B background rendering. 4aebeee
     - [x] Write tests for Plane B tile fetching and rendering.
     - [x] Implement Plane B rendering in `src/vdp/mod.rs`.
-- [ ] Task: Conductor - User Manual Verification 'Phase 1: VDP Background Rendering' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 1: VDP Background Rendering' (Protocol in workflow.md) efca1fa
 
 ## Phase 2: Audio Channel Expansion
 - [ ] Task: Expand PSG implementation.
