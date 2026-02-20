@@ -35,6 +35,7 @@ struct GuiState {
     show_settings: bool,
     input_mapping: InputMapping,
     integer_scaling: bool,
+    force_red: bool,
 }
 #[cfg(feature = "gui")]
 struct DebugInfo {
@@ -43,6 +44,8 @@ struct DebugInfo {
     frame_count: u64,
     vdp_status: u16,
     display_enabled: bool,
+    bg_color_index: u8,
+    cram0: u16,
 }
 
 #[cfg(feature = "gui")]
@@ -81,6 +84,7 @@ impl Framework {
             show_settings: false,
             input_mapping,
             integer_scaling: true,
+            force_red: false,
         };
         Self {
             egui_ctx,
@@ -137,6 +141,9 @@ impl Framework {
             ui.separator();
             ui.label(format!("VDP Display: {}", if debug_info.display_enabled { "ENABLED" } else { "DISABLED" }));
             ui.label(format!("VDP Status: {:04X}", debug_info.vdp_status));
+            ui.label(format!("BG Color Index: {}", debug_info.bg_color_index));
+            ui.label(format!("CRAM[0] (RGB565): {:04X}", debug_info.cram0));
+            ui.checkbox(&mut self.gui_state.force_red, "Force Red BG (Debug)");
         });
 
         if self.gui_state.show_settings {
@@ -982,6 +989,8 @@ impl Emulator {
                             WindowEvent::RedrawRequested => {
                                 // Sync settings from GUI
                                 self.input_mapping = framework.gui_state.input_mapping;
+                                let force_red = framework.gui_state.force_red;
+
                                 frame_count += 1;
                                 fps_count += 1;
                                 // Update FPS in title bar every second
@@ -1005,12 +1014,17 @@ impl Emulator {
                                 // Collect debug info and render
                                 let debug_info = {
                                     let mut bus = self.bus.borrow_mut();
+                                    if force_red {
+                                        bus.vdp.framebuffer.fill(0xF800); // Red in RGB565
+                                    }
                                     let info = DebugInfo {
                                         m68k_pc: self.cpu.pc,
                                         z80_pc: self.z80.pc,
                                         frame_count: self.internal_frame_count,
                                         vdp_status: bus.vdp.read_status(),
                                         display_enabled: bus.vdp.display_enabled(),
+                                        bg_color_index: bus.vdp.registers[7],
+                                        cram0: bus.vdp.cram_cache[0],
                                     };
                                     frontend::rgb565_to_rgba8(&bus.vdp.framebuffer, pixels.frame_mut());
                                     info
