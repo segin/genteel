@@ -225,7 +225,7 @@ pub fn exec_suba<M: MemoryInterface>(
     };
 
     let dst_val = cpu.a[dst_reg as usize];
-    cpu.a[dst_reg as usize] = dst_val.wrapping_add(src_val);
+    cpu.a[dst_reg as usize] = dst_val.wrapping_sub(src_val);
 
     cycles
 }
@@ -917,6 +917,182 @@ mod tests {
 
         // DIVU D1, D0
         exec_divu(
+            &mut cpu,
+            AddressingMode::DataRegister(1), // src = D1
+            0, // dst = D0
+            &mut memory,
+        );
+
+        // Expected: Exception processing
+        // PC should be 0x2000
+        assert_eq!(cpu.pc, 0x2000);
+
+        // Register should be unchanged
+        assert_eq!(cpu.d[0], 100);
+    }
+
+    #[test]
+    fn test_exec_divs_basic() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // Case 1: Positive / Positive
+        // D0 = 200, D1 = 10
+        cpu.d[0] = 200;
+        cpu.d[1] = 10;
+        let cycles = exec_divs(
+            &mut cpu,
+            AddressingMode::DataRegister(1), // src = D1
+            0, // dst = D0
+            &mut memory,
+        );
+        // Expected: Quotient 20, Remainder 0 -> 0x00000014
+        assert_eq!(cpu.d[0], 20);
+        assert!(!cpu.get_flag(flags::ZERO)); // 20 != 0
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(cycles > 0);
+
+        // Case 2: Positive / Negative
+        // D0 = 200, D1 = -10 (0xFFF6)
+        cpu.d[0] = 200;
+        cpu.d[1] = 0xFFF6;
+        exec_divs(
+            &mut cpu,
+            AddressingMode::DataRegister(1), // src = D1
+            0, // dst = D0
+            &mut memory,
+        );
+        // Expected: Quotient -20 (0xFFEC), Remainder 0 -> 0x0000FFEC
+        assert_eq!(cpu.d[0], 0x0000FFEC);
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert!(!cpu.get_flag(flags::CARRY));
+
+        // Case 3: Negative / Positive
+        // D0 = -200 (0xFFFFFF38), D1 = 10
+        cpu.d[0] = 0xFFFFFF38;
+        cpu.d[1] = 10;
+        exec_divs(
+            &mut cpu,
+            AddressingMode::DataRegister(1), // src = D1
+            0, // dst = D0
+            &mut memory,
+        );
+        // Expected: Quotient -20 (0xFFEC), Remainder 0 -> 0x0000FFEC
+        assert_eq!(cpu.d[0], 0x0000FFEC);
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(cpu.get_flag(flags::NEGATIVE)); // Quotient is negative
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert!(!cpu.get_flag(flags::CARRY));
+
+        // Case 4: Negative / Negative
+        // D0 = -200 (0xFFFFFF38), D1 = -10 (0xFFF6)
+        cpu.d[0] = 0xFFFFFF38;
+        cpu.d[1] = 0xFFF6;
+        exec_divs(
+            &mut cpu,
+            AddressingMode::DataRegister(1), // src = D1
+            0, // dst = D0
+            &mut memory,
+        );
+        // Expected: Quotient 20 (0x14), Remainder 0 -> 0x00000014
+        assert_eq!(cpu.d[0], 20);
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert!(!cpu.get_flag(flags::CARRY));
+
+        // Case 5: Remainder Check
+        // D0 = 7, D1 = 2
+        cpu.d[0] = 7;
+        cpu.d[1] = 2;
+        exec_divs(
+            &mut cpu,
+            AddressingMode::DataRegister(1), // src = D1
+            0, // dst = D0
+            &mut memory,
+        );
+        // Expected: Quotient 3, Remainder 1 -> 0x00010003
+        assert_eq!(cpu.d[0], 0x00010003);
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(!cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert!(!cpu.get_flag(flags::CARRY));
+
+        // Case 6: Negative Remainder Check
+        // D0 = -7 (0xFFFFFFF9), D1 = 2
+        cpu.d[0] = 0xFFFFFFF9;
+        cpu.d[1] = 2;
+        exec_divs(
+            &mut cpu,
+            AddressingMode::DataRegister(1), // src = D1
+            0, // dst = D0
+            &mut memory,
+        );
+        // Expected: Quotient -3 (0xFFFD), Remainder -1 (0xFFFF) -> 0xFFFFFFFD
+        assert_eq!(cpu.d[0], 0xFFFFFFFD);
+        assert!(!cpu.get_flag(flags::ZERO));
+        assert!(cpu.get_flag(flags::NEGATIVE));
+        assert!(!cpu.get_flag(flags::OVERFLOW));
+        assert!(!cpu.get_flag(flags::CARRY));
+    }
+
+    #[test]
+    fn test_exec_divs_overflow() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // Case 1: Large Quotient Overflow
+        // D0 = 0x00010000 (65536), D1 = 1
+        // Quotient = 65536 > 32767 (signed 16-bit max)
+        cpu.d[0] = 0x00010000;
+        cpu.d[1] = 1;
+
+        exec_divs(
+            &mut cpu,
+            AddressingMode::DataRegister(1), // src = D1
+            0, // dst = D0
+            &mut memory,
+        );
+
+        // Expected: Overflow set, register unchanged, Carry cleared
+        assert!(cpu.get_flag(flags::OVERFLOW));
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert_eq!(cpu.d[0], 0x00010000);
+
+        // Case 2: Negative Overflow
+        // D0 = 0x80000000 (Min i32, -2147483648), D1 = -1 (0xFFFF)
+        // Quotient = 2147483648 > 32767
+        cpu.d[0] = 0x80000000;
+        cpu.d[1] = 0xFFFF; // Interpreted as -1 (word size)
+
+        exec_divs(
+            &mut cpu,
+            AddressingMode::DataRegister(1), // src = D1
+            0, // dst = D0
+            &mut memory,
+        );
+
+        assert!(cpu.get_flag(flags::OVERFLOW));
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert_eq!(cpu.d[0], 0x80000000);
+    }
+
+    #[test]
+    fn test_exec_divs_zero() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // D0 = 100, D1 = 0
+        cpu.d[0] = 100;
+        cpu.d[1] = 0;
+
+        // Set up divide by zero vector (Vector 5)
+        // Address 0x14 -> Handler 0x2000
+        memory.write_long(0x14, 0x2000);
+
+        // DIVS D1, D0
+        exec_divs(
             &mut cpu,
             AddressingMode::DataRegister(1), // src = D1
             0, // dst = D0
