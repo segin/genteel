@@ -432,7 +432,11 @@ mod tests {
             assert_eq!(cycles, 34, "TRAP #{} should take 34 cycles", vector);
 
             // Verify PC Jump
-            assert_eq!(cpu.pc, handler_addr, "TRAP #{} should jump to handler", vector);
+            assert_eq!(
+                cpu.pc, handler_addr,
+                "TRAP #{} should jump to handler",
+                vector
+            );
 
             // Verify Stack Usage
             // 6 bytes pushed: 4 bytes (PC) + 2 bytes (SR)
@@ -471,7 +475,11 @@ mod tests {
 
         // Old SR on stack should have Trace bit set
         let pushed_sr = memory.read_word(cpu.a[7]);
-        assert_eq!(pushed_sr & 0x8000, 0x8000, "Pushed SR should preserve Trace bit");
+        assert_eq!(
+            pushed_sr & 0x8000,
+            0x8000,
+            "Pushed SR should preserve Trace bit"
+        );
 
         // New SR should have Trace bit cleared
         assert_eq!(cpu.sr & 0x8000, 0, "New SR should have Trace bit cleared");

@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests {
+    use crate::cpu::decoder::DecodeCacheEntry;
     use crate::cpu::Cpu;
     use crate::memory::{Memory, MemoryInterface};
-    use crate::cpu::decoder::DecodeCacheEntry;
 
     #[test]
     fn test_unsafe_cache_access() {

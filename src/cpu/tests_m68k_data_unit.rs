@@ -2,11 +2,11 @@
 //!
 //! Focused on `exec_move` and other data movement logic in isolation.
 
+use crate::cpu::decoder::{AddressingMode, Size};
+use crate::cpu::flags;
+use crate::cpu::ops::data::exec_move;
 #[cfg(test)]
 use crate::cpu::Cpu;
-use crate::cpu::flags;
-use crate::cpu::decoder::{AddressingMode, Size};
-use crate::cpu::ops::data::exec_move;
 use crate::memory::{Memory, MemoryInterface};
 
 fn create_cpu() -> (Cpu, Memory) {

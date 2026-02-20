@@ -31,7 +31,6 @@ impl XorShift64 {
     }
 }
 
-
 // ============ Reference Models ============
 
 fn ref_add(val1: u8, val2: u8) -> (u8, u8) {

@@ -36,5 +36,8 @@ fn main() {
 
     let duration = start.elapsed();
     println!("Cache Benchmark: {} steps took {:?}", steps, duration);
-    println!("Steps per second: {:.2} M", steps as f64 / duration.as_secs_f64() / 1_000_000.0);
+    println!(
+        "Steps per second: {:.2} M",
+        steps as f64 / duration.as_secs_f64() / 1_000_000.0
+    );
 }

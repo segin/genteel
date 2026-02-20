@@ -2114,7 +2114,9 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
             0x09 | 0x19 | 0x29 | 0x39 => self.execute_index_add_16(opcode, is_ix),
             0x21 | 0x22 | 0x2A => self.execute_index_load_store_16(opcode, is_ix),
             0x23 | 0x2B => self.execute_index_inc_dec_16(opcode, is_ix),
-            0x24 | 0x25 | 0x26 | 0x2C | 0x2D | 0x2E => self.execute_index_8bit_halves(opcode, is_ix),
+            0x24 | 0x25 | 0x26 | 0x2C | 0x2D | 0x2E => {
+                self.execute_index_8bit_halves(opcode, is_ix)
+            }
             0x34..=0x36 => self.execute_index_mem_8bit(opcode, is_ix),
 
             // Specific ALU ops
@@ -2165,7 +2167,6 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
     fn execute_fd_prefix(&mut self) -> u8 {
         self.execute_index_prefix(false)
     }
-
 }
 
 #[derive(Serialize, Deserialize)]

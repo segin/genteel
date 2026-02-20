@@ -1082,44 +1082,76 @@ impl Vdp {
 
         if h_flip {
             let mut col = p3 & 0x0F;
-            if col != 0 { *dest_ptr = *cram_ptr.add(col as usize); }
+            if col != 0 {
+                *dest_ptr = *cram_ptr.add(col as usize);
+            }
             col = p3 >> 4;
-            if col != 0 { *dest_ptr.add(1) = *cram_ptr.add(col as usize); }
+            if col != 0 {
+                *dest_ptr.add(1) = *cram_ptr.add(col as usize);
+            }
 
             col = p2 & 0x0F;
-            if col != 0 { *dest_ptr.add(2) = *cram_ptr.add(col as usize); }
+            if col != 0 {
+                *dest_ptr.add(2) = *cram_ptr.add(col as usize);
+            }
             col = p2 >> 4;
-            if col != 0 { *dest_ptr.add(3) = *cram_ptr.add(col as usize); }
+            if col != 0 {
+                *dest_ptr.add(3) = *cram_ptr.add(col as usize);
+            }
 
             col = p1 & 0x0F;
-            if col != 0 { *dest_ptr.add(4) = *cram_ptr.add(col as usize); }
+            if col != 0 {
+                *dest_ptr.add(4) = *cram_ptr.add(col as usize);
+            }
             col = p1 >> 4;
-            if col != 0 { *dest_ptr.add(5) = *cram_ptr.add(col as usize); }
+            if col != 0 {
+                *dest_ptr.add(5) = *cram_ptr.add(col as usize);
+            }
 
             col = p0 & 0x0F;
-            if col != 0 { *dest_ptr.add(6) = *cram_ptr.add(col as usize); }
+            if col != 0 {
+                *dest_ptr.add(6) = *cram_ptr.add(col as usize);
+            }
             col = p0 >> 4;
-            if col != 0 { *dest_ptr.add(7) = *cram_ptr.add(col as usize); }
+            if col != 0 {
+                *dest_ptr.add(7) = *cram_ptr.add(col as usize);
+            }
         } else {
             let mut col = p0 >> 4;
-            if col != 0 { *dest_ptr = *cram_ptr.add(col as usize); }
+            if col != 0 {
+                *dest_ptr = *cram_ptr.add(col as usize);
+            }
             col = p0 & 0x0F;
-            if col != 0 { *dest_ptr.add(1) = *cram_ptr.add(col as usize); }
+            if col != 0 {
+                *dest_ptr.add(1) = *cram_ptr.add(col as usize);
+            }
 
             col = p1 >> 4;
-            if col != 0 { *dest_ptr.add(2) = *cram_ptr.add(col as usize); }
+            if col != 0 {
+                *dest_ptr.add(2) = *cram_ptr.add(col as usize);
+            }
             col = p1 & 0x0F;
-            if col != 0 { *dest_ptr.add(3) = *cram_ptr.add(col as usize); }
+            if col != 0 {
+                *dest_ptr.add(3) = *cram_ptr.add(col as usize);
+            }
 
             col = p2 >> 4;
-            if col != 0 { *dest_ptr.add(4) = *cram_ptr.add(col as usize); }
+            if col != 0 {
+                *dest_ptr.add(4) = *cram_ptr.add(col as usize);
+            }
             col = p2 & 0x0F;
-            if col != 0 { *dest_ptr.add(5) = *cram_ptr.add(col as usize); }
+            if col != 0 {
+                *dest_ptr.add(5) = *cram_ptr.add(col as usize);
+            }
 
             col = p3 >> 4;
-            if col != 0 { *dest_ptr.add(6) = *cram_ptr.add(col as usize); }
+            if col != 0 {
+                *dest_ptr.add(6) = *cram_ptr.add(col as usize);
+            }
             col = p3 & 0x0F;
-            if col != 0 { *dest_ptr.add(7) = *cram_ptr.add(col as usize); }
+            if col != 0 {
+                *dest_ptr.add(7) = *cram_ptr.add(col as usize);
+            }
         }
     }
 

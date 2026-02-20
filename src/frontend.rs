@@ -111,10 +111,22 @@ mod tests {
         let mapping = InputMapping::Original;
 
         // Directional keys
-        assert_eq!(keycode_to_button(KeyCode::ArrowUp, mapping), Some(("up", true)));
-        assert_eq!(keycode_to_button(KeyCode::ArrowDown, mapping), Some(("down", true)));
-        assert_eq!(keycode_to_button(KeyCode::ArrowLeft, mapping), Some(("left", true)));
-        assert_eq!(keycode_to_button(KeyCode::ArrowRight, mapping), Some(("right", true)));
+        assert_eq!(
+            keycode_to_button(KeyCode::ArrowUp, mapping),
+            Some(("up", true))
+        );
+        assert_eq!(
+            keycode_to_button(KeyCode::ArrowDown, mapping),
+            Some(("down", true))
+        );
+        assert_eq!(
+            keycode_to_button(KeyCode::ArrowLeft, mapping),
+            Some(("left", true))
+        );
+        assert_eq!(
+            keycode_to_button(KeyCode::ArrowRight, mapping),
+            Some(("right", true))
+        );
 
         // Action keys (ABC)
         assert_eq!(keycode_to_button(KeyCode::KeyZ, mapping), Some(("a", true)));
@@ -122,13 +134,19 @@ mod tests {
         assert_eq!(keycode_to_button(KeyCode::KeyC, mapping), Some(("c", true)));
 
         // Start
-        assert_eq!(keycode_to_button(KeyCode::Enter, mapping), Some(("start", true)));
+        assert_eq!(
+            keycode_to_button(KeyCode::Enter, mapping),
+            Some(("start", true))
+        );
 
         // 6-button extension (XYZ Mode)
         assert_eq!(keycode_to_button(KeyCode::KeyA, mapping), Some(("x", true)));
         assert_eq!(keycode_to_button(KeyCode::KeyS, mapping), Some(("y", true)));
         assert_eq!(keycode_to_button(KeyCode::KeyD, mapping), Some(("z", true)));
-        assert_eq!(keycode_to_button(KeyCode::KeyQ, mapping), Some(("mode", true)));
+        assert_eq!(
+            keycode_to_button(KeyCode::KeyQ, mapping),
+            Some(("mode", true))
+        );
     }
 
     #[cfg(any(feature = "gui", feature = "test_headless"))]
@@ -137,16 +155,40 @@ mod tests {
         let mapping = InputMapping::Ergonomic;
 
         // Directional keys (WASD)
-        assert_eq!(keycode_to_button(KeyCode::KeyW, mapping), Some(("up", true)));
-        assert_eq!(keycode_to_button(KeyCode::KeyS, mapping), Some(("down", true)));
-        assert_eq!(keycode_to_button(KeyCode::KeyA, mapping), Some(("left", true)));
-        assert_eq!(keycode_to_button(KeyCode::KeyD, mapping), Some(("right", true)));
+        assert_eq!(
+            keycode_to_button(KeyCode::KeyW, mapping),
+            Some(("up", true))
+        );
+        assert_eq!(
+            keycode_to_button(KeyCode::KeyS, mapping),
+            Some(("down", true))
+        );
+        assert_eq!(
+            keycode_to_button(KeyCode::KeyA, mapping),
+            Some(("left", true))
+        );
+        assert_eq!(
+            keycode_to_button(KeyCode::KeyD, mapping),
+            Some(("right", true))
+        );
 
         // Directional keys (Arrows)
-        assert_eq!(keycode_to_button(KeyCode::ArrowUp, mapping), Some(("up", true)));
-        assert_eq!(keycode_to_button(KeyCode::ArrowDown, mapping), Some(("down", true)));
-        assert_eq!(keycode_to_button(KeyCode::ArrowLeft, mapping), Some(("left", true)));
-        assert_eq!(keycode_to_button(KeyCode::ArrowRight, mapping), Some(("right", true)));
+        assert_eq!(
+            keycode_to_button(KeyCode::ArrowUp, mapping),
+            Some(("up", true))
+        );
+        assert_eq!(
+            keycode_to_button(KeyCode::ArrowDown, mapping),
+            Some(("down", true))
+        );
+        assert_eq!(
+            keycode_to_button(KeyCode::ArrowLeft, mapping),
+            Some(("left", true))
+        );
+        assert_eq!(
+            keycode_to_button(KeyCode::ArrowRight, mapping),
+            Some(("right", true))
+        );
 
         // Face Buttons (JKL -> ABC)
         assert_eq!(keycode_to_button(KeyCode::KeyJ, mapping), Some(("a", true)));
@@ -159,8 +201,14 @@ mod tests {
         assert_eq!(keycode_to_button(KeyCode::KeyO, mapping), Some(("z", true)));
 
         // System Buttons
-        assert_eq!(keycode_to_button(KeyCode::Enter, mapping), Some(("start", true)));
-        assert_eq!(keycode_to_button(KeyCode::Space, mapping), Some(("mode", true)));
+        assert_eq!(
+            keycode_to_button(KeyCode::Enter, mapping),
+            Some(("start", true))
+        );
+        assert_eq!(
+            keycode_to_button(KeyCode::Space, mapping),
+            Some(("mode", true))
+        );
 
         // Legacy/Alternative Mapping (ZX -> AB)
         assert_eq!(keycode_to_button(KeyCode::KeyZ, mapping), Some(("a", true)));

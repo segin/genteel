@@ -45,7 +45,6 @@ mod performance_tests {
         );
     }
 
-
     #[test]
     fn benchmark_dma_transfer() {
         let mut bus = Bus::new();

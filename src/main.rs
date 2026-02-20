@@ -139,7 +139,14 @@ impl Framework {
             ui.label(format!("M68k PC: {:06X}", debug_info.m68k_pc));
             ui.label(format!("Z80 PC: {:04X}", debug_info.z80_pc));
             ui.separator();
-            ui.label(format!("VDP Display: {}", if debug_info.display_enabled { "ENABLED" } else { "DISABLED" }));
+            ui.label(format!(
+                "VDP Display: {}",
+                if debug_info.display_enabled {
+                    "ENABLED"
+                } else {
+                    "DISABLED"
+                }
+            ));
             ui.label(format!("VDP Status: {:04X}", debug_info.vdp_status));
             ui.label(format!("BG Color Index: {}", debug_info.bg_color_index));
             ui.label(format!("CRAM[0] (RGB565): {:04X}", debug_info.cram0));
@@ -309,9 +316,10 @@ impl Emulator {
             ));
         }
 
-        let allowed = self.allowed_paths.iter().any(|allowed_base| {
-            canonical_path.starts_with(allowed_base)
-        });
+        let allowed = self
+            .allowed_paths
+            .iter()
+            .any(|allowed_base| canonical_path.starts_with(allowed_base));
 
         if !allowed {
             return Err(std::io::Error::new(
@@ -653,7 +661,9 @@ impl Emulator {
             if debug && bus.z80_bus_request != prev {
                 log::debug!(
                     "Bus Req Changed: {} -> {} at 68k PC={:06X}",
-                    prev, bus.z80_bus_request, cpu_pc
+                    prev,
+                    bus.z80_bus_request,
+                    cpu_pc
                 );
             }
             *z80_last_bus_req = bus.z80_bus_request;
@@ -816,6 +826,7 @@ impl Emulator {
         }
         Ok(())
     }
+    #[cfg(feature = "gui")]
     fn log_debug(&self, frame_count: u64) {
         let bus = self.bus.borrow();
         let disp_en = if bus.vdp.display_enabled() {
@@ -1026,7 +1037,10 @@ impl Emulator {
                                         bg_color_index: bus.vdp.registers[7],
                                         cram0: bus.vdp.cram_cache[0],
                                     };
-                                    frontend::rgb565_to_rgba8(&bus.vdp.framebuffer, pixels.frame_mut());
+                                    frontend::rgb565_to_rgba8(
+                                        &bus.vdp.framebuffer,
+                                        pixels.frame_mut(),
+                                    );
                                     info
                                 };
 
@@ -1465,16 +1479,16 @@ mod tests {
         let temp_dir = std::env::temp_dir();
         // Only if temp_dir exists and is different from CWD
         if let Ok(_) = emulator.add_allowed_path(&temp_dir) {
-             let result = emulator.load_rom(dummy_rom);
-             // Assuming dummy_rom is in CWD and not in temp_dir
-             // If CWD == temp_dir, this test is weak but passes.
-             // Usually CWD is project root.
-             // We can check canonical paths to be sure.
-             let cwd = std::env::current_dir().unwrap().canonicalize().unwrap();
-             let temp = temp_dir.canonicalize().unwrap();
-             if !cwd.starts_with(&temp) {
-                 assert!(result.is_err(), "Should fail if path not in whitelist");
-             }
+            let result = emulator.load_rom(dummy_rom);
+            // Assuming dummy_rom is in CWD and not in temp_dir
+            // If CWD == temp_dir, this test is weak but passes.
+            // Usually CWD is project root.
+            // We can check canonical paths to be sure.
+            let cwd = std::env::current_dir().unwrap().canonicalize().unwrap();
+            let temp = temp_dir.canonicalize().unwrap();
+            if !cwd.starts_with(&temp) {
+                assert!(result.is_err(), "Should fail if path not in whitelist");
+            }
         }
 
         // 3. Should succeed if whitelisted

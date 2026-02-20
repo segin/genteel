@@ -209,11 +209,7 @@ fn decode_move(opcode: u16, size: Size) -> Instruction {
         if size == Size::Byte {
             return Instruction::System(SystemInstruction::Unimplemented { opcode });
         }
-        return Instruction::Data(DataInstruction::MoveA {
-            size,
-            src,
-            dst_reg,
-        });
+        return Instruction::Data(DataInstruction::MoveA { size, src, dst_reg });
     }
 
     let dst = match AddressingMode::from_mode_reg(dst_mode, dst_reg) {
@@ -886,18 +882,12 @@ mod tests {
 
     #[test]
     fn test_decode_nop() {
-        assert_eq!(
-            decode(0x4E71),
-            Instruction::System(SystemInstruction::Nop)
-        );
+        assert_eq!(decode(0x4E71), Instruction::System(SystemInstruction::Nop));
     }
 
     #[test]
     fn test_decode_rts() {
-        assert_eq!(
-            decode(0x4E75),
-            Instruction::System(SystemInstruction::Rts)
-        );
+        assert_eq!(decode(0x4E75), Instruction::System(SystemInstruction::Rts));
     }
 
     #[test]
@@ -1079,36 +1069,93 @@ mod tests {
     #[test]
     fn test_decode_groups_dispatch() {
         // Group 0: ORI.B #<data>, D0 (0x0000)
-        assert!(matches!(decode(0x0000), Instruction::Bits(BitsInstruction::OrI { .. })));
+        assert!(matches!(
+            decode(0x0000),
+            Instruction::Bits(BitsInstruction::OrI { .. })
+        ));
         // Group 1: MOVE.B D0, D1 (0x1200)
-        assert!(matches!(decode(0x1200), Instruction::Data(DataInstruction::Move { size: Size::Byte, .. })));
+        assert!(matches!(
+            decode(0x1200),
+            Instruction::Data(DataInstruction::Move {
+                size: Size::Byte,
+                ..
+            })
+        ));
         // Group 2: MOVE.L D0, D1 (0x2200)
-        assert!(matches!(decode(0x2200), Instruction::Data(DataInstruction::Move { size: Size::Long, .. })));
+        assert!(matches!(
+            decode(0x2200),
+            Instruction::Data(DataInstruction::Move {
+                size: Size::Long,
+                ..
+            })
+        ));
         // Group 3: MOVE.W D0, D1 (0x3200)
-        assert!(matches!(decode(0x3200), Instruction::Data(DataInstruction::Move { size: Size::Word, .. })));
+        assert!(matches!(
+            decode(0x3200),
+            Instruction::Data(DataInstruction::Move {
+                size: Size::Word,
+                ..
+            })
+        ));
         // Group 4: CLR.W D0 (0x4240)
-        assert!(matches!(decode(0x4240), Instruction::Data(DataInstruction::Clr { .. })));
+        assert!(matches!(
+            decode(0x4240),
+            Instruction::Data(DataInstruction::Clr { .. })
+        ));
         // Group 5: ADDQ.W #1, D0 (0x5240)
-        assert!(matches!(decode(0x5240), Instruction::Arithmetic(ArithmeticInstruction::AddQ { .. })));
+        assert!(matches!(
+            decode(0x5240),
+            Instruction::Arithmetic(ArithmeticInstruction::AddQ { .. })
+        ));
         // Group 6: BRA <disp> (0x6000)
-        assert!(matches!(decode(0x6000), Instruction::System(SystemInstruction::Bra { .. })));
+        assert!(matches!(
+            decode(0x6000),
+            Instruction::System(SystemInstruction::Bra { .. })
+        ));
         // Group 7: MOVEQ #0, D0 (0x7000)
-        assert!(matches!(decode(0x7000), Instruction::Data(DataInstruction::MoveQ { .. })));
+        assert!(matches!(
+            decode(0x7000),
+            Instruction::Data(DataInstruction::MoveQ { .. })
+        ));
         // Group 8: DIVU.W D1, D0 (0x80C1)
-        assert!(matches!(decode(0x80C1), Instruction::Arithmetic(ArithmeticInstruction::DivU { .. })));
+        assert!(matches!(
+            decode(0x80C1),
+            Instruction::Arithmetic(ArithmeticInstruction::DivU { .. })
+        ));
         // Group 9: SUB.W D0, D1 (0x9240)
-        assert!(matches!(decode(0x9240), Instruction::Arithmetic(ArithmeticInstruction::Sub { .. })));
+        assert!(matches!(
+            decode(0x9240),
+            Instruction::Arithmetic(ArithmeticInstruction::Sub { .. })
+        ));
         // Group A: Line A (0xA000)
-        assert!(matches!(decode(0xA000), Instruction::System(SystemInstruction::LineA { .. })));
+        assert!(matches!(
+            decode(0xA000),
+            Instruction::System(SystemInstruction::LineA { .. })
+        ));
         // Group B: CMP.W D0, D1 (0xB240)
-        assert!(matches!(decode(0xB240), Instruction::Arithmetic(ArithmeticInstruction::Cmp { .. })));
+        assert!(matches!(
+            decode(0xB240),
+            Instruction::Arithmetic(ArithmeticInstruction::Cmp { .. })
+        ));
         // Group C: AND.W D0, D1 (0xC240)
-        assert!(matches!(decode(0xC240), Instruction::Bits(BitsInstruction::And { .. })));
+        assert!(matches!(
+            decode(0xC240),
+            Instruction::Bits(BitsInstruction::And { .. })
+        ));
         // Group D: ADD.W D0, D1 (0xD240)
-        assert!(matches!(decode(0xD240), Instruction::Arithmetic(ArithmeticInstruction::Add { .. })));
+        assert!(matches!(
+            decode(0xD240),
+            Instruction::Arithmetic(ArithmeticInstruction::Add { .. })
+        ));
         // Group E: ASL.W #1, D0 (0xE340)
-        assert!(matches!(decode(0xE340), Instruction::Bits(BitsInstruction::Asl { .. })));
+        assert!(matches!(
+            decode(0xE340),
+            Instruction::Bits(BitsInstruction::Asl { .. })
+        ));
         // Group F: Line F (0xF000)
-        assert!(matches!(decode(0xF000), Instruction::System(SystemInstruction::LineF { .. })));
+        assert!(matches!(
+            decode(0xF000),
+            Instruction::System(SystemInstruction::LineF { .. })
+        ));
     }
 }

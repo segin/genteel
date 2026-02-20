@@ -108,7 +108,10 @@ fn test_btst_memory_modulo_behavior() {
     // Test bit 8 (should be 8 % 8 = 0, which is set)
     cpu.d[0] = 8;
     cpu.step_instruction(&mut memory);
-    assert!(!cpu.get_flag(flags::ZERO), "Bit 8 (mod 8 = 0) should test bit 0 which is set");
+    assert!(
+        !cpu.get_flag(flags::ZERO),
+        "Bit 8 (mod 8 = 0) should test bit 0 which is set"
+    );
 
     // Reset PC for next instruction
     cpu.pc = 0x1000;
@@ -122,7 +125,10 @@ fn test_btst_memory_modulo_behavior() {
     // Test bit 9 (should be 9 % 8 = 1, which is clear)
     cpu.d[0] = 9;
     cpu.step_instruction(&mut memory);
-    assert!(cpu.get_flag(flags::ZERO), "Bit 9 (mod 8 = 1) should test bit 1 which is clear");
+    assert!(
+        cpu.get_flag(flags::ZERO),
+        "Bit 9 (mod 8 = 1) should test bit 1 which is clear"
+    );
 }
 
 // ============================================================================

@@ -253,7 +253,9 @@ impl Bus {
     }
 
     fn write_vdp_area(&mut self, addr: u32, value: u8) {
-        if addr == 0xC00011 { self.apu.psg.write(value) }
+        if addr == 0xC00011 {
+            self.apu.psg.write(value)
+        }
     }
 
     fn write_ram(&mut self, addr: u32, value: u8) {

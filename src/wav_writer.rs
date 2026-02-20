@@ -18,7 +18,11 @@ impl WavWriter<BufWriter<File>> {
 }
 
 impl<W: Write + Seek> WavWriter<W> {
-    pub fn new_with_writer(mut writer: W, sample_rate: u32, channels: u16) -> std::io::Result<Self> {
+    pub fn new_with_writer(
+        mut writer: W,
+        sample_rate: u32,
+        channels: u16,
+    ) -> std::io::Result<Self> {
         // RIFF header
         writer.write_all(b"RIFF")?;
         writer.write_all(&[0; 4])?; // Placeholder for file size
@@ -115,8 +119,8 @@ mod tests {
         // Check fmt chunk
         assert_eq!(&buffer[12..16], b"fmt ");
         assert_eq!(&buffer[16..20], &16u32.to_le_bytes()); // Chunk size
-        assert_eq!(&buffer[20..22], &1u16.to_le_bytes());  // PCM
-        assert_eq!(&buffer[22..24], &2u16.to_le_bytes());  // Channels
+        assert_eq!(&buffer[20..22], &1u16.to_le_bytes()); // PCM
+        assert_eq!(&buffer[22..24], &2u16.to_le_bytes()); // Channels
         assert_eq!(&buffer[24..28], &44100u32.to_le_bytes()); // Sample rate
 
         // Byte rate = 44100 * 2 * 2 = 176400

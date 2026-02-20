@@ -698,9 +698,9 @@ fn test_divu_by_zero() {
 fn test_divs_basic() {
     let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0x81C1]); // DIVS.W D1, D0
-    // -10 / 3
-    // Quotient: -3 (0xFFFD)
-    // Remainder: -1 (0xFFFF)
+                                      // -10 / 3
+                                      // Quotient: -3 (0xFFFD)
+                                      // Remainder: -1 (0xFFFF)
     cpu.d[0] = (-10i32) as u32;
     cpu.d[1] = 3;
     cpu.step_instruction(&mut memory);
@@ -735,8 +735,8 @@ fn test_divs_by_zero() {
 fn test_divs_overflow() {
     let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0x81C1]); // DIVS.W D1, D0
-    // 0x80000000 (-2147483648) / -1 = 2147483648
-    // 2147483648 cannot fit in 16-bit signed quotient (max 32767)
+                                      // 0x80000000 (-2147483648) / -1 = 2147483648
+                                      // 2147483648 cannot fit in 16-bit signed quotient (max 32767)
     cpu.d[0] = 0x80000000;
     cpu.d[1] = 0xFFFFFFFF; // -1
     cpu.step_instruction(&mut memory);

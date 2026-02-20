@@ -321,7 +321,7 @@ fn test_movem_all_registers() {
         cpu.d[i] = 0xD0 + i as u32;
         cpu.a[i] = 0xA0 + i as u32;
     }
-    
+
     // Set SP (A7) to a safe location
     cpu.a[7] = 0x8000;
 

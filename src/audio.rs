@@ -82,13 +82,23 @@ impl AudioBuffer {
 
     /// Push samples into the buffer
     pub fn push(&mut self, samples: &[i16]) {
-        for &sample in samples {
-            if self.available < self.buffer.len() {
-                self.buffer[self.write_pos] = sample;
-                self.write_pos = (self.write_pos + 1) % self.buffer.len();
-                self.available += 1;
-            }
+        let samples_to_write = std::cmp::min(samples.len(), self.buffer.len() - self.available);
+        if samples_to_write == 0 {
+            return;
         }
+
+        let first_chunk_len = std::cmp::min(samples_to_write, self.buffer.len() - self.write_pos);
+        self.buffer[self.write_pos..self.write_pos + first_chunk_len]
+            .copy_from_slice(&samples[..first_chunk_len]);
+
+        let second_chunk_len = samples_to_write - first_chunk_len;
+        if second_chunk_len > 0 {
+            self.buffer[..second_chunk_len]
+                .copy_from_slice(&samples[first_chunk_len..samples_to_write]);
+        }
+
+        self.write_pos = (self.write_pos + samples_to_write) % self.buffer.len();
+        self.available += samples_to_write;
     }
 
     /// Pop samples from the buffer into destination
@@ -184,6 +194,8 @@ pub fn samples_per_frame() -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+
     #[test]
     fn test_audio_buffer_new() {
         let buf = AudioBuffer::new(1024);
@@ -326,10 +338,10 @@ mod tests {
         assert!((out[2] - 0.0).abs() < f32::EPSILON);
 
         // 1 / 32768.0
-        assert!((out[3] - (1.0/32768.0)).abs() < f32::EPSILON);
+        assert!((out[3] - (1.0 / 32768.0)).abs() < f32::EPSILON);
 
         // -1 / 32768.0
-        assert!((out[4] - (-1.0/32768.0)).abs() < f32::EPSILON);
+        assert!((out[4] - (-1.0 / 32768.0)).abs() < f32::EPSILON);
     }
 
     #[test]
@@ -341,7 +353,7 @@ mod tests {
         buf.pop_f32(&mut out);
 
         // First sample should be valid
-        assert!((out[0] - (1000.0/32768.0)).abs() < f32::EPSILON);
+        assert!((out[0] - (1000.0 / 32768.0)).abs() < f32::EPSILON);
         // Rest should be silence (0.0)
         assert_eq!(out[1], 0.0);
         assert_eq!(out[2], 0.0);
@@ -359,14 +371,70 @@ mod tests {
             buf.pop_f32(&mut out);
 
             let expected = sample as f32 / 32768.0;
-            assert!((out[0] - expected).abs() < f32::EPSILON, "Failed precision check for sample: {}", sample);
+            assert!(
+                (out[0] - expected).abs() < f32::EPSILON,
+                "Failed precision check for sample: {}",
+                sample
+            );
 
             // Verify range
-            assert!(out[0] >= -1.0, "Failed lower bound check for sample: {}", sample);
-            assert!(out[0] < 1.0, "Failed upper bound check for sample: {}", sample);
+            assert!(
+                out[0] >= -1.0,
+                "Failed lower bound check for sample: {}",
+                sample
+            );
+            assert!(
+                out[0] < 1.0,
+                "Failed upper bound check for sample: {}",
+                sample
+            );
 
             // Ensure buffer state is clean
             assert_eq!(buf.available(), 0);
+        }
+    }
+
+    // Reference implementation (old slow loop) for property testing
+    fn push_reference(buffer: &mut AudioBuffer, samples: &[i16]) {
+        for &sample in samples {
+            if buffer.available < buffer.buffer.len() {
+                buffer.buffer[buffer.write_pos] = sample;
+                buffer.write_pos = (buffer.write_pos + 1) % buffer.buffer.len();
+                buffer.available += 1;
+            }
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn test_push_equivalence(
+            buffer_size in 10usize..1000usize,
+            ref initial_fill in prop::collection::vec(any::<i16>(), 0..1000),
+            ref push_data in prop::collection::vec(any::<i16>(), 0..2000)
+        ) {
+            // Setup two identical buffers
+            let mut buf1 = AudioBuffer::new(buffer_size);
+            let mut buf2 = AudioBuffer::new(buffer_size);
+
+            // Pre-fill both buffers identically
+            push_reference(&mut buf1, initial_fill);
+            push_reference(&mut buf2, initial_fill);
+
+            // Verify they start identical
+            prop_assert_eq!(&buf1.buffer, &buf2.buffer);
+            prop_assert_eq!(buf1.write_pos, buf2.write_pos);
+            prop_assert_eq!(buf1.available, buf2.available);
+
+            // Apply push operation
+            // buf1 uses reference implementation
+            push_reference(&mut buf1, push_data);
+            // buf2 uses new optimized implementation
+            buf2.push(push_data);
+
+            // Verify they end up identical
+            prop_assert_eq!(&buf1.buffer, &buf2.buffer, "Buffer content mismatch");
+            prop_assert_eq!(buf1.write_pos, buf2.write_pos, "Write position mismatch");
+            prop_assert_eq!(buf1.available, buf2.available, "Available count mismatch");
         }
     }
 }

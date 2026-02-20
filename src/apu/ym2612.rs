@@ -265,8 +265,8 @@ impl Ym2612 {
         // Handle Load Transitions (Reload Counters)
         // Load A (Bit 0) 0->1
         if (val & 0x01) != 0 && (old_val & 0x01) == 0 {
-            let n = ((self.registers[0][0x24] as u32) << 2)
-                | (self.registers[0][0x25] as u32 & 0x03);
+            let n =
+                ((self.registers[0][0x24] as u32) << 2) | (self.registers[0][0x25] as u32 & 0x03);
             let period = (1024 - n as i32) * 144;
             self.timer_a_count = if period < 144 { 144 } else { period };
         }

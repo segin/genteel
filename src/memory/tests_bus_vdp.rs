@@ -23,11 +23,17 @@ mod tests {
 
         // Write first word of command to set pending
         bus.write_word(0xC00004, 0x4000);
-        assert!(bus.vdp.is_control_pending(), "Should be pending after write");
+        assert!(
+            bus.vdp.is_control_pending(),
+            "Should be pending after write"
+        );
 
         // Read byte at 0xC00004 should clear pending
         bus.read_byte(0xC00004);
-        assert!(!bus.vdp.is_control_pending(), "Should NOT be pending after reading 0xC00004");
+        assert!(
+            !bus.vdp.is_control_pending(),
+            "Should NOT be pending after reading 0xC00004"
+        );
 
         // Reset and try with 0xC00005
         bus.vdp.reset();
@@ -35,7 +41,10 @@ mod tests {
         assert!(bus.vdp.is_control_pending());
 
         bus.read_byte(0xC00005);
-        assert!(!bus.vdp.is_control_pending(), "Should NOT be pending after reading 0xC00005");
+        assert!(
+            !bus.vdp.is_control_pending(),
+            "Should NOT be pending after reading 0xC00005"
+        );
     }
 
     #[test]
