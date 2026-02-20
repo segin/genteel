@@ -1111,4 +1111,57 @@ mod tests {
         // Group F: Line F (0xF000)
         assert!(matches!(decode(0xF000), Instruction::System(SystemInstruction::LineF { .. })));
     }
+
+    #[test]
+    fn test_decode_bit_dynamic() {
+        // BTST D1, D0
+        // Opcode: 0000 001 1 00 000 000 (0x0300)
+        assert_eq!(
+            decode(0x0300),
+            Instruction::Bits(BitsInstruction::Btst {
+                bit: BitSource::Register(1),
+                dst: AddressingMode::DataRegister(0),
+            })
+        );
+
+        // BCHG D2, (A0)
+        // Opcode: 0000 010 1 01 010 000 (0x0550)
+        assert_eq!(
+            decode(0x0550),
+            Instruction::Bits(BitsInstruction::Bchg {
+                bit: BitSource::Register(2),
+                dst: AddressingMode::AddressIndirect(0),
+            })
+        );
+
+        // BCLR D3, (A1)+
+        // Opcode: 0000 011 1 10 011 001 (0x0799)
+        assert_eq!(
+            decode(0x0799),
+            Instruction::Bits(BitsInstruction::Bclr {
+                bit: BitSource::Register(3),
+                dst: AddressingMode::AddressPostIncrement(1),
+            })
+        );
+
+        // BSET D4, -(A2)
+        // Opcode: 0000 100 1 11 100 010 (0x09E2)
+        assert_eq!(
+            decode(0x09E2),
+            Instruction::Bits(BitsInstruction::Bset {
+                bit: BitSource::Register(4),
+                dst: AddressingMode::AddressPreDecrement(2),
+            })
+        );
+
+        // BTST D0, d16(A3)
+        // Opcode: 0000 000 1 00 101 011 (0x012B)
+        assert_eq!(
+            decode(0x012B),
+            Instruction::Bits(BitsInstruction::Btst {
+                bit: BitSource::Register(0),
+                dst: AddressingMode::AddressDisplacement(3),
+            })
+        );
+    }
 }
