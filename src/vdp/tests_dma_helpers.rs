@@ -88,15 +88,16 @@ fn test_dma_source_transfer() {
     let expected_base = ((0x0F as u32) << 17) | ((0xAA as u32) << 9) | ((0x55 as u32) << 1);
     assert_eq!(vdp.dma_source_transfer(), expected_base);
 
-    // Case 2: Reg 23 has mode bits (0x80)
-    // dma_source_transfer should mask out 0xC0 from Reg 23.
+    // Case 2: Reg 23 has mode bit 7 set (0x80)
+    // dma_source_transfer should ignore bit 7.
     vdp.registers[REG_DMA_SRC_HI] = 0x8F; // 0x80 | 0x0F
                                           // It should return same as if it was 0x0F
     assert_eq!(vdp.dma_source_transfer(), expected_base);
 
-    // Case 3: Reg 23 has copy mode bits (0xC0)
-    vdp.registers[REG_DMA_SRC_HI] = 0xCF; // 0xC0 | 0x0F
-    assert_eq!(vdp.dma_source_transfer(), expected_base);
+    // Case 3: Reg 23 has bit 6 set (0x40) -> RAM Transfer
+    vdp.registers[REG_DMA_SRC_HI] = 0x4F;
+    let expected_ram = 0xFF0000 | ((0xAA as u32) << 9) | ((0x55 as u32) << 1);
+    assert_eq!(vdp.dma_source_transfer(), expected_ram);
 }
 
 #[test]
@@ -178,10 +179,13 @@ proptest! {
         vdp.registers[REG_DMA_SRC_MID] = mid;
         vdp.registers[REG_DMA_SRC_LO] = lo;
 
-        // Mask hi with 0x3F (drop top 2 bits)
-        let expected = (((hi & 0x3F) as u32) << 17) |
-                       ((mid as u32) << 9) |
-                       ((lo as u32) << 1);
+        let expected = if (hi & 0x40) != 0 {
+            0xFF0000 | ((mid as u32) << 9) | ((lo as u32) << 1)
+        } else {
+            (((hi & 0x3F) as u32) << 17) |
+            ((mid as u32) << 9) |
+            ((lo as u32) << 1)
+        };
 
         prop_assert_eq!(vdp.dma_source_transfer(), expected);
     }

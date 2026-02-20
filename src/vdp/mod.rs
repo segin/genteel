@@ -55,7 +55,6 @@ const MODE4_H40_MODE: u8 = 0x81; // H40 mode check mask
 const DMA_MODE_MASK: u8 = 0xC0;
 const DMA_MODE_FILL: u8 = 0x80;
 const DMA_MODE_COPY: u8 = 0xC0;
-const DMA_TYPE_BIT: u8 = 0x80; // 0=Transfer, 1=Fill/Copy
 
 // Status bits
 const STATUS_VBLANK: u16 = 0x0008;
@@ -420,9 +419,14 @@ impl Vdp {
         // Reading the status register clears the write pending flag
         self.control_pending = false;
         let res = self.status;
-        // Reading status clears the VInt pending bit
+        // Reading status clears the VInt pending bit (Bit 7)
         self.status &= !STATUS_VINT_PENDING;
         res
+    }
+
+    /// Read status without side effects (for debugging)
+    pub fn peek_status(&self) -> u16 {
+        self.status
     }
 
     /// Reset VDP state
@@ -504,14 +508,22 @@ impl Vdp {
     }
 
     pub fn dma_source_transfer(&self) -> u32 {
-        ((self.registers[REG_DMA_SRC_HI] as u32 & 0x3F) << 17)
-            | ((self.registers[REG_DMA_SRC_MID] as u32) << 9)
-            | ((self.registers[REG_DMA_SRC_LO] as u32) << 1)
+        let hi = self.registers[REG_DMA_SRC_HI] as u32;
+        let mid = self.registers[REG_DMA_SRC_MID] as u32;
+        let lo = self.registers[REG_DMA_SRC_LO] as u32;
+
+        if (hi & 0x40) != 0 {
+            // RAM Transfer: bits 23-16 are forced to 1
+            0xFF0000 | (mid << 9) | (lo << 1)
+        } else {
+            // ROM/Expansion Transfer: bit 7 is ignored, bits 6-0 are address
+            ((hi & 0x3F) << 17) | (mid << 9) | (lo << 1)
+        }
     }
 
     /// Check if DMA mode is 0 or 1 (68k Transfer)
     pub fn is_dma_transfer(&self) -> bool {
-        (self.registers[REG_DMA_SRC_HI] & DMA_TYPE_BIT) == 0
+        (self.registers[REG_DMA_SRC_HI] & 0x80) == 0
     }
 
     pub fn is_dma_fill(&self) -> bool {
@@ -617,7 +629,7 @@ impl Vdp {
             self.status |= STATUS_VINT_PENDING;
         } else {
             self.status &= !STATUS_VBLANK;
-            self.status &= !STATUS_VINT_PENDING;
+            // Note: STATUS_VINT_PENDING is only cleared by reading status or manual write
         }
     }
 
@@ -681,7 +693,7 @@ impl Vdp {
     // === Rendering ===
 
     pub fn render_line(&mut self, line: u16) {
-        if line >= self.screen_height() {
+        if line >= 240 {
             return;
         }
 
@@ -695,7 +707,7 @@ impl Vdp {
 
         self.framebuffer[line_offset..line_offset + 320].fill(bg_color);
 
-        if !self.display_enabled() {
+        if !self.display_enabled() || line >= self.screen_height() {
             return;
         }
 
@@ -947,7 +959,8 @@ impl Vdp {
 
         // Vertical Scroll (Bits 2 of Mode 3: 0=Full Screen, 1=2-Cell Strips)
         let v_scroll = if (mode3 & 0x04) != 0 {
-            // 2-Cell (16-pixel) strips. Each entry in VSRAM is 2 bytes and handles 2 cells.
+            // 2-Cell (16-pixel) strips. Each entry in VSRAM is 4 bytes and handles 2 cells.
+            // Entry 0: Plane A Cell 0-1, Entry 1: Plane B Cell 0-1, etc.
             let strip_idx = tile_h >> 1;
             let vs_addr = (strip_idx * 4) + (if is_plane_a { 0 } else { 2 });
             if vs_addr + 1 < self.vsram.len() {

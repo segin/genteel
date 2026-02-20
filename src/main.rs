@@ -451,8 +451,16 @@ impl Emulator {
     fn vdp_scanline_setup(&mut self, line: u16, active_lines: u16) {
         let mut bus = self.bus.borrow_mut();
         bus.vdp.set_v_counter(line);
-        // Render scanline if active
-        if line < active_lines {
+
+        // VBlank Management
+        if line == active_lines {
+            bus.vdp.set_vblank(true);
+        } else if line == 0 {
+            bus.vdp.set_vblank(false);
+        }
+
+        // Process scanline if within framebuffer bounds (320x240)
+        if line < 240 {
             bus.vdp.render_line(line);
         }
     }
@@ -697,7 +705,6 @@ impl Emulator {
         let mut bus = self.bus.borrow_mut();
         // VBlank Interrupt (Level 6) - Triggered at start of VBlank (line 224/240)
         if line == active_lines {
-            bus.vdp.trigger_vint();
             // Check if VInterrupt enabled (Reg 1, bit 5)
             if (bus.vdp.mode2() & 0x20) != 0 {
                 self.cpu.request_interrupt(6);
@@ -1021,7 +1028,7 @@ impl Emulator {
                                         m68k_pc: self.cpu.pc,
                                         z80_pc: self.z80.pc,
                                         frame_count: self.internal_frame_count,
-                                        vdp_status: bus.vdp.read_status(),
+                                        vdp_status: bus.vdp.peek_status(),
                                         display_enabled: bus.vdp.display_enabled(),
                                         bg_color_index: bus.vdp.registers[7],
                                         cram0: bus.vdp.cram_cache[0],
