@@ -758,6 +758,9 @@ impl Vdp {
         let line_offset = (draw_line as usize) * 320;
         let plane_w_mask = plane_w - 1;
 
+        // Fetch H-scroll once for the line
+        let (_, h_scroll) = self.get_scroll_values(is_plane_a, fetch_line, 0);
+
         let mut screen_x: u16 = 0;
 
         while screen_x < screen_width {
@@ -767,6 +770,7 @@ impl Vdp {
                 plane_w,
                 plane_h,
                 plane_w_mask,
+                h_scroll,
                 fetch_line,
                 line_offset,
                 &mut screen_x,
@@ -783,19 +787,19 @@ impl Vdp {
         plane_w: usize,
         plane_h: usize,
         plane_w_mask: usize,
+        h_scroll: u16,
         fetch_line: u16,
         line_offset: usize,
         screen_x: &mut u16,
         priority_filter: bool,
     ) {
-        // Fetch scroll values for this specific column/line
-        let (v_scroll, h_scroll) =
-            self.get_scroll_values(is_plane_a, fetch_line, (*screen_x >> 3) as usize);
-
         // Horizontal position in plane
         let scrolled_h = (*screen_x).wrapping_sub(h_scroll);
         let pixel_h = scrolled_h & 0x07;
         let tile_h = ((scrolled_h >> 3) as usize) & plane_w_mask;
+
+        // Fetch V-scroll for this specific column (per-column VS support)
+        let (v_scroll, _) = self.get_scroll_values(is_plane_a, fetch_line, tile_h);
 
         // Vertical position in plane
         let scrolled_v = fetch_line.wrapping_add(v_scroll);
@@ -986,14 +990,18 @@ impl Vdp {
 
         let hs_addr = match hs_mode {
             0x00 => hs_base, // Full screen
-            0x01 | 0x02 => hs_base + (tile_h * 32), // 8-pixel strips (Cell)
-            0x03 => hs_base + (fetch_line as usize * 4), // Per-line
+            0x01 | 0x02 => hs_base + (((fetch_line as usize) >> 3) * 4), // 8-pixel high strips (Cell)
+            0x03 => hs_base + ((fetch_line as usize) * 4),               // Per-line
             _ => hs_base,
         } + (if is_plane_a { 0 } else { 2 });
 
         let hi = self.vram[hs_addr & 0xFFFF];
         let lo = self.vram[(hs_addr + 1) & 0xFFFF];
-        let h_scroll = (((hi as u16) << 8) | (lo as u16)) & 0x03FF;
+        // H-scroll is 10-bit signed value.
+        let mut h_scroll = (((hi as u16) << 8) | (lo as u16)) & 0x03FF;
+        if (h_scroll & 0x0200) != 0 {
+            h_scroll |= 0xFC00; // Sign extend to 16 bits
+        }
 
         (v_scroll, h_scroll)
     }

@@ -100,9 +100,7 @@ pub struct Ym2612 {
     busy_cycles: i32,
 
     /// Phase accumulators for the 6 channels (simplified FM)
-    phase: [f32; 6],
-    /// Phase increment for the 6 channels (cached)
-    phase_inc: [f32; 6],
+    phase_acc: [f32; 6],
     /// DAC value (register 0x2A)
     dac_value: u8,
     /// DAC enabled (register 0x2B bit 7)
@@ -118,8 +116,7 @@ impl Ym2612 {
             timer_a_count: 0,
             timer_b_count: 0,
             busy_cycles: 0,
-            phase: [0.0; 6],
-            phase_inc: [0.0; 6],
+            phase_acc: [0.0; 6],
             dac_value: 0x80,
             dac_enabled: false,
         };
@@ -145,8 +142,24 @@ impl Ym2612 {
         }
     }
 
-    /// Update timers based on elapsed M68k cycles
+    /// Update timers and phase based on elapsed M68k cycles
     pub fn step(&mut self, cycles: u32) {
+        // Advance Phase Accumulators for the 6 channels
+        for ch in 0..6 {
+            let (block, f_num) = self.get_frequency(ch);
+            if f_num > 0 {
+                let freq_mult = (1 << block) as f32;
+                // Internal FM frequency logic:
+                // F_fm = (F_clock / (144 * 2^2)) * (f_num / 2^10) * 2^block
+                // We want phase increment per M68k cycle.
+                // One M68k cycle = 1 Master Cycle. (Simplified, already scaled by 7 below for timers)
+                // Actually, let's use Master Cycles consistently.
+                let m_cycles = cycles * 7;
+                let inc = (f_num as f32 * freq_mult * m_cycles as f32) / (144.0 * 1024.0 * 8.0);
+                self.phase_acc[ch] = (self.phase_acc[ch] + inc) % 1.0;
+            }
+        }
+
         // Convert M68k cycles to Master Cycles (x7)
         let cycles = (cycles * 7) as i32;
 
@@ -241,16 +254,6 @@ impl Ym2612 {
             (Bank::Bank0, 0x2B) => self.handle_dac_enable(val),
             _ => {
                 self.registers[bank_idx][addr as usize] = val;
-                // Update cached phase increment if frequency registers are written
-                if (0xA0..=0xA2).contains(&addr) || (0xA4..=0xA6).contains(&addr) {
-                    let ch_offset = (addr & 0x03) as usize;
-                    let ch = if bank == Bank::Bank0 {
-                        ch_offset
-                    } else {
-                        ch_offset + 3
-                    };
-                    self.update_phase_inc(ch);
-                }
             }
         }
     }
@@ -324,16 +327,9 @@ impl Ym2612 {
                 continue;
             }
 
-            let inc = self.phase_inc[ch];
-            if inc == 0.0 {
-                continue;
-            }
-
-            self.phase[ch] = (self.phase[ch] + inc) % 1.0;
-
-            // Table-based sine wave lookup
+            // Table-based sine wave lookup using current phase accumulator
             let table_idx =
-                (self.phase[ch] * SINE_TABLE_SIZE as f32) as usize & (SINE_TABLE_SIZE - 1);
+                (self.phase_acc[ch] * SINE_TABLE_SIZE as f32) as usize & (SINE_TABLE_SIZE - 1);
             let sample_val = sine_table[table_idx];
 
             let (bank, offset) = if ch < 3 { (0, ch) } else { (1, ch - 3) };
@@ -390,28 +386,6 @@ impl Ym2612 {
         // For this skeletal implementation, we'll just check if we stored the last write.
         // But 0x28 is in Bank 0 and applies to all channels based on bits 0-2 (channel) and 4-7 (slots).
         self.registers[0][0x28]
-    }
-
-    fn update_phase_inc(&mut self, ch: usize) {
-        let (block, f_num) = self.get_frequency(ch);
-        if f_num == 0 {
-            self.phase_inc[ch] = 0.0;
-        } else {
-            // Internal YM2612 frequency formula:
-            // F_internal = (clock / (144 * 2^2)) * (f_num / 2^10) * 2^block
-            // For a 7.67MHz clock, this gives approx 53kHz max frequency.
-            // We need the increment per output sample (44.1kHz).
-            
-            let freq_mult = (1 << block) as f32;
-            // (f_num * freq_mult) / (2^10 * 144) is the frequency in internal ticks
-            // But we simplify: YM2612 clock is 7670453 Hz.
-            // One sample is 144 clock cycles.
-            // phase_inc = (f_num * 2^(block-1)) / (2^11 * 44100 / 53267) -- roughly.
-            // Let's use a more standard approach: 
-            // inc = (F_internal) / F_sample_rate
-            let f_internal = (f_num as f32 * freq_mult * 7670453.0) / (144.0 * 1024.0 * 8.0);
-            self.phase_inc[ch] = f_internal / 44100.0;
-        }
     }
 }
 
