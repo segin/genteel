@@ -848,3 +848,4 @@ mod tests_m68k_torture;
 mod tests_performance;
 #[cfg(test)]
 mod tests_security;
+mod tests_decoder_shift;
