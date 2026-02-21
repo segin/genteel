@@ -232,8 +232,6 @@ impl Framework {
 #[derive(Debug, Clone, Copy)]
 struct Z80Change {
     instruction_cycles: u32,
-    old_req: bool,
-    old_rst: bool,
     new_req: bool,
     new_rst: bool,
 }
@@ -503,65 +501,78 @@ impl Emulator {
             bus.vdp.render_line(line);
         }
     }
-    fn sync_audio_static(
+    fn sync_components(
         bus_rc: &Rc<RefCell<Bus>>,
         m68k_cycles: u32,
         z80: &mut Z80<Z80Bus, Z80Bus>,
         z80_cycle_debt: &mut f32,
+        trigger_vint: bool,
+        internal_frame_count: u64,
+        z80_last_bus_req: &mut bool,
+        z80_last_reset: &mut bool,
+        z80_trace_count: &mut u32,
+        cpu_pc: u32,
+        debug: bool,
     ) {
-        // 1. Update accumulator (needs lock)
-        let (cycles_per_sample, needs_samples, z80_can_run) = {
-            let mut bus = bus_rc.borrow_mut();
-            let cycles_per_sample = 7670453.0 / (bus.sample_rate as f32);
-            bus.audio_accumulator += m68k_cycles as f32;
-
-            let needs_samples = bus.audio_accumulator >= cycles_per_sample;
-            let z80_can_run = !bus.z80_reset && !bus.z80_bus_request;
-            (cycles_per_sample, needs_samples, z80_can_run)
+        // 1. Z80 State and Timing
+        let (z80_can_run, z80_is_reset) = {
+            let bus = bus_rc.borrow();
+            let prev = *z80_last_bus_req;
+            if debug && bus.z80_bus_request != prev {
+                log::debug!(
+                    "Bus Req Changed: {} -> {} at 68k PC={:06X}",
+                    prev,
+                    bus.z80_bus_request,
+                    cpu_pc
+                );
+            }
+            *z80_last_bus_req = bus.z80_bus_request;
+            (!bus.z80_reset && !bus.z80_bus_request, bus.z80_reset)
         };
 
-        if !needs_samples {
-            return;
+        // Handle Z80 Reset
+        if z80_is_reset && !*z80_last_reset {
+            z80.reset();
+        }
+        *z80_last_reset = z80_is_reset;
+
+        // Trace Z80 if debugging
+        if z80_can_run && internal_frame_count > 0 {
+            z80.debug = debug && *z80_trace_count < 5000;
+            if z80.debug {
+                *z80_trace_count += 1;
+            }
+        } else {
+            z80.debug = false;
         }
 
-        // Loop based on accumulator state
-        loop {
-            // Check if we still need to process samples
-            let should_run_cycle = {
-                let bus = bus_rc.borrow();
-                bus.audio_accumulator >= cycles_per_sample
-            };
+        // Trigger Z80 VInt if requested
+        if trigger_vint && !z80_is_reset {
+            z80.trigger_interrupt(0xFF);
+        }
 
-            if !should_run_cycle {
-                break;
+        // 2. Catch up Z80
+        if z80_can_run {
+            const Z80_CYCLES_PER_M68K_CYCLE: f32 = 3.58 / 7.67;
+            *z80_cycle_debt += m68k_cycles as f32 * Z80_CYCLES_PER_M68K_CYCLE;
+            while *z80_cycle_debt >= 1.0 {
+                let cycles = z80.step();
+                *z80_cycle_debt -= cycles as f32;
             }
+        }
 
-            // Decrement accumulator (needs lock)
-            {
-                let mut bus = bus_rc.borrow_mut();
-                bus.audio_accumulator -= cycles_per_sample;
-            }
+        // 3. Update APU and generate audio samples
+        let mut bus = bus_rc.borrow_mut();
+        let cycles_per_sample = 7670453.0 / (bus.sample_rate as f32);
+        bus.audio_accumulator += m68k_cycles as f32;
 
-            // Catch up Z80 (NO LOCK held here)
-            // Z80::step() will internally acquire the lock via SharedBus
-            if z80_can_run {
-                const Z80_CYCLES_PER_M68K_CYCLE: f32 = 3.58 / 7.67;
-                *z80_cycle_debt += cycles_per_sample * Z80_CYCLES_PER_M68K_CYCLE;
-                while *z80_cycle_debt >= 1.0 {
-                    let z80_cycles = z80.step();
-                    *z80_cycle_debt -= z80_cycles as f32;
-                }
+        while bus.audio_accumulator >= cycles_per_sample {
+            let (l, r) = bus.apu.step(cycles_per_sample as u32);
+            if bus.audio_buffer.len() < 32768 {
+                bus.audio_buffer.push(l);
+                bus.audio_buffer.push(r);
             }
-
-            // APU step (Needs LOCK)
-            {
-                let mut bus = bus_rc.borrow_mut();
-                let (l, r) = bus.apu.step(cycles_per_sample as u32);
-                if bus.audio_buffer.len() < 32768 {
-                    bus.audio_buffer.push(l);
-                    bus.audio_buffer.push(r);
-                }
-            }
+            bus.audio_accumulator -= cycles_per_sample;
         }
     }
 
@@ -571,6 +582,13 @@ impl Emulator {
         max_cycles: u32,
         z80: &mut Z80<Z80Bus, Z80Bus>,
         z80_cycle_debt: &mut f32,
+        line: u16,
+        active_lines: u16,
+        internal_frame_count: u64,
+        z80_last_bus_req: &mut bool,
+        z80_last_reset: &mut bool,
+        z80_trace_count: &mut u32,
+        debug: bool,
     ) -> CpuBatchResult {
         let (initial_req, initial_rst) = {
             let bus = bus_rc.borrow();
@@ -589,7 +607,20 @@ impl Emulator {
                 cpu.step_instruction(&mut *bus)
             };
 
-            Self::sync_audio_static(bus_rc, m68k_cycles, z80, z80_cycle_debt);
+            let trigger_vint = line == active_lines && pending_cycles < 10;
+            Self::sync_components(
+                bus_rc,
+                m68k_cycles,
+                z80,
+                z80_cycle_debt,
+                trigger_vint,
+                internal_frame_count,
+                z80_last_bus_req,
+                z80_last_reset,
+                z80_trace_count,
+                cpu.pc,
+                debug,
+            );
 
             // Check for Z80 state change
             let (req, rst) = {
@@ -602,8 +633,6 @@ impl Emulator {
                     cycles: pending_cycles, // cycles accumulated *before* this instruction
                     z80_change: Some(Z80Change {
                         instruction_cycles: m68k_cycles,
-                        old_req: initial_req,
-                        old_rst: initial_rst,
                         new_req: req,
                         new_rst: rst,
                     }),
@@ -626,49 +655,32 @@ impl Emulator {
                 limit,
                 &mut self.z80,
                 z80_cycle_debt,
+                line,
+                active_lines,
+                self.internal_frame_count,
+                &mut self.z80_last_bus_req,
+                &mut self.z80_last_reset,
+                &mut self.z80_trace_count,
+                self.debug,
             );
-            // If state changed, revert to old state temporarily so we can sync the batch cycles
-            // with the state that was active during those cycles.
+
+            cycles_scanline += result.cycles;
+
             if let Some(change) = result.z80_change {
-                let mut bus = self.bus.borrow_mut();
-                bus.z80_bus_request = change.old_req;
-                bus.z80_reset = change.old_rst;
-            }
-            if result.cycles > 0 {
-                let trigger_vint = line == active_lines && cycles_scanline < 10;
-                Self::sync_z80_static(
-                    &mut self.z80,
-                    &self.bus,
-                    result.cycles,
-                    trigger_vint,
-                    z80_cycle_debt,
-                    self.internal_frame_count,
-                    &mut self.z80_last_bus_req,
-                    &mut self.z80_last_reset,
-                    &mut self.z80_trace_count,
-                    self.cpu.pc,
-                    self.debug,
-                );
-                cycles_scanline += result.cycles;
-            }
-            if let Some(change) = result.z80_change {
-                // Now apply the new state for the instruction that caused the change
+                // Apply the new state for the instruction that caused the change
                 {
                     let mut bus = self.bus.borrow_mut();
                     bus.z80_bus_request = change.new_req;
                     bus.z80_reset = change.new_rst;
                 }
                 let trigger_vint = line == active_lines && cycles_scanline < 10;
-                // Step one instruction with NEW state, and sync audio for it
-                let m68k_cycles = change.instruction_cycles;
-                Self::sync_audio_static(&self.bus, m68k_cycles, &mut self.z80, z80_cycle_debt);
-
-                Self::sync_z80_static(
-                    &mut self.z80,
+                // Sync components for the instruction that triggered the state change
+                Self::sync_components(
                     &self.bus,
-                    m68k_cycles,
-                    trigger_vint,
+                    change.instruction_cycles,
+                    &mut self.z80,
                     z80_cycle_debt,
+                    trigger_vint,
                     self.internal_frame_count,
                     &mut self.z80_last_bus_req,
                     &mut self.z80_last_reset,
@@ -676,56 +688,8 @@ impl Emulator {
                     self.cpu.pc,
                     self.debug,
                 );
-                cycles_scanline += m68k_cycles;
+                cycles_scanline += change.instruction_cycles;
             }
-        }
-    }
-    fn sync_z80_static(
-        z80: &mut Z80<Z80Bus, Z80Bus>,
-        bus_rc: &Rc<RefCell<Bus>>,
-        _m68k_cycles: u32,
-        trigger_vint: bool,
-        _z80_cycle_debt: &mut f32,
-        internal_frame_count: u64,
-        z80_last_bus_req: &mut bool,
-        z80_last_reset: &mut bool,
-        z80_trace_count: &mut u32,
-        cpu_pc: u32,
-        debug: bool,
-    ) {
-        // Z80 execution state
-        let (z80_can_run, z80_is_reset) = {
-            let bus = bus_rc.borrow();
-            let prev = *z80_last_bus_req;
-            if debug && bus.z80_bus_request != prev {
-                log::debug!(
-                    "Bus Req Changed: {} -> {} at 68k PC={:06X}",
-                    prev,
-                    bus.z80_bus_request,
-                    cpu_pc
-                );
-            }
-            *z80_last_bus_req = bus.z80_bus_request;
-            (!bus.z80_reset && !bus.z80_bus_request, bus.z80_reset)
-        };
-        // Z80 reset logic
-        if z80_is_reset && !*z80_last_reset {
-            z80.reset();
-        }
-        *z80_last_reset = z80_is_reset;
-        if z80_can_run && internal_frame_count > 0 {
-            if debug && *z80_trace_count < 5000 {
-                z80.debug = true;
-                *z80_trace_count += 1;
-            } else {
-                z80.debug = false;
-            }
-        } else {
-            z80.debug = false;
-        }
-        // Trigger Z80 VInt at start of VBlank
-        if trigger_vint && !z80_is_reset {
-            z80.trigger_interrupt(0xFF);
         }
     }
     fn generate_audio_samples(&mut self, _samples_per_line: f32) {
