@@ -302,66 +302,15 @@ impl Cpu {
         let pc = self.pc;
         let instruction;
 
-        // Optimized instruction fetch with cache
-        if pc < 0x400000 {
-            // ROM/Cartridge space - Cacheable
-            // Index: (PC / 2) & 0xFFFF. Maps 0-128KB repeating or just lower bits.
-            // Since we check entry.pc == pc, aliasing is handled safely.
-            let cache_index = ((pc >> 1) & 0xFFFF) as usize;
-
-            // Try to read from cache safely
-            // If the cache has been resized to be smaller than 65536, get() returns None
-            // and we fall back to uncached fetch, preventing out-of-bounds access.
-            if let Some(entry) = self.decode_cache.get(cache_index).copied() {
-                if entry.pc == pc {
-                    // Cache Hit
-                    instruction = entry.instruction;
-                    self.pc = pc.wrapping_add(2);
-                } else {
-                    // Cache Miss
-                    let opcode = self.read_instruction_word(pc, memory);
-                    if self.pending_exception {
-                        // Address Error during fetch
-                        self.cycles += 34;
-                        return 34;
-                    }
-
-                    self.pc = self.pc.wrapping_add(2);
-                    instruction = decode(opcode);
-
-                    // Update Cache
-                    // We know the index is valid because get() succeeded earlier,
-                    // but we use get_mut() for safety in case of concurrent modification (unlikely here)
-                    // or weird edge cases.
-                    if let Some(entry_mut) = self.decode_cache.get_mut(cache_index) {
-                        *entry_mut = DecodeCacheEntry { pc, instruction };
-                    }
-                }
-            } else {
-                // Cache index out of bounds (cache too small/invalid)
-                // Fallback to uncached fetch
-                let opcode = self.read_instruction_word(pc, memory);
-                if self.pending_exception {
-                    // Address Error during fetch
-                    self.cycles += 34;
-                    return 34;
-                }
-
-                self.pc = self.pc.wrapping_add(2);
-                instruction = decode(opcode);
-            }
-        } else {
-            // Uncached (RAM, I/O, etc.)
-            let opcode = self.read_instruction_word(pc, memory);
-            if self.pending_exception {
-                // Address Error during fetch
-                self.cycles += 34;
-                return 34;
-            }
-
-            self.pc = self.pc.wrapping_add(2);
-            instruction = decode(opcode);
+        let opcode = self.read_instruction_word(pc, memory);
+        if self.pending_exception {
+            // Address Error during fetch
+            self.cycles += 34;
+            return 34;
         }
+
+        self.pc = self.pc.wrapping_add(2);
+        instruction = decode(opcode);
 
         let cycles = self.execute(instruction, memory);
         self.cycles += cycles as u64;
@@ -849,3 +798,5 @@ mod tests_performance;
 #[cfg(test)]
 mod tests_security;
 mod tests_decoder_shift;
+#[cfg(test)]
+mod tests_m68k_exhaustive;
