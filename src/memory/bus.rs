@@ -27,7 +27,7 @@ use crate::debugger::Debuggable;
 use crate::io::Io;
 use crate::vdp::Vdp;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 
 /// Sega Genesis Memory Bus
 ///
@@ -539,18 +539,82 @@ impl MemoryInterface for Bus {
 
 impl Debuggable for Bus {
     fn read_state(&self) -> Value {
-        serde_json::to_value(self).unwrap()
+        json!({
+            "z80_bus_request": self.z80_bus_request,
+            "z80_reset": self.z80_reset,
+            "z80_bank_addr": self.z80_bank_addr,
+            "z80_bank_bit": self.z80_bank_bit,
+            "tmss_unlocked": self.tmss_unlocked,
+            "audio_accumulator": self.audio_accumulator,
+            "sample_rate": self.sample_rate,
+            "work_ram": self.work_ram,
+            "z80_ram": self.z80_ram,
+            "vdp": self.vdp.read_state(),
+            "io": self.io.read_state(),
+            "apu": self.apu.read_state(),
+        })
     }
 
     fn write_state(&mut self, state: &Value) {
-        if let Ok(mut new_bus) = serde_json::from_value::<Bus>(state.clone()) {
-            new_bus.rom = std::mem::take(&mut self.rom);
-            if new_bus.vdp.framebuffer.len() != 320 * 240 {
-                new_bus.vdp.framebuffer.resize(320 * 240, 0);
+        if let Some(val) = state.get("z80_bus_request") {
+            if let Some(b) = val.as_bool() {
+                self.z80_bus_request = b;
             }
-            new_bus.vdp.reconstruct_cram_cache();
-            *self = new_bus;
         }
+        if let Some(val) = state.get("z80_reset") {
+            if let Some(b) = val.as_bool() {
+                self.z80_reset = b;
+            }
+        }
+        if let Some(val) = state.get("z80_bank_addr") {
+            if let Some(u) = val.as_u64() {
+                self.z80_bank_addr = u as u32;
+            }
+        }
+        if let Some(val) = state.get("z80_bank_bit") {
+            if let Some(u) = val.as_u64() {
+                self.z80_bank_bit = u as u8;
+            }
+        }
+        if let Some(val) = state.get("tmss_unlocked") {
+            if let Some(b) = val.as_bool() {
+                self.tmss_unlocked = b;
+            }
+        }
+        if let Some(val) = state.get("audio_accumulator") {
+            if let Some(f) = val.as_f64() {
+                self.audio_accumulator = f as f32;
+            }
+        }
+        if let Some(val) = state.get("sample_rate") {
+            if let Some(u) = val.as_u64() {
+                self.sample_rate = u as u32;
+            }
+        }
+
+        if let Some(val) = state.get("work_ram") {
+            if let Ok(ram) = serde_json::from_value::<Box<[u8]>>(val.clone()) {
+                self.work_ram = ram;
+            }
+        }
+        if let Some(val) = state.get("z80_ram") {
+            if let Ok(ram) = serde_json::from_value::<Box<[u8]>>(val.clone()) {
+                self.z80_ram = ram;
+            }
+        }
+
+        if let Some(val) = state.get("vdp") {
+            self.vdp.write_state(val);
+        }
+        if let Some(val) = state.get("io") {
+            self.io.write_state(val);
+        }
+        if let Some(val) = state.get("apu") {
+            self.apu.write_state(val);
+        }
+
+        // Clear audio buffer as it's transient
+        self.audio_buffer.clear();
     }
 }
 
@@ -559,19 +623,42 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_bus_state_serialization() {
+    fn test_bus_debuggable_roundtrip() {
         std::thread::Builder::new()
             .stack_size(16 * 1024 * 1024) // 16MB
             .spawn(|| {
                 let mut bus = Bus::new();
 
-                // Modify state
+                // Modify scalar state
                 bus.z80_bus_request = true;
                 bus.z80_reset = false;
                 bus.z80_bank_addr = 0x12345;
+                bus.z80_bank_bit = 7;
+                bus.tmss_unlocked = true;
+                bus.audio_accumulator = 1.234;
+                bus.sample_rate = 48000;
+
+                // Modify RAM
+                bus.work_ram[0] = 0xAA;
+                bus.work_ram[0xFFFF] = 0xBB;
+                bus.z80_ram[0] = 0xCC;
+                bus.z80_ram[0x1FFF] = 0xDD;
+
+                // Modify sub-components
+                bus.vdp.set_v_counter(100);
+                if let Some(ctrl) = bus.io.controller(1) {
+                    ctrl.a = true;
+                }
+                bus.apu.write_psg(0x90); // Set volume (test indirect effect)
 
                 // Serialize
                 let state_value = bus.read_state();
+
+                // Verify structure
+                assert!(state_value.get("vdp").is_some());
+                assert!(state_value.get("io").is_some());
+                assert!(state_value.get("apu").is_some());
+                assert!(state_value.get("work_ram").is_some());
 
                 // Create new bus
                 let mut new_bus = Bus::new();
@@ -579,15 +666,25 @@ mod tests {
                 // Deserialize
                 new_bus.write_state(&state_value);
 
-                // Assert equality
+                // Assert scalar equality
                 assert_eq!(new_bus.z80_bus_request, true);
                 assert_eq!(new_bus.z80_reset, false);
                 assert_eq!(new_bus.z80_bank_addr, 0x12345);
+                assert_eq!(new_bus.z80_bank_bit, 7);
+                assert_eq!(new_bus.tmss_unlocked, true);
+                assert!((new_bus.audio_accumulator - 1.234).abs() < 1e-6);
+                assert_eq!(new_bus.sample_rate, 48000);
 
-                // Verify VDP/IO/APU keys exist in JSON
-                assert!(state_value.get("vdp").is_some());
-                assert!(state_value.get("io").is_some());
-                assert!(state_value.get("apu").is_some());
+                // Assert RAM equality
+                assert_eq!(new_bus.work_ram[0], 0xAA);
+                assert_eq!(new_bus.work_ram[0xFFFF], 0xBB);
+                assert_eq!(new_bus.z80_ram[0], 0xCC);
+                assert_eq!(new_bus.z80_ram[0x1FFF], 0xDD);
+
+                // Assert sub-components
+                assert_eq!(new_bus.vdp.read_hv_counter() >> 8, 100); // V counter
+                assert!(new_bus.io.port1.state.a);
+                assert_eq!(new_bus.apu.psg.tones[0].volume, 0); // 0x90 sets vol to 0
             })
             .unwrap()
             .join()
