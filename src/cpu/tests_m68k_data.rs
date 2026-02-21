@@ -341,3 +341,46 @@ fn test_movem_all_registers() {
     // Should be initial value (0x8000)
     assert_eq!(memory.read_long(0x7FFC), 0x8000);
 }
+
+// ============================================================================
+// EXG Tests
+// ============================================================================
+
+#[test]
+fn test_exg_data_data() {
+    let (mut cpu, mut memory) = create_cpu();
+    // EXG D0, D1
+    // Opcode: 1100 000 1 01000 001 -> 0xC141
+    write_op(&mut memory, &[0xC141]);
+    cpu.d[0] = 0x11111111;
+    cpu.d[1] = 0x22222222;
+    cpu.step_instruction(&mut memory);
+    assert_eq!(cpu.d[0], 0x22222222);
+    assert_eq!(cpu.d[1], 0x11111111);
+}
+
+#[test]
+fn test_exg_addr_addr() {
+    let (mut cpu, mut memory) = create_cpu();
+    // EXG A0, A1
+    // Opcode: 1100 000 1 01001 001 -> 0xC149
+    write_op(&mut memory, &[0xC149]);
+    cpu.a[0] = 0x33333333;
+    cpu.a[1] = 0x44444444;
+    cpu.step_instruction(&mut memory);
+    assert_eq!(cpu.a[0], 0x44444444);
+    assert_eq!(cpu.a[1], 0x33333333);
+}
+
+#[test]
+fn test_exg_data_addr() {
+    let (mut cpu, mut memory) = create_cpu();
+    // EXG D0, A0
+    // Opcode: 1100 000 1 10001 000 -> 0xC188
+    write_op(&mut memory, &[0xC188]);
+    cpu.d[0] = 0x55555555;
+    cpu.a[0] = 0x66666666;
+    cpu.step_instruction(&mut memory);
+    assert_eq!(cpu.d[0], 0x66666666);
+    assert_eq!(cpu.a[0], 0x55555555);
+}

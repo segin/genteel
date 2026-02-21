@@ -784,6 +784,15 @@ fn test_exg_all_modes() {
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.a[0], 0x22222222);
     assert_eq!(cpu.a[1], 0x11111111);
+
+    // EXG Dx, Ay
+    let (mut cpu, mut memory) = create_test_cpu();
+    memory.write_word(0x100, 0xC188); // EXG D0, A0
+    cpu.d[0] = 0x33333333;
+    cpu.a[0] = 0x44444444;
+    cpu.step_instruction(&mut memory);
+    assert_eq!(cpu.d[0], 0x44444444);
+    assert_eq!(cpu.a[0], 0x33333333);
 }
 
 #[test]
