@@ -56,8 +56,8 @@ pub fn split_u32_to_u16(long: u32) -> (u16, u16) {
 
 /// Serde helper for arrays larger than 32 elements
 pub mod big_array {
-    use serde::{Deserializer, Serializer};
     use serde::ser::SerializeTuple;
+    use serde::{Deserializer, Serializer};
 
     pub fn serialize<S, const N: usize>(data: &[u8; N], serializer: S) -> Result<S::Ok, S::Error>
     where

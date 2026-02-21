@@ -11,8 +11,8 @@ pub mod input;
 pub mod io;
 pub mod memory;
 pub mod vdp;
-pub mod z80;
 pub mod wav_writer;
+pub mod z80;
 
 pub use audio::{create_audio_buffer, AudioBuffer, SharedAudioBuffer};
 pub use cpu::Cpu;

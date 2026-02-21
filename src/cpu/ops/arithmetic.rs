@@ -842,7 +842,7 @@ mod tests {
         let cycles = exec_divu(
             &mut cpu,
             AddressingMode::DataRegister(1), // src = D1
-            0, // dst = D0
+            0,                               // dst = D0
             &mut memory,
         );
 
@@ -868,7 +868,7 @@ mod tests {
         exec_divu(
             &mut cpu,
             AddressingMode::DataRegister(1), // src = D1
-            0, // dst = D0
+            0,                               // dst = D0
             &mut memory,
         );
 
@@ -894,7 +894,7 @@ mod tests {
         exec_divu(
             &mut cpu,
             AddressingMode::DataRegister(1), // src = D1
-            0, // dst = D0
+            0,                               // dst = D0
             &mut memory,
         );
 
@@ -919,7 +919,7 @@ mod tests {
         exec_divu(
             &mut cpu,
             AddressingMode::DataRegister(1), // src = D1
-            0, // dst = D0
+            0,                               // dst = D0
             &mut memory,
         );
 

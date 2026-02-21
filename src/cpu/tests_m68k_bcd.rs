@@ -186,15 +186,15 @@ fn test_sbcd_reg_simple() {
 
     cpu.d[0] = 0x45; // 45
     cpu.d[1] = 0x23; // 23
-    cpu.set_flag(flags::ZERO, true);    // Z starts set
+    cpu.set_flag(flags::ZERO, true); // Z starts set
     cpu.set_flag(flags::EXTEND, false); // No borrow in
 
     cpu.step_instruction(&mut memory);
 
     // 45 - 23 = 22 (0x22)
     assert_eq!(cpu.d[0] & 0xFF, 0x22);
-    assert!(!cpu.get_flag(flags::ZERO));   // Result non-zero, Z cleared
-    assert!(!cpu.get_flag(flags::CARRY));  // No borrow
+    assert!(!cpu.get_flag(flags::ZERO)); // Result non-zero, Z cleared
+    assert!(!cpu.get_flag(flags::CARRY)); // No borrow
     assert!(!cpu.get_flag(flags::EXTEND)); // No borrow out
 }
 

@@ -14,15 +14,15 @@ pub use z80_bus::Z80Bus;
 use crate::cpu::decoder::Size;
 
 #[cfg(test)]
-mod tests_property;
-#[cfg(test)]
 mod tests_bus_refactor;
+#[cfg(test)]
+mod tests_bus_safety;
 #[cfg(test)]
 mod tests_bus_vdp;
 #[cfg(test)]
-mod tests_rom_access;
+mod tests_property;
 #[cfg(test)]
-mod tests_bus_safety;
+mod tests_rom_access;
 
 pub trait MemoryInterface: std::fmt::Debug {
     fn read_byte(&mut self, address: u32) -> u8;

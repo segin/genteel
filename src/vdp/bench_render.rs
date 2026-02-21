@@ -94,9 +94,9 @@ fn bench_render_line_sparse() {
     // Fill VRAM with 50% zeros
     for i in 0..0x10000 {
         if i % 2 == 0 {
-             vdp.vram[i] = (i & 0xFF) as u8;
+            vdp.vram[i] = (i & 0xFF) as u8;
         } else {
-             vdp.vram[i] = 0;
+            vdp.vram[i] = 0;
         }
     }
     // Fill CRAM

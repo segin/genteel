@@ -1,7 +1,9 @@
 #[cfg(test)]
 mod tests {
+    use crate::cpu::decoder::{
+        decode, AddressingMode, BitsInstruction, Instruction, ShiftCount, Size,
+    };
     use crate::cpu::Cpu;
-    use crate::cpu::decoder::{decode, AddressingMode, BitsInstruction, Instruction, ShiftCount, Size};
     use crate::memory::{Memory, MemoryInterface};
 
     fn create_test_cpu() -> (Cpu, Memory) {
@@ -103,7 +105,7 @@ mod tests {
         match instr_asl {
             Instruction::Bits(BitsInstruction::AslM { dst }) => {
                 assert_eq!(dst, AddressingMode::AddressIndirect(0));
-            },
+            }
             _ => panic!("Expected ASL, got {:?}", instr_asl),
         }
 
@@ -115,7 +117,7 @@ mod tests {
                 assert_eq!(size, Size::Word);
                 assert_eq!(dst, AddressingMode::AddressIndirect(0));
                 assert_eq!(count, ShiftCount::Immediate(1));
-            },
+            }
             _ => panic!("Expected LSR, got {:?}", instr_lsr),
         }
     }

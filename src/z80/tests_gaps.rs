@@ -7,8 +7,8 @@
 #![cfg(test)]
 
 use crate::memory::{IoInterface, MemoryInterface};
-use crate::z80::{flags, Z80};
 use crate::z80::test_utils::create_z80;
+use crate::z80::{flags, Z80};
 
 // ============================================================================
 // Block Instructions (Items 21-24)
