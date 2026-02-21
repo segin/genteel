@@ -33,6 +33,7 @@ use z80::Z80;
 #[cfg(feature = "gui")]
 struct GuiState {
     show_settings: bool,
+    show_debug: bool,
     input_mapping: InputMapping,
     integer_scaling: bool,
     force_red: bool,
@@ -82,6 +83,7 @@ impl Framework {
             egui_wgpu::Renderer::new(pixels.device(), pixels.render_texture_format(), None, 1);
         let gui_state = GuiState {
             show_settings: false,
+            show_debug: false,
             input_mapping,
             integer_scaling: true,
             force_red: false,
@@ -125,33 +127,39 @@ impl Framework {
                         self.gui_state.show_settings = true;
                         ui.close_menu();
                     }
+                    ui.checkbox(
+                        &mut self.gui_state.show_debug,
+                        "Show Performance & Debug",
+                    );
                 });
             });
         });
 
-        egui::Window::new("Performance & Debug").show(&self.egui_ctx, |ui| {
-            let dt = self.egui_ctx.input(|i| i.stable_dt);
-            let fps = if dt > 0.0 { 1.0 / dt } else { 0.0 };
-            ui.label(format!("Frontend FPS: {:.1}", fps));
-            ui.label(format!("Frame Time: {:.2}ms", dt * 1000.0));
-            ui.separator();
-            ui.label(format!("Internal Frames: {}", debug_info.frame_count));
-            ui.label(format!("M68k PC: {:06X}", debug_info.m68k_pc));
-            ui.label(format!("Z80 PC: {:04X}", debug_info.z80_pc));
-            ui.separator();
-            ui.label(format!(
-                "VDP Display: {}",
-                if debug_info.display_enabled {
-                    "ENABLED"
-                } else {
-                    "DISABLED"
-                }
-            ));
-            ui.label(format!("VDP Status: {:04X}", debug_info.vdp_status));
-            ui.label(format!("BG Color Index: {}", debug_info.bg_color_index));
-            ui.label(format!("CRAM[0] (RGB565): {:04X}", debug_info.cram0));
-            ui.checkbox(&mut self.gui_state.force_red, "Force Red BG (Debug)");
-        });
+        if self.gui_state.show_debug {
+            egui::Window::new("Performance & Debug").show(&self.egui_ctx, |ui| {
+                let dt = self.egui_ctx.input(|i| i.stable_dt);
+                let fps = if dt > 0.0 { 1.0 / dt } else { 0.0 };
+                ui.label(format!("Frontend FPS: {:.1}", fps));
+                ui.label(format!("Frame Time: {:.2}ms", dt * 1000.0));
+                ui.separator();
+                ui.label(format!("Internal Frames: {}", debug_info.frame_count));
+                ui.label(format!("M68k PC: {:06X}", debug_info.m68k_pc));
+                ui.label(format!("Z80 PC: {:04X}", debug_info.z80_pc));
+                ui.separator();
+                ui.label(format!(
+                    "VDP Display: {}",
+                    if debug_info.display_enabled {
+                        "ENABLED"
+                    } else {
+                        "DISABLED"
+                    }
+                ));
+                ui.label(format!("VDP Status: {:04X}", debug_info.vdp_status));
+                ui.label(format!("BG Color Index: {}", debug_info.bg_color_index));
+                ui.label(format!("CRAM[0] (RGB565): {:04X}", debug_info.cram0));
+                ui.checkbox(&mut self.gui_state.force_red, "Force Red BG (Debug)");
+            });
+        }
 
         if self.gui_state.show_settings {
             egui::Window::new("Settings").show(&self.egui_ctx, |ui| {

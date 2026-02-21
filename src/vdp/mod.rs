@@ -758,32 +758,20 @@ impl Vdp {
         let line_offset = (draw_line as usize) * 320;
         let plane_w_mask = plane_w - 1;
 
-        // Fetch H-scroll once for the line (matching real hardware behavior for per-line/cell)
-        let (_, h_scroll) = self.get_scroll_values(is_plane_a, fetch_line, 0);
-
         let mut screen_x: u16 = 0;
 
         while screen_x < screen_width {
-            let scrolled_h = screen_x.wrapping_sub(h_scroll);
-            let pixel_h = scrolled_h & 0x07;
-
-            let pixels_left_in_tile = 8 - pixel_h;
-            let pixels_to_process = std::cmp::min(pixels_left_in_tile, screen_width - screen_x);
-
             self.render_tile(
                 is_plane_a,
                 name_table_base,
                 plane_w,
                 plane_h,
                 plane_w_mask,
-                h_scroll,
                 fetch_line,
                 line_offset,
-                screen_x,
-                pixels_to_process,
+                &mut screen_x,
                 priority_filter,
             );
-            screen_x += pixels_to_process;
         }
     }
 
@@ -795,26 +783,27 @@ impl Vdp {
         plane_w: usize,
         plane_h: usize,
         plane_w_mask: usize,
-        h_scroll: u16,
         fetch_line: u16,
         line_offset: usize,
-        screen_x: u16,
-        pixels_to_process: u16,
+        screen_x: &mut u16,
         priority_filter: bool,
     ) {
+        // Fetch scroll values for this specific column/line
+        let (v_scroll, h_scroll) =
+            self.get_scroll_values(is_plane_a, fetch_line, (*screen_x >> 3) as usize);
+
         // Horizontal position in plane
-        let scrolled_h = screen_x.wrapping_sub(h_scroll);
+        let scrolled_h = (*screen_x).wrapping_sub(h_scroll);
         let pixel_h = scrolled_h & 0x07;
         let tile_h = ((scrolled_h >> 3) as usize) & plane_w_mask;
-
-        // Fetch V-scroll for this specific column (per-column VS support)
-        let (v_scroll, _) =
-            self.get_scroll_values(is_plane_a, fetch_line, (screen_x >> 3) as usize);
 
         // Vertical position in plane
         let scrolled_v = fetch_line.wrapping_add(v_scroll);
         let tile_v = (scrolled_v as usize / 8) % plane_h;
         let pixel_v = scrolled_v % 8;
+
+        let pixels_left_in_tile = 8 - pixel_h;
+        let pixels_to_process = std::cmp::min(pixels_left_in_tile, self.screen_width() - *screen_x);
 
         let entry = self.fetch_nametable_entry(name_table_base, tile_v, tile_h, plane_w);
         let priority = (entry & 0x8000) != 0;
@@ -823,7 +812,7 @@ impl Vdp {
             if pixels_to_process == 8 && pixel_h == 0 {
                 // Fast path for full aligned tile
                 unsafe {
-                    self.draw_full_tile_row(entry, pixel_v, line_offset + screen_x as usize);
+                    self.draw_full_tile_row(entry, pixel_v, line_offset + *screen_x as usize);
                 }
             } else {
                 self.draw_partial_tile_row(
@@ -831,10 +820,11 @@ impl Vdp {
                     pixel_v,
                     pixel_h,
                     pixels_to_process,
-                    line_offset + screen_x as usize,
+                    line_offset + *screen_x as usize,
                 );
             }
         }
+        *screen_x += pixels_to_process;
     }
 
     fn get_active_sprites(&self, line: u16) -> (usize, [SpriteAttributes; 80]) {
@@ -995,10 +985,10 @@ impl Vdp {
         let hs_base = self.hscroll_address();
 
         let hs_addr = match hs_mode {
-            0x00 => hs_base,                                     // Full screen
-            0x02 => hs_base + ((fetch_line as usize >> 3) * 32), // 8-pixel strips (Cell)
-            0x03 => hs_base + (fetch_line as usize * 4),         // Per-line
-            _ => hs_base,                                        // Default/Fallback
+            0x00 => hs_base, // Full screen
+            0x01 | 0x02 => hs_base + (tile_h * 32), // 8-pixel strips (Cell)
+            0x03 => hs_base + (fetch_line as usize * 4), // Per-line
+            _ => hs_base,
         } + (if is_plane_a { 0 } else { 2 });
 
         let hi = self.vram[hs_addr & 0xFFFF];
