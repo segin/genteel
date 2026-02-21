@@ -470,6 +470,7 @@ impl Emulator {
         for line in 0..LINES_PER_FRAME {
             self.step_scanline(line, active_lines, samples_per_line, &mut z80_cycle_debt);
         }
+        self.generate_audio_samples(samples_per_line);
         // Update V30 rolling offset
         self.bus.borrow_mut().vdp.update_v30_offset();
     }
@@ -477,12 +478,11 @@ impl Emulator {
         &mut self,
         line: u16,
         active_lines: u16,
-        samples_per_line: f32,
+        _samples_per_line: f32,
         z80_cycle_debt: &mut f32,
     ) {
         self.vdp_scanline_setup(line, active_lines);
         self.run_cpu_loop(line, active_lines, z80_cycle_debt);
-        self.generate_audio_samples(samples_per_line);
         self.handle_interrupts(line, active_lines);
     }
     fn vdp_scanline_setup(&mut self, line: u16, active_lines: u16) {
@@ -514,8 +514,8 @@ impl Emulator {
         cpu_pc: u32,
         debug: bool,
     ) {
-        // 1. Z80 State and Timing
-        let (z80_can_run, z80_is_reset) = {
+        // 1. Z80 State and Timing (Single borrow for all checks)
+        let (z80_can_run, z80_is_reset, cycles_per_sample) = {
             let bus = bus_rc.borrow();
             let prev = *z80_last_bus_req;
             if debug && bus.z80_bus_request != prev {
@@ -527,7 +527,11 @@ impl Emulator {
                 );
             }
             *z80_last_bus_req = bus.z80_bus_request;
-            (!bus.z80_reset && !bus.z80_bus_request, bus.z80_reset)
+            (
+                !bus.z80_reset && !bus.z80_bus_request,
+                bus.z80_reset,
+                7670453.0 / (bus.sample_rate as f32),
+            )
         };
 
         // Handle Z80 Reset
@@ -561,9 +565,8 @@ impl Emulator {
             }
         }
 
-        // 3. Update APU and generate audio samples
+        // 3. Update APU and generate audio samples (Single mut borrow)
         let mut bus = bus_rc.borrow_mut();
-        let cycles_per_sample = 7670453.0 / (bus.sample_rate as f32);
         bus.audio_accumulator += m68k_cycles as f32;
 
         while bus.audio_accumulator >= cycles_per_sample {
@@ -1126,11 +1129,8 @@ impl Emulator {
                         if now >= next_frame {
                             last_frame_inst = now;
                             window.request_redraw();
-                        } else {
-                            target.set_control_flow(winit::event_loop::ControlFlow::WaitUntil(
-                                next_frame,
-                            ));
                         }
+                        target.set_control_flow(winit::event_loop::ControlFlow::Poll);
                     }
                     _ => {}
                 }
