@@ -758,6 +758,7 @@ impl Emulator {
             None => println!("Running headless until script ends..."),
         }
 
+        let start_time = std::time::Instant::now();
         let mut current = 0;
         loop {
             if let Some(n) = frames {
@@ -780,6 +781,7 @@ impl Emulator {
             }
         }
 
+        let elapsed = start_time.elapsed();
         if let Some(path) = screenshot_path {
             if let Err(e) = self.save_screenshot(&path) {
                 eprintln!("Failed to save final screenshot: {}", e);
@@ -787,7 +789,7 @@ impl Emulator {
                 println!("Final screenshot saved to: {}", path);
             }
         }
-        println!("Done.");
+        println!("Done in {:?} ({:.2} fps).", elapsed, current as f64 / elapsed.as_secs_f64());
     }
 
     pub fn save_screenshot(&self, path: &str) -> Result<(), String> {
