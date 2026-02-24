@@ -80,12 +80,18 @@ fn test_shift_opcode_space_properties() {
                 | BitsInstruction::AsrM { .. } => {
                     // Valid shift instruction
                 }
-                _ => panic!("Opcode {:#06X} decoded to unexpected BitsInstruction: {:?}", opcode, bits_instr),
+                _ => panic!(
+                    "Opcode {:#06X} decoded to unexpected BitsInstruction: {:?}",
+                    opcode, bits_instr
+                ),
             },
             Instruction::System(SystemInstruction::Unimplemented { .. }) => {
                 // Expected for invalid addressing modes or unimplemented extensions
             }
-            _ => panic!("Opcode {:#06X} decoded to unexpected instruction type: {:?}", opcode, instr),
+            _ => panic!(
+                "Opcode {:#06X} decoded to unexpected instruction type: {:?}",
+                opcode, instr
+            ),
         }
     }
 }
