@@ -204,10 +204,10 @@ pub fn exec_shift<M: MemoryInterface>(
     let (dst_ea, cycles) = calculate_ea(dst, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     let val = read_ea(dst_ea, size, &cpu.d, &cpu.a, memory);
 
-    let (mask, sign_bit) = match size {
-        Size::Byte => (0xFFu32, 0x80u32),
-        Size::Word => (0xFFFF, 0x8000),
-        Size::Long => (0xFFFFFFFF, 0x80000000),
+    let (mask, size_bits, sign_bit) = match size {
+        Size::Byte => (0xFFu32, 8u32, 0x80u32),
+        Size::Word => (0xFFFF, 16, 0x8000),
+        Size::Long => (0xFFFFFFFF, 32, 0x80000000),
     };
 
     let val = val & mask;
@@ -215,21 +215,65 @@ pub fn exec_shift<M: MemoryInterface>(
     let mut carry = false;
     let mut overflow = false;
 
-    for _ in 0..count_val {
+    if count_val > 0 {
         if left {
-            carry = (result & sign_bit) != 0;
-            result = (result << 1) & mask;
-            if arithmetic {
-                overflow = overflow || (carry != ((result & sign_bit) != 0));
+            if count_val >= size_bits {
+                result = 0;
+                carry = if count_val == size_bits {
+                    (val & 1) != 0
+                } else {
+                    false
+                };
+                if arithmetic {
+                    // For ASL, overflow occurs if the result is not the same as the original value multiplied by 2^n
+                    // which for large shifts means we lost non-zero bits.
+                    overflow = val != 0;
+                }
+            } else {
+                carry = ((val >> (size_bits - count_val)) & 1) != 0;
+                result = (val << count_val) & mask;
+                if arithmetic {
+                    // Check if the bits that passed through the MSB were all consistent
+                    // This means bits [size-1 .. size-1-count] must be all 0s or all 1s.
+                    // Mask for these bits:
+                    let check_mask = mask & (!0u32 << (size_bits - count_val - 1));
+                    let masked = val & check_mask;
+                    overflow = (masked != 0) && (masked != check_mask);
+                }
             }
         } else {
-            carry = (result & 1) != 0;
-            if arithmetic {
-                // ASR: preserve sign bit
-                let sign = result & sign_bit;
-                result = (result >> 1) | sign;
+            // Right shift
+            if count_val >= size_bits {
+                if arithmetic && (val & sign_bit) != 0 {
+                    result = mask; // Sign extended -1
+                    carry = true; // Last bit shifted out was sign bit (1)
+                } else {
+                    result = 0;
+                    carry = if arithmetic {
+                        false // Sign bit was 0
+                    } else {
+                        // Logical: Last bit out depends on count
+                        if count_val == size_bits {
+                            (val & sign_bit) != 0
+                        } else {
+                            false
+                        }
+                    };
+                }
             } else {
-                result >>= 1;
+                carry = ((val >> (count_val - 1)) & 1) != 0;
+                if arithmetic {
+                    let shifted = val >> count_val;
+                    if (val & sign_bit) != 0 {
+                        // Sign extend
+                        let sign_mask = mask & (!0u32 << (size_bits - count_val));
+                        result = shifted | sign_mask;
+                    } else {
+                        result = shifted;
+                    }
+                } else {
+                    result = val >> count_val;
+                }
             }
         }
     }
