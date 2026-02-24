@@ -26,7 +26,7 @@ pub mod flags {
 
 use crate::debugger::Debuggable;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 
 macro_rules! dispatch_z {
     ($z:expr, $c0:expr, $c1:expr, $c2:expr, $c3:expr, $c4:expr, $c5:expr, $c6:expr, $c7:expr) => {
