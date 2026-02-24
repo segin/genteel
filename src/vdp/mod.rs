@@ -168,6 +168,41 @@ impl Vdp {
         }
     }
 
+    fn perform_dma_fill(&mut self, len: u32) {
+        let fill_byte = (self.last_data_write >> 8) as u8;
+        let mut addr = self.control_address;
+        let inc = self.auto_increment() as u16;
+
+        if inc == 1 {
+            let start = addr as usize;
+            let count = len as usize;
+            let vram_len = self.vram.len();
+
+            // Handle wrapping
+            if start + count <= vram_len {
+                self.vram[start..start + count].fill(fill_byte);
+            } else {
+                let first_part = vram_len - start;
+                self.vram[start..vram_len].fill(fill_byte);
+                let remaining = count - first_part;
+                if remaining > 0 {
+                    self.vram[0..remaining].fill(fill_byte);
+                }
+            }
+            self.control_address = addr.wrapping_add(len as u16);
+        } else if inc == 0 {
+            if len > 0 {
+                self.vram[addr as usize] = fill_byte;
+            }
+        } else {
+            for _ in 0..len {
+                self.vram[addr as usize] = fill_byte;
+                addr = addr.wrapping_add(inc);
+            }
+            self.control_address = addr;
+        }
+    }
+
     pub fn write_data(&mut self, value: u16) {
         self.control_pending = false;
         self.last_data_write = value;
