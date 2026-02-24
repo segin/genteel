@@ -14,34 +14,13 @@ use super::{byte_utils, IoInterface, MemoryInterface, SharedBus};
 #[derive(Debug, Clone)]
 pub struct Z80Bus {
     /// Reference to the main Genesis bus.
-    /// Used to ensure the `Rc<RefCell<Bus>>` remains alive.
-    #[allow(dead_code)]
     bus: SharedBus,
-    /// Raw pointer to the bus for optimized access (avoids RefCell overhead)
-    raw_bus: *mut Bus,
 }
 
 impl Z80Bus {
     /// Create a new Z80 bus adapter
     pub fn new(bus: SharedBus) -> Self {
-        Self {
-            bus,
-            raw_bus: std::ptr::null_mut(),
-        }
-    }
-
-    /// Set the raw bus pointer for unchecked access.
-    ///
-    /// # Safety
-    /// The caller must ensure that the pointer is valid and that no conflicting
-    /// references exist while this pointer is used.
-    pub unsafe fn set_raw_bus(&mut self, bus: *mut Bus) {
-        self.raw_bus = bus;
-    }
-
-    /// Clear the raw bus pointer.
-    pub fn clear_raw_bus(&mut self) {
-        self.raw_bus = std::ptr::null_mut();
+        Self { bus }
     }
 
     /// Set the bank register (called on write to $6000)
@@ -138,41 +117,13 @@ impl Z80Bus {
 
 impl MemoryInterface for Z80Bus {
     fn read_byte(&mut self, address: u32) -> u8 {
-        // Fast path for Z80 RAM (0x0000-0x1FFF) and its mirror (0x2000-0x3FFF)
-        if !self.raw_bus.is_null() {
-            let addr = address as usize;
-            if addr <= 0x3FFF {
-                // Z80 RAM is 8KB (0x2000), mirrored once to fill 0x4000 space
-                // Use bitwise AND for fast modulo. Access via raw_bus ensures we
-                // always use the current buffer even if it was reallocated.
-                unsafe { return (*self.raw_bus).z80_ram[addr & 0x1FFF] };
-            }
-
-            let bus = unsafe { &mut *self.raw_bus };
-            Self::read_byte_from_bus(bus, address)
-        } else {
-            let mut bus_guard = self.bus.bus.borrow_mut();
-            Self::read_byte_from_bus(&mut bus_guard, address)
-        }
+        let mut bus_guard = self.bus.bus.borrow_mut();
+        Self::read_byte_from_bus(&mut bus_guard, address)
     }
 
     fn write_byte(&mut self, address: u32, value: u8) {
-        // Fast path for Z80 RAM (0x0000-0x1FFF) and its mirror (0x2000-0x3FFF)
-        if !self.raw_bus.is_null() {
-            let addr = address as usize;
-            if addr <= 0x3FFF {
-                unsafe {
-                    (*self.raw_bus).z80_ram[addr & 0x1FFF] = value;
-                }
-                return;
-            }
-
-            let bus = unsafe { &mut *self.raw_bus };
-            Self::write_byte_to_bus(bus, address, value)
-        } else {
-            let mut bus_guard = self.bus.bus.borrow_mut();
-            Self::write_byte_to_bus(&mut bus_guard, address, value)
-        }
+        let mut bus_guard = self.bus.bus.borrow_mut();
+        Self::write_byte_to_bus(&mut bus_guard, address, value)
     }
 
     fn read_word(&mut self, address: u32) -> u16 {
