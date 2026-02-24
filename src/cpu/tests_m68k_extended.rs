@@ -72,6 +72,52 @@ fn test_chk_exceeds_bound() {
     assert!(!cpu.get_flag(flags::NEGATIVE)); // N clear for exceeds
 }
 
+#[test]
+fn test_chk_boundaries() {
+    let (mut cpu, mut memory) = create_test_cpu();
+
+    // Set up CHK exception vector (vector 6 = address 0x18)
+    memory.write_long(0x18, 0x6000);
+
+    // CHK D1, D0 - opcode 4181
+    memory.write_word(0x100, 0x4181);
+
+    // Case 1: Value = 0 (Lower bound) -> Should NOT trap
+    cpu.d[0] = 0;
+    cpu.d[1] = 50;
+    cpu.pc = 0x100;
+    cpu.step_instruction(&mut memory);
+    assert_eq!(cpu.pc, 0x102, "Failed at 0 boundary");
+    assert!(!cpu.get_flag(flags::NEGATIVE));
+
+    // Case 2: Value = Bound (Upper bound) -> Should NOT trap
+    cpu.d[0] = 50;
+    cpu.d[1] = 50;
+    cpu.pc = 0x100;
+    cpu.step_instruction(&mut memory);
+    assert_eq!(cpu.pc, 0x102, "Failed at Upper boundary");
+    assert!(!cpu.get_flag(flags::NEGATIVE));
+
+    // Case 3: Value = Bound + 1 -> Should TRAP
+    cpu.d[0] = 51;
+    cpu.d[1] = 50;
+    cpu.pc = 0x100;
+    cpu.step_instruction(&mut memory);
+    assert_eq!(cpu.pc, 0x6000, "Failed at Upper + 1");
+    assert!(!cpu.get_flag(flags::NEGATIVE)); // N clear for > bound
+
+    // Restore PC and SP for next case
+    cpu.a[7] = 0x1000;
+
+    // Case 4: Value < 0 -> Should TRAP and set N
+    cpu.d[0] = 0xFFFF; // -1
+    cpu.d[1] = 50;
+    cpu.pc = 0x100;
+    cpu.step_instruction(&mut memory);
+    assert_eq!(cpu.pc, 0x6000, "Failed at Negative");
+    assert!(cpu.get_flag(flags::NEGATIVE));
+}
+
 // ============ TAS Tests ============
 
 #[test]
