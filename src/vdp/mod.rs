@@ -29,30 +29,14 @@ const CRAM_READ: u8 = 0x08;
 const REG_MODE1: usize = 0;
 const REG_MODE2: usize = 1;
 const REG_PLANE_A: usize = 2;
-#[allow(dead_code)]
-const REG_WINDOW: usize = 3;
 const REG_PLANE_B: usize = 4;
 const REG_SPRITE_TABLE: usize = 5;
-#[allow(dead_code)]
-const REG_SPRITE_PATTERN: usize = 6;
 const REG_BG_COLOR: usize = 7;
-#[allow(dead_code)]
-const REG_UNUSED_8: usize = 8;
-#[allow(dead_code)]
-const REG_UNUSED_9: usize = 9;
-#[allow(dead_code)]
-const REG_H_INT_COUNTER: usize = 10;
 const REG_MODE3: usize = 11;
 const REG_MODE4: usize = 12;
 const REG_HSCROLL: usize = 13;
-#[allow(dead_code)]
-const REG_UNUSED_14: usize = 14;
 const REG_AUTO_INC: usize = 15;
 const REG_PLANE_SIZE: usize = 16;
-#[allow(dead_code)]
-const REG_WINDOW_H_POS: usize = 17;
-#[allow(dead_code)]
-const REG_WINDOW_V_POS: usize = 18;
 const REG_DMA_LEN_LO: usize = 19;
 const REG_DMA_LEN_HI: usize = 20;
 const REG_DMA_SRC_LO: usize = 21;
@@ -310,21 +294,7 @@ impl Vdp {
             && (self.registers[REG_DMA_SRC_HI] & DMA_MODE_MASK) == DMA_MODE_FILL
             && self.dma_pending
         {
-            let length = self.dma_length();
-            let mut addr = self.control_address;
-            let inc = self.auto_increment() as u16;
-            let fill_byte = (value >> 8) as u8;
-
-            // DMA Fill writes bytes. Length register specifies number of bytes.
-            // If length is 0, it is treated as 0x10000 (64KB).
-            let len = if length == 0 { 0x10000 } else { length };
-
-            for _ in 0..len {
-                // VRAM is byte-addressable in this emulator
-                self.vram[addr as usize] = fill_byte;
-                addr = addr.wrapping_add(inc);
-            }
-            self.control_address = addr;
+            self.perform_dma_fill();
             self.dma_pending = false;
             return;
         }
@@ -432,7 +402,7 @@ impl Vdp {
 
     #[inline(always)]
     pub fn read_status(&mut self) -> u16 {
-        // Reading the status register clears the write pending flag
+        // Reading the status register clears the write pending flag (resets the command state machine).
         self.control_pending = false;
         let res = self.status;
         // Reading status clears the VInt pending bit (Bit 7)
@@ -546,6 +516,53 @@ impl Vdp {
         (self.registers[REG_DMA_SRC_HI] & DMA_MODE_MASK) == DMA_MODE_FILL
     }
 
+    fn perform_dma_fill(&mut self) {
+        let length = self.dma_length();
+        // If length is 0, it is treated as 0x10000 (64KB)
+        let len = if length == 0 { 0x10000 } else { length };
+
+        let data = self.last_data_write;
+        let mut addr = self.control_address;
+        let inc = self.auto_increment() as u16;
+        let fill_byte = (data >> 8) as u8;
+
+        if inc == 1 {
+            // Optimized fill using slice::fill
+            let start_addr = addr as usize;
+            let end_addr_exclusive = start_addr + (len as usize);
+
+            if end_addr_exclusive <= 0x10000 {
+                // Contiguous fill
+                self.vram[start_addr..end_addr_exclusive].fill(fill_byte);
+                // Address wraps at 0x10000
+                addr = (end_addr_exclusive & 0xFFFF) as u16;
+            } else {
+                // Wrapped fill
+                let first_part_len = 0x10000 - start_addr;
+                self.vram[start_addr..0x10000].fill(fill_byte);
+
+                let remaining = (len as usize) - first_part_len;
+                if remaining > 0 {
+                    self.vram[0..remaining].fill(fill_byte);
+                }
+                addr = remaining as u16;
+            }
+        } else if inc == 0 {
+            // Optimization: auto-increment 0 means writing to the same address repeatedly.
+            // Since VRAM is just memory here, the result is equivalent to a single write.
+            if len > 0 {
+                self.vram[addr as usize] = fill_byte;
+            }
+        } else {
+            for _ in 0..len {
+                // VRAM is byte-addressable in this emulator
+                self.vram[addr as usize] = fill_byte;
+                addr = addr.wrapping_add(inc);
+            }
+        }
+        self.control_address = addr;
+    }
+
     pub fn execute_dma(&mut self) -> u32 {
         let length = self.dma_length();
         // If length is 0, it is treated as 0x10000 (64KB)
@@ -555,17 +572,7 @@ impl Vdp {
 
         match mode {
             DMA_MODE_FILL => {
-                let data = self.last_data_write;
-                let mut addr = self.control_address;
-                let inc = self.auto_increment() as u16;
-                let fill_byte = (data >> 8) as u8;
-
-                for _ in 0..len {
-                    // VRAM is byte-addressable in this emulator
-                    self.vram[addr as usize] = fill_byte;
-                    addr = addr.wrapping_add(inc);
-                }
-                self.control_address = addr;
+                self.perform_dma_fill();
             }
             DMA_MODE_COPY => {
                 let mut source = (self.dma_source() & 0xFFFF) as u16;
@@ -627,7 +634,7 @@ impl Vdp {
     #[inline(always)]
     fn get_cram_color(&self, palette: u8, index: u8) -> u16 {
         let addr = ((palette as usize) * 16) + (index as usize);
-        unsafe { *self.cram_cache.get_unchecked(addr & 0x3F) }
+        self.cram_cache[addr & 0x3F]
     }
 
     // VDP State management
@@ -906,33 +913,61 @@ impl Vdp {
             }
 
             // Prefetch the 4 bytes (8 pixels) for this row.
-            // Mask to 64KB VRAM. Since each row fetch is 4 bytes and row_addr is a
-            // multiple of 4, masking with 0xFFFC ensures the slice never crosses
-            // the 64KB boundary.
-            let addr = row_addr & 0xFFFC;
-            let patterns: [u8; 4] = vram[addr..addr + 4].try_into().unwrap();
+            // row_addr is guaranteed to be 4-byte aligned (32*k + 4*j).
+            // We already checked row_addr + 4 <= 0x10000.
+            // So row_addr..row_addr+4 is within bounds.
+            let patterns: [u8; 4] = unsafe {
+                 vram.get_unchecked(row_addr..row_addr + 4).try_into().unwrap_unchecked()
+            };
 
             let base_screen_x = attr.h_pos.wrapping_add(tile_h_offset * 8);
 
-            for i in 0..8 {
-                let screen_x = base_screen_x.wrapping_add(i);
-                if screen_x >= screen_width {
-                    continue;
+            // Optimization: If the entire 8-pixel block is visible, skip per-pixel checks.
+            if (base_screen_x as u32) + 8 <= screen_width as u32 {
+                for i in 0..8 {
+                    let screen_x = base_screen_x.wrapping_add(i);
+                    let eff_col = if attr.h_flip { 7 - i } else { i };
+
+                    // SAFETY: eff_col is 0..8, so index 0..3 is valid. patterns is [u8; 4].
+                    let byte = unsafe { *patterns.get_unchecked((eff_col as usize) / 2) };
+
+                    let color_idx = if eff_col % 2 == 0 {
+                        byte >> 4
+                    } else {
+                        byte & 0x0F
+                    };
+
+                    if color_idx != 0 {
+                        let addr = ((attr.palette as usize) << 4) | (color_idx as usize);
+                        // SAFETY: cram_cache size 64. addr < 64.
+                        // framebuffer bounds checked by screen_width logic.
+                        unsafe {
+                            let color = *cram_cache.get_unchecked(addr);
+                            *framebuffer.get_unchecked_mut(line_offset + screen_x as usize) = color;
+                        }
+                    }
                 }
+            } else {
+                for i in 0..8 {
+                    let screen_x = base_screen_x.wrapping_add(i);
+                    if screen_x >= screen_width {
+                        continue;
+                    }
 
-                let eff_col = if attr.h_flip { 7 - i } else { i };
+                    let eff_col = if attr.h_flip { 7 - i } else { i };
 
-                let byte = patterns[(eff_col as usize) / 2];
-                let color_idx = if eff_col % 2 == 0 {
-                    byte >> 4
-                } else {
-                    byte & 0x0F
-                };
+                    let byte = patterns[(eff_col as usize) / 2];
+                    let color_idx = if eff_col % 2 == 0 {
+                        byte >> 4
+                    } else {
+                        byte & 0x0F
+                    };
 
-                if color_idx != 0 {
-                    let addr = ((attr.palette as usize) * 16) + (color_idx as usize);
-                    let color = cram_cache[addr];
-                    framebuffer[line_offset + screen_x as usize] = color;
+                    if color_idx != 0 {
+                        let addr = ((attr.palette as usize) * 16) + (color_idx as usize);
+                        let color = cram_cache[addr];
+                        framebuffer[line_offset + screen_x as usize] = color;
+                    }
                 }
             }
         }
@@ -1191,32 +1226,13 @@ impl Vdp {
     }
 }
 
-#[derive(Deserialize)]
-struct VdpJsonState {
-    status: Option<u16>,
-    h_counter: Option<u16>,
-    v_counter: Option<u16>,
-    dma_pending: Option<bool>,
-    registers: Option<Vec<u8>>,
-    control_pending: Option<bool>,
-    control_code: Option<u8>,
-    control_address: Option<u16>,
-    vram: Option<Vec<u8>>,
-    cram: Option<Vec<u8>>,
-    vsram: Option<Vec<u8>>,
-    line_counter: Option<u8>,
-    last_data_write: Option<u16>,
-    v30_offset: Option<u16>,
-    is_pal: Option<bool>,
-}
-
 impl Debuggable for Vdp {
     fn read_state(&self) -> Value {
         serde_json::to_value(self).unwrap()
     }
 
     fn write_state(&mut self, state: &Value) {
-        let json_state: VdpJsonState = match Deserialize::deserialize(state) {
+        let mut new_vdp: Vdp = match serde_json::from_value(state.clone()) {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("Error deserializing VDP state: {}", e);
@@ -1224,92 +1240,13 @@ impl Debuggable for Vdp {
             }
         };
 
-        if let Some(status) = json_state.status {
-            self.status = status;
-        }
-        if let Some(h_counter) = json_state.h_counter {
-            self.h_counter = h_counter;
-        }
-        if let Some(v_counter) = json_state.v_counter {
-            self.v_counter = v_counter;
-        }
-        if let Some(dma_pending) = json_state.dma_pending {
-            self.dma_pending = dma_pending;
-        }
+        // Swap framebuffer to preserve allocation
+        std::mem::swap(&mut self.framebuffer, &mut new_vdp.framebuffer);
 
-        if let Some(registers) = json_state.registers {
-            for (i, val) in registers.iter().enumerate() {
-                if i < 24 {
-                    self.registers[i] = *val;
-                }
-            }
-        }
+        // Reconstruct CRAM cache
+        new_vdp.reconstruct_cram_cache();
 
-        if let Some(pending) = json_state.control_pending {
-            self.control_pending = pending;
-        }
-        if let Some(code) = json_state.control_code {
-            self.control_code = code;
-        }
-        if let Some(address) = json_state.control_address {
-            self.control_address = address;
-        }
-
-        if let Some(vram) = json_state.vram {
-            for (i, val) in vram.iter().enumerate() {
-                if i < self.vram.len() {
-                    self.vram[i] = *val;
-                }
-            }
-        }
-
-        if let Some(cram) = json_state.cram {
-            for (i, val) in cram.iter().enumerate() {
-                if i < self.cram.len() {
-                    self.cram[i] = *val;
-                }
-            }
-            // Reconstruct CRAM Cache
-            for i in 0..64 {
-                let addr = i * 2;
-                if addr + 1 < self.cram.len() {
-                    let val = ((self.cram[addr + 1] as u16) << 8) | (self.cram[addr] as u16);
-
-                    // Extract 3-bit components (bits 1-3, 5-7, 9-11)
-                    let r3 = (val >> 1) & 0x07;
-                    let g3 = (val >> 5) & 0x07;
-                    let b3 = (val >> 9) & 0x07;
-
-                    // Scale to RGB565 using bit repetition
-                    let r5 = (r3 << 2) | (r3 >> 1);
-                    let g6 = (g3 << 3) | g3;
-                    let b5 = (b3 << 2) | (b3 >> 1);
-
-                    self.cram_cache[i] = ((r5 as u16) << 11) | ((g6 as u16) << 5) | (b5 as u16);
-                }
-            }
-        }
-
-        if let Some(vsram) = json_state.vsram {
-            for (i, val) in vsram.iter().enumerate() {
-                if i < self.vsram.len() {
-                    self.vsram[i] = *val;
-                }
-            }
-        }
-
-        if let Some(line_counter) = json_state.line_counter {
-            self.line_counter = line_counter;
-        }
-        if let Some(last_data_write) = json_state.last_data_write {
-            self.last_data_write = last_data_write;
-        }
-        if let Some(v30_offset) = json_state.v30_offset {
-            self.v30_offset = v30_offset;
-        }
-        if let Some(is_pal) = json_state.is_pal {
-            self.is_pal = is_pal;
-        }
+        *self = new_vdp;
     }
 }
 
@@ -1428,5 +1365,7 @@ mod tests_bulk_write;
 
 #[cfg(test)]
 mod bench_render;
+#[cfg(test)]
+mod bench_dma;
 #[cfg(test)]
 mod test_repro_white_screen;
