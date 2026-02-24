@@ -1,3 +1,5 @@
+use crate::vdp::RenderOps;
+
 #[test]
 fn test_render_tile_zero() {
     let mut vdp = super::Vdp::new();

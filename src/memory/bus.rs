@@ -25,7 +25,7 @@ use super::MemoryInterface;
 use crate::apu::Apu;
 use crate::debugger::Debuggable;
 use crate::io::Io;
-use crate::vdp::Vdp;
+use crate::vdp::{DmaOps, Vdp};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
