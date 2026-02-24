@@ -627,7 +627,7 @@ impl Vdp {
     #[inline(always)]
     fn get_cram_color(&self, palette: u8, index: u8) -> u16 {
         let addr = ((palette as usize) * 16) + (index as usize);
-        unsafe { *self.cram_cache.get_unchecked(addr & 0x3F) }
+        self.cram_cache[addr & 0x3F]
     }
 
     // VDP State management
