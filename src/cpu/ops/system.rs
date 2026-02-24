@@ -487,4 +487,53 @@ mod tests {
         // And Supervisor bit set
         assert_eq!(cpu.sr & 0x2000, 0x2000, "Supervisor bit should be set");
     }
+
+    #[test]
+    fn test_exec_rtr() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        // Setup
+        let initial_sp = 0x2000;
+        cpu.a[7] = initial_sp;
+        // Set SR to have high byte bits set (Supervisor, Int Mask)
+        // and low byte cleared to verify update.
+        cpu.sr = 0x2700;
+
+        // Target state
+        let target_pc = 0x4000;
+        let target_ccr = 0x001F; // All flags set (X, N, Z, V, C)
+
+        // Push PC (4 bytes)
+        cpu.push_long(target_pc, &mut memory);
+        // Push CCR (2 bytes)
+        // exec_rtr pops word, but only uses low byte for CCR.
+        // We push a word.
+        cpu.push_word(target_ccr, &mut memory);
+
+        // Verify stack setup
+        // SP should be 0x2000 - 4 - 2 = 0x1FFA
+        assert_eq!(cpu.a[7], 0x1FFA);
+
+        // Execute RTR
+        let cycles = exec_rtr(&mut cpu, &mut memory);
+
+        // Verify Return Cycles
+        assert_eq!(cycles, 20);
+
+        // Verify PC updated
+        assert_eq!(cpu.pc, target_pc);
+
+        // Verify SR
+        // Upper byte should be preserved (0x27)
+        // Lower byte should be target_ccr low byte (0x1F)
+        assert_eq!(cpu.sr & 0xFF00, 0x2700, "SR upper byte should be preserved");
+        assert_eq!(
+            cpu.sr & 0x00FF,
+            target_ccr & 0x00FF,
+            "SR lower byte should match popped CCR"
+        );
+
+        // Verify SP restored
+        assert_eq!(cpu.a[7], initial_sp, "SP should be restored");
+    }
 }
