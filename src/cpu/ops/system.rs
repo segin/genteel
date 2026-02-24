@@ -193,6 +193,15 @@ pub fn exec_stop<M: MemoryInterface>(cpu: &mut Cpu, memory: &mut M) -> u32 {
     4
 }
 
+pub fn exec_reset<M: MemoryInterface>(cpu: &mut Cpu, memory: &mut M) -> u32 {
+    if (cpu.sr & 0x2000) == 0 {
+        return cpu.process_exception(8, memory);
+    }
+    // RESET asserts the RESET line for 124 cycles, plus instruction overhead.
+    // Total 132 cycles. No internal CPU state changes.
+    132
+}
+
 pub fn exec_move_usp<M: MemoryInterface>(
     cpu: &mut Cpu,
     reg: u8,

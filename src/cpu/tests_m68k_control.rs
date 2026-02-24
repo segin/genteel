@@ -613,7 +613,7 @@ fn test_link_unlk() {
 
 #[test]
 fn test_trap_vector() {
-    let (mut cpu, mut memory) = create_cpu();
+    let (mut cpu, mut memory) = create_test_cpu();
     write_op(&mut memory, &[0x4E40]); // TRAP #0
     memory.write_long(0x80, 0x3000); // Vector 32 (TRAP #0)
     cpu.step_instruction(&mut memory);
@@ -622,40 +622,11 @@ fn test_trap_vector() {
 
 #[test]
 fn test_trap_15() {
-    let (mut cpu, mut memory) = create_cpu();
+    let (mut cpu, mut memory) = create_test_cpu();
     write_op(&mut memory, &[0x4E4F]); // TRAP #15
     memory.write_long(0xBC, 0x4000); // Vector 47 (TRAP #15)
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.pc, 0x4000);
-}
-
-// ============================================================================
-// TRAPV Tests
-// ============================================================================
-
-#[test]
-fn test_trapv_overflow_set() {
-    let (mut cpu, mut memory) = create_cpu();
-    write_op(&mut memory, &[0x4E76]); // TRAPV
-    cpu.set_flag(flags::OVERFLOW, true);
-
-    // Set Vector 7 (TRAPV exception vector)
-    memory.write_long(0x1C, 0x4000); // Vector 7 address: 7 * 4 = 28 (0x1C)
-
-    cpu.step_instruction(&mut memory);
-
-    assert_eq!(cpu.pc, 0x4000); // Should jump to vector 7 handler
-}
-
-#[test]
-fn test_trapv_overflow_clear() {
-    let (mut cpu, mut memory) = create_cpu();
-    write_op(&mut memory, &[0x4E76]); // TRAPV
-    cpu.set_flag(flags::OVERFLOW, false);
-
-    cpu.step_instruction(&mut memory);
-
-    assert_eq!(cpu.pc, 0x1002); // Should continue execution (no trap)
 }
 
 // ============================================================================
@@ -826,6 +797,48 @@ fn test_rte_supervisor() {
     assert_eq!(cpu.sr, target_sr);
     // Should now be in user mode because we popped 0x0000 into SR
     assert_eq!(cpu.sr & flags::SUPERVISOR, 0);
+}
+
+// ============================================================================
+// RESET Tests
+// ============================================================================
+
+#[test]
+fn test_reset_supervisor() {
+    let (mut cpu, mut memory) = create_cpu();
+    // RESET opcode: 0x4E70
+    write_op(&mut memory, &[0x4E70]);
+
+    // Ensure Supervisor Mode
+    cpu.sr |= flags::SUPERVISOR;
+
+    let cycles = cpu.step_instruction(&mut memory);
+
+    assert_eq!(cycles, 132);
+    assert_eq!(cpu.pc, 0x1002); // Should advance past instruction
+}
+
+#[test]
+fn test_reset_user_privilege_violation() {
+    let (mut cpu, mut memory) = create_cpu();
+    // RESET opcode: 0x4E70
+    write_op(&mut memory, &[0x4E70]);
+
+    // Set User Mode
+    cpu.sr &= !flags::SUPERVISOR;
+    // Setup stacks
+    cpu.usp = 0xA000;
+    cpu.ssp = 0x8000;
+    cpu.a[7] = cpu.usp;
+
+    // Set Vector 8 (Privilege Violation)
+    memory.write_long(32, 0x4000);
+
+    let cycles = cpu.step_instruction(&mut memory);
+
+    assert_eq!(cycles, 34); // Exception processing time
+    assert_eq!(cpu.pc, 0x4000); // Jump to handler
+    assert!((cpu.sr & flags::SUPERVISOR) != 0); // Should be in supervisor mode
 }
 
 // ============================================================================

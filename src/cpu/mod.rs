@@ -508,7 +508,7 @@ impl Cpu {
                 SystemInstruction::Rte => ops::system::exec_rte(self, memory),
                 SystemInstruction::Rtr => ops::system::exec_rtr(self, memory),
                 SystemInstruction::Nop => 4,
-                SystemInstruction::Reset => 132,
+                SystemInstruction::Reset => ops::system::exec_reset(self, memory),
                 SystemInstruction::Stop => ops::system::exec_stop(self, memory),
                 SystemInstruction::MoveUsp { reg, to_usp } => {
                     ops::system::exec_move_usp(self, reg, to_usp, memory)
