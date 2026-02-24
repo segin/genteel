@@ -548,3 +548,43 @@ fn test_rte_supervisor() {
     // Should now be in user mode because we popped 0x0000 into SR
     assert_eq!(cpu.sr & flags::SUPERVISOR, 0);
 }
+
+// ============================================================================
+// TRAPV Tests
+// ============================================================================
+
+#[test]
+fn test_trapv_overflow_set() {
+    let (mut cpu, mut memory) = create_cpu();
+    write_op(&mut memory, &[0x4E76]); // TRAPV
+
+    // Set Overflow Flag
+    cpu.set_flag(flags::OVERFLOW, true);
+
+    // Set Vector 7 (TRAPV exception vector)
+    memory.write_long(28, 0x5000); // 7 * 4 = 28
+
+    cpu.step_instruction(&mut memory);
+
+    // Should trap to 0x5000
+    assert_eq!(cpu.pc, 0x5000);
+    // Should be in supervisor mode
+    assert!(cpu.get_flag(flags::SUPERVISOR));
+}
+
+#[test]
+fn test_trapv_overflow_clear() {
+    let (mut cpu, mut memory) = create_cpu();
+    write_op(&mut memory, &[0x4E76]); // TRAPV
+
+    // Clear Overflow Flag
+    cpu.set_flag(flags::OVERFLOW, false);
+
+    // Set Vector 7 (TRAPV exception vector) just in case
+    memory.write_long(28, 0x5000);
+
+    cpu.step_instruction(&mut memory);
+
+    // Should NOT trap, just advance PC
+    assert_eq!(cpu.pc, 0x1002);
+}
