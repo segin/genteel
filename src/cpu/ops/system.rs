@@ -489,6 +489,58 @@ mod tests {
     }
 
     #[test]
+    fn test_exec_move_usp() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        // 1. Test Privilege Violation (User Mode)
+        cpu.sr = 0x0000; // User mode
+        // Setup Exception Vector 8 (Privilege Violation)
+        let vector_addr = 8 * 4;
+        let handler_addr = 0x4000;
+        memory.write_long(vector_addr, handler_addr);
+
+        let initial_pc = cpu.pc;
+
+        // Execute MOVE USP, A0 (to_usp = false)
+        let cycles = exec_move_usp(&mut cpu, 0, false, &mut memory);
+
+        // Should trigger exception (34 cycles)
+        assert_eq!(cycles, 34);
+        assert_eq!(cpu.pc, handler_addr);
+        assert_eq!(cpu.sr & flags::SUPERVISOR, flags::SUPERVISOR); // Switched to supervisor
+
+        // Verify pushed PC matches instruction address
+        let pushed_pc = memory.read_long(cpu.a[7] + 2);
+        assert_eq!(pushed_pc, initial_pc);
+
+        // 2. Test Move to USP (MOVE An, USP)
+        // Reset CPU to Supervisor
+        cpu.sr = flags::SUPERVISOR;
+        cpu.pc = 0x100;
+
+        let val_to_write = 0xDEADBEEF;
+        let reg_idx = 1;
+        cpu.a[reg_idx] = val_to_write;
+        cpu.usp = 0; // Clear USP
+
+        let cycles = exec_move_usp(&mut cpu, reg_idx as u8, true, &mut memory);
+
+        assert_eq!(cycles, 4);
+        assert_eq!(cpu.usp, val_to_write);
+
+        // 3. Test Move from USP (MOVE USP, An)
+        let val_in_usp = 0xCAFEBABE;
+        let reg_idx = 2;
+        cpu.usp = val_in_usp;
+        cpu.a[reg_idx] = 0;
+
+        let cycles = exec_move_usp(&mut cpu, reg_idx as u8, false, &mut memory);
+
+        assert_eq!(cycles, 4);
+        assert_eq!(cpu.a[reg_idx], val_in_usp);
+    }
+
+    #[test]
     fn test_exec_rtr() {
         let (mut cpu, mut memory) = create_test_cpu();
 
