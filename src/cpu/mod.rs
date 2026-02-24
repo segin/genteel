@@ -585,6 +585,7 @@ mod tests_addressing;
 mod tests_bug_fixes;
 #[cfg(test)]
 mod tests_cache;
+mod tests_decoder_shift;
 #[cfg(test)]
 mod tests_decoder_shift;
 #[cfg(test)]
