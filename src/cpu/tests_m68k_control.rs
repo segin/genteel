@@ -49,6 +49,25 @@ fn test_trapv_overflow() {
     assert_eq!(cpu.pc, 0x6000); // Trapped to vector
 }
 
+#[test]
+fn test_trapv_overflow_set_alt() {
+    let (mut cpu, mut memory) = create_cpu();
+    write_op(&mut memory, &[0x4E76]); // TRAPV
+
+    // Set Overflow Flag
+    cpu.set_flag(flags::OVERFLOW, true);
+
+    // Set Vector 7 (TRAPV exception vector)
+    memory.write_long(28, 0x5000); // 7 * 4 = 28
+
+    cpu.step_instruction(&mut memory);
+
+    // Should trap to 0x5000
+    assert_eq!(cpu.pc, 0x5000);
+    // Should be in supervisor mode
+    assert!(cpu.get_flag(flags::SUPERVISOR));
+}
+
 // ============================================================================
 // BRA Tests
 // ============================================================================
