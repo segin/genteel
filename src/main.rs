@@ -18,6 +18,7 @@ pub mod memory;
 pub mod vdp;
 pub mod wav_writer;
 pub mod z80;
+use crate::vdp::RenderOps;
 use apu::Apu;
 use cpu::Cpu;
 use debugger::{GdbMemory, GdbRegisters, GdbServer, StopReason};
@@ -898,7 +899,6 @@ impl Emulator {
         }
         Ok(())
     }
-    #[cfg(feature = "gui")]
     fn log_debug(&self, frame_count: u64) {
         let bus = self.bus.borrow();
         let disp_en = if bus.vdp.display_enabled() {

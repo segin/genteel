@@ -1,57 +1,15 @@
 use crate::debugger::Debuggable;
-use crate::vdp::render::RenderOps;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-// VDP Control Codes (bits 0-3)
-pub const VRAM_READ: u8 = 0x00;
-pub const VRAM_WRITE: u8 = 0x01;
-pub const CRAM_WRITE: u8 = 0x03;
-pub const VSRAM_READ: u8 = 0x04;
-pub const VSRAM_WRITE: u8 = 0x05;
-pub const CRAM_READ: u8 = 0x08;
+pub mod constants;
+pub use constants::*;
 
-// Register indices
-pub const REG_MODE1: usize = 0;
-pub const REG_MODE2: usize = 1;
-pub const REG_PLANE_A: usize = 2;
-pub const REG_WINDOW: usize = 3;
-pub const REG_PLANE_B: usize = 4;
-pub const REG_SPRITE_TABLE: usize = 5;
-pub const REG_SPRITE_PATTERN: usize = 6;
-pub const REG_BG_COLOR: usize = 7;
-pub const REG_H_INT_COUNTER: usize = 10;
-pub const REG_MODE3: usize = 11;
-pub const REG_MODE4: usize = 12;
-pub const REG_HSCROLL: usize = 13;
-pub const REG_AUTO_INC: usize = 15;
-pub const REG_PLANE_SIZE: usize = 16;
-pub const REG_WINDOW_H_POS: usize = 17;
-pub const REG_WINDOW_V_POS: usize = 18;
-pub const REG_DMA_LEN_LO: usize = 19;
-pub const REG_DMA_LEN_HI: usize = 20;
-pub const REG_DMA_SRC_LO: usize = 21;
-pub const REG_DMA_SRC_MID: usize = 22;
-pub const REG_DMA_SRC_HI: usize = 23;
+pub mod dma;
+pub use dma::DmaOps;
 
-// Mode bits
-pub const MODE1_HINT_ENABLE: u8 = 0x10;
-pub const MODE2_V30_MODE: u8 = 0x08;
-pub const MODE2_DMA_ENABLE: u8 = 0x10;
-pub const MODE2_VINT_ENABLE: u8 = 0x20;
-pub const MODE2_DISPLAY_ENABLE: u8 = 0x40;
-pub const MODE4_H40_MODE: u8 = 0x81; // H40 mode check mask
-
-// DMA Modes
-pub const DMA_MODE_MASK: u8 = 0xC0;
-pub const DMA_MODE_FILL: u8 = 0x80;
-pub const DMA_MODE_COPY: u8 = 0xC0;
-
-// Status bits
-pub const STATUS_VBLANK: u16 = 0x0008;
-pub const STATUS_VINT_PENDING: u16 = 0x0080;
-
-pub const NUM_REGISTERS: usize = 24;
+pub mod render;
+pub use render::RenderOps;
 
 /// Genesis Video Display Processor (VDP)
 #[derive(Debug, Serialize, Deserialize)]
@@ -133,76 +91,6 @@ impl Vdp {
         self.is_pal = is_pal;
     }
 
-    fn perform_dma_fill(&mut self, len: u32) {
-        let fill_byte = (self.last_data_write >> 8) as u8;
-        let mut addr = self.control_address;
-        let inc = self.auto_increment() as u16;
-
-        if inc == 1 {
-            let start = addr as usize;
-            let count = len as usize;
-            let vram_len = self.vram.len();
-
-            // Handle wrapping
-            if start + count <= vram_len {
-                self.vram[start..start + count].fill(fill_byte);
-            } else {
-                let first_part = vram_len - start;
-                self.vram[start..vram_len].fill(fill_byte);
-                let remaining = count - first_part;
-                if remaining > 0 {
-                    self.vram[0..remaining].fill(fill_byte);
-                }
-            }
-            self.control_address = addr.wrapping_add(len as u16);
-        } else if inc == 0 {
-            if len > 0 {
-                self.vram[addr as usize] = fill_byte;
-            }
-        } else {
-            for _ in 0..len {
-                self.vram[addr as usize] = fill_byte;
-                addr = addr.wrapping_add(inc);
-            }
-            self.control_address = addr;
-        }
-    }
-
-    fn perform_dma_fill(&mut self, len: u32) {
-        let fill_byte = (self.last_data_write >> 8) as u8;
-        let mut addr = self.control_address;
-        let inc = self.auto_increment() as u16;
-
-        if inc == 1 {
-            let start = addr as usize;
-            let count = len as usize;
-            let vram_len = self.vram.len();
-
-            // Handle wrapping
-            if start + count <= vram_len {
-                self.vram[start..start + count].fill(fill_byte);
-            } else {
-                let first_part = vram_len - start;
-                self.vram[start..vram_len].fill(fill_byte);
-                let remaining = count - first_part;
-                if remaining > 0 {
-                    self.vram[0..remaining].fill(fill_byte);
-                }
-            }
-            self.control_address = addr.wrapping_add(len as u16);
-        } else if inc == 0 {
-            if len > 0 {
-                self.vram[addr as usize] = fill_byte;
-            }
-        } else {
-            for _ in 0..len {
-                self.vram[addr as usize] = fill_byte;
-                addr = addr.wrapping_add(inc);
-            }
-            self.control_address = addr;
-        }
-    }
-
     pub fn write_data(&mut self, value: u16) {
         self.control_pending = false;
         self.last_data_write = value;
@@ -212,14 +100,7 @@ impl Vdp {
             && (self.registers[REG_DMA_SRC_HI] & DMA_MODE_MASK) == DMA_MODE_FILL
             && self.dma_pending
         {
-            let length = self.dma_length();
-
-            // DMA Fill writes bytes. Length register specifies number of bytes.
-            // If length is 0, it is treated as 0x10000 (64KB).
-            let len = if length == 0 { 0x10000 } else { length };
-
-            self.perform_dma_fill(len);
-            self.dma_pending = false;
+            self.execute_dma();
             return;
         }
 
@@ -343,41 +224,8 @@ impl Vdp {
         (r5 << 11) | (g6 << 5) | b5
     }
 
-    fn auto_increment(&self) -> u8 {
+    pub fn auto_increment(&self) -> u8 {
         self.registers[REG_AUTO_INC]
-    }
-
-    pub fn dma_mode(&self) -> u8 {
-        self.registers[REG_DMA_SRC_HI]
-    }
-
-    pub fn dma_source(&self) -> u32 {
-        ((self.registers[REG_DMA_SRC_HI] as u32) << 17)
-            | ((self.registers[REG_DMA_SRC_MID] as u32) << 9)
-            | ((self.registers[REG_DMA_SRC_LO] as u32) << 1)
-    }
-
-    pub fn dma_length(&self) -> u32 {
-        ((self.registers[REG_DMA_LEN_HI] as u32) << 8) | (self.registers[REG_DMA_LEN_LO] as u32)
-    }
-
-    pub fn dma_source_transfer(&self) -> u32 {
-        let hi = self.registers[REG_DMA_SRC_HI] as u32;
-        let mid = self.registers[REG_DMA_SRC_MID] as u32;
-        let lo = self.registers[REG_DMA_SRC_LO] as u32;
-
-        if (hi & 0x40) != 0 {
-            // RAM Transfer: bits 23-16 are forced to 1
-            0xFF0000 | (mid << 9) | (lo << 1)
-        } else {
-            // ROM/Expansion Transfer: bit 7 is ignored, bits 6-0 are address
-            ((hi & 0x3F) << 17) | (mid << 9) | (lo << 1)
-        }
-    }
-
-    /// Check if DMA mode is 0 or 1 (68k Transfer)
-    pub fn is_dma_transfer(&self) -> bool {
-        (self.registers[REG_DMA_SRC_HI] & 0x80) == 0
     }
 
     pub fn is_control_pending(&self) -> bool {
@@ -428,7 +276,6 @@ impl Vdp {
 
     pub fn sprite_table_address(&self) -> usize {
         // Bits 0-6 specify bits 9-15 of VRAM address (H40 mode)
-        // In H32 mode, bits 0-6 specify bits 10-16? No, bits 0-6 specify bits 9-15.
         ((self.registers[REG_SPRITE_TABLE] as usize) & 0x7F) << 9
     }
 
@@ -437,101 +284,51 @@ impl Vdp {
         ((self.registers[REG_HSCROLL] as usize) & 0x3F) << 10
     }
 
-    pub fn window_address(&self) -> usize {
-        // Bits 1-5 specify bits 11-15 of VRAM address
-        ((self.registers[REG_WINDOW] as usize) & 0x3E) << 10
-    }
-
-    fn is_window_area(&self, screen_x: u16, fetch_line: u16) -> bool {
-        let win_h = self.registers[REG_WINDOW_H_POS];
-        let win_v = self.registers[REG_WINDOW_V_POS];
-
-        let cell_x = (screen_x >> 3) as u8;
-        let cell_y = (fetch_line >> 3) as u8;
-
-        let h_pos = win_h & 0x1F;
-        let h_right = (win_h & 0x80) != 0;
-
-        // In H40 mode, horizontal position is in units of 2 cells (16 pixels)
-        let h_unit = if self.h40_mode() { h_pos << 1 } else { h_pos };
-
-        let in_h = if h_right {
-            cell_x >= h_unit
-        } else {
-            cell_x < h_unit
-        };
-
-        let v_pos = win_v & 0x1F;
-        let v_down = (win_v & 0x80) != 0;
-        let in_v = if v_down {
-            cell_y >= v_pos
-        } else {
-            cell_y < v_pos
-        };
-
-        in_h || in_v
-    }
-
-    pub fn plane_size(&self) -> (usize, usize) {
-        let w = match self.registers[REG_PLANE_SIZE] & 0x03 {
-            0 => 32,
-            1 => 64,
-            3 => 128,
-            _ => 32,
-        };
-        let h = match (self.registers[REG_PLANE_SIZE] >> 4) & 0x03 {
-            0 => 32,
-            1 => 64,
-            3 => 128,
-            _ => 32,
-        };
-        (w, h)
-    }
-
-    pub fn execute_dma(&mut self) -> u32 {
-        let length = self.dma_length();
-        // If length is 0, it is treated as 0x10000 (64KB)
-        let len = if length == 0 { 0x10000 } else { length };
-
-        let mode = self.registers[REG_DMA_SRC_HI] & DMA_MODE_MASK;
-
-        match mode {
-            DMA_MODE_FILL => {
-                self.perform_dma_fill(len);
-            }
-            DMA_MODE_COPY => {
-                let mut source = (self.dma_source() & 0xFFFF) as u16;
-                let mut dest = self.control_address;
-                let inc = self.auto_increment() as u16;
-
-                for _ in 0..len {
-                    let val = self.vram[source as usize];
-                    self.vram[dest as usize] = val;
-                    source = source.wrapping_add(1);
-                    dest = dest.wrapping_add(inc);
-                }
-                self.control_address = dest;
-            }
-            _ => {}
+    pub fn write_vram_word(&mut self, addr: u16, value: u16) {
+        let addr = addr as usize;
+        if addr < 0x10000 {
+            self.vram[addr] = (value >> 8) as u8;
+            self.vram[addr ^ 1] = (value & 0xFF) as u8;
         }
-
-        self.dma_pending = false;
-        len
     }
 
-    pub fn bg_color(&self) -> (u8, u8) {
-        let bg_idx = self.registers[REG_BG_COLOR];
-        let pal = (bg_idx >> 4) & 0x03;
-        let color = bg_idx & 0x0F;
-        (pal, color)
+    pub fn set_vblank(&mut self, active: bool) {
+        if active {
+            self.status |= STATUS_VBLANK;
+            self.status |= STATUS_VINT_PENDING;
+        } else {
+            self.status &= !STATUS_VBLANK;
+        }
     }
 
-    #[inline(always)]
-    pub fn get_cram_color(&self, palette: u8, index: u8) -> u16 {
-        let addr = ((palette as usize) * 16) + (index as usize);
-        // SAFETY: palette is 2 bits (0-3), index is 4 bits (0-15).
-        // Max addr is (3 * 16) + 15 = 63, which is within cram_cache bounds (64).
-        unsafe { *self.cram_cache.get_unchecked(addr) }
+    pub fn trigger_vint(&mut self) {
+        self.status |= STATUS_VINT_PENDING;
+    }
+
+    pub fn vblank_pending(&self) -> bool {
+        (self.status & STATUS_VINT_PENDING) != 0 && self.vint_enabled()
+    }
+
+    pub fn hblank_pending(&self) -> bool {
+        self.hint_enabled()
+    }
+
+    pub fn read_hv_counter(&self) -> u16 {
+        let h = (self.h_counter >> 1) as u8;
+        let v = if self.v_counter > 0xFF {
+            (self.v_counter - 0x100) as u8
+        } else {
+            self.v_counter as u8
+        };
+        ((v as u16) << 8) | (h as u16)
+    }
+
+    pub fn set_v_counter(&mut self, v: u16) {
+        self.v_counter = v;
+    }
+
+    pub fn set_h_counter(&mut self, h: u16) {
+        self.h_counter = h;
     }
 }
 
