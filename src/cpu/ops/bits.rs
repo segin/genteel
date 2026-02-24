@@ -1415,4 +1415,56 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn test_exec_bit_ops_memory_modulo() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.a[0] = 0x2000;
+
+        // BSET bit 8 (mod 8 = 0)
+        memory.write_byte(0x2000, 0x00);
+        cpu.d[0] = 8;
+        exec_bset(&mut cpu, BitSource::Register(0), AddressingMode::AddressIndirect(0), &mut memory);
+        assert_eq!(memory.read_byte(0x2000), 0x01);
+        assert!(cpu.get_flag(flags::ZERO)); // bit 0 was clear
+
+        // BCLR bit 9 (mod 8 = 1)
+        memory.write_byte(0x2000, 0x02);
+        cpu.d[0] = 9;
+        exec_bclr(&mut cpu, BitSource::Register(0), AddressingMode::AddressIndirect(0), &mut memory);
+        assert_eq!(memory.read_byte(0x2000), 0x00);
+        assert!(!cpu.get_flag(flags::ZERO)); // bit 1 was set
+
+        // BCHG bit 10 (mod 8 = 2)
+        memory.write_byte(0x2000, 0x00);
+        cpu.d[0] = 10;
+        exec_bchg(&mut cpu, BitSource::Register(0), AddressingMode::AddressIndirect(0), &mut memory);
+        assert_eq!(memory.read_byte(0x2000), 0x04);
+        assert!(cpu.get_flag(flags::ZERO)); // bit 2 was clear
+
+        // BTST bit 11 (mod 8 = 3)
+        memory.write_byte(0x2000, 0x08);
+        cpu.d[0] = 11;
+        exec_btst(&mut cpu, BitSource::Register(0), AddressingMode::AddressIndirect(0), &mut memory);
+        assert!(!cpu.get_flag(flags::ZERO)); // bit 3 is set
+    }
+
+    #[test]
+    fn test_exec_bit_ops_register_modulo() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // BSET bit 32 (mod 32 = 0)
+        cpu.d[0] = 0x00000000;
+        cpu.d[1] = 32;
+        exec_bset(&mut cpu, BitSource::Register(1), AddressingMode::DataRegister(0), &mut memory);
+        assert_eq!(cpu.d[0], 0x00000001);
+        assert!(cpu.get_flag(flags::ZERO));
+
+        // BCLR bit 33 (mod 32 = 1)
+        cpu.d[0] = 0x00000002;
+        cpu.d[1] = 33;
+        exec_bclr(&mut cpu, BitSource::Register(1), AddressingMode::DataRegister(0), &mut memory);
+        assert_eq!(cpu.d[0], 0x00000000);
+        assert!(!cpu.get_flag(flags::ZERO));
+    }
 }
