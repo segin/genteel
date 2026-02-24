@@ -38,7 +38,7 @@ fn snapshot_memory<M: MemoryInterface, I: crate::memory::IoInterface>(
 ) -> Vec<u8> {
     let mut snapshot = Vec::with_capacity(0x10000);
     for addr in 0..0x10000u32 {
-        snapshot.push(z80.memory.read_byte(addr));
+        snapshot.push(bus.memory.read_byte(addr));
     }
     snapshot
 }
@@ -108,12 +108,12 @@ fn test_ldir_exhaustive() {
         // assuming src/dst don't overwrite it immediately.
         // To be safe, we execute until PC indicates completion.
 
-        let mut cpu = create_z80(&[]);
+        let (mut cpu, mut bus) = create_z80(&[]);
         // Put Opcode at 0x100 avoids conflict usually?
         // Let's randomize PC placement too? No, keep simple.
         let _code_base = 0x0000;
-        cpu.memory.write_byte(0 as u32, 0xED);
-        cpu.memory.write_byte(1 as u32, 0xB0); // LDIR
+        bus.memory.write_byte(0 as u32, 0xED);
+        bus.memory.write_byte(1 as u32, 0xB0); // LDIR
         cpu.pc = 0;
 
         cpu.set_hl(src);
@@ -135,16 +135,16 @@ fn test_ldir_exhaustive() {
             let val = rng.next_u8();
             let s_addr = src.wrapping_add(k) as usize;
             let d_addr = dst.wrapping_add(k) as usize;
-            cpu.memory.write_byte(s_addr as u32, val);
+            bus.memory.write_byte(s_addr as u32, val);
             ref_mem[s_addr] = val;
-            cpu.memory.write_byte(d_addr as u32, val ^ 0xFF); // Different initial dst
+            bus.memory.write_byte(d_addr as u32, val ^ 0xFF); // Different initial dst
             ref_mem[d_addr] = val ^ 0xFF;
         }
         // Also fill end of range
         if real_len > 256 {
             let val = rng.next_u8();
             let s_addr = src.wrapping_add((real_len - 1) as u16) as usize;
-            cpu.memory.write_byte(s_addr as u32, val);
+            bus.memory.write_byte(s_addr as u32, val);
             ref_mem[s_addr] = val;
         }
 
@@ -166,12 +166,12 @@ fn test_ldir_exhaustive() {
             // For chaos test, let's accept divergence if code is overwritten.
             // But checking code integrity complicates things.
             // Let's check if code is intact.
-            if cpu.memory.read_byte(0 as u32) != 0xED || cpu.memory.read_byte(1 as u32) != 0xB0 {
+            if bus.memory.read_byte(0 as u32) != 0xED || bus.memory.read_byte(1 as u32) != 0xB0 {
                 // Code overwritten. Skip verification of this insane case.
                 break;
             }
 
-            cpu.step();
+            cpu.step(&mut bus);
             steps += 1;
             if cpu.pc != 0 {
                 break;
@@ -182,7 +182,7 @@ fn test_ldir_exhaustive() {
         }
 
         // Validation
-        if cpu.memory.read_byte(0 as u32) == 0xED {
+        if bus.memory.read_byte(0 as u32) == 0xED {
             // valid result check
             assert_eq!(cpu.hl(), exp_hl, "HL mismatch case #{}", i);
             assert_eq!(cpu.de(), exp_de, "DE mismatch case #{}", i);
@@ -193,7 +193,7 @@ fn test_ldir_exhaustive() {
             for _k in 0..50 {
                 let offset = rng.next() as usize % 0x10000;
                 assert_eq!(
-                    cpu.memory.read_byte(offset as u32),
+                    bus.memory.read_byte(offset as u32),
                     ref_mem[offset],
                     "Mem mismatch at {} case #{} BC={}",
                     offset,
@@ -213,7 +213,7 @@ fn test_lddr_exhaustive() {
         let dst = rng.next_u16();
         let bc = (rng.next() % 0x100) as u16; // Limit size for speed, cover 256
 
-        let mut cpu = create_z80(&[0xED, 0xB8]); // LDDR at 0x0000
+        let (mut cpu, mut bus) = create_z80(&[0xED, 0xB8]); // LDDR at 0x0000
         cpu.set_hl(src);
         cpu.set_de(dst);
         cpu.set_bc(bc);
@@ -224,7 +224,7 @@ fn test_lddr_exhaustive() {
         for k in 0..bc {
             let addr = src.wrapping_sub(k);
             let val = rng.next_u8();
-            cpu.memory.write_byte(addr as usize as u32, val);
+            bus.memory.write_byte(addr as usize as u32, val);
             ref_mem[addr as usize] = val;
         }
 
@@ -232,17 +232,17 @@ fn test_lddr_exhaustive() {
 
         // Run
         loop {
-            if cpu.memory.read_byte(0 as u32) != 0xED || cpu.memory.read_byte(1 as u32) != 0xB8 {
+            if bus.memory.read_byte(0 as u32) != 0xED || bus.memory.read_byte(1 as u32) != 0xB8 {
                 break;
             }
-            cpu.step();
+            cpu.step(&mut bus);
             if cpu.pc != 0 {
                 break;
             }
         }
 
         // Validate
-        if cpu.memory.read_byte(0 as u32) == 0xED && cpu.memory.read_byte(1 as u32) == 0xB8 {
+        if bus.memory.read_byte(0 as u32) == 0xED && bus.memory.read_byte(1 as u32) == 0xB8 {
             assert_eq!(cpu.hl(), exp_hl, "LDDR HL mismatch #{}", i);
             assert_eq!(cpu.de(), exp_de);
             assert_eq!(cpu.bc(), exp_bc);
@@ -250,12 +250,12 @@ fn test_lddr_exhaustive() {
             if bc > 0 {
                 let check_addr = dst;
                 assert_eq!(
-                    cpu.memory.read_byte(check_addr as usize as u32),
+                    bus.memory.read_byte(check_addr as usize as u32),
                     ref_mem[check_addr as usize]
                 );
                 let check_addr_end = dst.wrapping_sub(bc - 1);
                 assert_eq!(
-                    cpu.memory.read_byte(check_addr_end as usize as u32),
+                    bus.memory.read_byte(check_addr_end as usize as u32),
                     ref_mem[check_addr_end as usize]
                 );
             }
@@ -272,7 +272,7 @@ fn test_cpir_validation() {
         let bc = (rng.next() % 256) as u16 + 1; // 1..256
         let target = rng.next_u8();
 
-        let mut cpu = create_z80(&[0xED, 0xB1]);
+        let (mut cpu, mut bus) = create_z80(&[0xED, 0xB1]);
         cpu.set_hl(hl);
         cpu.set_bc(bc);
         cpu.a = target;
@@ -295,22 +295,22 @@ fn test_cpir_validation() {
             } else {
                 target.wrapping_add(1)
             };
-            cpu.memory.write_byte(addr as usize as u32, val);
+            bus.memory.write_byte(addr as usize as u32, val);
         }
 
         // Run
         loop {
             // Guard against self-modification
-            if cpu.memory.read_byte(0 as u32) != 0xED || cpu.memory.read_byte(1 as u32) != 0xB1 {
+            if bus.memory.read_byte(0 as u32) != 0xED || bus.memory.read_byte(1 as u32) != 0xB1 {
                 break;
             }
-            cpu.step();
+            cpu.step(&mut bus);
             if cpu.pc != 0 {
                 break;
             }
         }
 
-        if cpu.memory.read_byte(0 as u32) == 0xED && cpu.memory.read_byte(1 as u32) == 0xB1 {
+        if bus.memory.read_byte(0 as u32) == 0xED && bus.memory.read_byte(1 as u32) == 0xB1 {
             if should_find {
                 assert!(cpu.get_flag(flags::ZERO), "Should fulfill find #{}", i);
                 // Verify HL points to char AFTER found
@@ -332,7 +332,7 @@ fn test_cpir_validation() {
 #[test]
 fn test_inir_simulation() {
     // Tests register logic for INIR (mock IO)
-    let mut c = create_z80(&[0xED, 0xB2]); // INIR
+    let (mut c, mut bus) = create_z80(&[0xED, 0xB2]); // INIR
     c.set_hl(0x2000);
     c.set_bc(0x0500); // B=5, C=0 implies port 0
 
@@ -342,7 +342,7 @@ fn test_inir_simulation() {
 
     // Loop
     loop {
-        c.step();
+        c.step(&mut bus);
         if c.pc != 0 {
             break;
         }
@@ -355,6 +355,6 @@ fn test_inir_simulation() {
 
     // Check memory (assuming stub wrote 0xFF)
     for i in 0..5 {
-        assert_eq!(c.memory.read_byte(0x2000 + i as u32), 0xFF);
+        assert_eq!(bus.memory.read_byte(0x2000 + i as u32), 0xFF);
     }
 }

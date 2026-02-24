@@ -54,6 +54,12 @@ pub trait IoInterface: std::fmt::Debug {
     fn write_port(&mut self, port: u16, value: u8);
 }
 
+/// Combined interface for the Z80 CPU which has separate memory and I/O spaces
+pub trait Z80Interface: MemoryInterface + IoInterface {}
+
+// Blanket implementation for any type that implements both
+impl<T: MemoryInterface + IoInterface> Z80Interface for T {}
+
 // Blanket impl for Box<dyn MemoryInterface>
 impl MemoryInterface for Box<dyn MemoryInterface> {
     fn read_byte(&mut self, address: u32) -> u8 {

@@ -11,11 +11,11 @@ use crate::z80::test_utils::create_z80;
 // Bug: DAA not handling N flag correctly
 #[test]
 fn regression_daa_after_sub() {
-    let mut c = create_z80(&[0x90, 0x27]); // SUB B; DAA
+    let (mut c, mut bus) = create_z80(&[0x90, 0x27]); // SUB B; DAA
     c.a = 0x50;
     c.b = 0x25;
-    c.step(); // SUB
-    c.step(); // DAA
+    c.step(&mut bus); // SUB
+    c.step(&mut bus); // DAA
     assert_eq!(c.a, 0x25);
 }
 
@@ -23,17 +23,17 @@ fn regression_daa_after_sub() {
 #[test]
 fn regression_djnz_decrements_first() {
     // Case 1: B=1 -> B=0, Jump NOT taken
-    let mut c = create_z80(&[0x10, 0x05]);
+    let (mut c, mut bus) = create_z80(&[0x10, 0x05]);
     c.b = 1;
-    let cycles = c.step();
+    let cycles = c.step(&mut bus);
     assert_eq!(c.b, 0);
     assert_eq!(c.pc, 2); // Not taken (PC points to next instruction)
     assert_eq!(cycles, 8);
 
     // Case 2: B=2 -> B=1, Jump TAKEN
-    let mut c = create_z80(&[0x10, 0x05]);
+    let (mut c, mut bus) = create_z80(&[0x10, 0x05]);
     c.b = 2;
-    let cycles = c.step();
+    let cycles = c.step(&mut bus);
     assert_eq!(c.b, 1);
     assert_eq!(c.pc, 7); // 2 (instruction) + 5 (displacement) = 7
     assert_eq!(cycles, 13);
@@ -42,9 +42,9 @@ fn regression_djnz_decrements_first() {
 // Bug: DJNZ wrapping behavior (decrement then test)
 #[test]
 fn regression_djnz_wrap() {
-    let mut c = create_z80(&[0x10, 0x05]);
+    let (mut c, mut bus) = create_z80(&[0x10, 0x05]);
     c.b = 0;
-    c.step();
+    c.step(&mut bus);
     assert_eq!(c.b, 0xFF);
     assert_eq!(c.pc, 7); // Taken (2 + 5)
 }
@@ -52,17 +52,17 @@ fn regression_djnz_wrap() {
 // Bug: JR displacement is signed
 #[test]
 fn regression_jr_negative() {
-    let mut c = create_z80(&[0x00, 0x00, 0x18, 0xFC]); // JR -4
+    let (mut c, mut bus) = create_z80(&[0x00, 0x00, 0x18, 0xFC]); // JR -4
     c.pc = 2;
-    c.step();
+    c.step(&mut bus);
     assert_eq!(c.pc, 0); // 2 + 2 (instruction) + (-4) = 0
 }
 
 #[test]
 fn regression_jr_negative_extended() {
     // JR -2 (0xFE)
-    let mut c = create_z80(&[0x18, 0xFE]);
-    c.step();
+    let (mut c, mut bus) = create_z80(&[0x18, 0xFE]);
+    c.step(&mut bus);
     assert_eq!(c.pc, 0); // 0 + 2 (instruction) + (-2) = 0
 }
 
@@ -76,31 +76,31 @@ fn regression_jr_positive_overflow() {
     // After fetch disp: PC=0x7FFF (32767)
     // Calculation: 32767 + 1 = 32768
     // If done in i16, 32767 + 1 overflows.
-    let mut c = create_z80(&[]);
-    c.memory.data[0x7FFD] = 0x18;
-    c.memory.data[0x7FFE] = 0x01;
+    let (mut c, mut bus) = create_z80(&[]);
+    bus.memory.data[0x7FFD] = 0x18;
+    bus.memory.data[0x7FFE] = 0x01;
     c.pc = 0x7FFD;
-    c.step();
+    c.step(&mut bus);
     assert_eq!(c.pc, 0x8000);
 }
 
 // Bug: LD (HL), H/L uses new value after HL is modified
 #[test]
 fn regression_ld_hl_h() {
-    let mut c = create_z80(&[0x74]); // LD (HL), H
+    let (mut c, mut bus) = create_z80(&[0x74]); // LD (HL), H
     c.set_hl(0x1234);
-    let t = c.step();
+    let t = c.step(&mut bus);
     assert_eq!(t, 7); // Timing check
-    assert_eq!(c.memory.read_byte(0x1234 as u32), 0x12); // H value, not modified
+    assert_eq!(bus.memory.read_byte(0x1234 as u32), 0x12); // H value, not modified
 }
 
 #[test]
 fn regression_ld_hl_l() {
-    let mut c = create_z80(&[0x75]); // LD (HL), L
+    let (mut c, mut bus) = create_z80(&[0x75]); // LD (HL), L
     c.set_hl(0x1234);
-    let t = c.step();
+    let t = c.step(&mut bus);
     assert_eq!(t, 7); // Timing check
-    assert_eq!(c.memory.read_byte(0x1234 as u32), 0x34); // L value
+    assert_eq!(bus.memory.read_byte(0x1234 as u32), 0x34); // L value
 }
 
 // Bug: PUSH/POP AF not preserving all flag bits
@@ -109,14 +109,14 @@ fn regression_push_pop_af_all_bits() {
     // Test all possible values for F register to ensure full preservation
     let patterns = [0xFF, 0x00, 0x55, 0xAA, 0xF0, 0x0F, 0xCC, 0x33];
     for &val in &patterns {
-        let mut c = create_z80(&[0xF5, 0xF1]); // PUSH AF; POP AF
+        let (mut c, mut bus) = create_z80(&[0xF5, 0xF1]); // PUSH AF; POP AF
         c.sp = 0x8000;
         c.a = val;
         c.f = val;
-        c.step(); // PUSH
+        c.step(&mut bus); // PUSH
         c.a = !val; // Corrupt registers to ensure reload works
         c.f = !val;
-        c.step(); // POP
+        c.step(&mut bus); // POP
         assert_eq!(c.a, val, "Failed to preserve A for pattern 0x{:02X}", val);
         assert_eq!(c.f, val, "Failed to preserve F for pattern 0x{:02X}", val);
     }
@@ -125,33 +125,33 @@ fn regression_push_pop_af_all_bits() {
 // Bug: EX (SP), HL not swapping correctly
 #[test]
 fn regression_ex_sp_hl() {
-    let mut c = create_z80(&[0xE3]);
+    let (mut c, mut bus) = create_z80(&[0xE3]);
     c.sp = 0x1000;
     c.set_hl(0x1234);
-    c.memory.write_byte(0x1000 as u32, 0xCD);
-    c.memory.write_byte(0x1001 as u32, 0xAB);
-    c.step();
+    bus.memory.write_byte(0x1000 as u32, 0xCD);
+    bus.memory.write_byte(0x1001 as u32, 0xAB);
+    c.step(&mut bus);
     assert_eq!(c.hl(), 0xABCD);
-    assert_eq!(c.memory.read_byte(0x1000 as u32), 0x34);
-    assert_eq!(c.memory.read_byte(0x1001 as u32), 0x12);
+    assert_eq!(bus.memory.read_byte(0x1000 as u32), 0x34);
+    assert_eq!(bus.memory.read_byte(0x1001 as u32), 0x12);
 }
 
 // Bug: INC/DEC not affecting V flag correctly
 // Confirmed fixed: implementation correctly sets P/V flag on overflow.
 #[test]
 fn regression_inc_overflow() {
-    let mut c = create_z80(&[0x3C]); // INC A
+    let (mut c, mut bus) = create_z80(&[0x3C]); // INC A
     c.a = 0x7F;
-    c.step();
+    c.step(&mut bus);
     assert_eq!(c.a, 0x80);
     assert!(c.get_flag(flags::PARITY)); // Overflow
 }
 
 #[test]
 fn regression_dec_overflow() {
-    let mut c = create_z80(&[0x3D]); // DEC A
+    let (mut c, mut bus) = create_z80(&[0x3D]); // DEC A
     c.a = 0x80;
-    c.step();
+    c.step(&mut bus);
     assert_eq!(c.a, 0x7F);
     assert!(c.get_flag(flags::PARITY)); // Overflow
 }
@@ -159,13 +159,13 @@ fn regression_dec_overflow() {
 // Bug: SCF/CCF H flag behavior
 #[test]
 fn regression_scf_clears_h() {
-    let mut c = create_z80(&[0x37]); // SCF
+    let (mut c, mut bus) = create_z80(&[0x37]); // SCF
     c.set_flag(flags::HALF_CARRY, true);
     c.set_flag(flags::ADD_SUB, true);
     c.set_flag(flags::SIGN, true);
     c.set_flag(flags::ZERO, true);
     c.set_flag(flags::PARITY, true);
-    c.step();
+    c.step(&mut bus);
     assert!(!c.get_flag(flags::HALF_CARRY));
     assert!(!c.get_flag(flags::ADD_SUB));
     assert!(c.get_flag(flags::CARRY));
@@ -176,7 +176,7 @@ fn regression_scf_clears_h() {
 
 #[test]
 fn regression_ccf_copies_c_to_h() {
-    let mut c = create_z80(&[0x3F]); // CCF
+    let (mut c, mut bus) = create_z80(&[0x3F]); // CCF
 
     // Case 1: C=1 -> H=1, C=0
     c.set_flag(flags::CARRY, true);
@@ -185,7 +185,7 @@ fn regression_ccf_copies_c_to_h() {
     c.set_flag(flags::SIGN, true);
     c.set_flag(flags::ZERO, true);
     c.set_flag(flags::PARITY, true);
-    c.step();
+    c.step(&mut bus);
     assert!(!c.get_flag(flags::CARRY)); // Inverted C
     assert!(c.get_flag(flags::HALF_CARRY)); // Previous C copied to H
     assert!(!c.get_flag(flags::ADD_SUB)); // N cleared
@@ -203,7 +203,7 @@ fn regression_ccf_copies_c_to_h() {
     c.set_flag(flags::SIGN, true);
     c.set_flag(flags::ZERO, true);
     c.set_flag(flags::PARITY, true);
-    c.step();
+    c.step(&mut bus);
     assert!(c.get_flag(flags::CARRY)); // Inverted C
     assert!(!c.get_flag(flags::HALF_CARRY)); // Previous C copied to H
     assert!(!c.get_flag(flags::ADD_SUB)); // N cleared
@@ -215,9 +215,9 @@ fn regression_ccf_copies_c_to_h() {
 // Bug: NEG with A=0x80 causes overflow
 #[test]
 fn regression_neg_80() {
-    let mut c = create_z80(&[0xED, 0x44]);
+    let (mut c, mut bus) = create_z80(&[0xED, 0x44]);
     c.a = 0x80;
-    c.step();
+    c.step(&mut bus);
     assert_eq!(c.a, 0x80);
     assert!(
         c.get_flag(flags::PARITY),
@@ -245,9 +245,9 @@ fn regression_neg_80() {
 // Regression: NEG with A=0 should clear carry (verified against reference model)
 #[test]
 fn regression_neg_00() {
-    let mut c = create_z80(&[0xED, 0x44]);
+    let (mut c, mut bus) = create_z80(&[0xED, 0x44]);
     c.a = 0x00;
-    c.step();
+    c.step(&mut bus);
     assert_eq!(c.a, 0x00);
     // Carry should be cleared when A=0
     assert!(!c.get_flag(flags::CARRY));
@@ -255,19 +255,19 @@ fn regression_neg_00() {
 
 #[test]
 fn regression_neg_normal() {
-    let mut c = create_z80(&[0xED, 0x44]);
+    let (mut c, mut bus) = create_z80(&[0xED, 0x44]);
     c.a = 0x01;
-    c.step();
+    c.step(&mut bus);
     assert_eq!(c.a, 0xFF);
     assert!(!c.get_flag(flags::PARITY)); // No overflow
     assert!(c.get_flag(flags::CARRY)); // Carry set
 
     // Reuse c for another test
     c.reset();
-    c.memory.write_byte(0, 0xED);
-    c.memory.write_byte(1, 0x44);
+    bus.memory.write_byte(0, 0xED);
+    bus.memory.write_byte(1, 0x44);
     c.a = 0x7F;
-    c.step();
+    c.step(&mut bus);
     assert_eq!(c.a, 0x81);
     assert!(!c.get_flag(flags::PARITY)); // No overflow
     assert!(c.get_flag(flags::CARRY)); // Carry set
@@ -276,52 +276,52 @@ fn regression_neg_normal() {
 // Bug: LD A, I/R should set P/V from IFF2
 #[test]
 fn regression_ld_a_i_iff2() {
-    let mut c = create_z80(&[0xED, 0x57]);
+    let (mut c, mut bus) = create_z80(&[0xED, 0x57]);
     c.i = 0x42;
     c.iff2 = true;
-    c.step();
+    c.step(&mut bus);
     assert!(c.get_flag(flags::PARITY));
 }
 
 #[test]
 fn regression_ld_a_r_iff2() {
-    let mut c = create_z80(&[0xED, 0x5F]);
+    let (mut c, mut bus) = create_z80(&[0xED, 0x5F]);
     c.r = 0x42;
     c.iff2 = true;
-    c.step();
+    c.step(&mut bus);
     assert!(c.get_flag(flags::PARITY));
 }
 
 #[test]
 fn regression_ld_a_i_iff2_false() {
-    let mut c = create_z80(&[0xED, 0x57]);
+    let (mut c, mut bus) = create_z80(&[0xED, 0x57]);
     c.i = 0x42;
     c.iff2 = false;
-    c.step();
+    c.step(&mut bus);
     assert!(!c.get_flag(flags::PARITY));
 }
 
 #[test]
 fn regression_ld_a_r_iff2_false() {
-    let mut c = create_z80(&[0xED, 0x5F]);
+    let (mut c, mut bus) = create_z80(&[0xED, 0x5F]);
     c.r = 0x42;
     c.iff2 = false;
-    c.step();
+    c.step(&mut bus);
     assert!(!c.get_flag(flags::PARITY));
 }
 
 // Bug: LDIR/LDDR BC=0 means 64K
 #[test]
 fn regression_ldir_bc_zero() {
-    let mut c = create_z80(&[0xED, 0xB0]);
+    let (mut c, mut bus) = create_z80(&[0xED, 0xB0]);
     c.set_hl(0x1000);
     c.set_de(0x2000);
     c.set_bc(0x0000);
-    c.memory.write_byte(0x1000 as u32, 0xAA);
-    c.step();
+    bus.memory.write_byte(0x1000 as u32, 0xAA);
+    c.step(&mut bus);
     // BC was 0, now 0xFFFF
     assert_eq!(c.bc(), 0xFFFF);
-    assert_eq!(c.memory.read_byte(0x2000 as u32), 0xAA);
+    assert_eq!(bus.memory.read_byte(0x2000 as u32), 0xAA);
     // HL and DE should be incremented
     assert_eq!(c.hl(), 0x1001);
     assert_eq!(c.de(), 0x2001);
@@ -331,15 +331,15 @@ fn regression_ldir_bc_zero() {
 
 #[test]
 fn regression_lddr_bc_zero() {
-    let mut c = create_z80(&[0xED, 0xB8]); // LDDR
+    let (mut c, mut bus) = create_z80(&[0xED, 0xB8]); // LDDR
     c.set_hl(0x1000);
     c.set_de(0x2000);
     c.set_bc(0x0000);
-    c.memory.write_byte(0x1000 as u32, 0xBB);
-    c.step();
+    bus.memory.write_byte(0x1000 as u32, 0xBB);
+    c.step(&mut bus);
     // BC was 0, now 0xFFFF
     assert_eq!(c.bc(), 0xFFFF);
-    assert_eq!(c.memory.read_byte(0x2000 as u32), 0xBB);
+    assert_eq!(bus.memory.read_byte(0x2000 as u32), 0xBB);
     // HL and DE should be decremented
     assert_eq!(c.hl(), 0x0FFF);
     assert_eq!(c.de(), 0x1FFF);
@@ -351,14 +351,14 @@ fn regression_lddr_bc_zero() {
 #[test]
 fn regression_add_hl_sp_flags() {
     // Case 1: Flags set, should remain set
-    let mut c = create_z80(&[0x39]);
+    let (mut c, mut bus) = create_z80(&[0x39]);
     c.set_hl(0x1234);
     c.sp = 0x4321;
     c.set_flag(flags::ZERO, true);
     c.set_flag(flags::SIGN, true);
     c.set_flag(flags::PARITY, true);
     c.set_flag(flags::ADD_SUB, true); // Should be reset
-    c.step();
+    c.step(&mut bus);
     // S, Z, P/V should be preserved
     assert!(c.get_flag(flags::ZERO));
     assert!(c.get_flag(flags::SIGN));
@@ -367,14 +367,14 @@ fn regression_add_hl_sp_flags() {
     assert!(!c.get_flag(flags::ADD_SUB));
 
     // Case 2: Flags clear, should remain clear
-    let mut c = create_z80(&[0x39]);
+    let (mut c, mut bus) = create_z80(&[0x39]);
     c.set_hl(0x1000);
     c.sp = 0x0500;
     c.set_flag(flags::ZERO, false);
     c.set_flag(flags::SIGN, false);
     c.set_flag(flags::PARITY, false);
     c.set_flag(flags::ADD_SUB, true); // Should be reset
-    c.step();
+    c.step(&mut bus);
     // S, Z, P/V should be preserved
     assert!(!c.get_flag(flags::ZERO));
     assert!(!c.get_flag(flags::SIGN));
@@ -384,10 +384,10 @@ fn regression_add_hl_sp_flags() {
 
     // Case 3: Carry generation
     // HL = 0xFFFF, SP = 0x0001 -> Result = 0x0000, Carry = 1
-    let mut c = create_z80(&[0x39]);
+    let (mut c, mut bus) = create_z80(&[0x39]);
     c.set_hl(0xFFFF);
     c.sp = 0x0001;
-    c.step();
+    c.step(&mut bus);
     assert_eq!(c.hl(), 0x0000);
     assert!(c.get_flag(flags::CARRY));
     assert!(c.get_flag(flags::HALF_CARRY)); // 0xFFF + 1 = 0x1000 -> Half Carry
@@ -398,10 +398,10 @@ fn regression_add_hl_sp_flags() {
 
     // Case 4: No Carry, No Half Carry
     // HL = 0x1000, SP = 0x0100 -> Result = 0x1100
-    let mut c = create_z80(&[0x39]);
+    let (mut c, mut bus) = create_z80(&[0x39]);
     c.set_hl(0x1000);
     c.sp = 0x0100;
-    c.step();
+    c.step(&mut bus);
     assert_eq!(c.hl(), 0x1100);
     assert!(!c.get_flag(flags::CARRY));
     assert!(!c.get_flag(flags::HALF_CARRY));
@@ -414,10 +414,10 @@ fn regression_add_hl_sp_flags() {
     // Case 5: X/Y flags set
     // HL = 0x2800, SP = 0x0000 -> Result = 0x2800
     // High byte 0x28 = 0010 1000. Bit 3 is 1 (X), Bit 5 is 1 (Y).
-    let mut c = create_z80(&[0x39]);
+    let (mut c, mut bus) = create_z80(&[0x39]);
     c.set_hl(0x2800);
     c.sp = 0x0000;
-    c.step();
+    c.step(&mut bus);
     assert_eq!(c.hl(), 0x2800);
     assert!(c.get_flag(flags::X_FLAG));
     assert!(c.get_flag(flags::Y_FLAG));
@@ -427,29 +427,29 @@ fn regression_add_hl_sp_flags() {
 #[test]
 fn regression_bit_sets_h_flag() {
     // BIT 0, A
-    let mut c = create_z80(&[0xCB, 0x47]);
+    let (mut c, mut bus) = create_z80(&[0xCB, 0x47]);
     c.a = 0x00;
-    c.step();
+    c.step(&mut bus);
     assert!(c.get_flag(flags::HALF_CARRY));
 
     // BIT 7, B
-    let mut c = create_z80(&[0xCB, 0x78]);
+    let (mut c, mut bus) = create_z80(&[0xCB, 0x78]);
     c.b = 0x00;
-    c.step();
+    c.step(&mut bus);
     assert!(c.get_flag(flags::HALF_CARRY));
 
     // BIT 0, (HL)
-    let mut c = create_z80(&[0xCB, 0x46]);
+    let (mut c, mut bus) = create_z80(&[0xCB, 0x46]);
     c.set_hl(0x1000);
-    c.memory.write_byte(0x1000 as u32, 0x00);
-    c.step();
+    bus.memory.write_byte(0x1000 as u32, 0x00);
+    c.step(&mut bus);
     assert!(c.get_flag(flags::HALF_CARRY));
 
     // BIT 4, (IX+5) -> DD CB 05 66
-    let mut c = create_z80(&[0xDD, 0xCB, 0x05, 0x66]);
+    let (mut c, mut bus) = create_z80(&[0xDD, 0xCB, 0x05, 0x66]);
     c.ix = 0x2000;
-    c.memory.write_byte(0x2005 as u32, 0x00);
-    c.step();
+    bus.memory.write_byte(0x2005 as u32, 0x00);
+    c.step(&mut bus);
     assert!(c.get_flag(flags::HALF_CARRY));
 }
 
@@ -459,21 +459,21 @@ fn regression_bit_h_flag() {
     // Reference: Z80 User Manual, BIT b, r: "H is set to 1"
 
     // Case 1: BIT 0, A
-    let mut c = create_z80(&[0xCB, 0x47]);
+    let (mut c, mut bus) = create_z80(&[0xCB, 0x47]);
     c.a = 0xFF; // Set all bits
     c.set_flag(flags::HALF_CARRY, false); // Ensure it starts clear
-    c.step();
+    c.step(&mut bus);
     assert!(
         c.get_flag(flags::HALF_CARRY),
         "H flag should be set after BIT 0, A"
     );
 
     // Case 2: BIT 7, (HL)
-    let mut c = create_z80(&[0xCB, 0x7E]);
+    let (mut c, mut bus) = create_z80(&[0xCB, 0x7E]);
     c.set_hl(0x1234);
-    c.memory.write_byte(0x1234, 0x00);
+    bus.memory.write_byte(0x1234, 0x00);
     c.set_flag(flags::HALF_CARRY, false);
-    c.step();
+    c.step(&mut bus);
     assert!(
         c.get_flag(flags::HALF_CARRY),
         "H flag should be set after BIT 7, (HL)"
@@ -481,11 +481,11 @@ fn regression_bit_h_flag() {
 
     // Case 3: BIT 3, (IX+d)
     // DD CB d 5E -> BIT 3, (IX+d)
-    let mut c = create_z80(&[0xDD, 0xCB, 0x02, 0x5E]);
+    let (mut c, mut bus) = create_z80(&[0xDD, 0xCB, 0x02, 0x5E]);
     c.ix = 0x1000;
-    c.memory.write_byte(0x1002, 0x55);
+    bus.memory.write_byte(0x1002, 0x55);
     c.set_flag(flags::HALF_CARRY, false);
-    c.step();
+    c.step(&mut bus);
     assert!(
         c.get_flag(flags::HALF_CARRY),
         "H flag should be set after BIT 3, (IX+d)"
@@ -495,9 +495,9 @@ fn regression_bit_h_flag() {
 // Bug: RLC/RRC/RL/RR should affect all flags correctly
 #[test]
 fn regression_rlc_flags() {
-    let mut c = create_z80(&[0xCB, 0x07]); // RLC A
+    let (mut c, mut bus) = create_z80(&[0xCB, 0x07]); // RLC A
     c.a = 0x80; // 1000 0000 -> 0000 0001 (Carry=1)
-    c.step();
+    c.step(&mut bus);
     assert_eq!(c.a, 0x01);
     assert!(!c.get_flag(flags::ZERO)); // Z=0
     assert!(!c.get_flag(flags::SIGN)); // S=0
@@ -509,9 +509,9 @@ fn regression_rlc_flags() {
 
 #[test]
 fn regression_rrc_flags() {
-    let mut c = create_z80(&[0xCB, 0x0F]); // RRC A
+    let (mut c, mut bus) = create_z80(&[0xCB, 0x0F]); // RRC A
     c.a = 0x01; // 0000 0001 -> 1000 0000 (Carry=1)
-    c.step();
+    c.step(&mut bus);
     assert_eq!(c.a, 0x80);
     assert!(!c.get_flag(flags::ZERO)); // Z=0
     assert!(c.get_flag(flags::SIGN)); // S=1
@@ -523,10 +523,10 @@ fn regression_rrc_flags() {
 
 #[test]
 fn regression_rl_flags() {
-    let mut c = create_z80(&[0xCB, 0x17]); // RL A
+    let (mut c, mut bus) = create_z80(&[0xCB, 0x17]); // RL A
     c.a = 0x80; // 1000 0000
     c.set_flag(flags::CARRY, false);
-    c.step();
+    c.step(&mut bus);
     // 1000 0000 << 1 | 0 = 0000 0000, C=1
     assert_eq!(c.a, 0x00);
     assert!(c.get_flag(flags::ZERO)); // Z=1
@@ -539,10 +539,10 @@ fn regression_rl_flags() {
 
 #[test]
 fn regression_rr_flags() {
-    let mut c = create_z80(&[0xCB, 0x1F]); // RR A
+    let (mut c, mut bus) = create_z80(&[0xCB, 0x1F]); // RR A
     c.a = 0x01; // 0000 0001
     c.set_flag(flags::CARRY, true);
-    c.step();
+    c.step(&mut bus);
     // 0000 0001 >> 1 | 0x80 = 1000 0000, C=1
     assert_eq!(c.a, 0x80);
     assert!(!c.get_flag(flags::ZERO)); // Z=0
@@ -555,9 +555,9 @@ fn regression_rr_flags() {
 
 #[test]
 fn regression_sla_flags() {
-    let mut c = create_z80(&[0xCB, 0x27]); // SLA A
+    let (mut c, mut bus) = create_z80(&[0xCB, 0x27]); // SLA A
     c.a = 0xFF; // 1111 1111
-    c.step();
+    c.step(&mut bus);
     // 1111 1111 << 1 = 1111 1110 (0xFE), C=1
     assert_eq!(c.a, 0xFE);
     assert!(!c.get_flag(flags::ZERO)); // Z=0
@@ -570,9 +570,9 @@ fn regression_sla_flags() {
 
 #[test]
 fn regression_sra_flags() {
-    let mut c = create_z80(&[0xCB, 0x2F]); // SRA A
+    let (mut c, mut bus) = create_z80(&[0xCB, 0x2F]); // SRA A
     c.a = 0x80; // 1000 0000
-    c.step();
+    c.step(&mut bus);
     // 1000 0000 >> 1 | 1000 0000 = 1100 0000 (0xC0), C=0
     assert_eq!(c.a, 0xC0);
     assert!(!c.get_flag(flags::ZERO)); // Z=0
@@ -585,9 +585,9 @@ fn regression_sra_flags() {
 
 #[test]
 fn regression_srl_flags() {
-    let mut c = create_z80(&[0xCB, 0x3F]); // SRL A
+    let (mut c, mut bus) = create_z80(&[0xCB, 0x3F]); // SRL A
     c.a = 0x01; // 0000 0001
-    c.step();
+    c.step(&mut bus);
     // 0000 0001 >> 1 = 0000 0000, C=1
     assert_eq!(c.a, 0x00);
     assert!(c.get_flag(flags::ZERO)); // Z=1
@@ -601,11 +601,11 @@ fn regression_srl_flags() {
 // Bug: SBC HL, BC with no carry shouldn't borrow
 #[test]
 fn regression_sbc_hl_no_carry() {
-    let mut c = create_z80(&[0xED, 0x42]);
+    let (mut c, mut bus) = create_z80(&[0xED, 0x42]);
     c.set_hl(0x1234);
     c.set_bc(0x0100);
     c.f = 0; // No carry
-    c.step();
+    c.step(&mut bus);
     assert_eq!(c.hl(), 0x1134);
 }
 
@@ -613,32 +613,32 @@ fn regression_sbc_hl_no_carry() {
 
 #[test]
 fn regression_sp_wrap_push() {
-    let mut c = create_z80(&[0xC5]); // PUSH BC
+    let (mut c, mut bus) = create_z80(&[0xC5]); // PUSH BC
     c.sp = 0x0001;
     c.set_bc(0x1234);
-    c.step();
+    c.step(&mut bus);
     assert_eq!(c.sp, 0xFFFF);
-    assert_eq!(c.memory.read_byte(0xFFFF as u32), 0x34);
-    assert_eq!(c.memory.read_byte(0x0000 as u32), 0x12);
+    assert_eq!(bus.memory.read_byte(0xFFFF as u32), 0x34);
+    assert_eq!(bus.memory.read_byte(0x0000 as u32), 0x12);
 }
 
 #[test]
 fn regression_sp_wrap_pop() {
-    let mut c = create_z80(&[0xC1]); // POP BC at addr 0
+    let (mut c, mut bus) = create_z80(&[0xC1]); // POP BC at addr 0
     c.sp = 0xFFFE; // Use 0xFFFE so we don't overwrite the instruction
-    c.memory.write_byte(0xFFFE as u32, 0xCD);
-    c.memory.write_byte(0xFFFF as u32, 0xAB);
-    c.step();
+    bus.memory.write_byte(0xFFFE as u32, 0xCD);
+    bus.memory.write_byte(0xFFFF as u32, 0xAB);
+    c.step(&mut bus);
     assert_eq!(c.bc(), 0xABCD);
     assert_eq!(c.sp, 0x0000);
 }
 
 #[test]
 fn regression_pc_wrap() {
-    let mut c = create_z80(&[0x00]); // NOP at 0xFFFF
+    let (mut c, mut bus) = create_z80(&[0x00]); // NOP at 0xFFFF
     c.pc = 0xFFFF;
-    c.memory.write_byte(0xFFFF as u32, 0x00);
-    c.step();
+    bus.memory.write_byte(0xFFFF as u32, 0x00);
+    c.step(&mut bus);
     assert_eq!(c.pc, 0x0000);
 }
 
@@ -647,44 +647,44 @@ fn regression_pc_wrap() {
 #[test]
 fn regression_ei_di_sequence() {
     // EI followed by DI - should DI take effect immediately?
-    let mut c = create_z80(&[0xFB, 0xF3]); // EI; DI
+    let (mut c, mut bus) = create_z80(&[0xFB, 0xF3]); // EI; DI
     c.iff1 = false;
     c.iff2 = false;
-    c.step(); // EI
-    c.step(); // DI
+    c.step(&mut bus); // EI
+    c.step(&mut bus); // DI
     assert!(!c.iff1);
     assert!(!c.iff2);
 }
 
 #[test]
 fn regression_halt_continues() {
-    let mut c = create_z80(&[0x76]);
-    c.step();
+    let (mut c, mut bus) = create_z80(&[0x76]);
+    c.step(&mut bus);
     assert!(c.halted);
     // HALT should stay at same PC
     let old_pc = c.pc;
-    c.step();
+    c.step(&mut bus);
     assert_eq!(c.pc, old_pc);
 }
 
 #[test]
 fn regression_daa_after_sub_carry() {
-    let mut c = create_z80(&[0x90, 0x27]); // SUB B; DAA
+    let (mut c, mut bus) = create_z80(&[0x90, 0x27]); // SUB B; DAA
     c.a = 0x10;
     c.b = 0x20;
-    c.step(); // SUB
-    c.step(); // DAA
+    c.step(&mut bus); // SUB
+    c.step(&mut bus); // DAA
     assert_eq!(c.a, 0x90);
     assert!(c.get_flag(flags::CARRY));
 }
 
 #[test]
 fn regression_daa_after_sub_carry_half() {
-    let mut c = create_z80(&[0x90, 0x27]); // SUB B; DAA
+    let (mut c, mut bus) = create_z80(&[0x90, 0x27]); // SUB B; DAA
     c.a = 0x13;
     c.b = 0x19;
-    c.step(); // SUB
-    c.step(); // DAA
+    c.step(&mut bus); // SUB
+    c.step(&mut bus); // DAA
     assert_eq!(c.a, 0x94);
     assert!(c.get_flag(flags::CARRY));
 }

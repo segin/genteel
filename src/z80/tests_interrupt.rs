@@ -13,40 +13,40 @@ use crate::z80::test_utils::create_z80;
 
 #[test]
 fn di_clears_iff1() {
-    let mut c = create_z80(&[0xF3]);
+    let (mut c, mut bus) = create_z80(&[0xF3]);
     c.iff1 = true;
-    c.step();
+    c.step(&mut bus);
     assert!(!c.iff1);
 }
 #[test]
 fn di_clears_iff2() {
-    let mut c = create_z80(&[0xF3]);
+    let (mut c, mut bus) = create_z80(&[0xF3]);
     c.iff2 = true;
-    c.step();
+    c.step(&mut bus);
     assert!(!c.iff2);
 }
 #[test]
 fn di_both() {
-    let mut c = create_z80(&[0xF3]);
+    let (mut c, mut bus) = create_z80(&[0xF3]);
     c.iff1 = true;
     c.iff2 = true;
-    c.step();
+    c.step(&mut bus);
     assert!(!c.iff1);
     assert!(!c.iff2);
 }
 #[test]
 fn di_already_clear() {
-    let mut c = create_z80(&[0xF3]);
+    let (mut c, mut bus) = create_z80(&[0xF3]);
     c.iff1 = false;
     c.iff2 = false;
-    c.step();
+    c.step(&mut bus);
     assert!(!c.iff1);
     assert!(!c.iff2);
 }
 #[test]
 fn di_pc() {
-    let mut c = create_z80(&[0xF3]);
-    c.step();
+    let (mut c, mut bus) = create_z80(&[0xF3]);
+    c.step(&mut bus);
     assert_eq!(c.pc, 1);
 }
 
@@ -54,40 +54,40 @@ fn di_pc() {
 
 #[test]
 fn ei_sets_iff1() {
-    let mut c = create_z80(&[0xFB]);
+    let (mut c, mut bus) = create_z80(&[0xFB]);
     c.iff1 = false;
-    c.step();
+    c.step(&mut bus);
     assert!(c.iff1);
 }
 #[test]
 fn ei_sets_iff2() {
-    let mut c = create_z80(&[0xFB]);
+    let (mut c, mut bus) = create_z80(&[0xFB]);
     c.iff2 = false;
-    c.step();
+    c.step(&mut bus);
     assert!(c.iff2);
 }
 #[test]
 fn ei_both() {
-    let mut c = create_z80(&[0xFB]);
+    let (mut c, mut bus) = create_z80(&[0xFB]);
     c.iff1 = false;
     c.iff2 = false;
-    c.step();
+    c.step(&mut bus);
     assert!(c.iff1);
     assert!(c.iff2);
 }
 #[test]
 fn ei_already_set() {
-    let mut c = create_z80(&[0xFB]);
+    let (mut c, mut bus) = create_z80(&[0xFB]);
     c.iff1 = true;
     c.iff2 = true;
-    c.step();
+    c.step(&mut bus);
     assert!(c.iff1);
     assert!(c.iff2);
 }
 #[test]
 fn ei_pc() {
-    let mut c = create_z80(&[0xFB]);
-    c.step();
+    let (mut c, mut bus) = create_z80(&[0xFB]);
+    c.step(&mut bus);
     assert_eq!(c.pc, 1);
 }
 
@@ -95,26 +95,26 @@ fn ei_pc() {
 
 #[test]
 fn di_ei_sequence() {
-    let mut c = create_z80(&[0xF3, 0xFB]); // DI; EI
+    let (mut c, mut bus) = create_z80(&[0xF3, 0xFB]); // DI; EI
     c.iff1 = true;
     c.iff2 = true;
-    c.step(); // DI
+    c.step(&mut bus); // DI
     assert!(!c.iff1);
     assert!(!c.iff2);
-    c.step(); // EI
+    c.step(&mut bus); // EI
     assert!(c.iff1);
     assert!(c.iff2);
 }
 
 #[test]
 fn ei_di_sequence() {
-    let mut c = create_z80(&[0xFB, 0xF3]); // EI; DI
+    let (mut c, mut bus) = create_z80(&[0xFB, 0xF3]); // EI; DI
     c.iff1 = false;
     c.iff2 = false;
-    c.step(); // EI
+    c.step(&mut bus); // EI
     assert!(c.iff1);
     assert!(c.iff2);
-    c.step(); // DI
+    c.step(&mut bus); // DI
     assert!(!c.iff1);
     assert!(!c.iff2);
 }
@@ -123,50 +123,50 @@ fn ei_di_sequence() {
 
 #[test]
 fn im0_from_1() {
-    let mut c = create_z80(&[0xED, 0x46]);
+    let (mut c, mut bus) = create_z80(&[0xED, 0x46]);
     c.im = 1;
-    c.step();
+    c.step(&mut bus);
     assert_eq!(c.im, 0);
 }
 #[test]
 fn im0_from_2() {
-    let mut c = create_z80(&[0xED, 0x46]);
+    let (mut c, mut bus) = create_z80(&[0xED, 0x46]);
     c.im = 2;
-    c.step();
+    c.step(&mut bus);
     assert_eq!(c.im, 0);
 }
 #[test]
 fn im1_from_0() {
-    let mut c = create_z80(&[0xED, 0x56]);
+    let (mut c, mut bus) = create_z80(&[0xED, 0x56]);
     c.im = 0;
-    c.step();
+    c.step(&mut bus);
     assert_eq!(c.im, 1);
 }
 #[test]
 fn im1_from_2() {
-    let mut c = create_z80(&[0xED, 0x56]);
+    let (mut c, mut bus) = create_z80(&[0xED, 0x56]);
     c.im = 2;
-    c.step();
+    c.step(&mut bus);
     assert_eq!(c.im, 1);
 }
 #[test]
 fn im2_from_0() {
-    let mut c = create_z80(&[0xED, 0x5E]);
+    let (mut c, mut bus) = create_z80(&[0xED, 0x5E]);
     c.im = 0;
-    c.step();
+    c.step(&mut bus);
     assert_eq!(c.im, 2);
 }
 #[test]
 fn im2_from_1() {
-    let mut c = create_z80(&[0xED, 0x5E]);
+    let (mut c, mut bus) = create_z80(&[0xED, 0x5E]);
     c.im = 1;
-    c.step();
+    c.step(&mut bus);
     assert_eq!(c.im, 2);
 }
 #[test]
 fn im_pc() {
-    let mut c = create_z80(&[0xED, 0x46]);
-    c.step();
+    let (mut c, mut bus) = create_z80(&[0xED, 0x46]);
+    c.step(&mut bus);
     assert_eq!(c.pc, 2);
 }
 
@@ -174,37 +174,37 @@ fn im_pc() {
 
 #[test]
 fn retn_returns() {
-    let mut c = create_z80(&[0xED, 0x45]);
+    let (mut c, mut bus) = create_z80(&[0xED, 0x45]);
     c.sp = 0x1FFE;
-    c.memory.write_byte(0x1FFE as u32, 0x34);
-    c.memory.write_byte(0x1FFF as u32, 0x12);
-    c.step();
+    bus.memory.write_byte(0x1FFE as u32, 0x34);
+    bus.memory.write_byte(0x1FFF as u32, 0x12);
+    c.step(&mut bus);
     assert_eq!(c.pc, 0x1234);
     assert_eq!(c.sp, 0x2000);
 }
 
 #[test]
 fn retn_restores_iff1_from_iff2_true() {
-    let mut c = create_z80(&[0xED, 0x45]);
+    let (mut c, mut bus) = create_z80(&[0xED, 0x45]);
     c.sp = 0x1FFE;
-    c.memory.write_byte(0x1FFE as u32, 0x00);
-    c.memory.write_byte(0x1FFF as u32, 0x00);
+    bus.memory.write_byte(0x1FFE as u32, 0x00);
+    bus.memory.write_byte(0x1FFF as u32, 0x00);
     c.iff1 = false;
     c.iff2 = true;
-    c.step();
+    c.step(&mut bus);
     assert!(c.iff1);
     assert!(c.iff2);
 }
 
 #[test]
 fn retn_restores_iff1_from_iff2_false() {
-    let mut c = create_z80(&[0xED, 0x45]);
+    let (mut c, mut bus) = create_z80(&[0xED, 0x45]);
     c.sp = 0x1FFE;
-    c.memory.write_byte(0x1FFE as u32, 0x00);
-    c.memory.write_byte(0x1FFF as u32, 0x00);
+    bus.memory.write_byte(0x1FFE as u32, 0x00);
+    bus.memory.write_byte(0x1FFF as u32, 0x00);
     c.iff1 = true;
     c.iff2 = false;
-    c.step();
+    c.step(&mut bus);
     assert!(!c.iff1);
     assert!(!c.iff2);
 }
@@ -213,11 +213,11 @@ fn retn_restores_iff1_from_iff2_false() {
 
 #[test]
 fn reti_returns() {
-    let mut c = create_z80(&[0xED, 0x4D]);
+    let (mut c, mut bus) = create_z80(&[0xED, 0x4D]);
     c.sp = 0x1FFE;
-    c.memory.write_byte(0x1FFE as u32, 0x78);
-    c.memory.write_byte(0x1FFF as u32, 0x56);
-    c.step();
+    bus.memory.write_byte(0x1FFE as u32, 0x78);
+    bus.memory.write_byte(0x1FFF as u32, 0x56);
+    c.step(&mut bus);
     assert_eq!(c.pc, 0x5678);
     assert_eq!(c.sp, 0x2000);
 }
@@ -225,13 +225,13 @@ fn reti_returns() {
 #[test]
 fn reti_does_not_modify_iff() {
     // RETI doesn't modify IFF flags (unlike RETN)
-    let mut c = create_z80(&[0xED, 0x4D]);
+    let (mut c, mut bus) = create_z80(&[0xED, 0x4D]);
     c.sp = 0x1FFE;
-    c.memory.write_byte(0x1FFE as u32, 0x00);
-    c.memory.write_byte(0x1FFF as u32, 0x00);
+    bus.memory.write_byte(0x1FFE as u32, 0x00);
+    bus.memory.write_byte(0x1FFF as u32, 0x00);
     c.iff1 = false;
     c.iff2 = true;
-    c.step();
+    c.step(&mut bus);
     // IFF flags should be unchanged
     assert!(!c.iff1);
     assert!(c.iff2);
@@ -241,39 +241,39 @@ fn reti_does_not_modify_iff() {
 
 #[test]
 fn ld_a_i_sets_parity_from_iff2_true() {
-    let mut c = create_z80(&[0xED, 0x57]);
+    let (mut c, mut bus) = create_z80(&[0xED, 0x57]);
     c.i = 0x42;
     c.iff2 = true;
-    c.step();
+    c.step(&mut bus);
     assert_eq!(c.a, 0x42);
     assert!(c.get_flag(flags::PARITY)); // P/V = IFF2
 }
 
 #[test]
 fn ld_a_i_sets_parity_from_iff2_false() {
-    let mut c = create_z80(&[0xED, 0x57]);
+    let (mut c, mut bus) = create_z80(&[0xED, 0x57]);
     c.i = 0x42;
     c.iff2 = false;
-    c.step();
+    c.step(&mut bus);
     assert_eq!(c.a, 0x42);
     assert!(!c.get_flag(flags::PARITY)); // P/V = IFF2
 }
 
 #[test]
 fn ld_a_r_sets_parity_from_iff2_true() {
-    let mut c = create_z80(&[0xED, 0x5F]);
+    let (mut c, mut bus) = create_z80(&[0xED, 0x5F]);
     c.r = 0x00; // Will become 0x01 after fetch
     c.iff2 = true;
-    c.step();
+    c.step(&mut bus);
     assert!(c.get_flag(flags::PARITY));
 }
 
 #[test]
 fn ld_a_r_sets_parity_from_iff2_false() {
-    let mut c = create_z80(&[0xED, 0x5F]);
+    let (mut c, mut bus) = create_z80(&[0xED, 0x5F]);
     c.r = 0x00;
     c.iff2 = false;
-    c.step();
+    c.step(&mut bus);
     assert!(!c.get_flag(flags::PARITY));
 }
 
@@ -281,27 +281,27 @@ fn ld_a_r_sets_parity_from_iff2_false() {
 
 #[test]
 fn halt_sets_flag() {
-    let mut c = create_z80(&[0x76]);
+    let (mut c, mut bus) = create_z80(&[0x76]);
     assert!(!c.halted);
-    c.step();
+    c.step(&mut bus);
     assert!(c.halted);
 }
 
 #[test]
 fn halt_stays_halted() {
-    let mut c = create_z80(&[0x76]);
-    c.step();
+    let (mut c, mut bus) = create_z80(&[0x76]);
+    c.step(&mut bus);
     assert!(c.halted);
-    let cycles = c.step();
+    let cycles = c.step(&mut bus);
     assert!(c.halted);
     assert_eq!(cycles, 4); // HALT uses 4 T-states per NOP
 }
 
 #[test]
 fn halt_pc_stops() {
-    let mut c = create_z80(&[0x76]);
-    c.step();
+    let (mut c, mut bus) = create_z80(&[0x76]);
+    c.step(&mut bus);
     assert_eq!(c.pc, 1);
-    c.step();
+    c.step(&mut bus);
     assert_eq!(c.pc, 1); // PC doesn't advance during HALT
 }
