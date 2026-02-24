@@ -1,132 +1,54 @@
-//! M68k CPU Core
-//!
-//! This module implements the Motorola 68000 CPU, the main processor
-//! of the Sega Mega Drive/Genesis.
+use crate::memory::MemoryInterface;
+use serde::{Deserialize, Serialize};
 
 pub mod addressing;
 pub mod decoder;
 pub mod instructions;
 pub mod ops;
 
-use crate::cpu::decoder::decode;
-use crate::cpu::instructions::{
-    ArithmeticInstruction, BitSource, BitsInstruction, Condition, DataInstruction,
-    DecodeCacheEntry, Instruction, Size, SystemInstruction,
-};
-use crate::memory::MemoryInterface;
+pub use decoder::{Condition, Cpu, Size};
 
-/// Status Register flags
 pub mod flags {
-    pub const CARRY: u16 = 0x0001; // C - Carry
-    pub const OVERFLOW: u16 = 0x0002; // V - Overflow
-    pub const ZERO: u16 = 0x0004; // Z - Zero
-    pub const NEGATIVE: u16 = 0x0008; // N - Negative
-    pub const EXTEND: u16 = 0x0010; // X - Extend
-    pub const INTERRUPT_MASK: u16 = 0x0700; // I2-I0 - Interrupt mask
-    pub const SUPERVISOR: u16 = 0x2000; // S - Supervisor mode
-    pub const TRACE: u16 = 0x8000; // T - Trace mode
+    pub const CARRY: u16 = 0x0001;
+    pub const OVERFLOW: u16 = 0x0002;
+    pub const ZERO: u16 = 0x0004;
+    pub const NEGATIVE: u16 = 0x0008;
+    pub const EXTEND: u16 = 0x0010;
+    pub const INTERRUPT_MASK: u16 = 0x0700;
+    pub const MASTER_STATE: u16 = 0x1000;
+    pub const SUPERVISOR: u16 = 0x2000;
+    pub const TRACE: u16 = 0x8000;
 }
 
-/// CPU Cache Configuration
-const CACHE_SIZE: usize = 65536;
-const CACHE_MASK: u32 = 0xFFFF;
-const CACHE_ROM_LIMIT: u32 = 0x400000;
-
-/// Motorola 68000 Central Processing Unit
-#[derive(Debug)]
-pub struct Cpu {
-    // Registers
-    pub d: [u32; 8], // Data registers D0-D7
-    pub a: [u32; 8], // Address registers A0-A7 (A7 is SP)
-    pub pc: u32,     // Program counter
-    pub sr: u16,     // Status register
-
-    // Internal state
-    pub usp: u32, // User stack pointer (saved when in supervisor mode)
-    pub ssp: u32, // Supervisor stack pointer (saved when in user mode)
-
-    // Cycle counter for timing
-    pub cycles: u64,
-
-    // Halted state
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CpuState {
+    pub d: [u32; 8],
+    pub a: [u32; 8],
+    pub pc: u32,
+    pub sr: u16,
     pub halted: bool,
-
-    // Pending interrupt level (0-7, 0 = none)
     pub pending_interrupt: u8,
-    pub pending_exception: bool,
-
-    // Interrupt pending bitmask (bit N = level N is pending)
-    pub interrupt_pending_mask: u8,
-
-    // Instruction cache (Direct Mapped, 64K entries)
-    pub decode_cache: Box<[DecodeCacheEntry]>,
 }
 
 impl Cpu {
-    pub fn new<M: MemoryInterface>(memory: &mut M) -> Self {
-        let mut cpu = Self {
-            d: [0; 8],
-            a: [0; 8],
-            pc: 0,
-            sr: 0x2700, // Supervisor mode, interrupts disabled
-            usp: 0,
-            ssp: 0,
-            cycles: 0,
-            halted: false,
-            pending_interrupt: 0,
-            pending_exception: false,
-            interrupt_pending_mask: 0,
-            decode_cache: vec![DecodeCacheEntry::default(); CACHE_SIZE].into_boxed_slice(),
-        };
-
-        // At startup, the supervisor stack pointer is read from address 0x00000000
-        // and the program counter is read from 0x00000004.
-        cpu.a[7] = memory.read_long(0x0);
-        cpu.ssp = cpu.a[7];
-        cpu.pc = memory.read_long(0x4);
-
-        cpu
-    }
-
-    /// Reset the CPU to initial state
-    pub fn reset<M: MemoryInterface>(&mut self, memory: &mut M) {
-        self.d = [0; 8];
-        self.a = [0; 8];
-        self.sr = 0x2700;
-        self.a[7] = memory.read_long(0x0);
-        self.ssp = self.a[7];
-        self.pc = memory.read_long(0x4);
-        self.cycles = 0;
-        self.halted = false;
-        self.pending_interrupt = 0;
-        self.interrupt_pending_mask = 0;
-        // Invalidate cache on reset
-        self.decode_cache.fill(DecodeCacheEntry::default());
-    }
-
-    /// Invalidate the instruction cache.
-    /// Should be called when code in ROM/RAM is modified (e.g. self-modifying code, or tests).
-    pub fn invalidate_cache(&mut self) {
-        self.decode_cache.fill(DecodeCacheEntry::default());
-    }
-
-    fn invalidate_cache_line(&mut self, addr: u32) {
-        let index = ((addr >> 1) & CACHE_MASK) as usize;
-        if let Some(entry) = self.decode_cache.get_mut(index) {
-            entry.pc = u32::MAX;
+    pub fn get_state(&self) -> CpuState {
+        CpuState {
+            d: self.d,
+            a: self.a,
+            pc: self.pc,
+            sr: self.sr,
+            halted: self.halted,
+            pending_interrupt: self.pending_interrupt,
         }
     }
 
-    /// Request an interrupt at the specified level
-    /// Uses a bitmask to queue multiple interrupt levels
-    pub fn request_interrupt(&mut self, level: u8) {
-        if level == 0 || level > 7 {
-            return;
-        }
-        // Set the bit for this interrupt level
-        self.interrupt_pending_mask |= 1 << level;
-        // Update pending_interrupt to highest priority
-        self.update_pending_interrupt();
+    pub fn set_state(&mut self, state: CpuState) {
+        self.d = state.d;
+        self.a = state.a;
+        self.pc = state.pc;
+        self.sr = state.sr;
+        self.halted = state.halted;
+        self.pending_interrupt = state.pending_interrupt;
     }
 
     /// Update pending_interrupt to highest priority level from bitmask
@@ -604,7 +526,7 @@ impl Cpu {
                     self.pc = self.pc.wrapping_add(2);
                     ops::system::exec_link(self, reg, displacement, memory)
                 }
-                SystemInstruction::Unlk { reg } => ops::system::exec_unlk(self, reg, memory),
+                SystemInstruction::Unlk { reg } => ops::system::unlk(self, reg, memory),
                 SystemInstruction::MoveToSr { src } => {
                     ops::system::exec_move_to_sr(self, src, memory)
                 }
@@ -792,13 +714,13 @@ impl Cpu {
         }
     }
 
-    pub fn test_condition(&self, condition: Condition) -> bool {
-        let n = self.get_flag(flags::NEGATIVE);
+    pub fn check_condition(&self, cond: Condition) -> bool {
         let z = self.get_flag(flags::ZERO);
-        let v = self.get_flag(flags::OVERFLOW);
         let c = self.get_flag(flags::CARRY);
+        let n = self.get_flag(flags::NEGATIVE);
+        let v = self.get_flag(flags::OVERFLOW);
 
-        match condition {
+        match cond {
             Condition::True => true,
             Condition::False => false,
             Condition::High => !c && !z,
@@ -811,7 +733,7 @@ impl Cpu {
             Condition::OverflowSet => v,
             Condition::Plus => !n,
             Condition::Minus => n,
-            Condition::GreaterOrEqual => (n && v) || (!n && !v),
+            Condition::GreaterEqual => (n && v) || (!n && !v),
             Condition::LessThan => (n && !v) || (!n && v),
             Condition::GreaterThan => (n && v && !z) || (!n && !v && !z),
             Condition::LessOrEqual => z || (n && !v) || (!n && v),
@@ -820,11 +742,17 @@ impl Cpu {
 }
 
 #[cfg(test)]
+mod bench_decoder;
+#[cfg(test)]
 mod tests_addressing;
 #[cfg(test)]
 mod tests_bug_fixes;
 #[cfg(test)]
 mod tests_cache;
+#[cfg(test)]
+mod tests_decoder_shift;
+#[cfg(test)]
+mod tests_interrupts;
 #[cfg(test)]
 mod tests_m68k_alu;
 #[cfg(test)]
@@ -840,7 +768,11 @@ mod tests_m68k_data;
 #[cfg(test)]
 mod tests_m68k_data_unit;
 #[cfg(test)]
+mod tests_m68k_exhaustive;
+#[cfg(test)]
 mod tests_m68k_extended;
+#[cfg(test)]
+mod tests_m68k_movep;
 #[cfg(test)]
 mod tests_m68k_shift;
 #[cfg(test)]
@@ -849,6 +781,3 @@ mod tests_m68k_torture;
 mod tests_performance;
 #[cfg(test)]
 mod tests_security;
-mod tests_decoder_shift;
-#[cfg(test)]
-mod tests_m68k_exhaustive;
