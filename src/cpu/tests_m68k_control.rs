@@ -380,6 +380,35 @@ fn test_trap_15() {
 }
 
 // ============================================================================
+// TRAPV Tests
+// ============================================================================
+
+#[test]
+fn test_trapv_overflow_set() {
+    let (mut cpu, mut memory) = create_cpu();
+    write_op(&mut memory, &[0x4E76]); // TRAPV
+    cpu.set_flag(flags::OVERFLOW, true);
+
+    // Set Vector 7 (TRAPV exception vector)
+    memory.write_long(0x1C, 0x4000); // Vector 7 address: 7 * 4 = 28 (0x1C)
+
+    cpu.step_instruction(&mut memory);
+
+    assert_eq!(cpu.pc, 0x4000); // Should jump to vector 7 handler
+}
+
+#[test]
+fn test_trapv_overflow_clear() {
+    let (mut cpu, mut memory) = create_cpu();
+    write_op(&mut memory, &[0x4E76]); // TRAPV
+    cpu.set_flag(flags::OVERFLOW, false);
+
+    cpu.step_instruction(&mut memory);
+
+    assert_eq!(cpu.pc, 0x1002); // Should continue execution (no trap)
+}
+
+// ============================================================================
 // NOP Test
 // ============================================================================
 
