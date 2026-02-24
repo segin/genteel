@@ -291,12 +291,6 @@ impl Emulator {
         {
             let mut bus = emulator.bus.borrow_mut();
             emulator.cpu.reset(&mut *bus);
-            // Set up raw bus pointer for Z80 performance and to avoid RefCell deadlocks
-            unsafe {
-                let bus_ptr: *mut Bus = &mut *bus;
-                emulator.z80.memory.set_raw_bus(bus_ptr);
-                emulator.z80.io.set_raw_bus(bus_ptr);
-            }
         }
         emulator.z80.reset();
         emulator
@@ -502,7 +496,7 @@ impl Emulator {
         }
     }
     fn sync_components(
-        bus: &mut Bus,
+        bus: &Rc<RefCell<Bus>>,
         m68k_cycles: u32,
         z80: &mut Z80<Z80Bus, Z80Bus>,
         z80_cycle_debt: &mut f32,
@@ -516,19 +510,25 @@ impl Emulator {
     ) {
         // 1. Z80 State and Timing
         let prev = *z80_last_bus_req;
-        if debug && bus.z80_bus_request != prev {
-            log::debug!(
-                "Bus Req Changed: {} -> {} at 68k PC={:06X}",
-                prev,
-                bus.z80_bus_request,
-                cpu_pc
-            );
-        }
-        *z80_last_bus_req = bus.z80_bus_request;
 
-        let z80_can_run = !bus.z80_reset && !bus.z80_bus_request;
-        let z80_is_reset = bus.z80_reset;
-        let cycles_per_sample = 7670453.0 / (bus.sample_rate as f32);
+        let (z80_req, z80_reset, sample_rate) = {
+            let b = bus.borrow();
+            if debug && b.z80_bus_request != prev {
+                log::debug!(
+                    "Bus Req Changed: {} -> {} at 68k PC={:06X}",
+                    prev,
+                    b.z80_bus_request,
+                    cpu_pc
+                );
+            }
+            (b.z80_bus_request, b.z80_reset, b.sample_rate)
+        };
+
+        *z80_last_bus_req = z80_req;
+
+        let z80_can_run = !z80_reset && !z80_req;
+        let z80_is_reset = z80_reset;
+        let cycles_per_sample = 7670453.0 / (sample_rate as f32);
 
         // Handle Z80 Reset
         if z80_is_reset && !*z80_last_reset {
@@ -556,27 +556,31 @@ impl Emulator {
             const Z80_CYCLES_PER_M68K_CYCLE: f32 = 3.58 / 7.67;
             *z80_cycle_debt += m68k_cycles as f32 * Z80_CYCLES_PER_M68K_CYCLE;
             while *z80_cycle_debt >= 1.0 {
+                // IMPORTANT: bus is NOT borrowed here, so z80.step() can safely borrow it internally.
                 let cycles = z80.step();
                 *z80_cycle_debt -= cycles as f32;
             }
         }
 
         // 3. Update APU and generate audio samples
-        bus.audio_accumulator += m68k_cycles as f32;
+        {
+            let mut bus_guard = bus.borrow_mut();
+            bus_guard.audio_accumulator += m68k_cycles as f32;
 
-        while bus.audio_accumulator >= cycles_per_sample {
-            let (l, r) = bus.apu.step(cycles_per_sample as u32);
-            if bus.audio_buffer.len() < 32768 {
-                bus.audio_buffer.push(l);
-                bus.audio_buffer.push(r);
+            while bus_guard.audio_accumulator >= cycles_per_sample {
+                let (l, r) = bus_guard.apu.step(cycles_per_sample as u32);
+                if bus_guard.audio_buffer.len() < 32768 {
+                    bus_guard.audio_buffer.push(l);
+                    bus_guard.audio_buffer.push(r);
+                }
+                bus_guard.audio_accumulator -= cycles_per_sample;
             }
-            bus.audio_accumulator -= cycles_per_sample;
         }
     }
 
     fn run_cpu_batch_static(
         cpu: &mut Cpu,
-        bus: &mut Bus,
+        bus: &Rc<RefCell<Bus>>,
         max_cycles: u32,
         z80: &mut Z80<Z80Bus, Z80Bus>,
         z80_cycle_debt: &mut f32,
@@ -588,7 +592,10 @@ impl Emulator {
         z80_trace_count: &mut u32,
         debug: bool,
     ) -> CpuBatchResult {
-        let (initial_req, initial_rst) = (bus.z80_bus_request, bus.z80_reset);
+        let (initial_req, initial_rst) = {
+            let b = bus.borrow();
+            (b.z80_bus_request, b.z80_reset)
+        };
         let mut pending_cycles = 0;
         loop {
             if pending_cycles >= max_cycles {
@@ -597,7 +604,10 @@ impl Emulator {
                     z80_change: None,
                 };
             }
-            let m68k_cycles = cpu.step_instruction(bus);
+            let m68k_cycles = {
+                let mut bus_guard = bus.borrow_mut();
+                cpu.step_instruction(&mut *bus_guard)
+            };
 
             let trigger_vint = line == active_lines && pending_cycles < 10;
             Self::sync_components(
@@ -615,7 +625,10 @@ impl Emulator {
             );
 
             // Check for Z80 state change
-            let (req, rst) = (bus.z80_bus_request, bus.z80_reset);
+            let (req, rst) = {
+                let b = bus.borrow();
+                (b.z80_bus_request, b.z80_reset)
+            };
 
             if req != initial_req || rst != initial_rst {
                 return CpuBatchResult {
@@ -639,10 +652,9 @@ impl Emulator {
             let remaining = CYCLES_PER_LINE - cycles_scanline;
             let limit = std::cmp::min(remaining, BATCH_SIZE);
             let result = {
-                let mut bus = self.bus.borrow_mut();
                 Self::run_cpu_batch_static(
                     &mut self.cpu,
-                    &mut *bus,
+                    &self.bus,
                     limit,
                     &mut self.z80,
                     z80_cycle_debt,
@@ -659,15 +671,17 @@ impl Emulator {
             cycles_scanline += result.cycles;
 
             if let Some(change) = result.z80_change {
-                let mut bus = self.bus.borrow_mut();
-                // Apply the new state for the instruction that caused the change
-                bus.z80_bus_request = change.new_req;
-                bus.z80_reset = change.new_rst;
+                {
+                    let mut bus = self.bus.borrow_mut();
+                    // Apply the new state for the instruction that caused the change
+                    bus.z80_bus_request = change.new_req;
+                    bus.z80_reset = change.new_rst;
+                }
 
                 let trigger_vint = line == active_lines && cycles_scanline < 10;
                 // Sync components for the instruction that triggered the state change
                 Self::sync_components(
-                    &mut *bus,
+                    &self.bus,
                     change.instruction_cycles,
                     &mut self.z80,
                     z80_cycle_debt,
@@ -750,6 +764,7 @@ impl Emulator {
 
             // Log every 600 frames (approx 10 seconds)
             if self.debug && current % 600 == 0 {
+                #[cfg(feature = "gui")]
                 self.log_debug(current as u64);
             }
         }
