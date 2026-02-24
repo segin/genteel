@@ -711,13 +711,16 @@ impl GdbServer {
             }
         }
 
-        // Other monitor commands?
         if !self.authenticated {
             return "E01".to_string();
         }
 
-        // Add other monitor commands here if needed
-        "OK".to_string()
+        // Handle other monitor commands
+        match cmd.trim() {
+            // Unknown commands return "OK" to preserve existing behavior and avoid breaking clients
+            // that might be sending unsupported commands.
+            _ => "OK".to_string(),
+        }
     }
 
     fn handle_set(&mut self, cmd: &str) -> String {
