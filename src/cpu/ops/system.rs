@@ -193,6 +193,15 @@ pub fn exec_stop<M: MemoryInterface>(cpu: &mut Cpu, memory: &mut M) -> u32 {
     4
 }
 
+pub fn exec_reset<M: MemoryInterface>(cpu: &mut Cpu, memory: &mut M) -> u32 {
+    if (cpu.sr & 0x2000) == 0 {
+        return cpu.process_exception(8, memory);
+    }
+    // RESET asserts the RESET line for 124 cycles, plus instruction overhead.
+    // Total 132 cycles. No internal CPU state changes.
+    132
+}
+
 pub fn exec_move_usp<M: MemoryInterface>(
     cpu: &mut Cpu,
     reg: u8,
@@ -486,5 +495,106 @@ mod tests {
 
         // And Supervisor bit set
         assert_eq!(cpu.sr & 0x2000, 0x2000, "Supervisor bit should be set");
+    }
+
+    #[test]
+    fn test_exec_move_usp() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        // 1. Test Privilege Violation (User Mode)
+        cpu.sr = 0x0000; // User mode
+        // Setup Exception Vector 8 (Privilege Violation)
+        let vector_addr = 8 * 4;
+        let handler_addr = 0x4000;
+        memory.write_long(vector_addr, handler_addr);
+
+        let initial_pc = cpu.pc;
+
+        // Execute MOVE USP, A0 (to_usp = false)
+        let cycles = exec_move_usp(&mut cpu, 0, false, &mut memory);
+
+        // Should trigger exception (34 cycles)
+        assert_eq!(cycles, 34);
+        assert_eq!(cpu.pc, handler_addr);
+        assert_eq!(cpu.sr & flags::SUPERVISOR, flags::SUPERVISOR); // Switched to supervisor
+
+        // Verify pushed PC matches instruction address
+        let pushed_pc = memory.read_long(cpu.a[7] + 2);
+        assert_eq!(pushed_pc, initial_pc);
+
+        // 2. Test Move to USP (MOVE An, USP)
+        // Reset CPU to Supervisor
+        cpu.sr = flags::SUPERVISOR;
+        cpu.pc = 0x100;
+
+        let val_to_write = 0xDEADBEEF;
+        let reg_idx = 1;
+        cpu.a[reg_idx] = val_to_write;
+        cpu.usp = 0; // Clear USP
+
+        let cycles = exec_move_usp(&mut cpu, reg_idx as u8, true, &mut memory);
+
+        assert_eq!(cycles, 4);
+        assert_eq!(cpu.usp, val_to_write);
+
+        // 3. Test Move from USP (MOVE USP, An)
+        let val_in_usp = 0xCAFEBABE;
+        let reg_idx = 2;
+        cpu.usp = val_in_usp;
+        cpu.a[reg_idx] = 0;
+
+        let cycles = exec_move_usp(&mut cpu, reg_idx as u8, false, &mut memory);
+
+        assert_eq!(cycles, 4);
+        assert_eq!(cpu.a[reg_idx], val_in_usp);
+    }
+
+    #[test]
+    fn test_exec_rtr() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        // Setup
+        let initial_sp = 0x2000;
+        cpu.a[7] = initial_sp;
+        // Set SR to have high byte bits set (Supervisor, Int Mask)
+        // and low byte cleared to verify update.
+        cpu.sr = 0x2700;
+
+        // Target state
+        let target_pc = 0x4000;
+        let target_ccr = 0x001F; // All flags set (X, N, Z, V, C)
+
+        // Push PC (4 bytes)
+        cpu.push_long(target_pc, &mut memory);
+        // Push CCR (2 bytes)
+        // exec_rtr pops word, but only uses low byte for CCR.
+        // We push a word.
+        cpu.push_word(target_ccr, &mut memory);
+
+        // Verify stack setup
+        // SP should be 0x2000 - 4 - 2 = 0x1FFA
+        assert_eq!(cpu.a[7], 0x1FFA);
+
+        // Execute RTR
+        let cycles = exec_rtr(&mut cpu, &mut memory);
+
+        // Verify Return Cycles
+        assert_eq!(cycles, 20);
+
+        // Verify PC updated
+        assert_eq!(cpu.pc, target_pc);
+
+        // Verify SR
+        // Upper byte should be preserved (0x27)
+        // Lower byte should be target_ccr low byte (0x1F)
+        assert_eq!(cpu.sr & 0xFF00, 0x2700, "SR upper byte should be preserved");
+        assert_eq!(
+            cpu.sr & 0x00FF,
+            target_ccr & 0x00FF,
+            "SR lower byte should match popped CCR"
+        );
+
+        // Verify SP restored
+        assert_eq!(cpu.a[7], initial_sp, "SP should be restored");
     }
 }

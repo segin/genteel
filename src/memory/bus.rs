@@ -64,6 +64,10 @@ pub struct Bus {
     /// TMSS (Trademark Security System) - lock/unlock state
     pub tmss_unlocked: bool,
 
+    /// TMSS Register (stores the written bytes "SEGA")
+    #[serde(skip)]
+    pub tmss_register: [u8; 4],
+
     /// Audio synchronization
     pub audio_accumulator: f32,
     #[serde(skip)]
@@ -92,6 +96,7 @@ impl Bus {
             z80_bank_addr: 0,
             z80_bank_bit: 0,
             tmss_unlocked: false,
+            tmss_register: [0; 4],
             audio_accumulator: 0.0,
             audio_buffer: Vec::with_capacity(2048),
             sample_rate: 44100,
@@ -260,9 +265,12 @@ impl Bus {
                 }
             }
             0xA14000..=0xA14003 => {
-                // TMSS Unlock: Write 'SEGA' (long) to $A14000
-                // We'll approximate this by checking for individual byte writes if needed,
-                // but usually games write it as a long. See write_long.
+                // TMSS Unlock: Write 'SEGA' to $A14000
+                let idx = (addr & 3) as usize;
+                self.tmss_register[idx] = value;
+                if self.tmss_register == *b"SEGA" {
+                    self.tmss_unlocked = true;
+                }
             }
             _ => {}
         }
@@ -448,19 +456,11 @@ impl Bus {
 
         // VDP Control Port (Long access)
         if (0xC00004..=0xC00007).contains(&addr) {
-            let (high, low) = byte_utils::split_u32_to_u16(value);
+            let (high, low) = byte_utils::split_u32_to_words(value);
             self.vdp.write_control(high);
             self.handle_dma();
             self.vdp.write_control(low);
             self.handle_dma();
-            return;
-        }
-
-        // TMSS Unlock
-        if (0xA14000..=0xA14003).contains(&addr) {
-            if value == 0x53454741 { // "SEGA"
-                self.tmss_unlocked = true;
-            }
             return;
         }
 
@@ -579,6 +579,12 @@ impl Debuggable for Bus {
         if let Some(val) = state.get("tmss_unlocked") {
             if let Some(b) = val.as_bool() {
                 self.tmss_unlocked = b;
+                // Sync register state
+                if b {
+                    self.tmss_register = *b"SEGA";
+                } else {
+                    self.tmss_register = [0; 4];
+                }
             }
         }
         if let Some(val) = state.get("audio_accumulator") {
@@ -621,6 +627,36 @@ impl Debuggable for Bus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_tmss_unlock_byte_writes() {
+        let mut bus = Bus::new();
+        assert_eq!(bus.tmss_unlocked, false);
+
+        // Write 'S', 'E', 'G', 'A' byte by byte
+        bus.write_byte(0xA14000, b'S');
+        assert_eq!(bus.tmss_unlocked, false);
+
+        bus.write_byte(0xA14001, b'E');
+        assert_eq!(bus.tmss_unlocked, false);
+
+        bus.write_byte(0xA14002, b'G');
+        assert_eq!(bus.tmss_unlocked, false);
+
+        bus.write_byte(0xA14003, b'A');
+        // This should unlock the TMSS
+        assert_eq!(bus.tmss_unlocked, true);
+    }
+
+    #[test]
+    fn test_tmss_unlock_long_write() {
+        let mut bus = Bus::new();
+        assert_eq!(bus.tmss_unlocked, false);
+
+        // Write 'SEGA' as a long
+        bus.write_long(0xA14000, 0x53454741); // "SEGA"
+        assert_eq!(bus.tmss_unlocked, true);
+    }
 
     #[test]
     fn test_bus_debuggable_roundtrip() {
