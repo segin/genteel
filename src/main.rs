@@ -242,7 +242,7 @@ struct CpuBatchResult {
 }
 pub struct Emulator {
     pub cpu: Cpu,
-    pub z80: Z80<Z80Bus, Z80Bus>,
+    pub z80: Z80,
     pub apu: Apu,
     pub bus: Rc<RefCell<Bus>>,
     pub input: InputManager,
@@ -270,8 +270,7 @@ impl Emulator {
         drop(bus_ref);
         // Z80 uses Z80Bus which routes to sound chips and banked 68k memory
         // It also handles Z80 I/O (which is unconnected on Genesis)
-        let z80_bus = Z80Bus::new(SharedBus::new(bus.clone()));
-        let z80 = Z80::new(z80_bus.clone(), z80_bus);
+        let z80 = Z80::new();
         let mut emulator = Self {
             cpu,
             z80,
@@ -291,12 +290,6 @@ impl Emulator {
         {
             let mut bus = emulator.bus.borrow_mut();
             emulator.cpu.reset(&mut *bus);
-            // Set up raw bus pointer for Z80 performance and to avoid RefCell deadlocks
-            unsafe {
-                let bus_ptr: *mut Bus = &mut *bus;
-                emulator.z80.memory.set_raw_bus(bus_ptr);
-                emulator.z80.io.set_raw_bus(bus_ptr);
-            }
         }
         emulator.z80.reset();
         emulator
@@ -504,7 +497,7 @@ impl Emulator {
     fn sync_components(
         bus: &mut Bus,
         m68k_cycles: u32,
-        z80: &mut Z80<Z80Bus, Z80Bus>,
+        z80: &mut Z80,
         z80_cycle_debt: &mut f32,
         trigger_vint: bool,
         internal_frame_count: u64,
@@ -548,7 +541,8 @@ impl Emulator {
 
         // Trigger Z80 VInt if requested
         if trigger_vint && !z80_is_reset {
-            z80.trigger_interrupt(0xFF);
+            let mut z80_bus = Z80Bus::new(bus);
+            z80.trigger_interrupt(&mut z80_bus, 0xFF);
         }
 
         // 2. Catch up Z80
@@ -556,7 +550,8 @@ impl Emulator {
             const Z80_CYCLES_PER_M68K_CYCLE: f32 = 3.58 / 7.67;
             *z80_cycle_debt += m68k_cycles as f32 * Z80_CYCLES_PER_M68K_CYCLE;
             while *z80_cycle_debt >= 1.0 {
-                let cycles = z80.step();
+                let mut z80_bus = Z80Bus::new(bus);
+                let cycles = z80.step(&mut z80_bus);
                 *z80_cycle_debt -= cycles as f32;
             }
         }
@@ -578,7 +573,7 @@ impl Emulator {
         cpu: &mut Cpu,
         bus: &mut Bus,
         max_cycles: u32,
-        z80: &mut Z80<Z80Bus, Z80Bus>,
+        z80: &mut Z80,
         z80_cycle_debt: &mut f32,
         line: u16,
         active_lines: u16,

@@ -8,53 +8,31 @@
 //! - 8000h-FFFFh: Banked 68k Memory (32KB window)
 
 use super::bus::Bus;
-use super::{byte_utils, IoInterface, MemoryInterface, SharedBus};
+use super::{byte_utils, IoInterface, MemoryInterface};
 
-/// Z80 Bus adapter that routes memory accesses to Genesis components
-#[derive(Debug, Clone)]
-pub struct Z80Bus {
-    /// Reference to the main Genesis bus.
-    /// Used to ensure the `Rc<RefCell<Bus>>` remains alive.
-    #[allow(dead_code)]
-    bus: SharedBus,
-    /// Raw pointer to the bus for optimized access (avoids RefCell overhead)
-    raw_bus: *mut Bus,
+/// Z80 Bus adapter that routes memory accesses to Genesis components.
+/// This is a lightweight wrapper around a mutable reference to the main Bus.
+#[derive(Debug)]
+pub struct Z80Bus<'a> {
+    pub bus: &'a mut Bus,
 }
 
-impl Z80Bus {
+impl<'a> Z80Bus<'a> {
     /// Create a new Z80 bus adapter
-    pub fn new(bus: SharedBus) -> Self {
-        Self {
-            bus,
-            raw_bus: std::ptr::null_mut(),
-        }
-    }
-
-    /// Set the raw bus pointer for unchecked access.
-    ///
-    /// # Safety
-    /// The caller must ensure that the pointer is valid and that no conflicting
-    /// references exist while this pointer is used.
-    pub unsafe fn set_raw_bus(&mut self, bus: *mut Bus) {
-        self.raw_bus = bus;
-    }
-
-    /// Clear the raw bus pointer.
-    pub fn clear_raw_bus(&mut self) {
-        self.raw_bus = std::ptr::null_mut();
+    pub fn new(bus: &'a mut Bus) -> Self {
+        Self { bus }
     }
 
     /// Set the bank register (called on write to $6000)
     /// The value written becomes the upper bits of the 68k address
     pub fn set_bank(&mut self, value: u8) {
-        self.bus.bus.borrow_mut().write_byte(0xA06000, value);
+        self.bus.write_byte(0xA06000, value);
     }
 
     /// Reset bank register to 0
     pub fn reset_bank(&mut self) {
-        let mut bus = self.bus.bus.borrow_mut();
-        bus.z80_bank_addr = 0;
-        bus.z80_bank_bit = 0;
+        self.bus.z80_bank_addr = 0;
+        self.bus.z80_bank_bit = 0;
     }
 
     /// Internal helper to read byte from Bus (deduplicated logic)
@@ -136,43 +114,27 @@ impl Z80Bus {
     }
 }
 
-impl MemoryInterface for Z80Bus {
+impl<'a> MemoryInterface for Z80Bus<'a> {
     fn read_byte(&mut self, address: u32) -> u8 {
         // Fast path for Z80 RAM (0x0000-0x1FFF) and its mirror (0x2000-0x3FFF)
-        if !self.raw_bus.is_null() {
-            let addr = address as usize;
-            if addr <= 0x3FFF {
-                // Z80 RAM is 8KB (0x2000), mirrored once to fill 0x4000 space
-                // Use bitwise AND for fast modulo. Access via raw_bus ensures we
-                // always use the current buffer even if it was reallocated.
-                unsafe { return (*self.raw_bus).z80_ram[addr & 0x1FFF] };
-            }
-
-            let bus = unsafe { &mut *self.raw_bus };
-            Self::read_byte_from_bus(bus, address)
-        } else {
-            let mut bus_guard = self.bus.bus.borrow_mut();
-            Self::read_byte_from_bus(&mut bus_guard, address)
+        let addr = address as usize;
+        if addr <= 0x3FFF {
+            // Z80 RAM is 8KB (0x2000), mirrored once to fill 0x4000 space
+            return self.bus.z80_ram[addr & 0x1FFF];
         }
+
+        Self::read_byte_from_bus(self.bus, address)
     }
 
     fn write_byte(&mut self, address: u32, value: u8) {
         // Fast path for Z80 RAM (0x0000-0x1FFF) and its mirror (0x2000-0x3FFF)
-        if !self.raw_bus.is_null() {
-            let addr = address as usize;
-            if addr <= 0x3FFF {
-                unsafe {
-                    (*self.raw_bus).z80_ram[addr & 0x1FFF] = value;
-                }
-                return;
-            }
-
-            let bus = unsafe { &mut *self.raw_bus };
-            Self::write_byte_to_bus(bus, address, value)
-        } else {
-            let mut bus_guard = self.bus.bus.borrow_mut();
-            Self::write_byte_to_bus(&mut bus_guard, address, value)
+        let addr = address as usize;
+        if addr <= 0x3FFF {
+            self.bus.z80_ram[addr & 0x1FFF] = value;
+            return;
         }
+
+        Self::write_byte_to_bus(self.bus, address, value)
     }
 
     fn read_word(&mut self, address: u32) -> u16 {
@@ -216,7 +178,7 @@ impl MemoryInterface for Z80Bus {
     }
 }
 
-impl IoInterface for Z80Bus {
+impl<'a> IoInterface for Z80Bus<'a> {
     fn read_port(&mut self, _port: u16) -> u8 {
         // On a real Sega Genesis, the Z80 I/O space is not connected to any internal hardware.
         // Any IN instruction will result in 0xFF (due to bus pull-ups).
@@ -236,14 +198,10 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    fn create_test_z80_bus() -> Z80Bus {
-        let bus = Rc::new(RefCell::new(Bus::new()));
-        Z80Bus::new(SharedBus::new(bus))
-    }
-
     #[test]
     fn test_z80_ram_read_write() {
-        let mut z80_bus = create_test_z80_bus();
+        let mut bus = Bus::new();
+        let mut z80_bus = Z80Bus::new(&mut bus);
 
         z80_bus.write_byte(0x0000, 0x42);
         assert_eq!(z80_bus.read_byte(0x0000), 0x42);
@@ -254,22 +212,24 @@ mod tests {
 
     #[test]
     fn test_bank_register() {
-        let mut z80_bus = create_test_z80_bus();
+        let mut bus = Bus::new();
+        let mut z80_bus = Z80Bus::new(&mut bus);
 
         // Initially bank is 0
-        assert_eq!(z80_bus.bus.bus.borrow().z80_bank_addr, 0);
+        assert_eq!(z80_bus.bus.z80_bank_addr, 0);
 
         // Write to bank register (bit-by-bit shifting)
         z80_bus.write_byte(0x6000, 0x01); // Shift in 1
 
         // Note: bank register implementation in Bus handles the bit shifting logic
         // We just verify it changed
-        assert_ne!(z80_bus.bus.bus.borrow().z80_bank_addr, 0);
+        assert_ne!(z80_bus.bus.z80_bank_addr, 0);
     }
 
     #[test]
     fn test_reserved_reads_ff() {
-        let mut z80_bus = create_test_z80_bus();
+        let mut bus = Bus::new();
+        let mut z80_bus = Z80Bus::new(&mut bus);
 
         // Z80 RAM is mirrored at 0x2000-0x3FFF, so reading 0x2000 reads 0x0000 (initially 0)
         assert_eq!(z80_bus.read_byte(0x2000), 0x00);
@@ -283,7 +243,8 @@ mod tests {
 
     #[test]
     fn test_z80_io_ports() {
-        let mut z80_bus = create_test_z80_bus();
+        let mut bus = Bus::new();
+        let mut z80_bus = Z80Bus::new(&mut bus);
 
         // All I/O port reads should return 0xFF on Genesis
         assert_eq!(z80_bus.read_port(0x0000), 0xFF);
