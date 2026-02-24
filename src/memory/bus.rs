@@ -448,7 +448,7 @@ impl Bus {
 
         // VDP Control Port (Long access)
         if (0xC00004..=0xC00007).contains(&addr) {
-            let (high, low) = byte_utils::split_u32_to_u16(value);
+            let (high, low) = byte_utils::split_u32_to_words(value);
             self.vdp.write_control(high);
             self.handle_dma();
             self.vdp.write_control(low);
