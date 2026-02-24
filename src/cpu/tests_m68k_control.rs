@@ -756,3 +756,25 @@ fn test_rte_supervisor() {
     // Should now be in user mode because we popped 0x0000 into SR
     assert_eq!(cpu.sr & flags::SUPERVISOR, 0);
 }
+
+// ============================================================================
+// Address Error Tests
+// ============================================================================
+
+#[test]
+fn test_address_error_write_word() {
+    let (mut cpu, mut memory) = create_cpu();
+    // MOVE.W D0, (A0) -> 0x3080
+    write_op(&mut memory, &[0x3080]);
+
+    cpu.d[0] = 0x1234;
+    cpu.a[0] = 0x2001; // Odd address
+
+    // Set Address Error Vector (3)
+    memory.write_long(12, 0x4000);
+
+    cpu.step_instruction(&mut memory);
+
+    // Should jump to exception handler at 0x4000
+    assert_eq!(cpu.pc, 0x4000);
+}

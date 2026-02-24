@@ -768,10 +768,6 @@ impl Cpu {
                 }
             }
             addressing::EffectiveAddress::Memory(addr) => {
-                if size != Size::Byte && addr % 2 != 0 {
-                    self.process_exception(3, memory);
-                    return;
-                }
                 self.cpu_write_memory(addr, size, val, memory);
             }
         }
