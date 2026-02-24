@@ -310,21 +310,7 @@ impl Vdp {
             && (self.registers[REG_DMA_SRC_HI] & DMA_MODE_MASK) == DMA_MODE_FILL
             && self.dma_pending
         {
-            let length = self.dma_length();
-            let mut addr = self.control_address;
-            let inc = self.auto_increment() as u16;
-            let fill_byte = (value >> 8) as u8;
-
-            // DMA Fill writes bytes. Length register specifies number of bytes.
-            // If length is 0, it is treated as 0x10000 (64KB).
-            let len = if length == 0 { 0x10000 } else { length };
-
-            for _ in 0..len {
-                // VRAM is byte-addressable in this emulator
-                self.vram[addr as usize] = fill_byte;
-                addr = addr.wrapping_add(inc);
-            }
-            self.control_address = addr;
+            self.perform_dma_fill();
             self.dma_pending = false;
             return;
         }
@@ -546,6 +532,53 @@ impl Vdp {
         (self.registers[REG_DMA_SRC_HI] & DMA_MODE_MASK) == DMA_MODE_FILL
     }
 
+    fn perform_dma_fill(&mut self) {
+        let length = self.dma_length();
+        // If length is 0, it is treated as 0x10000 (64KB)
+        let len = if length == 0 { 0x10000 } else { length };
+
+        let data = self.last_data_write;
+        let mut addr = self.control_address;
+        let inc = self.auto_increment() as u16;
+        let fill_byte = (data >> 8) as u8;
+
+        if inc == 1 {
+            // Optimized fill using slice::fill
+            let start_addr = addr as usize;
+            let end_addr_exclusive = start_addr + (len as usize);
+
+            if end_addr_exclusive <= 0x10000 {
+                // Contiguous fill
+                self.vram[start_addr..end_addr_exclusive].fill(fill_byte);
+                // Address wraps at 0x10000
+                addr = (end_addr_exclusive & 0xFFFF) as u16;
+            } else {
+                // Wrapped fill
+                let first_part_len = 0x10000 - start_addr;
+                self.vram[start_addr..0x10000].fill(fill_byte);
+
+                let remaining = (len as usize) - first_part_len;
+                if remaining > 0 {
+                    self.vram[0..remaining].fill(fill_byte);
+                }
+                addr = remaining as u16;
+            }
+        } else if inc == 0 {
+            // Optimization: auto-increment 0 means writing to the same address repeatedly.
+            // Since VRAM is just memory here, the result is equivalent to a single write.
+            if len > 0 {
+                self.vram[addr as usize] = fill_byte;
+            }
+        } else {
+            for _ in 0..len {
+                // VRAM is byte-addressable in this emulator
+                self.vram[addr as usize] = fill_byte;
+                addr = addr.wrapping_add(inc);
+            }
+        }
+        self.control_address = addr;
+    }
+
     pub fn execute_dma(&mut self) -> u32 {
         let length = self.dma_length();
         // If length is 0, it is treated as 0x10000 (64KB)
@@ -555,17 +588,7 @@ impl Vdp {
 
         match mode {
             DMA_MODE_FILL => {
-                let data = self.last_data_write;
-                let mut addr = self.control_address;
-                let inc = self.auto_increment() as u16;
-                let fill_byte = (data >> 8) as u8;
-
-                for _ in 0..len {
-                    // VRAM is byte-addressable in this emulator
-                    self.vram[addr as usize] = fill_byte;
-                    addr = addr.wrapping_add(inc);
-                }
-                self.control_address = addr;
+                self.perform_dma_fill();
             }
             DMA_MODE_COPY => {
                 let mut source = (self.dma_source() & 0xFFFF) as u16;
@@ -1428,5 +1451,7 @@ mod tests_bulk_write;
 
 #[cfg(test)]
 mod bench_render;
+#[cfg(test)]
+mod bench_dma;
 #[cfg(test)]
 mod test_repro_white_screen;
