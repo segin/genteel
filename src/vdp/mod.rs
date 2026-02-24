@@ -989,7 +989,7 @@ impl Vdp {
         let hs_base = self.hscroll_address();
 
         let hs_addr = match hs_mode {
-            0x00 => hs_base, // Full screen
+            0x00 => hs_base,                                             // Full screen
             0x01 | 0x02 => hs_base + (((fetch_line as usize) >> 3) * 4), // 8-pixel high strips (Cell)
             0x03 => hs_base + ((fetch_line as usize) * 4),               // Per-line
             _ => hs_base,
@@ -1216,7 +1216,7 @@ impl Debuggable for Vdp {
     }
 
     fn write_state(&mut self, state: &Value) {
-        let json_state: VdpJsonState = match Deserialize::deserialize(state) {
+        let json_state: VdpJsonState = match serde_json::from_value(state.clone()) {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("Error deserializing VDP state: {}", e);
@@ -1269,25 +1269,7 @@ impl Debuggable for Vdp {
                     self.cram[i] = *val;
                 }
             }
-            // Reconstruct CRAM Cache
-            for i in 0..64 {
-                let addr = i * 2;
-                if addr + 1 < self.cram.len() {
-                    let val = ((self.cram[addr + 1] as u16) << 8) | (self.cram[addr] as u16);
-
-                    // Extract 3-bit components (bits 1-3, 5-7, 9-11)
-                    let r3 = (val >> 1) & 0x07;
-                    let g3 = (val >> 5) & 0x07;
-                    let b3 = (val >> 9) & 0x07;
-
-                    // Scale to RGB565 using bit repetition
-                    let r5 = (r3 << 2) | (r3 >> 1);
-                    let g6 = (g3 << 3) | g3;
-                    let b5 = (b3 << 2) | (b3 >> 1);
-
-                    self.cram_cache[i] = ((r5 as u16) << 11) | ((g6 as u16) << 5) | (b5 as u16);
-                }
-            }
+            self.reconstruct_cram_cache();
         }
 
         if let Some(vsram) = json_state.vsram {
