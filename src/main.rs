@@ -413,7 +413,10 @@ impl Emulator {
     /// Step one frame with current input state
     pub fn step_frame(&mut self, input: Option<input::FrameInput>) {
         // Apply inputs from script or live input
-        let frame_input = input.unwrap_or_else(|| self.input.advance_frame());
+        let frame_input = match input {
+            Some(i) => std::borrow::Cow::Owned(i),
+            None => self.input.advance_frame(),
+        };
         {
             let mut bus = self.bus.borrow_mut();
             if let Some(ctrl) = bus.io.controller(1) {
