@@ -548,3 +548,45 @@ fn test_rte_supervisor() {
     // Should now be in user mode because we popped 0x0000 into SR
     assert_eq!(cpu.sr & flags::SUPERVISOR, 0);
 }
+
+// ============================================================================
+// RESET Tests
+// ============================================================================
+
+#[test]
+fn test_reset_supervisor() {
+    let (mut cpu, mut memory) = create_cpu();
+    // RESET opcode: 0x4E70
+    write_op(&mut memory, &[0x4E70]);
+
+    // Ensure Supervisor Mode
+    cpu.sr |= flags::SUPERVISOR;
+
+    let cycles = cpu.step_instruction(&mut memory);
+
+    assert_eq!(cycles, 132);
+    assert_eq!(cpu.pc, 0x1002); // Should advance past instruction
+}
+
+#[test]
+fn test_reset_user_privilege_violation() {
+    let (mut cpu, mut memory) = create_cpu();
+    // RESET opcode: 0x4E70
+    write_op(&mut memory, &[0x4E70]);
+
+    // Set User Mode
+    cpu.sr &= !flags::SUPERVISOR;
+    // Setup stacks
+    cpu.usp = 0xA000;
+    cpu.ssp = 0x8000;
+    cpu.a[7] = cpu.usp;
+
+    // Set Vector 8 (Privilege Violation)
+    memory.write_long(32, 0x4000);
+
+    let cycles = cpu.step_instruction(&mut memory);
+
+    assert_eq!(cycles, 34); // Exception processing time
+    assert_eq!(cpu.pc, 0x4000); // Jump to handler
+    assert!((cpu.sr & flags::SUPERVISOR) != 0); // Should be in supervisor mode
+}
