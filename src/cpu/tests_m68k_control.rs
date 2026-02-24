@@ -27,6 +27,29 @@ fn write_op(memory: &mut Memory, opcodes: &[u16]) {
 }
 
 // ============================================================================
+// TRAPV Tests
+// ============================================================================
+
+#[test]
+fn test_trapv_no_overflow() {
+    let (mut cpu, mut memory) = create_cpu();
+    write_op(&mut memory, &[0x4E76]); // TRAPV
+    cpu.set_flag(flags::OVERFLOW, false);
+    cpu.step_instruction(&mut memory);
+    assert_eq!(cpu.pc, 0x1002); // No trap, just move to next instruction
+}
+
+#[test]
+fn test_trapv_overflow() {
+    let (mut cpu, mut memory) = create_cpu();
+    write_op(&mut memory, &[0x4E76]); // TRAPV
+    cpu.set_flag(flags::OVERFLOW, true);
+    memory.write_long(0x1C, 0x6000); // TRAPV vector (7 * 4 = 0x1C)
+    cpu.step_instruction(&mut memory);
+    assert_eq!(cpu.pc, 0x6000); // Trapped to vector
+}
+
+// ============================================================================
 // BRA Tests
 // ============================================================================
 
