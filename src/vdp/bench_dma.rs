@@ -34,3 +34,30 @@ fn bench_dma_fill_performance() {
     let duration = start.elapsed();
     println!("DMA Fill ({} iterations) took: {:?}", iterations, duration);
 }
+
+#[test]
+fn bench_dma_fill_write_data() {
+    let mut vdp = Vdp::new();
+    // Enable DMA (bit 4 of Mode 2)
+    vdp.registers[REG_MODE2] = MODE2_DMA_ENABLE;
+    // Set DMA Mode to Fill (bit 7 of DMA SRC HI)
+    vdp.registers[REG_DMA_SRC_HI] = DMA_MODE_FILL;
+    // Set Auto Increment to 1
+    vdp.registers[REG_AUTO_INC] = 1;
+    // Set DMA Length to 0xFFFF (max)
+    vdp.registers[REG_DMA_LEN_HI] = 0xFF;
+    vdp.registers[REG_DMA_LEN_LO] = 0xFF;
+
+    let iterations = 1000;
+    let start = Instant::now();
+
+    for _ in 0..iterations {
+        vdp.dma_pending = true;
+        vdp.control_address = 0;
+        // This triggers the loop in write_data
+        vdp.write_data(0xAA00);
+    }
+
+    let duration = start.elapsed();
+    println!("DMA Fill via write_data ({} iterations) took: {:?}", iterations, duration);
+}

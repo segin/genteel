@@ -14,8 +14,6 @@ use super::{byte_utils, IoInterface, MemoryInterface, SharedBus};
 #[derive(Debug, Clone)]
 pub struct Z80Bus {
     /// Reference to the main Genesis bus.
-    /// Used to ensure the `Rc<RefCell<Bus>>` remains alive.
-    #[allow(dead_code)]
     bus: SharedBus,
 }
 
@@ -143,11 +141,11 @@ impl MemoryInterface for Z80Bus {
     fn read_long(&mut self, address: u32) -> u32 {
         let hi = self.read_word(address);
         let lo = self.read_word(address.wrapping_add(2));
-        byte_utils::join_u32_from_u16(hi, lo)
+        byte_utils::join_u32_words(hi, lo)
     }
 
     fn write_long(&mut self, address: u32, value: u32) {
-        let (high, low) = byte_utils::split_u32_to_u16(value);
+        let (high, low) = byte_utils::split_u32_to_words(value);
         self.write_word(address, high);
         self.write_word(address.wrapping_add(2), low);
     }
