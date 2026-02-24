@@ -72,3 +72,135 @@ fn benchmark_interrupt_handler() {
         duration
     );
 }
+
+#[test]
+fn benchmark_movem_sparse() {
+    use crate::cpu::decoder::{AddressingMode, Size};
+    use crate::cpu::ops::data::exec_movem;
+
+    let mut memory = Memory::new(0x10000);
+    let mut cpu = Cpu::new(&mut memory);
+
+    // Setup mask at 0x100
+    // Mask with 1 bit set (e.g. 0x0001)
+    memory.write_word(0x100, 0x0001);
+
+    // Setup A0 to point to some safe memory area
+    cpu.a[0] = 0x2000;
+
+    let iterations = 100_000;
+    let start = Instant::now();
+
+    for _ in 0..iterations {
+        cpu.pc = 0x100;
+        exec_movem(
+            &mut cpu,
+            Size::Long,
+            true,
+            AddressingMode::AddressIndirect(0),
+            &mut memory
+        );
+    }
+
+    let duration = start.elapsed();
+    println!("MOVEM Sparse (1 bit) duration: {:?}", duration);
+    // Print in nanoseconds per iteration for easier comparison
+    println!("MOVEM Sparse (1 bit) ns/iter: {}", duration.as_nanos() / iterations as u128);
+}
+
+#[test]
+fn benchmark_movem_dense() {
+    use crate::cpu::decoder::{AddressingMode, Size};
+    use crate::cpu::ops::data::exec_movem;
+
+    let mut memory = Memory::new(0x10000);
+    let mut cpu = Cpu::new(&mut memory);
+
+    // Setup mask at 0x100
+    // Mask with all bits set
+    memory.write_word(0x100, 0xFFFF);
+
+    cpu.a[0] = 0x2000;
+
+    let iterations = 100_000;
+    let start = Instant::now();
+
+    for _ in 0..iterations {
+        cpu.pc = 0x100;
+        exec_movem(
+            &mut cpu,
+            Size::Long,
+            true,
+            AddressingMode::AddressIndirect(0),
+            &mut memory
+        );
+    }
+
+    let duration = start.elapsed();
+    println!("MOVEM Dense (16 bits) duration: {:?}", duration);
+    println!("MOVEM Dense (16 bits) ns/iter: {}", duration.as_nanos() / iterations as u128);
+}
+
+#[test]
+fn benchmark_movem_predec_sparse() {
+    use crate::cpu::decoder::{AddressingMode, Size};
+    use crate::cpu::ops::data::exec_movem;
+
+    let mut memory = Memory::new(0x10000);
+    let mut cpu = Cpu::new(&mut memory);
+
+    // Mask with 1 bit set (e.g. 0x0001 -> A7)
+    memory.write_word(0x100, 0x0001);
+
+    cpu.a[0] = 0x4000;
+
+    let iterations = 100_000;
+    let start = Instant::now();
+
+    for _ in 0..iterations {
+        cpu.pc = 0x100;
+        cpu.a[0] = 0x4000; // Reset A0 as it is modified in PreDec
+        exec_movem(
+            &mut cpu,
+            Size::Long,
+            true,
+            AddressingMode::AddressPreDecrement(0),
+            &mut memory
+        );
+    }
+
+    let duration = start.elapsed();
+    println!("MOVEM PreDec Sparse (1 bit) duration: {:?}", duration);
+    println!("MOVEM PreDec Sparse (1 bit) ns/iter: {}", duration.as_nanos() / iterations as u128);
+}
+
+#[test]
+fn benchmark_movem_mem2reg_sparse() {
+    use crate::cpu::decoder::{AddressingMode, Size};
+    use crate::cpu::ops::data::exec_movem;
+
+    let mut memory = Memory::new(0x10000);
+    let mut cpu = Cpu::new(&mut memory);
+
+    memory.write_word(0x100, 0x0001);
+
+    cpu.a[0] = 0x2000;
+
+    let iterations = 100_000;
+    let start = Instant::now();
+
+    for _ in 0..iterations {
+        cpu.pc = 0x100;
+        exec_movem(
+            &mut cpu,
+            Size::Long,
+            false, // Mem to Reg
+            AddressingMode::AddressIndirect(0),
+            &mut memory
+        );
+    }
+
+    let duration = start.elapsed();
+    println!("MOVEM Mem2Reg Sparse (1 bit) duration: {:?}", duration);
+    println!("MOVEM Mem2Reg Sparse (1 bit) ns/iter: {}", duration.as_nanos() / iterations as u128);
+}
