@@ -16,6 +16,7 @@
 //! ```
 
 use crate::io::ControllerState;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
@@ -208,22 +209,21 @@ impl InputManager {
     }
 
     /// Advance to the next frame and return the input
-    pub fn advance_frame(&mut self) -> FrameInput {
+    pub fn advance_frame(&mut self) -> Cow<'_, FrameInput> {
         let input = if let Some(script) = &self.script {
             if let Some(frame_input) = script.get(self.current_frame) {
-                let out = frame_input.clone();
                 // Update last_input but EXCLUDE command for hold behavior
-                self.last_input.p1 = out.p1;
-                self.last_input.p2 = out.p2;
+                self.last_input.p1 = frame_input.p1;
+                self.last_input.p2 = frame_input.p2;
                 self.last_input.command = None;
-                out
+                Cow::Borrowed(frame_input)
             } else {
                 // No input for this frame - hold last input (which has None command)
-                self.last_input.clone()
+                Cow::Borrowed(&self.last_input)
             }
         } else {
-            // No script - return empty input
-            FrameInput::default()
+            // No script - return empty input (last_input is default if no script)
+            Cow::Borrowed(&self.last_input)
         };
 
         self.current_frame += 1;

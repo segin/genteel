@@ -1,4 +1,3 @@
-#![allow(unused_imports)]
 //! Z80 CPU Implementation for Genesis Sound Co-processor
 //!
 //! The Z80 is used as a sound co-processor in the Sega Genesis, running at 3.58 MHz.
@@ -26,7 +25,7 @@ pub mod flags {
 
 use crate::debugger::Debuggable;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 
 macro_rules! dispatch_z {
     ($z:expr, $c0:expr, $c1:expr, $c2:expr, $c3:expr, $c4:expr, $c5:expr, $c6:expr, $c7:expr) => {
