@@ -226,8 +226,25 @@ impl Cpu {
             return 4;
         }
 
+        let instruction = match self.fetch_next_instruction(memory) {
+            Some(instr) => instr,
+            None => {
+                // Address Error during fetch
+                self.cycles += 34;
+                return 34;
+            }
+        };
+
+        let cycles = self.execute(instruction, memory);
+        self.cycles += cycles as u64;
+        cycles
+    }
+
+    fn fetch_next_instruction<M: MemoryInterface>(
+        &mut self,
+        memory: &mut M,
+    ) -> Option<Instruction> {
         let pc = self.pc;
-        let instruction;
 
         // Optimized instruction fetch with cache
         if pc < CACHE_ROM_LIMIT {
@@ -242,57 +259,38 @@ impl Cpu {
             if let Some(entry) = self.decode_cache.get(cache_index).copied() {
                 if entry.pc == pc {
                     // Cache Hit
-                    instruction = entry.instruction;
                     self.pc = pc.wrapping_add(2);
-                } else {
-                    // Cache Miss
-                    let opcode = self.read_instruction_word(pc, memory);
-                    if self.pending_exception {
-                        // Address Error during fetch
-                        self.cycles += 34;
-                        return 34;
-                    }
-
-                    self.pc = self.pc.wrapping_add(2);
-                    instruction = decode(opcode);
-
-                    // Update Cache
-                    // We know the index is valid because get() succeeded earlier,
-                    // but we use get_mut() for safety in case of concurrent modification (unlikely here)
-                    // or weird edge cases.
-                    if let Some(entry_mut) = self.decode_cache.get_mut(cache_index) {
-                        *entry_mut = DecodeCacheEntry { pc, instruction };
-                    }
+                    return Some(entry.instruction);
                 }
-            } else {
-                // Cache index out of bounds (cache too small/invalid)
-                // Fallback to uncached fetch
+
+                // Cache Miss
                 let opcode = self.read_instruction_word(pc, memory);
                 if self.pending_exception {
-                    // Address Error during fetch
-                    self.cycles += 34;
-                    return 34;
+                    return None;
                 }
 
                 self.pc = self.pc.wrapping_add(2);
-                instruction = decode(opcode);
-            }
-        } else {
-            // Uncached (RAM, I/O, etc.)
-            let opcode = self.read_instruction_word(pc, memory);
-            if self.pending_exception {
-                // Address Error during fetch
-                self.cycles += 34;
-                return 34;
-            }
+                let instruction = decode(opcode);
 
-            self.pc = self.pc.wrapping_add(2);
-            instruction = decode(opcode);
+                // Update Cache
+                // We know the index is valid because get() succeeded earlier,
+                // but we use get_mut() for safety in case of concurrent modification (unlikely here)
+                // or weird edge cases.
+                if let Some(entry_mut) = self.decode_cache.get_mut(cache_index) {
+                    *entry_mut = DecodeCacheEntry { pc, instruction };
+                }
+                return Some(instruction);
+            }
         }
 
-        let cycles = self.execute(instruction, memory);
-        self.cycles += cycles as u64;
-        cycles
+        // Uncached (RAM, I/O, etc.) or Cache index out of bounds
+        let opcode = self.read_instruction_word(pc, memory);
+        if self.pending_exception {
+            return None;
+        }
+
+        self.pc = self.pc.wrapping_add(2);
+        Some(decode(opcode))
     }
 
     fn read_instruction_word<M: MemoryInterface>(&mut self, addr: u32, memory: &mut M) -> u16 {
