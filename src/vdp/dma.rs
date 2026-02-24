@@ -9,6 +9,7 @@ pub trait DmaOps {
     fn is_dma_transfer(&self) -> bool;
     fn is_dma_fill(&self) -> bool;
     fn execute_dma(&mut self) -> u32;
+    fn perform_dma_fill(&mut self, len: u32);
 }
 
 impl DmaOps for Vdp {
@@ -49,6 +50,41 @@ impl DmaOps for Vdp {
         (self.registers[REG_DMA_SRC_HI] & DMA_MODE_MASK) == DMA_MODE_FILL
     }
 
+    fn perform_dma_fill(&mut self, len: u32) {
+        let fill_byte = (self.last_data_write >> 8) as u8;
+        let mut addr = self.control_address;
+        let inc = self.registers[REG_AUTO_INC] as u16;
+
+        if inc == 1 {
+            let start = addr as usize;
+            let count = len as usize;
+            let vram_len = self.vram.len();
+
+            // Handle wrapping
+            if start + count <= vram_len {
+                self.vram[start..start + count].fill(fill_byte);
+            } else {
+                let first_part = vram_len - start;
+                self.vram[start..vram_len].fill(fill_byte);
+                let remaining = count - first_part;
+                if remaining > 0 {
+                    self.vram[0..remaining].fill(fill_byte);
+                }
+            }
+            self.control_address = addr.wrapping_add(len as u16);
+        } else if inc == 0 {
+            if len > 0 {
+                self.vram[addr as usize] = fill_byte;
+            }
+        } else {
+            for _ in 0..len {
+                self.vram[addr as usize] = fill_byte;
+                addr = addr.wrapping_add(inc);
+            }
+            self.control_address = addr;
+        }
+    }
+
     fn execute_dma(&mut self) -> u32 {
         let length = self.dma_length();
         // If length is 0, it is treated as 0x10000 (64KB)
@@ -58,17 +94,7 @@ impl DmaOps for Vdp {
 
         match mode {
             DMA_MODE_FILL => {
-                let data = self.last_data_write;
-                let mut addr = self.control_address;
-                let inc = self.registers[REG_AUTO_INC] as u16;
-                let fill_byte = (data >> 8) as u8;
-
-                for _ in 0..len {
-                    // VRAM is byte-addressable in this emulator
-                    self.vram[addr as usize] = fill_byte;
-                    addr = addr.wrapping_add(inc);
-                }
-                self.control_address = addr;
+                self.perform_dma_fill(len);
             }
             DMA_MODE_COPY => {
                 let mut source = (self.dma_source() & 0xFFFF) as u16;

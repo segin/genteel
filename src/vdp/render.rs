@@ -96,6 +96,7 @@ pub trait RenderOps {
     fn render_tile(
         &mut self,
         is_plane_a: bool,
+        enable_v_scroll: bool,
         name_table_base: usize,
         plane_w: usize,
         plane_h: usize,
@@ -147,7 +148,7 @@ fn render_sprite_scanline(
 ) {
     let sprite_v_px = (attr.v_size as u16) * 8;
 
-    let py = line - attr.v_pos;
+    let py = line.wrapping_sub(attr.v_pos);
     let fetch_py = if attr.v_flip {
         (sprite_v_px - 1) - py
     } else {
@@ -182,33 +183,59 @@ fn render_sprite_scanline(
         }
 
         // Prefetch the 4 bytes (8 pixels) for this row.
-        // Mask to 64KB VRAM. Since each row fetch is 4 bytes and row_addr is a
-        // multiple of 4, masking with 0xFFFC ensures the slice never crosses
-        // the 64KB boundary.
-        let addr = row_addr & 0xFFFC;
-        let patterns: [u8; 4] = vram[addr..addr + 4].try_into().unwrap();
+        // row_addr is guaranteed to be 4-byte aligned (32*k + 4*j).
+        // We already checked row_addr + 4 <= 0x10000.
+        let patterns: [u8; 4] = unsafe {
+             vram.get_unchecked(row_addr..row_addr + 4).try_into().unwrap_unchecked()
+        };
 
         let base_screen_x = attr.h_pos.wrapping_add(tile_h_offset * 8);
 
-        for i in 0..8 {
-            let screen_x = base_screen_x.wrapping_add(i);
-            if screen_x >= screen_width {
-                continue;
+        // Optimization: If the entire 8-pixel block is visible, skip per-pixel checks.
+        if (base_screen_x as u32) + 8 <= screen_width as u32 {
+            for i in 0..8 {
+                let screen_x = base_screen_x.wrapping_add(i);
+                let eff_col = if attr.h_flip { 7 - i } else { i };
+
+                // SAFETY: eff_col is 0..8, so index 0..3 is valid. patterns is [u8; 4].
+                let byte = unsafe { *patterns.get_unchecked((eff_col as usize) / 2) };
+
+                let color_idx = if eff_col % 2 == 0 {
+                    byte >> 4
+                } else {
+                    byte & 0x0F
+                };
+
+                if color_idx != 0 {
+                    let addr = ((attr.palette as usize) << 4) | (color_idx as usize);
+                    // SAFETY: cram_cache size 64. addr < 64.
+                    unsafe {
+                        let color = *cram_cache.get_unchecked(addr);
+                        *framebuffer.get_unchecked_mut(line_offset + screen_x as usize) = color;
+                    }
+                }
             }
+        } else {
+            for i in 0..8 {
+                let screen_x = base_screen_x.wrapping_add(i);
+                if screen_x >= screen_width {
+                    continue;
+                }
 
-            let eff_col = if attr.h_flip { 7 - i } else { i };
+                let eff_col = if attr.h_flip { 7 - i } else { i };
 
-            let byte = patterns[(eff_col as usize) / 2];
-            let color_idx = if eff_col % 2 == 0 {
-                byte >> 4
-            } else {
-                byte & 0x0F
-            };
+                let byte = patterns[(eff_col as usize) / 2];
+                let color_idx = if eff_col % 2 == 0 {
+                    byte >> 4
+                } else {
+                    byte & 0x0F
+                };
 
-            if color_idx != 0 {
-                let addr = ((attr.palette as usize) * 16) + (color_idx as usize);
-                let color = cram_cache[addr];
-                framebuffer[line_offset + screen_x as usize] = color;
+                if color_idx != 0 {
+                    let addr = ((attr.palette as usize) << 4) | (color_idx as usize);
+                    let color = cram_cache[addr];
+                    framebuffer[line_offset + screen_x as usize] = color;
+                }
             }
         }
     }
@@ -245,6 +272,13 @@ impl RenderOps for Vdp {
         self.render_plane(false, fetch_line, draw_line, true); // Plane B High
         self.render_plane(true, fetch_line, draw_line, true); // Plane A High
         self.render_sprites(active_sprites, fetch_line, draw_line, true);
+
+        // Apply Register 0 Bit 5 (Mask 1st Column)
+        if (self.registers[REG_MODE1] & 0x20) != 0 {
+            let (pal_line, color_idx) = self.bg_color();
+            let bg_color = self.get_cram_color(pal_line, color_idx);
+            self.framebuffer[line_offset..line_offset + 8].fill(bg_color);
+        }
     }
 
     fn render_plane(
@@ -263,21 +297,28 @@ impl RenderOps for Vdp {
 
         let screen_width = self.screen_width();
         let line_offset = (draw_line as usize) * 320;
-        let plane_w_mask = plane_w - 1;
 
-        // Fetch H-scroll once for the line
+        // Fetch H-scroll once for the line (but may be overridden by Window)
         let (_, h_scroll) = self.get_scroll_values(is_plane_a, fetch_line, 0);
 
         let mut screen_x: u16 = 0;
 
         while screen_x < screen_width {
+            let (tile_base, tile_h_scroll, use_v_scroll, tile_w) = if is_plane_a && self.is_window_area(screen_x, fetch_line) {
+                let win_w = if self.h40_mode() { 64 } else { 32 };
+                (self.window_address(), 0, false, win_w)
+            } else {
+                (name_table_base, h_scroll, true, plane_w)
+            };
+
             self.render_tile(
                 is_plane_a,
-                name_table_base,
-                plane_w,
+                use_v_scroll,
+                tile_base,
+                tile_w,
                 plane_h,
-                plane_w_mask,
-                h_scroll,
+                tile_w - 1, // tile_w_mask
+                tile_h_scroll,
                 fetch_line,
                 line_offset,
                 &mut screen_x,
@@ -290,6 +331,7 @@ impl RenderOps for Vdp {
     fn render_tile(
         &mut self,
         is_plane_a: bool,
+        enable_v_scroll: bool,
         name_table_base: usize,
         plane_w: usize,
         plane_h: usize,
@@ -306,7 +348,12 @@ impl RenderOps for Vdp {
         let tile_h = ((scrolled_h >> 3) as usize) & plane_w_mask;
 
         // Fetch V-scroll for this specific column (per-column VS support)
-        let (v_scroll, _) = self.get_scroll_values(is_plane_a, fetch_line, tile_h);
+        // If not using scroll (e.g. Window plane), V-scroll is 0.
+        let (v_scroll, _) = if enable_v_scroll {
+            self.get_scroll_values(is_plane_a, fetch_line, (*screen_x >> 3) as usize)
+        } else {
+            (0, 0)
+        };
 
         // Vertical position in plane
         let scrolled_v = fetch_line.wrapping_add(v_scroll);
@@ -353,13 +400,15 @@ impl RenderOps for Vdp {
             sat_base,
         };
 
+        let line_limit = if self.h40_mode() { 20 } else { 16 };
+
         for attr in iter {
             let sprite_v_px = (attr.v_size as u16) * 8;
-            if line >= attr.v_pos && line < attr.v_pos + sprite_v_px {
+            // Handle wrapping v_pos (top clipping) correctly using wrapping subtraction
+            if line.wrapping_sub(attr.v_pos) < sprite_v_px {
                 sprites[count] = attr;
                 count += 1;
-                // Safety check, though SpriteIterator limits iterations
-                if count >= 80 {
+                if count >= line_limit {
                     break;
                 }
             }

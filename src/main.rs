@@ -292,12 +292,6 @@ impl Emulator {
         {
             let mut bus = emulator.bus.borrow_mut();
             emulator.cpu.reset(&mut *bus);
-            // Set up raw bus pointer for Z80 performance and to avoid RefCell deadlocks
-            unsafe {
-                let bus_ptr: *mut Bus = &mut *bus;
-                emulator.z80.memory.set_raw_bus(bus_ptr);
-                emulator.z80.io.set_raw_bus(bus_ptr);
-            }
         }
         emulator.z80.reset();
         emulator
@@ -414,7 +408,10 @@ impl Emulator {
     /// Step one frame with current input state
     pub fn step_frame(&mut self, input: Option<input::FrameInput>) {
         // Apply inputs from script or live input
-        let frame_input = input.unwrap_or_else(|| self.input.advance_frame());
+        let frame_input = match input {
+            Some(i) => std::borrow::Cow::Owned(i),
+            None => self.input.advance_frame(),
+        };
         {
             let mut bus = self.bus.borrow_mut();
             if let Some(ctrl) = bus.io.controller(1) {
@@ -432,7 +429,21 @@ impl Emulator {
                 match parts[0].to_uppercase().as_str() {
                     "SCREENSHOT" => {
                         if parts.len() > 1 {
-                            let path = parts[1];
+                            let raw_path = parts[1];
+                            // Security: Sanitize path to prevent arbitrary file writes
+                            // Only allow saving to current directory by using only the file name component
+                            let path = std::path::Path::new(raw_path)
+                                .file_name()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or("screenshot.png");
+
+                            if path != raw_path {
+                                eprintln!(
+                                    "Script Warning: Sanitized screenshot path '{}' to '{}'",
+                                    raw_path, path
+                                );
+                            }
+
                             if let Err(e) = self.save_screenshot(path) {
                                 eprintln!("Script Error: Failed to save screenshot to {}: {}", path, e);
                             } else {
@@ -503,7 +514,7 @@ impl Emulator {
         }
     }
     fn sync_components(
-        bus: &mut Bus,
+        bus_rc: &SharedBus,
         m68k_cycles: u32,
         z80: &mut Z80<Z80Bus, Z80Bus>,
         z80_cycle_debt: &mut f32,
@@ -516,20 +527,24 @@ impl Emulator {
         debug: bool,
     ) {
         // 1. Z80 State and Timing
-        let prev = *z80_last_bus_req;
-        if debug && bus.z80_bus_request != prev {
-            log::debug!(
-                "Bus Req Changed: {} -> {} at 68k PC={:06X}",
-                prev,
-                bus.z80_bus_request,
-                cpu_pc
-            );
-        }
-        *z80_last_bus_req = bus.z80_bus_request;
+        let (z80_can_run, z80_is_reset, cycles_per_sample) = {
+            let bus = bus_rc.bus.borrow();
+            let prev = *z80_last_bus_req;
+            if debug && bus.z80_bus_request != prev {
+                log::debug!(
+                    "Bus Req Changed: {} -> {} at 68k PC={:06X}",
+                    prev,
+                    bus.z80_bus_request,
+                    cpu_pc
+                );
+            }
+            *z80_last_bus_req = bus.z80_bus_request;
 
-        let z80_can_run = !bus.z80_reset && !bus.z80_bus_request;
-        let z80_is_reset = bus.z80_reset;
-        let cycles_per_sample = 7670453.0 / (bus.sample_rate as f32);
+            let z80_can_run = !bus.z80_reset && !bus.z80_bus_request;
+            let z80_is_reset = bus.z80_reset;
+            let cycles_per_sample = 7670453.0 / (bus.sample_rate as f32);
+            (z80_can_run, z80_is_reset, cycles_per_sample)
+        };
 
         // Handle Z80 Reset
         if z80_is_reset && !*z80_last_reset {
@@ -563,21 +578,24 @@ impl Emulator {
         }
 
         // 3. Update APU and generate audio samples
-        bus.audio_accumulator += m68k_cycles as f32;
+        {
+            let mut bus = bus_rc.bus.borrow_mut();
+            bus.audio_accumulator += m68k_cycles as f32;
 
-        while bus.audio_accumulator >= cycles_per_sample {
-            let (l, r) = bus.apu.step(cycles_per_sample as u32);
-            if bus.audio_buffer.len() < 32768 {
-                bus.audio_buffer.push(l);
-                bus.audio_buffer.push(r);
+            while bus.audio_accumulator >= cycles_per_sample {
+                let (l, r) = bus.apu.step(cycles_per_sample as u32);
+                if bus.audio_buffer.len() < 32768 {
+                    bus.audio_buffer.push(l);
+                    bus.audio_buffer.push(r);
+                }
+                bus.audio_accumulator -= cycles_per_sample;
             }
-            bus.audio_accumulator -= cycles_per_sample;
         }
     }
 
     fn run_cpu_batch_static(
         cpu: &mut Cpu,
-        bus: &mut Bus,
+        bus_rc: &SharedBus,
         max_cycles: u32,
         z80: &mut Z80<Z80Bus, Z80Bus>,
         z80_cycle_debt: &mut f32,
@@ -589,7 +607,10 @@ impl Emulator {
         z80_trace_count: &mut u32,
         debug: bool,
     ) -> CpuBatchResult {
-        let (initial_req, initial_rst) = (bus.z80_bus_request, bus.z80_reset);
+        let (initial_req, initial_rst) = {
+            let bus = bus_rc.bus.borrow();
+            (bus.z80_bus_request, bus.z80_reset)
+        };
         let mut pending_cycles = 0;
         loop {
             if pending_cycles >= max_cycles {
@@ -598,11 +619,14 @@ impl Emulator {
                     z80_change: None,
                 };
             }
-            let m68k_cycles = cpu.step_instruction(bus);
+            let m68k_cycles = {
+                let mut bus = bus_rc.bus.borrow_mut();
+                cpu.step_instruction(&mut *bus)
+            };
 
             let trigger_vint = line == active_lines && pending_cycles < 10;
             Self::sync_components(
-                bus,
+                bus_rc,
                 m68k_cycles,
                 z80,
                 z80_cycle_debt,
@@ -616,7 +640,10 @@ impl Emulator {
             );
 
             // Check for Z80 state change
-            let (req, rst) = (bus.z80_bus_request, bus.z80_reset);
+            let (req, rst) = {
+                let bus = bus_rc.bus.borrow();
+                (bus.z80_bus_request, bus.z80_reset)
+            };
 
             if req != initial_req || rst != initial_rst {
                 return CpuBatchResult {
@@ -635,40 +662,40 @@ impl Emulator {
         const CYCLES_PER_LINE: u32 = 488;
         const BATCH_SIZE: u32 = 128;
         let mut cycles_scanline: u32 = 0;
+        let bus_rc = SharedBus::new(self.bus.clone());
 
         while cycles_scanline < CYCLES_PER_LINE {
             let remaining = CYCLES_PER_LINE - cycles_scanline;
             let limit = std::cmp::min(remaining, BATCH_SIZE);
-            let result = {
-                let mut bus = self.bus.borrow_mut();
-                Self::run_cpu_batch_static(
-                    &mut self.cpu,
-                    &mut *bus,
-                    limit,
-                    &mut self.z80,
-                    z80_cycle_debt,
-                    line,
-                    active_lines,
-                    self.internal_frame_count,
-                    &mut self.z80_last_bus_req,
-                    &mut self.z80_last_reset,
-                    &mut self.z80_trace_count,
-                    self.debug,
-                )
-            };
+            let result = Self::run_cpu_batch_static(
+                &mut self.cpu,
+                &bus_rc,
+                limit,
+                &mut self.z80,
+                z80_cycle_debt,
+                line,
+                active_lines,
+                self.internal_frame_count,
+                &mut self.z80_last_bus_req,
+                &mut self.z80_last_reset,
+                &mut self.z80_trace_count,
+                self.debug,
+            );
 
             cycles_scanline += result.cycles;
 
             if let Some(change) = result.z80_change {
-                let mut bus = self.bus.borrow_mut();
-                // Apply the new state for the instruction that caused the change
-                bus.z80_bus_request = change.new_req;
-                bus.z80_reset = change.new_rst;
+                {
+                    let mut bus = self.bus.borrow_mut();
+                    // Apply the new state for the instruction that caused the change
+                    bus.z80_bus_request = change.new_req;
+                    bus.z80_reset = change.new_rst;
+                }
 
                 let trigger_vint = line == active_lines && cycles_scanline < 10;
                 // Sync components for the instruction that triggered the state change
                 Self::sync_components(
-                    &mut *bus,
+                    &bus_rc,
                     change.instruction_cycles,
                     &mut self.z80,
                     z80_cycle_debt,
@@ -751,6 +778,7 @@ impl Emulator {
 
             // Log every 600 frames (approx 10 seconds)
             if self.debug && current % 600 == 0 {
+                #[cfg(feature = "gui")]
                 self.log_debug(current as u64);
             }
         }
@@ -1562,5 +1590,40 @@ mod tests {
 
         // Cleanup
         let _ = std::fs::remove_file(dummy_rom);
+    }
+
+    #[test]
+    fn test_screenshot_path_sanitization() {
+        let mut emulator = Emulator::new();
+        let path = "/tmp/genteel_exploit.png";
+        let sanitized_path = "genteel_exploit.png";
+
+        // Ensure files don't exist
+        if std::path::Path::new(path).exists() {
+             let _ = std::fs::remove_file(path);
+        }
+        if std::path::Path::new(sanitized_path).exists() {
+             let _ = std::fs::remove_file(sanitized_path);
+        }
+
+        // Construct input with command
+        let mut input = crate::input::FrameInput::default();
+        input.command = Some(format!("SCREENSHOT {}", path));
+
+        emulator.step_frame(Some(input));
+
+        // Check vulnerability is fixed
+        if std::path::Path::new(path).exists() {
+            let _ = std::fs::remove_file(path);
+            panic!("Vulnerability still present: file created at {}", path);
+        }
+
+        // Check sanitized behavior
+        if std::path::Path::new(sanitized_path).exists() {
+            // Success: created at sanitized path
+            let _ = std::fs::remove_file(sanitized_path);
+        } else {
+            panic!("Sanitization failed: file not created at {}", sanitized_path);
+        }
     }
 }

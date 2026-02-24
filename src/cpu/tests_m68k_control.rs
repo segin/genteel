@@ -27,6 +27,48 @@ fn write_op(memory: &mut Memory, opcodes: &[u16]) {
 }
 
 // ============================================================================
+// TRAPV Tests
+// ============================================================================
+
+#[test]
+fn test_trapv_no_overflow() {
+    let (mut cpu, mut memory) = create_cpu();
+    write_op(&mut memory, &[0x4E76]); // TRAPV
+    cpu.set_flag(flags::OVERFLOW, false);
+    cpu.step_instruction(&mut memory);
+    assert_eq!(cpu.pc, 0x1002); // No trap, just move to next instruction
+}
+
+#[test]
+fn test_trapv_overflow() {
+    let (mut cpu, mut memory) = create_cpu();
+    write_op(&mut memory, &[0x4E76]); // TRAPV
+    cpu.set_flag(flags::OVERFLOW, true);
+    memory.write_long(0x1C, 0x6000); // TRAPV vector (7 * 4 = 0x1C)
+    cpu.step_instruction(&mut memory);
+    assert_eq!(cpu.pc, 0x6000); // Trapped to vector
+}
+
+#[test]
+fn test_trapv_overflow_set_alt() {
+    let (mut cpu, mut memory) = create_cpu();
+    write_op(&mut memory, &[0x4E76]); // TRAPV
+
+    // Set Overflow Flag
+    cpu.set_flag(flags::OVERFLOW, true);
+
+    // Set Vector 7 (TRAPV exception vector)
+    memory.write_long(28, 0x5000); // 7 * 4 = 28
+
+    cpu.step_instruction(&mut memory);
+
+    // Should trap to 0x5000
+    assert_eq!(cpu.pc, 0x5000);
+    // Should be in supervisor mode
+    assert!(cpu.get_flag(flags::SUPERVISOR));
+}
+
+// ============================================================================
 // BRA Tests
 // ============================================================================
 
@@ -237,6 +279,35 @@ fn test_dbeq_condition_true() {
 // Scc Tests
 // ============================================================================
 
+fn check_scc(opcode: u16, setup_met: impl Fn(&mut Cpu), setup_not_met: impl Fn(&mut Cpu)) {
+    let (mut cpu, mut memory) = create_cpu();
+
+    // Condition Met
+    write_op(&mut memory, &[opcode]);
+    cpu.d[0] = 0;
+    setup_met(&mut cpu);
+    cpu.step_instruction(&mut memory);
+    assert_eq!(
+        cpu.d[0] & 0xFF,
+        0xFF,
+        "Condition Met failed for opcode {:04X}",
+        opcode
+    );
+
+    // Condition Not Met
+    write_op(&mut memory, &[opcode]);
+    cpu.pc = 0x1000;
+    cpu.d[0] = 0xFF;
+    setup_not_met(&mut cpu);
+    cpu.step_instruction(&mut memory);
+    assert_eq!(
+        cpu.d[0] & 0xFF,
+        0x00,
+        "Condition Not Met failed for opcode {:04X}",
+        opcode
+    );
+}
+
 #[test]
 fn test_st_always_true() {
     let (mut cpu, mut memory) = create_cpu();
@@ -273,6 +344,185 @@ fn test_sne_zero_clear() {
     cpu.set_flag(flags::ZERO, false);
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.d[0] & 0xFF, 0xFF);
+}
+
+#[test]
+fn test_shi_unsigned_higher() {
+    check_scc(
+        0x52C0,
+        |cpu| {
+            cpu.set_flag(flags::CARRY, false);
+            cpu.set_flag(flags::ZERO, false);
+        },
+        |cpu| {
+            cpu.set_flag(flags::CARRY, true);
+        },
+    );
+}
+
+#[test]
+fn test_sls_unsigned_lower_same() {
+    check_scc(
+        0x53C0,
+        |cpu| {
+            cpu.set_flag(flags::CARRY, true);
+        },
+        |cpu| {
+            cpu.set_flag(flags::CARRY, false);
+            cpu.set_flag(flags::ZERO, false);
+        },
+    );
+}
+
+#[test]
+fn test_scc_carry_clear() {
+    check_scc(
+        0x54C0,
+        |cpu| {
+            cpu.set_flag(flags::CARRY, false);
+        },
+        |cpu| {
+            cpu.set_flag(flags::CARRY, true);
+        },
+    );
+}
+
+#[test]
+fn test_scs_carry_set() {
+    check_scc(
+        0x55C0,
+        |cpu| {
+            cpu.set_flag(flags::CARRY, true);
+        },
+        |cpu| {
+            cpu.set_flag(flags::CARRY, false);
+        },
+    );
+}
+
+#[test]
+fn test_svc_overflow_clear() {
+    check_scc(
+        0x58C0,
+        |cpu| {
+            cpu.set_flag(flags::OVERFLOW, false);
+        },
+        |cpu| {
+            cpu.set_flag(flags::OVERFLOW, true);
+        },
+    );
+}
+
+#[test]
+fn test_svs_overflow_set() {
+    check_scc(
+        0x59C0,
+        |cpu| {
+            cpu.set_flag(flags::OVERFLOW, true);
+        },
+        |cpu| {
+            cpu.set_flag(flags::OVERFLOW, false);
+        },
+    );
+}
+
+#[test]
+fn test_spl_plus() {
+    check_scc(
+        0x5AC0,
+        |cpu| {
+            cpu.set_flag(flags::NEGATIVE, false);
+        },
+        |cpu| {
+            cpu.set_flag(flags::NEGATIVE, true);
+        },
+    );
+}
+
+#[test]
+fn test_smi_minus() {
+    check_scc(
+        0x5BC0,
+        |cpu| {
+            cpu.set_flag(flags::NEGATIVE, true);
+        },
+        |cpu| {
+            cpu.set_flag(flags::NEGATIVE, false);
+        },
+    );
+}
+
+#[test]
+fn test_sge_signed_ge() {
+    check_scc(
+        0x5CC0,
+        |cpu| {
+            cpu.set_flag(flags::NEGATIVE, false);
+            cpu.set_flag(flags::OVERFLOW, false);
+        },
+        |cpu| {
+            cpu.set_flag(flags::NEGATIVE, true);
+            cpu.set_flag(flags::OVERFLOW, false);
+        },
+    );
+}
+
+#[test]
+fn test_slt_signed_lt() {
+    check_scc(
+        0x5DC0,
+        |cpu| {
+            cpu.set_flag(flags::NEGATIVE, true);
+            cpu.set_flag(flags::OVERFLOW, false);
+        },
+        |cpu| {
+            cpu.set_flag(flags::NEGATIVE, false);
+            cpu.set_flag(flags::OVERFLOW, false);
+        },
+    );
+}
+
+#[test]
+fn test_sgt_signed_gt() {
+    check_scc(
+        0x5EC0,
+        |cpu| {
+            cpu.set_flag(flags::NEGATIVE, false);
+            cpu.set_flag(flags::OVERFLOW, false);
+            cpu.set_flag(flags::ZERO, false);
+        },
+        |cpu| {
+            cpu.set_flag(flags::ZERO, true);
+        },
+    );
+}
+
+#[test]
+fn test_sle_signed_le() {
+    check_scc(
+        0x5FC0,
+        |cpu| {
+            cpu.set_flag(flags::ZERO, true);
+        },
+        |cpu| {
+            cpu.set_flag(flags::NEGATIVE, false);
+            cpu.set_flag(flags::OVERFLOW, false);
+            cpu.set_flag(flags::ZERO, false);
+        },
+    );
+}
+
+#[test]
+fn test_scc_preserves_upper_bits() {
+    let (mut cpu, mut memory) = create_cpu();
+    write_op(&mut memory, &[0x50C0]); // ST D0
+
+    // Set D0 to a known pattern
+    cpu.d[0] = 0x12345600;
+    cpu.step_instruction(&mut memory);
+
+    // Lower byte should be FF, upper bytes should be preserved
+    assert_eq!(cpu.d[0], 0x123456FF);
 }
 
 // ============================================================================
@@ -363,7 +613,7 @@ fn test_link_unlk() {
 
 #[test]
 fn test_trap_vector() {
-    let (mut cpu, mut memory) = create_cpu();
+    let (mut cpu, mut memory) = create_test_cpu();
     write_op(&mut memory, &[0x4E40]); // TRAP #0
     memory.write_long(0x80, 0x3000); // Vector 32 (TRAP #0)
     cpu.step_instruction(&mut memory);
@@ -372,7 +622,7 @@ fn test_trap_vector() {
 
 #[test]
 fn test_trap_15() {
-    let (mut cpu, mut memory) = create_cpu();
+    let (mut cpu, mut memory) = create_test_cpu();
     write_op(&mut memory, &[0x4E4F]); // TRAP #15
     memory.write_long(0xBC, 0x4000); // Vector 47 (TRAP #15)
     cpu.step_instruction(&mut memory);
@@ -547,4 +797,70 @@ fn test_rte_supervisor() {
     assert_eq!(cpu.sr, target_sr);
     // Should now be in user mode because we popped 0x0000 into SR
     assert_eq!(cpu.sr & flags::SUPERVISOR, 0);
+}
+
+// ============================================================================
+// RESET Tests
+// ============================================================================
+
+#[test]
+fn test_reset_supervisor() {
+    let (mut cpu, mut memory) = create_cpu();
+    // RESET opcode: 0x4E70
+    write_op(&mut memory, &[0x4E70]);
+
+    // Ensure Supervisor Mode
+    cpu.sr |= flags::SUPERVISOR;
+
+    let cycles = cpu.step_instruction(&mut memory);
+
+    assert_eq!(cycles, 132);
+    assert_eq!(cpu.pc, 0x1002); // Should advance past instruction
+}
+
+#[test]
+fn test_reset_user_privilege_violation() {
+    let (mut cpu, mut memory) = create_cpu();
+    // RESET opcode: 0x4E70
+    write_op(&mut memory, &[0x4E70]);
+
+    // Set User Mode
+    cpu.sr &= !flags::SUPERVISOR;
+    // Setup stacks
+    cpu.usp = 0xA000;
+    cpu.ssp = 0x8000;
+    cpu.a[7] = cpu.usp;
+
+    // Set Vector 8 (Privilege Violation)
+    memory.write_long(32, 0x4000);
+
+    let cycles = cpu.step_instruction(&mut memory);
+
+    assert_eq!(cycles, 34); // Exception processing time
+    assert_eq!(cpu.pc, 0x4000); // Jump to handler
+    assert!((cpu.sr & flags::SUPERVISOR) != 0); // Should be in supervisor mode
+}
+
+// ============================================================================
+// Address Error Tests
+// ============================================================================
+
+#[test]
+fn test_address_error_write_word() {
+    let (mut cpu, mut memory) = create_cpu();
+    // MOVE.W D0, (A0)
+    // Opcode: 0011 000 010 000 000 -> 0x3080
+    write_op(&mut memory, &[0x3080]);
+
+    cpu.d[0] = 0x1234;
+    cpu.a[0] = 0x2001; // Odd address
+
+    // Set Vector 3 (Address Error)
+    memory.write_long(12, 0x4000); // 3 * 4 = 12
+
+    cpu.step_instruction(&mut memory);
+
+    assert_eq!(cpu.pc, 0x4000);
+    // Should be in supervisor mode (exception processing)
+    assert!(cpu.sr & flags::SUPERVISOR != 0);
 }
