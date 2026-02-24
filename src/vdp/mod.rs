@@ -929,33 +929,61 @@ impl Vdp {
             }
 
             // Prefetch the 4 bytes (8 pixels) for this row.
-            // Mask to 64KB VRAM. Since each row fetch is 4 bytes and row_addr is a
-            // multiple of 4, masking with 0xFFFC ensures the slice never crosses
-            // the 64KB boundary.
-            let addr = row_addr & 0xFFFC;
-            let patterns: [u8; 4] = vram[addr..addr + 4].try_into().unwrap();
+            // row_addr is guaranteed to be 4-byte aligned (32*k + 4*j).
+            // We already checked row_addr + 4 <= 0x10000.
+            // So row_addr..row_addr+4 is within bounds.
+            let patterns: [u8; 4] = unsafe {
+                 vram.get_unchecked(row_addr..row_addr + 4).try_into().unwrap_unchecked()
+            };
 
             let base_screen_x = attr.h_pos.wrapping_add(tile_h_offset * 8);
 
-            for i in 0..8 {
-                let screen_x = base_screen_x.wrapping_add(i);
-                if screen_x >= screen_width {
-                    continue;
+            // Optimization: If the entire 8-pixel block is visible, skip per-pixel checks.
+            if (base_screen_x as u32) + 8 <= screen_width as u32 {
+                for i in 0..8 {
+                    let screen_x = base_screen_x.wrapping_add(i);
+                    let eff_col = if attr.h_flip { 7 - i } else { i };
+
+                    // SAFETY: eff_col is 0..8, so index 0..3 is valid. patterns is [u8; 4].
+                    let byte = unsafe { *patterns.get_unchecked((eff_col as usize) / 2) };
+
+                    let color_idx = if eff_col % 2 == 0 {
+                        byte >> 4
+                    } else {
+                        byte & 0x0F
+                    };
+
+                    if color_idx != 0 {
+                        let addr = ((attr.palette as usize) << 4) | (color_idx as usize);
+                        // SAFETY: cram_cache size 64. addr < 64.
+                        // framebuffer bounds checked by screen_width logic.
+                        unsafe {
+                            let color = *cram_cache.get_unchecked(addr);
+                            *framebuffer.get_unchecked_mut(line_offset + screen_x as usize) = color;
+                        }
+                    }
                 }
+            } else {
+                for i in 0..8 {
+                    let screen_x = base_screen_x.wrapping_add(i);
+                    if screen_x >= screen_width {
+                        continue;
+                    }
 
-                let eff_col = if attr.h_flip { 7 - i } else { i };
+                    let eff_col = if attr.h_flip { 7 - i } else { i };
 
-                let byte = patterns[(eff_col as usize) / 2];
-                let color_idx = if eff_col % 2 == 0 {
-                    byte >> 4
-                } else {
-                    byte & 0x0F
-                };
+                    let byte = patterns[(eff_col as usize) / 2];
+                    let color_idx = if eff_col % 2 == 0 {
+                        byte >> 4
+                    } else {
+                        byte & 0x0F
+                    };
 
-                if color_idx != 0 {
-                    let addr = ((attr.palette as usize) * 16) + (color_idx as usize);
-                    let color = cram_cache[addr];
-                    framebuffer[line_offset + screen_x as usize] = color;
+                    if color_idx != 0 {
+                        let addr = ((attr.palette as usize) * 16) + (color_idx as usize);
+                        let color = cram_cache[addr];
+                        framebuffer[line_offset + screen_x as usize] = color;
+                    }
                 }
             }
         }
