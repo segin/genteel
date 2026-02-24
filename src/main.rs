@@ -431,7 +431,21 @@ impl Emulator {
                 match parts[0].to_uppercase().as_str() {
                     "SCREENSHOT" => {
                         if parts.len() > 1 {
-                            let path = parts[1];
+                            let raw_path = parts[1];
+                            // Security: Sanitize path to prevent arbitrary file writes
+                            // Only allow saving to current directory by using only the file name component
+                            let path = std::path::Path::new(raw_path)
+                                .file_name()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or("screenshot.png");
+
+                            if path != raw_path {
+                                eprintln!(
+                                    "Script Warning: Sanitized screenshot path '{}' to '{}'",
+                                    raw_path, path
+                                );
+                            }
+
                             if let Err(e) = self.save_screenshot(path) {
                                 eprintln!("Script Error: Failed to save screenshot to {}: {}", path, e);
                             } else {
@@ -750,6 +764,7 @@ impl Emulator {
 
             // Log every 600 frames (approx 10 seconds)
             if self.debug && current % 600 == 0 {
+                #[cfg(feature = "gui")]
                 self.log_debug(current as u64);
             }
         }
@@ -1562,5 +1577,40 @@ mod tests {
 
         // Cleanup
         let _ = std::fs::remove_file(dummy_rom);
+    }
+
+    #[test]
+    fn test_screenshot_path_sanitization() {
+        let mut emulator = Emulator::new();
+        let path = "/tmp/genteel_exploit.png";
+        let sanitized_path = "genteel_exploit.png";
+
+        // Ensure files don't exist
+        if std::path::Path::new(path).exists() {
+             let _ = std::fs::remove_file(path);
+        }
+        if std::path::Path::new(sanitized_path).exists() {
+             let _ = std::fs::remove_file(sanitized_path);
+        }
+
+        // Construct input with command
+        let mut input = crate::input::FrameInput::default();
+        input.command = Some(format!("SCREENSHOT {}", path));
+
+        emulator.step_frame(Some(input));
+
+        // Check vulnerability is fixed
+        if std::path::Path::new(path).exists() {
+            let _ = std::fs::remove_file(path);
+            panic!("Vulnerability still present: file created at {}", path);
+        }
+
+        // Check sanitized behavior
+        if std::path::Path::new(sanitized_path).exists() {
+            // Success: created at sanitized path
+            let _ = std::fs::remove_file(sanitized_path);
+        } else {
+            panic!("Sanitization failed: file not created at {}", sanitized_path);
+        }
     }
 }
