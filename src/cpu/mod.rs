@@ -824,11 +824,15 @@ impl Cpu {
 }
 
 #[cfg(test)]
+mod bench_decoder;
+#[cfg(test)]
 mod tests_addressing;
 #[cfg(test)]
 mod tests_bug_fixes;
 #[cfg(test)]
 mod tests_cache;
+#[cfg(test)]
+mod tests_decoder_shift;
 #[cfg(test)]
 mod tests_m68k_alu;
 #[cfg(test)]
@@ -844,7 +848,11 @@ mod tests_m68k_data;
 #[cfg(test)]
 mod tests_m68k_data_unit;
 #[cfg(test)]
+mod tests_m68k_exhaustive;
+#[cfg(test)]
 mod tests_m68k_extended;
+#[cfg(test)]
+mod tests_m68k_movep;
 #[cfg(test)]
 mod tests_m68k_shift;
 #[cfg(test)]
@@ -853,6 +861,3 @@ mod tests_m68k_torture;
 mod tests_performance;
 #[cfg(test)]
 mod tests_security;
-mod tests_decoder_shift;
-#[cfg(test)]
-mod tests_m68k_exhaustive;
