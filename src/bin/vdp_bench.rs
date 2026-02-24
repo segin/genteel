@@ -1,4 +1,4 @@
-use genteel::vdp::Vdp;
+use genteel::vdp::{RenderOps, Vdp};
 use std::time::Instant;
 
 fn main() {

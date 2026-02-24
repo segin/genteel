@@ -1,10 +1,9 @@
-#![allow(unused_imports)]
 //! Z80 CPU Implementation for Genesis Sound Co-processor
 //!
 //! The Z80 is used as a sound co-processor in the Sega Genesis, running at 3.58 MHz.
 //! It has access to 8KB of dedicated sound RAM and controls the YM2612 and SN76489.
 
-use crate::memory::{IoInterface, MemoryInterface, Z80Interface};
+use crate::memory::{IoInterface, MemoryInterface};
 
 #[cfg(test)]
 pub mod test_utils;
@@ -26,27 +25,23 @@ pub mod flags {
 
 use crate::debugger::Debuggable;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 
-macro_rules! dispatch_z {
-    ($z:expr, $c0:expr, $c1:expr, $c2:expr, $c3:expr, $c4:expr, $c5:expr, $c6:expr, $c7:expr) => {
-        match $z {
-            0 => $c0,
-            1 => $c1,
-            2 => $c2,
-            3 => $c3,
-            4 => $c4,
-            5 => $c5,
-            6 => $c6,
-            7 => $c7,
-            _ => 4,
-        }
-    };
-}
+#[macro_use]
+mod macros;
+
+pub mod op_general;
+use op_general::GeneralOps;
+
+pub mod op_ed;
+use op_ed::EdOps;
+
+pub mod op_index;
+use op_index::IndexOps;
 
 /// Z80 CPU
 #[derive(Debug)]
-pub struct Z80 {
+pub struct Z80<M: MemoryInterface, I: IoInterface> {
     // Main registers
     pub a: u8,
     pub f: u8,
@@ -95,6 +90,12 @@ pub struct Z80 {
     // Interrupt logic
     pub pending_ei: bool,
 
+    // Memory interface (Generic for static dispatch performance)
+    pub memory: M,
+
+    // I/O interface (Generic for static dispatch performance)
+    pub io: I,
+
     // Cycle counter for timing
     pub cycles: u64,
 
@@ -102,8 +103,8 @@ pub struct Z80 {
     pub debug: bool,
 }
 
-impl Z80 {
-    pub fn new() -> Self {
+impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
+    pub fn new(memory: M, io: I) -> Self {
         Self {
             a: 0xFF,
             f: 0xFF,
@@ -133,6 +134,8 @@ impl Z80 {
             memptr: 0,
             halted: false,
             pending_ei: false,
+            memory,
+            io,
             cycles: 0,
             debug: false,
         }
@@ -222,8 +225,8 @@ impl Z80 {
 
     // ========== Memory access helpers ==========
 
-    pub(crate) fn fetch_byte<T: Z80Interface>(&mut self, bus: &mut T) -> u8 {
-        let byte = bus.read_byte(self.pc as u32);
+    pub(crate) fn fetch_byte(&mut self) -> u8 {
+        let byte = self.memory.read_byte(self.pc as u32);
         self.pc = self.pc.wrapping_add(1);
 
         // Refresh register (R) increments on every instruction fetch
@@ -233,55 +236,55 @@ impl Z80 {
         byte
     }
 
-    fn fetch_word<T: Z80Interface>(&mut self, bus: &mut T) -> u16 {
-        let low = self.fetch_byte(bus) as u16;
-        let high = self.fetch_byte(bus) as u16;
+    pub(crate) fn fetch_word(&mut self) -> u16 {
+        let low = self.fetch_byte() as u16;
+        let high = self.fetch_byte() as u16;
         (high << 8) | low
     }
 
-    pub(crate) fn read_byte<T: Z80Interface>(&mut self, bus: &mut T, addr: u16) -> u8 {
-        bus.read_byte(addr as u32)
+    pub(crate) fn read_byte(&mut self, addr: u16) -> u8 {
+        self.memory.read_byte(addr as u32)
     }
 
-    pub(crate) fn write_byte<T: Z80Interface>(&mut self, bus: &mut T, addr: u16, value: u8) {
-        bus.write_byte(addr as u32, value);
+    pub(crate) fn write_byte(&mut self, addr: u16, value: u8) {
+        self.memory.write_byte(addr as u32, value);
     }
 
-    fn read_word<T: Z80Interface>(&mut self, bus: &mut T, addr: u16) -> u16 {
-        let low = self.read_byte(bus, addr) as u16;
-        let high = self.read_byte(bus, addr.wrapping_add(1)) as u16;
+    pub(crate) fn read_word(&mut self, addr: u16) -> u16 {
+        let low = self.read_byte(addr) as u16;
+        let high = self.read_byte(addr.wrapping_add(1)) as u16;
         (high << 8) | low
     }
 
-    fn write_word<T: Z80Interface>(&mut self, bus: &mut T, addr: u16, value: u16) {
-        self.write_byte(bus, addr, value as u8);
-        self.write_byte(bus, addr.wrapping_add(1), (value >> 8) as u8);
+    pub(crate) fn write_word(&mut self, addr: u16, value: u16) {
+        self.write_byte(addr, value as u8);
+        self.write_byte(addr.wrapping_add(1), (value >> 8) as u8);
     }
 
     // ========== I/O access helpers ==========
 
-    fn read_port<T: Z80Interface>(&mut self, bus: &mut T, port: u16) -> u8 {
-        bus.read_port(port)
+    pub(crate) fn read_port(&mut self, port: u16) -> u8 {
+        self.io.read_port(port)
     }
 
-    fn write_port<T: Z80Interface>(&mut self, bus: &mut T, port: u16, value: u8) {
-        bus.write_port(port, value);
+    pub(crate) fn write_port(&mut self, port: u16, value: u8) {
+        self.io.write_port(port, value);
     }
 
-    fn push<T: Z80Interface>(&mut self, bus: &mut T, value: u16) {
+    pub(crate) fn push(&mut self, value: u16) {
         self.sp = self.sp.wrapping_sub(2);
-        self.write_word(bus, self.sp, value);
+        self.write_word(self.sp, value);
     }
 
-    fn pop<T: Z80Interface>(&mut self, bus: &mut T) -> u16 {
-        let value = self.read_word(bus, self.sp);
+    pub(crate) fn pop(&mut self) -> u16 {
+        let value = self.read_word(self.sp);
         self.sp = self.sp.wrapping_add(2);
         value
     }
 
     // ========== ALU operations ==========
 
-    fn add_a(&mut self, value: u8, with_carry: bool) {
+    pub(crate) fn add_a(&mut self, value: u8, with_carry: bool) {
         let carry = if with_carry && (self.f & flags::CARRY) != 0 {
             1u16
         } else {
@@ -316,7 +319,7 @@ impl Z80 {
         self.f = f;
     }
 
-    fn sub_a(&mut self, value: u8, with_carry: bool, store: bool) {
+    pub(crate) fn sub_a(&mut self, value: u8, with_carry: bool, store: bool) {
         let carry = if with_carry && (self.f & flags::CARRY) != 0 {
             1u16
         } else {
@@ -352,7 +355,7 @@ impl Z80 {
         self.f = f;
     }
 
-    fn and_a(&mut self, value: u8) {
+    pub(crate) fn and_a(&mut self, value: u8) {
         self.a &= value;
 
         // H=1, N=0, C=0
@@ -373,7 +376,7 @@ impl Z80 {
         self.f = f;
     }
 
-    fn or_a(&mut self, value: u8) {
+    pub(crate) fn or_a(&mut self, value: u8) {
         self.a |= value;
 
         // H=0, N=0, C=0
@@ -394,7 +397,7 @@ impl Z80 {
         self.f = f;
     }
 
-    fn xor_a(&mut self, value: u8) {
+    pub(crate) fn xor_a(&mut self, value: u8) {
         self.a ^= value;
 
         // H=0, N=0, C=0
@@ -415,7 +418,7 @@ impl Z80 {
         self.f = f;
     }
 
-    fn inc(&mut self, value: u8) -> u8 {
+    pub(crate) fn inc(&mut self, value: u8) -> u8 {
         let result = value.wrapping_add(1);
 
         let mut f = self.f & flags::CARRY; // Preserve Carry
@@ -436,7 +439,7 @@ impl Z80 {
         result
     }
 
-    fn dec(&mut self, value: u8) -> u8 {
+    pub(crate) fn dec(&mut self, value: u8) -> u8 {
         let result = value.wrapping_sub(1);
 
         let mut f = (self.f & flags::CARRY) | flags::ADD_SUB; // Preserve Carry, set N
@@ -456,7 +459,7 @@ impl Z80 {
         result
     }
 
-    fn add_hl(&mut self, value: u16) {
+    pub(crate) fn add_hl(&mut self, value: u16) {
         let hl = self.hl() as u32;
         let v = value as u32;
         let result = hl + v;
@@ -500,59 +503,9 @@ impl Z80 {
         self.iy = (self.iy & 0xFF00) | (val as u16);
     }
 
-    fn get_index_byte(&self, r: u8, is_ix: bool) -> u8 {
-        match r {
-            0 => self.b,
-            1 => self.c,
-            2 => self.d,
-            3 => self.e,
-            4 => {
-                if is_ix {
-                    self.ixh()
-                } else {
-                    self.iyh()
-                }
-            }
-            5 => {
-                if is_ix {
-                    self.ixl()
-                } else {
-                    self.iyl()
-                }
-            }
-            7 => self.a,
-            _ => 0,
-        }
-    }
-
-    fn set_index_byte(&mut self, r: u8, val: u8, is_ix: bool) {
-        match r {
-            0 => self.b = val,
-            1 => self.c = val,
-            2 => self.d = val,
-            3 => self.e = val,
-            4 => {
-                if is_ix {
-                    self.set_ixh(val)
-                } else {
-                    self.set_iyh(val)
-                }
-            }
-            5 => {
-                if is_ix {
-                    self.set_ixl(val)
-                } else {
-                    self.set_iyl(val)
-                }
-            }
-            7 => self.a = val,
-            _ => {}
-        }
-    }
-
     // ========== Rotate/Shift operations ==========
 
-    fn rlca(&mut self) {
+    pub(crate) fn rlca(&mut self) {
         let carry = (self.a & 0x80) != 0;
         self.a = (self.a << 1) | if carry { 1 } else { 0 };
         self.set_flag(flags::CARRY, carry);
@@ -563,7 +516,7 @@ impl Z80 {
         self.set_flag(flags::Y_FLAG, (self.a & 0x20) != 0);
     }
 
-    fn rrca(&mut self) {
+    pub(crate) fn rrca(&mut self) {
         let carry = (self.a & 0x01) != 0;
         self.a = (self.a >> 1) | if carry { 0x80 } else { 0 };
         self.set_flag(flags::CARRY, carry);
@@ -574,7 +527,7 @@ impl Z80 {
         self.set_flag(flags::Y_FLAG, (self.a & 0x20) != 0);
     }
 
-    fn rla(&mut self) {
+    pub(crate) fn rla(&mut self) {
         let old_carry = self.get_flag(flags::CARRY);
         let new_carry = (self.a & 0x80) != 0;
         self.a = (self.a << 1) | if old_carry { 1 } else { 0 };
@@ -586,7 +539,7 @@ impl Z80 {
         self.set_flag(flags::Y_FLAG, (self.a & 0x20) != 0);
     }
 
-    fn rra(&mut self) {
+    pub(crate) fn rra(&mut self) {
         let old_carry = self.get_flag(flags::CARRY);
         let new_carry = (self.a & 0x01) != 0;
         self.a = (self.a >> 1) | if old_carry { 0x80 } else { 0 };
@@ -600,7 +553,7 @@ impl Z80 {
 
     // ========== Helper to get/set register by index ==========
 
-    pub(crate) fn get_reg<T: Z80Interface>(&mut self, bus: &mut T, index: u8) -> u8 {
+    pub(crate) fn get_reg(&mut self, index: u8) -> u8 {
         match index {
             0 => self.b,
             1 => self.c,
@@ -608,13 +561,13 @@ impl Z80 {
             3 => self.e,
             4 => self.h,
             5 => self.l,
-            6 => self.read_byte(bus, self.hl()),
+            6 => self.read_byte(self.hl()),
             7 => self.a,
             _ => 0,
         }
     }
 
-    pub(crate) fn set_reg<T: Z80Interface>(&mut self, bus: &mut T, index: u8, value: u8) {
+    pub(crate) fn set_reg(&mut self, index: u8, value: u8) {
         match index {
             0 => self.b = value,
             1 => self.c = value,
@@ -624,14 +577,14 @@ impl Z80 {
             5 => self.l = value,
             6 => {
                 let addr = self.hl();
-                self.write_byte(bus, addr, value);
+                self.write_byte(addr, value);
             }
             7 => self.a = value,
             _ => {}
         }
     }
 
-    fn get_rp(&self, index: u8) -> u16 {
+    pub(crate) fn get_rp(&self, index: u8) -> u16 {
         match index {
             0 => self.bc(),
             1 => self.de(),
@@ -641,7 +594,7 @@ impl Z80 {
         }
     }
 
-    fn set_rp(&mut self, index: u8, value: u16) {
+    pub(crate) fn set_rp(&mut self, index: u8, value: u16) {
         match index {
             0 => self.set_bc(value),
             1 => self.set_de(value),
@@ -651,7 +604,7 @@ impl Z80 {
         }
     }
 
-    fn get_rp2(&self, index: u8) -> u16 {
+    pub(crate) fn get_rp2(&self, index: u8) -> u16 {
         match index {
             0 => self.bc(),
             1 => self.de(),
@@ -661,7 +614,7 @@ impl Z80 {
         }
     }
 
-    fn set_rp2(&mut self, index: u8, value: u16) {
+    pub(crate) fn set_rp2(&mut self, index: u8, value: u16) {
         match index {
             0 => self.set_bc(value),
             1 => self.set_de(value),
@@ -671,7 +624,7 @@ impl Z80 {
         }
     }
 
-    fn check_condition(&self, cc: u8) -> bool {
+    pub(crate) fn check_condition(&self, cc: u8) -> bool {
         match cc {
             0 => !self.get_flag(flags::ZERO),   // NZ
             1 => self.get_flag(flags::ZERO),    // Z
@@ -688,7 +641,7 @@ impl Z80 {
     // ========== Main execution ==========
 
     /// Trigger a maskable interrupt
-    pub fn trigger_interrupt<T: Z80Interface>(&mut self, bus: &mut T, vector: u8) -> u8 {
+    pub fn trigger_interrupt(&mut self, vector: u8) -> u8 {
         if !self.iff1 || self.pending_ei {
             return 0;
         }
@@ -699,15 +652,15 @@ impl Z80 {
 
         match self.im {
             0 | 1 => {
-                self.push(bus, self.pc);
+                self.push(self.pc);
                 self.pc = 0x0038;
                 13
             }
             2 => {
-                self.push(bus, self.pc);
+                self.push(self.pc);
                 let addr = ((self.i as u16) << 8) | vector as u16;
                 self.memptr = addr;
-                let handler = self.read_word(bus, addr);
+                let handler = self.read_word(addr);
                 self.pc = handler;
                 8
             }
@@ -716,17 +669,17 @@ impl Z80 {
     }
 
     /// Trigger a non-maskable interrupt (NMI)
-    pub fn trigger_nmi<T: Z80Interface>(&mut self, bus: &mut T) -> u8 {
+    pub fn trigger_nmi(&mut self) -> u8 {
         self.halted = false;
         self.iff2 = self.iff1;
         self.iff1 = false;
-        self.push(bus, self.pc);
+        self.push(self.pc);
         self.pc = 0x0066;
         11
     }
 
     /// Execute one instruction, returns number of T-states used
-    pub fn step<T: Z80Interface>(&mut self, bus: &mut T) -> u8 {
+    pub fn step(&mut self) -> u8 {
         if self.halted {
             return 4;
         }
@@ -736,7 +689,7 @@ impl Z80 {
         self.pending_ei = false;
 
         let _pc_before = self.pc;
-        let opcode = self.fetch_byte(bus);
+        let opcode = self.fetch_byte();
 
         if self.debug {
             log::debug!("Z80 | PC:{:04X} OP:{:02X} | A:{:02X} F:{:02X} | BC:{:04X} DE:{:04X} HL:{:04X} SP:{:04X} | CYC:{}", 
@@ -750,10 +703,10 @@ impl Z80 {
         let q = y & 1;
 
         let t_states = match x {
-            0 => self.execute_x0(bus, opcode, y, z, p, q),
-            1 => self.execute_x1(bus, y, z),
-            2 => self.execute_x2(bus, y, z),
-            3 => self.execute_x3(bus, opcode, y, z, p, q),
+            0 => self.execute_x0(opcode, y, z, p, q),
+            1 => self.execute_x1(y, z),
+            2 => self.execute_x2(y, z),
+            3 => self.execute_x3(opcode, y, z, p, q),
             _ => 4,
         };
 
@@ -761,1222 +714,6 @@ impl Z80 {
         t_states
     }
 
-    fn execute_x0<T: Z80Interface>(&mut self, bus: &mut T, _opcode: u8, y: u8, z: u8, _p: u8, _q: u8) -> u8 {
-        dispatch_z!(
-            z,
-            self.execute_x0_control_misc(bus, y),
-            self.execute_x0_load_add_hl(bus, y),
-            self.execute_x0_load_indirect(bus, y),
-            self.execute_x0_inc_dec_rp(y),
-            self.execute_x0_inc_r(bus, y),
-            self.execute_x0_dec_r(bus, y),
-            self.execute_x0_ld_r_n(bus, y),
-            self.execute_x0_rotate_accum_flags(y)
-        )
-    }
-
-    fn execute_x0_control_misc<T: Z80Interface>(&mut self, bus: &mut T, y: u8) -> u8 {
-        match y {
-            0 => 4, // NOP
-            1 => {
-                // EX AF, AF'
-                std::mem::swap(&mut self.a, &mut self.a_prime);
-                std::mem::swap(&mut self.f, &mut self.f_prime);
-                4
-            }
-            2 => {
-                // DJNZ d
-                let d = self.fetch_byte(bus) as i8;
-                self.b = self.b.wrapping_sub(1);
-                if self.b != 0 {
-                    self.pc = (self.pc as i32 + d as i32) as u16;
-                    13
-                } else {
-                    8
-                }
-            }
-            3 => {
-                // JR d
-                let d = self.fetch_byte(bus) as i8;
-                self.pc = (self.pc as i32 + d as i32) as u16;
-                12
-            }
-            4..=7 => {
-                // JR cc, d
-                let d = self.fetch_byte(bus) as i8;
-                if self.check_condition(y - 4) {
-                    self.pc = (self.pc as i32 + d as i32) as u16;
-                    12
-                } else {
-                    7
-                }
-            }
-            _ => 4,
-        }
-    }
-
-    fn execute_x0_load_add_hl<T: Z80Interface>(&mut self, bus: &mut T, y: u8) -> u8 {
-        let p = (y >> 1) & 0x03;
-        let q = y & 0x01;
-        if q == 0 {
-            // LD rp, nn
-            let nn = self.fetch_word(bus);
-            self.set_rp(p, nn);
-            10
-        } else {
-            // ADD HL, rp
-            let rp = self.get_rp(p);
-            self.add_hl(rp);
-            11
-        }
-    }
-
-    fn execute_x0_load_indirect<T: Z80Interface>(&mut self, bus: &mut T, y: u8) -> u8 {
-        let p = (y >> 1) & 0x03;
-        let q = y & 0x01;
-        match (p, q) {
-            (0, 0) => {
-                // LD (BC), A
-                let addr = self.bc();
-                self.write_byte(bus, addr, self.a);
-                self.memptr = ((self.a as u16) << 8) | (addr.wrapping_add(1) & 0xFF);
-                7
-            }
-            (0, 1) => {
-                // LD A, (BC)
-                let addr = self.bc();
-                self.a = self.read_byte(bus, addr);
-                self.memptr = addr.wrapping_add(1);
-                7
-            }
-            (1, 0) => {
-                // LD (DE), A
-                let addr = self.de();
-                self.write_byte(bus, addr, self.a);
-                self.memptr = ((self.a as u16) << 8) | (addr.wrapping_add(1) & 0xFF);
-                7
-            }
-            (1, 1) => {
-                // LD A, (DE)
-                let addr = self.de();
-                self.a = self.read_byte(bus, addr);
-                self.memptr = addr.wrapping_add(1);
-                7
-            }
-            (2, 0) => {
-                // LD (nn), HL
-                let addr = self.fetch_word(bus);
-                self.write_word(bus, addr, self.hl());
-                self.memptr = addr.wrapping_add(1);
-                16
-            }
-            (2, 1) => {
-                // LD HL, (nn)
-                let addr = self.fetch_word(bus);
-                let val = self.read_word(bus, addr);
-                self.set_hl(val);
-                self.memptr = addr.wrapping_add(1);
-                16
-            }
-            (3, 0) => {
-                // LD (nn), A
-                let addr = self.fetch_word(bus);
-                self.write_byte(bus, addr, self.a);
-                self.memptr = ((self.a as u16) << 8) | (addr.wrapping_add(1) & 0xFF);
-                13
-            }
-            (3, 1) => {
-                // LD A, (nn)
-                let addr = self.fetch_word(bus);
-                self.a = self.read_byte(bus, addr);
-                self.memptr = addr.wrapping_add(1);
-                13
-            }
-            _ => 4,
-        }
-    }
-
-    fn execute_x0_inc_dec_rp(&mut self, y: u8) -> u8 {
-        let p = (y >> 1) & 0x03;
-        let q = y & 0x01;
-        // INC/DEC rp
-        let rp = self.get_rp(p);
-        if q == 0 {
-            self.set_rp(p, rp.wrapping_add(1));
-        } else {
-            self.set_rp(p, rp.wrapping_sub(1));
-        }
-        6
-    }
-
-    fn execute_x0_inc_r<T: Z80Interface>(&mut self, bus: &mut T, y: u8) -> u8 {
-        // INC r
-        let val = self.get_reg(bus, y);
-        let result = self.inc(val);
-        self.set_reg(bus, y, result);
-        if y == 6 {
-            11
-        } else {
-            4
-        }
-    }
-
-    fn execute_x0_dec_r<T: Z80Interface>(&mut self, bus: &mut T, y: u8) -> u8 {
-        // DEC r
-        let val = self.get_reg(bus, y);
-        let result = self.dec(val);
-        self.set_reg(bus, y, result);
-        if y == 6 {
-            11
-        } else {
-            4
-        }
-    }
-
-    fn execute_x0_ld_r_n<T: Z80Interface>(&mut self, bus: &mut T, y: u8) -> u8 {
-        // LD r, n
-        let n = self.fetch_byte(bus);
-        self.set_reg(bus, y, n);
-        if y == 6 {
-            10
-        } else {
-            7
-        }
-    }
-
-    fn execute_x0_rotate_accum_flags(&mut self, y: u8) -> u8 {
-        match y {
-            0 => {
-                self.rlca();
-                4
-            }
-            1 => {
-                self.rrca();
-                4
-            }
-            2 => {
-                self.rla();
-                4
-            }
-            3 => {
-                self.rra();
-                4
-            }
-            4 => {
-                // DAA - Decimal Adjust Accumulator
-                // DAA adjusts A to valid BCD based on N, H, C flags
-                let mut correction: u8 = 0;
-                let mut carry = self.get_flag(flags::CARRY);
-
-                if self.get_flag(flags::ADD_SUB) {
-                    // After subtraction
-                    if self.get_flag(flags::HALF_CARRY) {
-                        correction |= 0x06;
-                    }
-                    if carry {
-                        correction |= 0x60;
-                    }
-                    self.a = self.a.wrapping_sub(correction);
-                } else {
-                    // After addition
-                    if self.get_flag(flags::HALF_CARRY) || (self.a & 0x0F) > 9 {
-                        correction |= 0x06;
-                    }
-                    if carry || self.a > 0x99 {
-                        correction |= 0x60;
-                        carry = true;
-                    }
-                    self.a = self.a.wrapping_add(correction);
-                }
-
-                self.set_flag(flags::CARRY, carry);
-                self.set_flag(flags::HALF_CARRY, (correction & 0x06) != 0);
-                self.set_sz_flags(self.a);
-                self.set_parity_flag(self.a);
-                4
-            }
-            5 => {
-                // CPL
-                self.a = !self.a;
-                self.set_flag(flags::HALF_CARRY, true);
-                self.set_flag(flags::ADD_SUB, true);
-                self.set_flag(flags::X_FLAG, (self.a & 0x08) != 0);
-                self.set_flag(flags::Y_FLAG, (self.a & 0x20) != 0);
-                4
-            }
-            6 => {
-                // SCF
-                self.set_flag(flags::CARRY, true);
-                self.set_flag(flags::HALF_CARRY, false);
-                self.set_flag(flags::ADD_SUB, false);
-                self.set_flag(flags::X_FLAG, (self.a & 0x08) != 0);
-                self.set_flag(flags::Y_FLAG, (self.a & 0x20) != 0);
-                4
-            }
-            7 => {
-                // CCF
-                let c = self.get_flag(flags::CARRY);
-                self.set_flag(flags::HALF_CARRY, c);
-                self.set_flag(flags::CARRY, !c);
-                self.set_flag(flags::ADD_SUB, false);
-                self.set_flag(flags::X_FLAG, (self.a & 0x08) != 0);
-                self.set_flag(flags::Y_FLAG, (self.a & 0x20) != 0);
-                4
-            }
-            _ => 4,
-        }
-    }
-
-    fn execute_x1<T: Z80Interface>(&mut self, bus: &mut T, y: u8, z: u8) -> u8 {
-        if y == 6 && z == 6 {
-            // HALT
-            self.halted = true;
-            4
-        } else {
-            // LD r, r'
-            let val = self.get_reg(bus, z);
-            self.set_reg(bus, y, val);
-            if y == 6 || z == 6 {
-                7
-            } else {
-                4
-            }
-        }
-    }
-
-    fn execute_x2<T: Z80Interface>(&mut self, bus: &mut T, y: u8, z: u8) -> u8 {
-        // ALU operations
-        let val = self.get_reg(bus, z);
-        match y {
-            0 => self.add_a(val, false),        // ADD A, r
-            1 => self.add_a(val, true),         // ADC A, r
-            2 => self.sub_a(val, false, true),  // SUB r
-            3 => self.sub_a(val, true, true),   // SBC A, r
-            4 => self.and_a(val),               // AND r
-            5 => self.xor_a(val),               // XOR r
-            6 => self.or_a(val),                // OR r
-            7 => self.sub_a(val, false, false), // CP r
-            _ => {}
-        }
-        if z == 6 {
-            7
-        } else {
-            4
-        }
-    }
-
-    fn execute_x3<T: Z80Interface>(&mut self, bus: &mut T, _opcode: u8, y: u8, z: u8, _p: u8, _q: u8) -> u8 {
-        dispatch_z!(
-            z,
-            self.execute_x3_ret_cc(bus, y),
-            self.execute_x3_pop_ret_exx(bus, y),
-            self.execute_x3_jp_cc(bus, y),
-            self.execute_x3_jp_out_ex_di_ei(bus, y),
-            self.execute_x3_call_cc(bus, y),
-            self.execute_x3_push_call_prefixes(bus, y),
-            self.execute_x3_alu_n(bus, y),
-            self.execute_x3_rst(bus, y)
-        )
-    }
-
-    fn execute_x3_ret_cc<T: Z80Interface>(&mut self, bus: &mut T, y: u8) -> u8 {
-        // RET cc
-        if self.check_condition(y) {
-            self.pc = self.pop(bus);
-            11
-        } else {
-            5
-        }
-    }
-
-    fn execute_x3_pop_ret_exx<T: Z80Interface>(&mut self, bus: &mut T, y: u8) -> u8 {
-        let p = (y >> 1) & 0x03;
-        let q = y & 0x01;
-        if q == 0 {
-            // POP rp2
-            let val = self.pop(bus);
-            self.set_rp2(p, val);
-            10
-        } else {
-            match p {
-                0 => {
-                    // RET
-                    self.pc = self.pop(bus);
-                    10
-                }
-                1 => {
-                    // EXX
-                    std::mem::swap(&mut self.b, &mut self.b_prime);
-                    std::mem::swap(&mut self.c, &mut self.c_prime);
-                    std::mem::swap(&mut self.d, &mut self.d_prime);
-                    std::mem::swap(&mut self.e, &mut self.e_prime);
-                    std::mem::swap(&mut self.h, &mut self.h_prime);
-                    std::mem::swap(&mut self.l, &mut self.l_prime);
-                    4
-                }
-                2 => {
-                    // JP HL
-                    self.pc = self.hl();
-                    4
-                }
-                3 => {
-                    // LD SP, HL
-                    self.sp = self.hl();
-                    6
-                }
-                _ => 4,
-            }
-        }
-    }
-
-    fn execute_x3_jp_cc<T: Z80Interface>(&mut self, bus: &mut T, y: u8) -> u8 {
-        // JP cc, nn
-        let nn = self.fetch_word(bus);
-        if self.check_condition(y) {
-            self.pc = nn;
-        }
-        10
-    }
-
-    fn execute_x3_jp_out_ex_di_ei<T: Z80Interface>(&mut self, bus: &mut T, y: u8) -> u8 {
-        match y {
-            0 => {
-                // JP nn
-                self.pc = self.fetch_word(bus);
-                10
-            }
-            1 => self.execute_cb_prefix(bus),
-            2 => {
-                // OUT (n), A
-                let n = self.fetch_byte(bus);
-                let port = (n as u16) | ((self.a as u16) << 8);
-                self.write_port(bus, port, self.a);
-                11
-            }
-            3 => {
-                // IN A, (n)
-                let n = self.fetch_byte(bus);
-                let port = (n as u16) | ((self.a as u16) << 8);
-                self.a = self.read_port(bus, port);
-                11
-            }
-            4 => {
-                // EX (SP), HL
-                let val = self.read_word(bus, self.sp);
-                self.memptr = val;
-                self.write_word(bus, self.sp, self.hl());
-                self.memptr = val;
-                self.set_hl(val);
-                self.memptr = val;
-                19
-            }
-            5 => {
-                // EX DE, HL
-                let de = self.de();
-                let hl = self.hl();
-                self.set_de(hl);
-                self.set_hl(de);
-                4
-            }
-            6 => {
-                // DI
-                self.iff1 = false;
-                self.iff2 = false;
-                4
-            }
-            7 => {
-                // EI
-                self.iff1 = true;
-                self.iff2 = true;
-                self.pending_ei = true;
-                4
-            }
-            _ => 4,
-        }
-    }
-
-    fn execute_x3_call_cc<T: Z80Interface>(&mut self, bus: &mut T, y: u8) -> u8 {
-        // CALL cc, nn
-        let nn = self.fetch_word(bus);
-        if self.check_condition(y) {
-            self.push(bus, self.pc);
-            self.pc = nn;
-            17
-        } else {
-            10
-        }
-    }
-
-    fn execute_x3_push_call_prefixes<T: Z80Interface>(&mut self, bus: &mut T, y: u8) -> u8 {
-        let p = (y >> 1) & 0x03;
-        let q = y & 0x01;
-        if q == 0 {
-            // PUSH rp2
-            let val = self.get_rp2(p);
-            self.push(bus, val);
-            11
-        } else {
-            match p {
-                0 => {
-                    // CALL nn
-                    let nn = self.fetch_word(bus);
-                    self.push(bus, self.pc);
-                    self.pc = nn;
-                    17
-                }
-                1 => self.execute_dd_prefix(bus),
-                2 => self.execute_ed_prefix(bus),
-                3 => self.execute_fd_prefix(bus),
-                _ => 4,
-            }
-        }
-    }
-
-    fn execute_x3_alu_n<T: Z80Interface>(&mut self, bus: &mut T, y: u8) -> u8 {
-        // ALU A, n
-        let n = self.fetch_byte(bus);
-        match y {
-            0 => self.add_a(n, false),
-            1 => self.add_a(n, true),
-            2 => self.sub_a(n, false, true),
-            3 => self.sub_a(n, true, true),
-            4 => self.and_a(n),
-            5 => self.xor_a(n),
-            6 => self.or_a(n),
-            7 => self.sub_a(n, false, false),
-            _ => {}
-        }
-        7
-    }
-
-    fn execute_x3_rst<T: Z80Interface>(&mut self, bus: &mut T, y: u8) -> u8 {
-        // RST y*8
-        self.push(bus, self.pc);
-        self.pc = (y as u16) * 8;
-        11
-    }
-
-    // ========== ED Prefix (Extended) ==========
-
-    fn execute_ed_in_r_c<T: Z80Interface>(&mut self, bus: &mut T, y: u8) -> u8 {
-        // IN r, (C)
-        let port = self.bc();
-        let val = self.read_port(bus, port);
-        if y != 6 {
-            self.set_reg(bus, y, val);
-        }
-        self.set_sz_flags(val);
-        self.set_parity_flag(val);
-        self.set_flag(flags::HALF_CARRY, false);
-        self.set_flag(flags::ADD_SUB, false);
-        12
-    }
-
-    fn execute_ed_out_c_r<T: Z80Interface>(&mut self, bus: &mut T, y: u8) -> u8 {
-        // OUT (C), r
-        let port = self.bc();
-        let val = if y == 6 { 0 } else { self.get_reg(bus, y) };
-        self.write_port(bus, port, val);
-        12
-    }
-
-    fn execute_ed_neg(&mut self) -> u8 {
-        // NEG
-        let a = self.a;
-        self.a = 0;
-        self.sub_a(a, false, true);
-        8
-    }
-
-    fn execute_ed_retn_reti<T: Z80Interface>(&mut self, bus: &mut T, q: u8) -> u8 {
-        if q == 0 {
-            // RETN
-            self.iff1 = self.iff2;
-            self.pc = self.pop(bus);
-            14
-        } else {
-            // RETI
-            self.pc = self.pop(bus);
-            14
-        }
-    }
-
-    fn execute_ed_im(&mut self, y: u8) -> u8 {
-        // IM y
-        self.im = match y & 0x03 {
-            0 | 1 => 0,
-            2 => 1,
-            3 => 2,
-            _ => 0,
-        };
-        8
-    }
-
-    fn execute_ed_block<T: Z80Interface>(&mut self, bus: &mut T, y: u8, z: u8) -> u8 {
-        // Block instructions
-        if y >= 4 {
-            dispatch_z!(
-                z,
-                self.execute_ldi_ldd(bus, y),
-                self.execute_cpi_cpd(bus, y),
-                self.execute_ini_ind(bus, y),
-                self.execute_outi_outd(bus, y),
-                8, // 4
-                8, // 5
-                8, // 6
-                8  // 7
-            )
-        } else {
-            8 // Invalid
-        }
-    }
-
-    fn execute_ed_sbc_adc_hl(&mut self, p: u8, q: u8) -> u8 {
-        if q == 0 {
-            // SBC HL, rp
-            let hl = self.hl() as u32;
-            let rp = self.get_rp(p) as u32;
-            let c = if self.get_flag(flags::CARRY) { 1u32 } else { 0 };
-            let result = hl.wrapping_sub(rp).wrapping_sub(c);
-
-            self.set_flag(flags::CARRY, result > 0xFFFF);
-            self.set_flag(flags::ADD_SUB, true);
-            self.set_flag(flags::ZERO, (result & 0xFFFF) == 0);
-            self.set_flag(flags::SIGN, (result & 0x8000) != 0);
-            // Half borrow: (HL & 0xFFF) - (RP & 0xFFF) - C < 0
-            let h_check = (hl & 0xFFF).wrapping_sub(rp & 0xFFF).wrapping_sub(c);
-            self.set_flag(flags::HALF_CARRY, h_check > 0xFFF);
-            // P/V: Overflow
-            let overflow = ((hl ^ rp) & (hl ^ result) & 0x8000) != 0;
-            self.set_flag(flags::PARITY, overflow);
-
-            // X/Y from High Byte
-            let h_res = (result >> 8) as u8;
-            self.set_flag(flags::X_FLAG, (h_res & 0x08) != 0);
-            self.set_flag(flags::Y_FLAG, (h_res & 0x20) != 0);
-
-            self.set_hl(result as u16);
-            15
-        } else {
-            // ADC HL, rp
-            let hl = self.hl() as u32;
-            let rp = self.get_rp(p) as u32;
-            let c = if self.get_flag(flags::CARRY) { 1u32 } else { 0 };
-            let result = hl + rp + c;
-
-            self.set_flag(flags::CARRY, result > 0xFFFF);
-            self.set_flag(flags::ADD_SUB, false);
-            self.set_flag(flags::ZERO, (result & 0xFFFF) == 0);
-            self.set_flag(flags::SIGN, (result & 0x8000) != 0);
-            // Half carry: Carry from bit 11
-            self.set_flag(flags::HALF_CARRY, ((hl & 0xFFF) + (rp & 0xFFF) + c) > 0xFFF);
-            // P/V: Overflow
-            let overflow = (!(hl ^ rp) & (hl ^ result) & 0x8000) != 0;
-            self.set_flag(flags::PARITY, overflow);
-
-            // X/Y from High Byte
-            let h_res = (result >> 8) as u8;
-            self.set_flag(flags::X_FLAG, (h_res & 0x08) != 0);
-            self.set_flag(flags::Y_FLAG, (h_res & 0x20) != 0);
-
-            self.set_hl(result as u16);
-            15
-        }
-    }
-
-    fn execute_ed_ld_rp_nn<T: Z80Interface>(&mut self, bus: &mut T, p: u8, q: u8) -> u8 {
-        let nn = self.fetch_word(bus);
-        if q == 0 {
-            // LD (nn), rp
-            self.write_word(bus, nn, self.get_rp(p));
-        } else {
-            // LD rp, (nn)
-            let val = self.read_word(bus, nn);
-            self.set_rp(p, val);
-        }
-        self.memptr = nn.wrapping_add(1);
-        20
-    }
-
-    fn execute_ed_misc<T: Z80Interface>(&mut self, bus: &mut T, y: u8) -> u8 {
-        match y {
-            0 => {
-                // LD I, A
-                self.i = self.a;
-                9
-            }
-            1 => {
-                // LD R, A
-                self.r = self.a;
-                9
-            }
-            2 => {
-                // LD A, I
-                self.a = self.i;
-                self.set_sz_flags(self.a);
-                self.set_flag(flags::PARITY, self.iff2);
-                self.set_flag(flags::HALF_CARRY, false);
-                self.set_flag(flags::ADD_SUB, false);
-                9
-            }
-            3 => {
-                // LD A, R
-                self.a = self.r;
-                self.set_sz_flags(self.a);
-                self.set_flag(flags::PARITY, self.iff2);
-                self.set_flag(flags::HALF_CARRY, false);
-                self.set_flag(flags::ADD_SUB, false);
-                9
-            }
-            4 => {
-                // RRD
-                let hl = self.hl();
-                let m = self.read_byte(bus, hl);
-                let new_m = (self.a << 4) | (m >> 4);
-                self.a = (self.a & 0xF0) | (m & 0x0F);
-                self.write_byte(bus, hl, new_m);
-                self.set_sz_flags(self.a);
-                self.set_parity_flag(self.a);
-                self.set_flag(flags::HALF_CARRY, false);
-                self.set_flag(flags::ADD_SUB, false);
-                18
-            }
-            5 => {
-                // RLD
-                let hl = self.hl();
-                let m = self.read_byte(bus, hl);
-                let new_m = (m << 4) | (self.a & 0x0F);
-                self.a = (self.a & 0xF0) | (m >> 4);
-                self.write_byte(bus, hl, new_m);
-                self.set_sz_flags(self.a);
-                self.set_parity_flag(self.a);
-                self.set_flag(flags::HALF_CARRY, false);
-                self.set_flag(flags::ADD_SUB, false);
-                18
-            }
-            _ => 8,
-        }
-    }
-
-    fn execute_ed_prefix<T: Z80Interface>(&mut self, bus: &mut T) -> u8 {
-        let opcode = self.fetch_byte(bus);
-        let x = (opcode >> 6) & 0x03;
-        let y = (opcode >> 3) & 0x07;
-        let z = opcode & 0x07;
-        let p = (y >> 1) & 0x03;
-        let q = y & 0x01;
-
-        match x {
-            1 => dispatch_z!(
-                z,
-                self.execute_ed_in_r_c(bus, y),
-                self.execute_ed_out_c_r(bus, y),
-                self.execute_ed_sbc_adc_hl(p, q),
-                self.execute_ed_ld_rp_nn(bus, p, q),
-                self.execute_ed_neg(),
-                self.execute_ed_retn_reti(bus, q),
-                self.execute_ed_im(y),
-                self.execute_ed_misc(bus, y)
-            ),
-            2 => self.execute_ed_block(bus, y, z),
-            _ => 8, // NONI / NOP
-        }
-    }
-
-    fn execute_ldi_ldd<T: Z80Interface>(&mut self, bus: &mut T, y: u8) -> u8 {
-        let hl = self.hl();
-        let de = self.de();
-        let val = self.read_byte(bus, hl);
-        self.write_byte(bus, de, val);
-
-        let bc = self.bc().wrapping_sub(1);
-        self.set_bc(bc);
-
-        let (new_hl, new_de) = if (y & 1) == 0 {
-            (hl.wrapping_add(1), de.wrapping_add(1)) // LDI
-        } else {
-            (hl.wrapping_sub(1), de.wrapping_sub(1)) // LDD
-        };
-
-        self.set_hl(new_hl);
-        self.set_de(new_de);
-
-        let n_val = val.wrapping_add(self.a);
-        self.set_flag(flags::Y_FLAG, (n_val & 0x02) != 0);
-        self.set_flag(flags::X_FLAG, (n_val & 0x08) != 0);
-        self.set_flag(flags::PARITY, bc != 0);
-        self.set_flag(flags::HALF_CARRY, false);
-        self.set_flag(flags::ADD_SUB, false);
-
-        // LDIR/LDDR
-        if y >= 6 && bc != 0 {
-            self.pc = self.pc.wrapping_sub(2);
-            self.memptr = self.pc.wrapping_add(1);
-            21
-        } else {
-            16
-        }
-    }
-
-    fn execute_cpi_cpd<T: Z80Interface>(&mut self, bus: &mut T, y: u8) -> u8 {
-        let hl = self.hl();
-        let val = self.read_byte(bus, hl);
-        let result = self.a.wrapping_sub(val);
-
-        let bc = self.bc().wrapping_sub(1);
-        self.set_bc(bc);
-
-        let new_hl = if (y & 1) == 0 {
-            hl.wrapping_add(1) // CPI
-        } else {
-            hl.wrapping_sub(1) // CPD
-        };
-
-        self.set_hl(new_hl);
-
-        let h = (self.a & 0x0F) < (val & 0x0F);
-        self.set_flag(flags::ZERO, result == 0);
-        self.set_flag(flags::SIGN, (result & 0x80) != 0);
-        self.set_flag(flags::HALF_CARRY, h);
-        self.set_flag(flags::PARITY, bc != 0);
-        self.set_flag(flags::ADD_SUB, true);
-
-        // CPI/CPD X/Y flags: based on A - val - H
-        let mut x_val = self.a.wrapping_sub(val);
-        if h {
-            x_val = x_val.wrapping_sub(1);
-        }
-        self.set_flag(flags::Y_FLAG, (x_val & 0x02) != 0);
-        self.set_flag(flags::X_FLAG, (x_val & 0x08) != 0);
-
-        self.memptr = self.memptr.wrapping_add(1);
-
-        // CPIR/CPDR
-        if y >= 6 && bc != 0 && result != 0 {
-            self.pc = self.pc.wrapping_sub(2);
-            self.memptr = self.pc.wrapping_add(1);
-            21
-        } else {
-            16
-        }
-    }
-
-    fn execute_ini_ind<T: Z80Interface>(&mut self, bus: &mut T, y: u8) -> u8 {
-        // INI (y=4), IND (y=5), INIR (y=6), INDR (y=7)
-
-        let port = self.bc();
-        let hl = self.hl();
-
-        let io_val = self.read_port(bus, port);
-        self.write_byte(bus, hl, io_val);
-
-        let b = self.b.wrapping_sub(1);
-        self.b = b;
-
-        let new_hl = if (y & 1) == 0 {
-            hl.wrapping_add(1)
-        } else {
-            hl.wrapping_sub(1)
-        };
-        self.set_hl(new_hl);
-
-        // Flags:
-        // Z: set if B=0
-        // N: Set (bit 7 of internal calculation?) -> Z80 manual says N is Set.
-        self.set_flag(flags::ZERO, b == 0);
-        self.set_flag(flags::ADD_SUB, true);
-
-        // Repeat logic for INIR/INDR (y>=6)
-        if y >= 6 && b != 0 {
-            self.pc = self.pc.wrapping_sub(2);
-            21
-        } else {
-            16
-        }
-    }
-
-    fn execute_outi_outd<T: Z80Interface>(&mut self, bus: &mut T, y: u8) -> u8 {
-        // OUTI (y=4), OUTD (y=5), OTIR (y=6), OTDR (y=7)
-
-        let hl = self.hl();
-        let val = self.read_byte(bus, hl);
-
-        let port = self.bc();
-        self.write_port(bus, port, val);
-
-        let b = self.b.wrapping_sub(1);
-        self.b = b;
-
-        let new_hl = if (y & 1) == 0 {
-            hl.wrapping_add(1)
-        } else {
-            hl.wrapping_sub(1)
-        };
-        self.set_hl(new_hl);
-
-        self.set_flag(flags::ZERO, b == 0);
-        self.set_flag(flags::ADD_SUB, true);
-
-        if y >= 6 && b != 0 {
-            self.pc = self.pc.wrapping_sub(2);
-            21
-        } else {
-            16
-        }
-    }
-
-    // ========== Index Register Helpers (for DD/FD prefixes) ==========
-
-    fn get_index_val(&self, is_ix: bool) -> u16 {
-        if is_ix {
-            self.ix
-        } else {
-            self.iy
-        }
-    }
-
-    fn set_index_val(&mut self, val: u16, is_ix: bool) {
-        if is_ix {
-            self.ix = val;
-        } else {
-            self.iy = val;
-        }
-    }
-
-    fn get_index_h(&self, is_ix: bool) -> u8 {
-        if is_ix {
-            self.ixh()
-        } else {
-            self.iyh()
-        }
-    }
-
-    fn set_index_h(&mut self, val: u8, is_ix: bool) {
-        if is_ix {
-            self.set_ixh(val);
-        } else {
-            self.set_iyh(val);
-        }
-    }
-
-    fn get_index_l(&self, is_ix: bool) -> u8 {
-        if is_ix {
-            self.ixl()
-        } else {
-            self.iyl()
-        }
-    }
-
-    fn set_index_l(&mut self, val: u8, is_ix: bool) {
-        if is_ix {
-            self.set_ixl(val);
-        } else {
-            self.set_iyl(val);
-        }
-    }
-
-    fn add_index(&mut self, value: u16, is_ix: bool) {
-        let idx = if is_ix { self.ix } else { self.iy } as u32;
-        let v = value as u32;
-        let result = idx + v;
-
-        self.set_flag(flags::CARRY, result > 0xFFFF);
-        self.set_flag(flags::HALF_CARRY, ((idx & 0x0FFF) + (v & 0x0FFF)) > 0x0FFF);
-        self.set_flag(flags::ADD_SUB, false);
-
-        self.memptr = idx.wrapping_add(1) as u16;
-        if is_ix {
-            self.ix = result as u16;
-        } else {
-            self.iy = result as u16;
-        }
-    }
-
-    fn calc_index_addr(&mut self, offset: i8, is_ix: bool) -> u16 {
-        let idx = self.get_index_val(is_ix);
-        let addr = (idx as i16 + offset as i16) as u16;
-        self.memptr = addr;
-        addr
-    }
-
-    fn execute_index_alu(&mut self, op_index: u8, val: u8) {
-        match op_index {
-            0 => self.add_a(val, false),
-            1 => self.add_a(val, true),
-            2 => self.sub_a(val, false, true),
-            3 => self.sub_a(val, true, true),
-            4 => self.and_a(val),
-            5 => self.xor_a(val),
-            6 => self.or_a(val),
-            7 => self.sub_a(val, false, false),
-            _ => {}
-        }
-    }
-
-    fn execute_index_add_16<T: Z80Interface>(&mut self, opcode: u8, is_ix: bool) -> u8 {
-        match opcode {
-            0x09 => {
-                let val = self.bc();
-                self.add_index(val, is_ix);
-                15
-            }
-            0x19 => {
-                let val = self.de();
-                self.add_index(val, is_ix);
-                15
-            }
-            0x29 => {
-                let val = self.get_index_val(is_ix);
-                self.add_index(val, is_ix);
-                15
-            }
-            0x39 => {
-                self.add_index(self.sp, is_ix);
-                15
-            }
-            _ => 8,
-        }
-    }
-
-    fn execute_index_load_store_16<T: Z80Interface>(&mut self, bus: &mut T, opcode: u8, is_ix: bool) -> u8 {
-        match opcode {
-            0x21 => {
-                let val = self.fetch_word(bus);
-                self.set_index_val(val, is_ix);
-                14
-            }
-            0x22 => {
-                let addr = self.fetch_word(bus);
-                let val = self.get_index_val(is_ix);
-                self.write_word(bus, addr, val);
-                20
-            }
-            0x2A => {
-                let addr = self.fetch_word(bus);
-                let val = self.read_word(bus, addr);
-                self.set_index_val(val, is_ix);
-                20
-            }
-            _ => 8,
-        }
-    }
-
-    fn execute_index_inc_dec_16(&mut self, opcode: u8, is_ix: bool) -> u8 {
-        match opcode {
-            0x23 => {
-                let val = self.get_index_val(is_ix);
-                self.set_index_val(val.wrapping_add(1), is_ix);
-                10
-            }
-            0x2B => {
-                let val = self.get_index_val(is_ix);
-                self.set_index_val(val.wrapping_sub(1), is_ix);
-                10
-            }
-            _ => 8,
-        }
-    }
-
-    fn execute_index_8bit_halves<T: Z80Interface>(&mut self, bus: &mut T, opcode: u8, is_ix: bool) -> u8 {
-        match opcode {
-            0x24 => {
-                let val = self.get_index_h(is_ix);
-                let res = self.inc(val);
-                self.set_index_h(res, is_ix);
-                8
-            }
-            0x25 => {
-                let val = self.get_index_h(is_ix);
-                let res = self.dec(val);
-                self.set_index_h(res, is_ix);
-                8
-            }
-            0x26 => {
-                let n = self.fetch_byte(bus);
-                self.set_index_h(n, is_ix);
-                11
-            }
-            0x2C => {
-                let val = self.get_index_l(is_ix);
-                let res = self.inc(val);
-                self.set_index_l(res, is_ix);
-                8
-            }
-            0x2D => {
-                let val = self.get_index_l(is_ix);
-                let res = self.dec(val);
-                self.set_index_l(res, is_ix);
-                8
-            }
-            0x2E => {
-                let n = self.fetch_byte(bus);
-                self.set_index_l(n, is_ix);
-                11
-            }
-            _ => 8,
-        }
-    }
-
-    fn execute_index_mem_8bit<T: Z80Interface>(&mut self, bus: &mut T, opcode: u8, is_ix: bool) -> u8 {
-        let d = self.fetch_byte(bus) as i8;
-        let addr = self.calc_index_addr(d, is_ix);
-        match opcode {
-            0x34 => {
-                let val = self.read_byte(bus, addr);
-                let result = self.inc(val);
-                self.write_byte(bus, addr, result);
-                23
-            }
-            0x35 => {
-                let val = self.read_byte(bus, addr);
-                let result = self.dec(val);
-                self.write_byte(bus, addr, result);
-                23
-            }
-            0x36 => {
-                let n = self.fetch_byte(bus);
-                self.write_byte(bus, addr, n);
-                19
-            }
-            _ => 8,
-        }
-    }
-
-    fn execute_index_alu_mem<T: Z80Interface>(&mut self, bus: &mut T, opcode: u8, is_ix: bool) -> u8 {
-        let d = self.fetch_byte(bus) as i8;
-        let addr = self.calc_index_addr(d, is_ix);
-        let val = self.read_byte(bus, addr);
-        self.execute_index_alu((opcode >> 3) & 0x07, val);
-        19
-    }
-
-    fn execute_index_load_r_mem<T: Z80Interface>(&mut self, bus: &mut T, opcode: u8, is_ix: bool) -> u8 {
-        let d = self.fetch_byte(bus) as i8;
-        let addr = self.calc_index_addr(d, is_ix);
-        let val = self.read_byte(bus, addr);
-        let r = (opcode >> 3) & 0x07;
-        self.set_reg(bus, r, val);
-        19
-    }
-
-    fn execute_index_load_mem_r<T: Z80Interface>(&mut self, bus: &mut T, opcode: u8, is_ix: bool) -> u8 {
-        let d = self.fetch_byte(bus) as i8;
-        let addr = self.calc_index_addr(d, is_ix);
-        let r = opcode & 0x07;
-        let val = self.get_reg(bus, r);
-        self.write_byte(bus, addr, val);
-        19
-    }
-
-    fn execute_index_stack_control<T: Z80Interface>(&mut self, bus: &mut T, opcode: u8, is_ix: bool) -> u8 {
-        match opcode {
-            0xE1 => {
-                let val = self.pop(bus);
-                self.set_index_val(val, is_ix);
-                14
-            }
-            0xE3 => {
-                let val = self.read_word(bus, self.sp);
-                let idx = self.get_index_val(is_ix);
-                self.memptr = val;
-                self.write_word(bus, self.sp, idx);
-                self.memptr = val;
-                self.set_index_val(val, is_ix);
-                self.memptr = val;
-                23
-            }
-            0xE5 => {
-                let idx = self.get_index_val(is_ix);
-                self.push(bus, idx);
-                15
-            }
-            0xE9 => {
-                self.pc = self.get_index_val(is_ix);
-                8
-            }
-            0xF9 => {
-                self.sp = self.get_index_val(is_ix);
-                10
-            }
-            _ => 8,
-        }
-    }
-
-    fn execute_index_undoc_load(&mut self, opcode: u8, is_ix: bool) -> u8 {
-        // Opcode 0x76 (HALT) is handled by caller
-        let r_src = opcode & 0x07;
-        let r_dest = (opcode >> 3) & 0x07;
-        let val = self.get_index_byte(r_src, is_ix);
-        self.set_index_byte(r_dest, val, is_ix);
-        8
-    }
-
-    fn execute_index_undoc_alu(&mut self, opcode: u8, is_ix: bool) -> u8 {
-        let val = self.get_index_byte(opcode & 0x07, is_ix);
-        self.execute_index_alu((opcode >> 3) & 0x07, val);
-        8
-    }
-
-    fn execute_index_prefix<T: Z80Interface>(&mut self, bus: &mut T, is_ix: bool) -> u8 {
-        let opcode = self.fetch_byte(bus);
-
-        match opcode {
-            0x09 | 0x19 | 0x29 | 0x39 => self.execute_index_add_16(opcode, is_ix),
-            0x21 | 0x22 | 0x2A => self.execute_index_load_store_16(bus, opcode, is_ix),
-            0x23 | 0x2B => self.execute_index_inc_dec_16(opcode, is_ix),
-            0x24 | 0x25 | 0x26 | 0x2C | 0x2D | 0x2E => {
-                self.execute_index_8bit_halves(bus, opcode, is_ix)
-            }
-            0x34..=0x36 => self.execute_index_mem_8bit(bus, opcode, is_ix),
-
-            // Specific ALU ops
-            0x86 | 0x8E | 0x96 | 0x9E | 0xA6 | 0xAE | 0xB6 | 0xBE => {
-                self.execute_index_alu_mem(bus, opcode, is_ix)
-            }
-
-            // LD r, (IX/IY+d)
-            0x46 | 0x4E | 0x56 | 0x5E | 0x66 | 0x6E | 0x7E => {
-                self.execute_index_load_r_mem(bus, opcode, is_ix)
-            }
-            // LD (IX/IY+d), r
-            0x70..=0x75 | 0x77 => self.execute_index_load_mem_r(bus, opcode, is_ix),
-
-            0x76 => {
-                self.halted = true;
-                8
-            }
-
-            // Generic Undocumented (using index halves)
-            // Note: 0x76 HALT is handled above, and specific LDs are also handled above.
-            0x40..=0x7F => self.execute_index_undoc_load(opcode, is_ix),
-
-            // Generic Undocumented ALU
-            // Note: Specific ALU ops (IX+d) are handled above.
-            0x80..=0xBF => self.execute_index_undoc_alu(opcode, is_ix),
-
-            0xE1 | 0xE3 | 0xE5 | 0xE9 | 0xF9 => self.execute_index_stack_control(bus, opcode, is_ix),
-
-            0xCB => {
-                let d = self.fetch_byte(bus) as i8;
-                let addr = self.calc_index_addr(d, is_ix);
-                let opcode = self.fetch_byte(bus);
-                self.execute_indexed_cb(bus, opcode, addr)
-            }
-            _ => 8, // Treat as NOP
-        }
-    }
-
-    // ========== DD Prefix (IX) ==========
-
-    fn execute_dd_prefix<T: Z80Interface>(&mut self, bus: &mut T) -> u8 {
-        self.execute_index_prefix(bus, true)
-    }
-
-    // ========== FD Prefix (IY) ==========
-
-    fn execute_fd_prefix<T: Z80Interface>(&mut self, bus: &mut T) -> u8 {
-        self.execute_index_prefix(bus, false)
-    }
 }
 
 #[derive(Serialize, Deserialize)]
