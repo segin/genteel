@@ -97,6 +97,47 @@ fn test_btst_memory_register() {
 }
 
 #[test]
+fn test_bset_memory_modulo_behavior() {
+    let (mut cpu, mut memory) = create_cpu();
+    // BSET D0, (A0)
+    // Opcode: 0000 000 1 11 010 000 (0x01D0)
+    write_op(&mut memory, &[0x01D0]);
+    cpu.a[0] = 0x2000;
+    memory.write_byte(0x2000, 0x00);
+    cpu.d[0] = 8; // Test bit 8 (mod 8 = 0)
+    cpu.step_instruction(&mut memory);
+    assert_eq!(memory.read_byte(0x2000), 0x01);
+    assert!(cpu.get_flag(flags::ZERO)); // Was clear before
+}
+
+#[test]
+fn test_bclr_memory_modulo_behavior() {
+    let (mut cpu, mut memory) = create_cpu();
+    // BCLR D0, (A0)
+    // Opcode: 0000 000 1 10 010 000 (0x0190)
+    write_op(&mut memory, &[0x0190]);
+    cpu.a[0] = 0x2000;
+    memory.write_byte(0x2000, 0x01);
+    cpu.d[0] = 8; // Test bit 8 (mod 8 = 0)
+    cpu.step_instruction(&mut memory);
+    assert_eq!(memory.read_byte(0x2000), 0x00);
+    assert!(!cpu.get_flag(flags::ZERO)); // Was set before
+}
+
+#[test]
+fn test_bchg_memory_modulo_behavior() {
+    let (mut cpu, mut memory) = create_cpu();
+    // BCHG D0, (A0)
+    // Opcode: 0000 000 1 01 010 000 (0x0150)
+    write_op(&mut memory, &[0x0150]);
+    cpu.a[0] = 0x2000;
+    memory.write_byte(0x2000, 0x00);
+    cpu.d[0] = 8; // Test bit 8 (mod 8 = 0)
+    cpu.step_instruction(&mut memory);
+    assert_eq!(memory.read_byte(0x2000), 0x01);
+    assert!(cpu.get_flag(flags::ZERO)); // Was clear before toggle
+}
+
 fn test_btst_memory_modulo_behavior() {
     let (mut cpu, mut memory) = create_cpu();
     // BTST D0, (A0)

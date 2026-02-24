@@ -310,21 +310,7 @@ impl Vdp {
             && (self.registers[REG_DMA_SRC_HI] & DMA_MODE_MASK) == DMA_MODE_FILL
             && self.dma_pending
         {
-            let length = self.dma_length();
-            let mut addr = self.control_address;
-            let inc = self.auto_increment() as u16;
-            let fill_byte = (value >> 8) as u8;
-
-            // DMA Fill writes bytes. Length register specifies number of bytes.
-            // If length is 0, it is treated as 0x10000 (64KB).
-            let len = if length == 0 { 0x10000 } else { length };
-
-            for _ in 0..len {
-                // VRAM is byte-addressable in this emulator
-                self.vram[addr as usize] = fill_byte;
-                addr = addr.wrapping_add(inc);
-            }
-            self.control_address = addr;
+            self.perform_dma_fill();
             self.dma_pending = false;
             return;
         }
@@ -432,7 +418,7 @@ impl Vdp {
 
     #[inline(always)]
     pub fn read_status(&mut self) -> u16 {
-        // Reading the status register clears the write pending flag
+        // Reading the status register clears the write pending flag (resets the command state machine).
         self.control_pending = false;
         let res = self.status;
         // Reading status clears the VInt pending bit (Bit 7)
@@ -546,6 +532,53 @@ impl Vdp {
         (self.registers[REG_DMA_SRC_HI] & DMA_MODE_MASK) == DMA_MODE_FILL
     }
 
+    fn perform_dma_fill(&mut self) {
+        let length = self.dma_length();
+        // If length is 0, it is treated as 0x10000 (64KB)
+        let len = if length == 0 { 0x10000 } else { length };
+
+        let data = self.last_data_write;
+        let mut addr = self.control_address;
+        let inc = self.auto_increment() as u16;
+        let fill_byte = (data >> 8) as u8;
+
+        if inc == 1 {
+            // Optimized fill using slice::fill
+            let start_addr = addr as usize;
+            let end_addr_exclusive = start_addr + (len as usize);
+
+            if end_addr_exclusive <= 0x10000 {
+                // Contiguous fill
+                self.vram[start_addr..end_addr_exclusive].fill(fill_byte);
+                // Address wraps at 0x10000
+                addr = (end_addr_exclusive & 0xFFFF) as u16;
+            } else {
+                // Wrapped fill
+                let first_part_len = 0x10000 - start_addr;
+                self.vram[start_addr..0x10000].fill(fill_byte);
+
+                let remaining = (len as usize) - first_part_len;
+                if remaining > 0 {
+                    self.vram[0..remaining].fill(fill_byte);
+                }
+                addr = remaining as u16;
+            }
+        } else if inc == 0 {
+            // Optimization: auto-increment 0 means writing to the same address repeatedly.
+            // Since VRAM is just memory here, the result is equivalent to a single write.
+            if len > 0 {
+                self.vram[addr as usize] = fill_byte;
+            }
+        } else {
+            for _ in 0..len {
+                // VRAM is byte-addressable in this emulator
+                self.vram[addr as usize] = fill_byte;
+                addr = addr.wrapping_add(inc);
+            }
+        }
+        self.control_address = addr;
+    }
+
     pub fn execute_dma(&mut self) -> u32 {
         let length = self.dma_length();
         // If length is 0, it is treated as 0x10000 (64KB)
@@ -555,17 +588,7 @@ impl Vdp {
 
         match mode {
             DMA_MODE_FILL => {
-                let data = self.last_data_write;
-                let mut addr = self.control_address;
-                let inc = self.auto_increment() as u16;
-                let fill_byte = (data >> 8) as u8;
-
-                for _ in 0..len {
-                    // VRAM is byte-addressable in this emulator
-                    self.vram[addr as usize] = fill_byte;
-                    addr = addr.wrapping_add(inc);
-                }
-                self.control_address = addr;
+                self.perform_dma_fill();
             }
             DMA_MODE_COPY => {
                 let mut source = (self.dma_source() & 0xFFFF) as u16;
@@ -906,33 +929,61 @@ impl Vdp {
             }
 
             // Prefetch the 4 bytes (8 pixels) for this row.
-            // Mask to 64KB VRAM. Since each row fetch is 4 bytes and row_addr is a
-            // multiple of 4, masking with 0xFFFC ensures the slice never crosses
-            // the 64KB boundary.
-            let addr = row_addr & 0xFFFC;
-            let patterns: [u8; 4] = vram[addr..addr + 4].try_into().unwrap();
+            // row_addr is guaranteed to be 4-byte aligned (32*k + 4*j).
+            // We already checked row_addr + 4 <= 0x10000.
+            // So row_addr..row_addr+4 is within bounds.
+            let patterns: [u8; 4] = unsafe {
+                 vram.get_unchecked(row_addr..row_addr + 4).try_into().unwrap_unchecked()
+            };
 
             let base_screen_x = attr.h_pos.wrapping_add(tile_h_offset * 8);
 
-            for i in 0..8 {
-                let screen_x = base_screen_x.wrapping_add(i);
-                if screen_x >= screen_width {
-                    continue;
+            // Optimization: If the entire 8-pixel block is visible, skip per-pixel checks.
+            if (base_screen_x as u32) + 8 <= screen_width as u32 {
+                for i in 0..8 {
+                    let screen_x = base_screen_x.wrapping_add(i);
+                    let eff_col = if attr.h_flip { 7 - i } else { i };
+
+                    // SAFETY: eff_col is 0..8, so index 0..3 is valid. patterns is [u8; 4].
+                    let byte = unsafe { *patterns.get_unchecked((eff_col as usize) / 2) };
+
+                    let color_idx = if eff_col % 2 == 0 {
+                        byte >> 4
+                    } else {
+                        byte & 0x0F
+                    };
+
+                    if color_idx != 0 {
+                        let addr = ((attr.palette as usize) << 4) | (color_idx as usize);
+                        // SAFETY: cram_cache size 64. addr < 64.
+                        // framebuffer bounds checked by screen_width logic.
+                        unsafe {
+                            let color = *cram_cache.get_unchecked(addr);
+                            *framebuffer.get_unchecked_mut(line_offset + screen_x as usize) = color;
+                        }
+                    }
                 }
+            } else {
+                for i in 0..8 {
+                    let screen_x = base_screen_x.wrapping_add(i);
+                    if screen_x >= screen_width {
+                        continue;
+                    }
 
-                let eff_col = if attr.h_flip { 7 - i } else { i };
+                    let eff_col = if attr.h_flip { 7 - i } else { i };
 
-                let byte = patterns[(eff_col as usize) / 2];
-                let color_idx = if eff_col % 2 == 0 {
-                    byte >> 4
-                } else {
-                    byte & 0x0F
-                };
+                    let byte = patterns[(eff_col as usize) / 2];
+                    let color_idx = if eff_col % 2 == 0 {
+                        byte >> 4
+                    } else {
+                        byte & 0x0F
+                    };
 
-                if color_idx != 0 {
-                    let addr = ((attr.palette as usize) * 16) + (color_idx as usize);
-                    let color = cram_cache[addr];
-                    framebuffer[line_offset + screen_x as usize] = color;
+                    if color_idx != 0 {
+                        let addr = ((attr.palette as usize) * 16) + (color_idx as usize);
+                        let color = cram_cache[addr];
+                        framebuffer[line_offset + screen_x as usize] = color;
+                    }
                 }
             }
         }
@@ -1428,5 +1479,7 @@ mod tests_bulk_write;
 
 #[cfg(test)]
 mod bench_render;
+#[cfg(test)]
+mod bench_dma;
 #[cfg(test)]
 mod test_repro_white_screen;

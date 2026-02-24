@@ -217,61 +217,72 @@ pub fn exec_movem<M: MemoryInterface>(
 
         if is_predec {
             // Predecrement: Store A7-A0, then D7-D0 (reverse order)
-            for i in (0..16).rev() {
-                if (mask & (1 << (15 - i))) != 0 {
-                    addr = addr.wrapping_sub(reg_size);
-                    let val = if i < 8 { cpu.d[i] } else { cpu.a[i - 8] };
-                    if size == Size::Word {
-                        cpu.write_word(addr, val as u16, memory);
-                    } else {
-                        cpu.write_long(addr, val, memory);
-                    }
-                    cycles += if size == Size::Word { 4 } else { 8 };
+            // The mask is reversed: bit 0 corresponds to A7 (i=15), bit 15 to D0 (i=0)
+            let mut m = mask;
+            while m != 0 {
+                let bit = m.trailing_zeros();
+                m &= !(1 << bit);
+                let i = (15 - bit) as usize;
+
+                addr = addr.wrapping_sub(reg_size);
+                let val = if i < 8 { cpu.d[i] } else { cpu.a[i - 8] };
+                if size == Size::Word {
+                    cpu.write_word(addr, val as u16, memory);
+                } else {
+                    cpu.write_long(addr, val, memory);
                 }
+                cycles += if size == Size::Word { 4 } else { 8 };
             }
+
             // Update An for predecrement mode
             if let AddressingMode::AddressPreDecrement(reg) = ea {
                 cpu.a[reg as usize] = addr;
             }
         } else {
             // Normal: Store D0-D7, then A0-A7
-            for i in 0..16 {
-                if (mask & (1 << i)) != 0 {
-                    let val = if i < 8 { cpu.d[i] } else { cpu.a[i - 8] };
-                    if size == Size::Word {
-                        cpu.write_word(addr, val as u16, memory);
-                    } else {
-                        cpu.write_long(addr, val, memory);
-                    }
-                    addr = addr.wrapping_add(reg_size);
-                    cycles += if size == Size::Word { 4 } else { 8 };
+            let mut m = mask;
+            while m != 0 {
+                let i = m.trailing_zeros();
+                m &= !(1 << i);
+                let i = i as usize;
+
+                let val = if i < 8 { cpu.d[i] } else { cpu.a[i - 8] };
+                if size == Size::Word {
+                    cpu.write_word(addr, val as u16, memory);
+                } else {
+                    cpu.write_long(addr, val, memory);
                 }
+                addr = addr.wrapping_add(reg_size);
+                cycles += if size == Size::Word { 4 } else { 8 };
             }
         }
     } else {
         // Memory to Registers
         let mut addr = base_addr;
+        let mut m = mask;
 
-        for i in 0..16 {
-            if (mask & (1 << i)) != 0 {
-                if i < 8 {
-                    // Data register: Word load is sign-extended to 32 bits, Long load is normal
-                    if size == Size::Word {
-                        cpu.d[i] = cpu.read_word(addr, memory) as i16 as i32 as u32;
-                    } else {
-                        cpu.d[i] = cpu.read_long(addr, memory);
-                    }
+        while m != 0 {
+            let i = m.trailing_zeros();
+            m &= !(1 << i);
+            let i = i as usize;
+
+            if i < 8 {
+                // Data register: Word load is sign-extended to 32 bits, Long load is normal
+                if size == Size::Word {
+                    cpu.d[i] = cpu.read_word(addr, memory) as i16 as i32 as u32;
                 } else {
-                    // Address register: Word load is sign-extended, Long load is normal
-                    if size == Size::Word {
-                        cpu.a[i - 8] = cpu.read_word(addr, memory) as i16 as i32 as u32;
-                    } else {
-                        cpu.a[i - 8] = cpu.read_long(addr, memory);
-                    }
+                    cpu.d[i] = cpu.read_long(addr, memory);
                 }
-                addr = addr.wrapping_add(reg_size);
-                cycles += if size == Size::Word { 4 } else { 8 };
+            } else {
+                // Address register: Word load is sign-extended, Long load is normal
+                if size == Size::Word {
+                    cpu.a[i - 8] = cpu.read_word(addr, memory) as i16 as i32 as u32;
+                } else {
+                    cpu.a[i - 8] = cpu.read_long(addr, memory);
+                }
             }
+            addr = addr.wrapping_add(reg_size);
+            cycles += if size == Size::Word { 4 } else { 8 };
         }
 
         // Update An for postincrement mode
