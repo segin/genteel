@@ -164,53 +164,102 @@ impl Psg {
             return self.current_sample();
         }
 
-        let mut total_output: i32 = 0;
+        let mut total_output: i64 = 0;
+        let mut cycles_remaining = cycles;
 
-        for _ in 0..cycles {
+        // Determine noise frequency.
+        // It's constant during this call because tones[2].frequency doesn't change here.
+        let noise_freq = match self.noise.shift_rate {
+            0 => 0x10,
+            1 => 0x20,
+            2 => 0x40,
+            3 => self.tones[2].frequency,
+            _ => 0x10,
+        };
+
+        while cycles_remaining > 0 {
+            let mut updated_tones = [false; 3];
+            let mut updated_noise = false;
+
+            // 1. Process immediate updates (counters reaching 0)
+
             // Process tone channels
-            for tone in &mut self.tones {
-                if tone.frequency > 0 {
-                    if tone.counter == 0 {
-                        tone.counter = tone.frequency;
-                        tone.output = !tone.output;
-                    } else {
-                        tone.counter -= 1;
-                    }
+            for (i, tone) in self.tones.iter_mut().enumerate() {
+                if tone.frequency > 0 && tone.counter == 0 {
+                    tone.counter = tone.frequency;
+                    tone.output = !tone.output;
+                    updated_tones[i] = true;
                 }
             }
 
             // Process noise channel
-            let noise_freq = match self.noise.shift_rate {
-                0 => 0x10,                    // N/512
-                1 => 0x20,                    // N/1024
-                2 => 0x40,                    // N/2048
-                3 => self.tones[2].frequency, // Tone 2 frequency
-                _ => 0x10,
-            };
+            if noise_freq > 0 && self.noise.counter == 0 {
+                self.noise.counter = noise_freq;
 
-            if noise_freq > 0 {
-                if self.noise.counter == 0 {
-                    self.noise.counter = noise_freq;
-
-                    // Shift LFSR
-                    let feedback = if self.noise.white_noise {
-                        // White noise: XOR bits 0 and 3
-                        (self.noise.lfsr & 1) ^ ((self.noise.lfsr >> 3) & 1)
-                    } else {
-                        // Periodic noise: just bit 0
-                        self.noise.lfsr & 1
-                    };
-
-                    self.noise.lfsr = (self.noise.lfsr >> 1) | (feedback << 14);
+                // Shift LFSR
+                let feedback = if self.noise.white_noise {
+                    // White noise: XOR bits 0 and 3
+                    (self.noise.lfsr & 1) ^ ((self.noise.lfsr >> 3) & 1)
                 } else {
-                    self.noise.counter -= 1;
+                    // Periodic noise: just bit 0
+                    self.noise.lfsr & 1
+                };
+
+                self.noise.lfsr = (self.noise.lfsr >> 1) | (feedback << 14);
+                updated_noise = true;
+            }
+
+            // 2. Calculate current sample
+            let sample = self.current_sample();
+
+            // 3. Determine skip amount
+            let mut step = cycles_remaining;
+
+            for (i, tone) in self.tones.iter().enumerate() {
+                if tone.frequency > 0 {
+                    let dist = if updated_tones[i] {
+                        tone.counter as u32 + 1
+                    } else {
+                        tone.counter as u32
+                    };
+                    if dist < step {
+                        step = dist;
+                    }
                 }
             }
 
-            total_output += self.current_sample() as i32;
+            if noise_freq > 0 {
+                let dist = if updated_noise {
+                    self.noise.counter as u32 + 1
+                } else {
+                    self.noise.counter as u32
+                };
+                if dist < step {
+                    step = dist;
+                }
+            }
+
+            if step == 0 {
+                step = 1;
+            }
+
+            // 4. Advance
+            total_output += sample as i64 * step as i64;
+            cycles_remaining -= step;
+
+            for (i, tone) in self.tones.iter_mut().enumerate() {
+                if tone.frequency > 0 {
+                    let dec = if updated_tones[i] { step - 1 } else { step };
+                    tone.counter -= dec as u16;
+                }
+            }
+            if noise_freq > 0 {
+                let dec = if updated_noise { step - 1 } else { step };
+                self.noise.counter -= dec as u16;
+            }
         }
 
-        (total_output / cycles as i32) as i16
+        (total_output / cycles as i64) as i16
     }
 
     /// Generate a single instantaneous sample from current state
