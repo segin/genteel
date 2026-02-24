@@ -1242,32 +1242,13 @@ impl Vdp {
     }
 }
 
-#[derive(Deserialize)]
-struct VdpJsonState {
-    status: Option<u16>,
-    h_counter: Option<u16>,
-    v_counter: Option<u16>,
-    dma_pending: Option<bool>,
-    registers: Option<Vec<u8>>,
-    control_pending: Option<bool>,
-    control_code: Option<u8>,
-    control_address: Option<u16>,
-    vram: Option<Vec<u8>>,
-    cram: Option<Vec<u8>>,
-    vsram: Option<Vec<u8>>,
-    line_counter: Option<u8>,
-    last_data_write: Option<u16>,
-    v30_offset: Option<u16>,
-    is_pal: Option<bool>,
-}
-
 impl Debuggable for Vdp {
     fn read_state(&self) -> Value {
         serde_json::to_value(self).unwrap()
     }
 
     fn write_state(&mut self, state: &Value) {
-        let json_state: VdpJsonState = match Deserialize::deserialize(state) {
+        let mut new_vdp: Vdp = match serde_json::from_value(state.clone()) {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("Error deserializing VDP state: {}", e);
@@ -1275,92 +1256,13 @@ impl Debuggable for Vdp {
             }
         };
 
-        if let Some(status) = json_state.status {
-            self.status = status;
-        }
-        if let Some(h_counter) = json_state.h_counter {
-            self.h_counter = h_counter;
-        }
-        if let Some(v_counter) = json_state.v_counter {
-            self.v_counter = v_counter;
-        }
-        if let Some(dma_pending) = json_state.dma_pending {
-            self.dma_pending = dma_pending;
-        }
+        // Swap framebuffer to preserve allocation
+        std::mem::swap(&mut self.framebuffer, &mut new_vdp.framebuffer);
 
-        if let Some(registers) = json_state.registers {
-            for (i, val) in registers.iter().enumerate() {
-                if i < 24 {
-                    self.registers[i] = *val;
-                }
-            }
-        }
+        // Reconstruct CRAM cache
+        new_vdp.reconstruct_cram_cache();
 
-        if let Some(pending) = json_state.control_pending {
-            self.control_pending = pending;
-        }
-        if let Some(code) = json_state.control_code {
-            self.control_code = code;
-        }
-        if let Some(address) = json_state.control_address {
-            self.control_address = address;
-        }
-
-        if let Some(vram) = json_state.vram {
-            for (i, val) in vram.iter().enumerate() {
-                if i < self.vram.len() {
-                    self.vram[i] = *val;
-                }
-            }
-        }
-
-        if let Some(cram) = json_state.cram {
-            for (i, val) in cram.iter().enumerate() {
-                if i < self.cram.len() {
-                    self.cram[i] = *val;
-                }
-            }
-            // Reconstruct CRAM Cache
-            for i in 0..64 {
-                let addr = i * 2;
-                if addr + 1 < self.cram.len() {
-                    let val = ((self.cram[addr + 1] as u16) << 8) | (self.cram[addr] as u16);
-
-                    // Extract 3-bit components (bits 1-3, 5-7, 9-11)
-                    let r3 = (val >> 1) & 0x07;
-                    let g3 = (val >> 5) & 0x07;
-                    let b3 = (val >> 9) & 0x07;
-
-                    // Scale to RGB565 using bit repetition
-                    let r5 = (r3 << 2) | (r3 >> 1);
-                    let g6 = (g3 << 3) | g3;
-                    let b5 = (b3 << 2) | (b3 >> 1);
-
-                    self.cram_cache[i] = ((r5 as u16) << 11) | ((g6 as u16) << 5) | (b5 as u16);
-                }
-            }
-        }
-
-        if let Some(vsram) = json_state.vsram {
-            for (i, val) in vsram.iter().enumerate() {
-                if i < self.vsram.len() {
-                    self.vsram[i] = *val;
-                }
-            }
-        }
-
-        if let Some(line_counter) = json_state.line_counter {
-            self.line_counter = line_counter;
-        }
-        if let Some(last_data_write) = json_state.last_data_write {
-            self.last_data_write = last_data_write;
-        }
-        if let Some(v30_offset) = json_state.v30_offset {
-            self.v30_offset = v30_offset;
-        }
-        if let Some(is_pal) = json_state.is_pal {
-            self.is_pal = is_pal;
-        }
+        *self = new_vdp;
     }
 }
 
