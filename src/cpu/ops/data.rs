@@ -1,6 +1,6 @@
 use crate::cpu::addressing::{calculate_ea, EffectiveAddress};
 use crate::cpu::decoder::{AddressingMode, Size};
-use crate::cpu::{flags, Cpu};
+use crate::cpu::Cpu;
 use crate::memory::MemoryInterface;
 
 pub fn exec_move<M: MemoryInterface>(
@@ -10,26 +10,29 @@ pub fn exec_move<M: MemoryInterface>(
     dst: AddressingMode,
     memory: &mut M,
 ) -> u32 {
-    let mut cycles = match size {
-        Size::Byte | Size::Word => 4,
-        Size::Long => 4, // MOVE.L is also 4 cycles for reg-reg
-    };
+    let mut cycles = 4u32;
 
     let (src_ea, src_cycles) = calculate_ea(src, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     cycles += src_cycles;
+
     let val = cpu.cpu_read_ea(src_ea, size, memory);
 
     let (dst_ea, dst_cycles) = calculate_ea(dst, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     cycles += dst_cycles;
 
-    // MOVE flags: N and Z set according to data, V and C always cleared.
-    cpu.update_nz_flags(val, size);
-    cpu.set_flag(flags::OVERFLOW, false);
-    cpu.set_flag(flags::CARRY, false);
-
     cpu.cpu_write_ea(dst_ea, size, val, memory);
 
-    cycles
+    // Update flags
+    cpu.update_nz_flags(val, size);
+    cpu.set_flag(crate::cpu::flags::CARRY, false);
+    cpu.set_flag(crate::cpu::flags::OVERFLOW, false);
+
+    // MOVE to register is faster than MOVE to memory
+    if matches!(dst, AddressingMode::DataRegister(_)) {
+        cycles
+    } else {
+        cycles + 4
+    }
 }
 
 pub fn exec_movea<M: MemoryInterface>(
@@ -39,33 +42,34 @@ pub fn exec_movea<M: MemoryInterface>(
     dst_reg: u8,
     memory: &mut M,
 ) -> u32 {
-    let cycles = match size {
-        Size::Word => 4,
-        Size::Long => 4,
-        _ => 4,
-    };
+    let mut cycles = 4u32;
 
     let (src_ea, src_cycles) = calculate_ea(src, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
-    let total_cycles = cycles + src_cycles;
+    cycles += src_cycles;
 
-    let val = match size {
-        Size::Word => (cpu.cpu_read_ea(src_ea, size, memory) as i16) as i32 as u32,
-        Size::Long => cpu.cpu_read_ea(src_ea, size, memory),
-        _ => cpu.cpu_read_ea(src_ea, size, memory),
+    let val = cpu.cpu_read_ea(src_ea, size, memory);
+
+    // MOVEA sign-extends word to long
+    let val = if size == Size::Word {
+        (val as i16) as i32 as u32
+    } else {
+        val
     };
 
     cpu.a[dst_reg as usize] = val;
 
-    total_cycles
+    cycles
 }
 
-pub fn exec_moveq(cpu: &mut Cpu, dst_reg: u8, data: i8) -> u32 {
-    let val = data as i32 as u32;
+pub fn exec_moveq(cpu: &mut Cpu, dst_reg: u8, data: u8) -> u32 {
+    // MOVEQ sign-extends 8-bit data to 32 bits
+    let val = (data as i8) as i32 as u32;
     cpu.d[dst_reg as usize] = val;
 
+    // Update flags
     cpu.update_nz_flags(val, Size::Long);
-    cpu.set_flag(flags::OVERFLOW, false);
-    cpu.set_flag(flags::CARRY, false);
+    cpu.set_flag(crate::cpu::flags::CARRY, false);
+    cpu.set_flag(crate::cpu::flags::OVERFLOW, false);
 
     4
 }
@@ -76,42 +80,45 @@ pub fn exec_lea<M: MemoryInterface>(
     dst_reg: u8,
     memory: &mut M,
 ) -> u32 {
-    let (ea, cycles) = calculate_ea(src, Size::Long, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
+    let (src_ea, cycles) = calculate_ea(src, Size::Long, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
 
-    if let EffectiveAddress::Memory(addr) = ea {
+    if let EffectiveAddress::Memory(addr) = src_ea {
         cpu.a[dst_reg as usize] = addr;
     }
 
-    // LEA does not affect flags
-    4 + cycles
+    cycles
 }
 
 pub fn exec_pea<M: MemoryInterface>(cpu: &mut Cpu, src: AddressingMode, memory: &mut M) -> u32 {
-    let (ea, cycles) = calculate_ea(src, Size::Long, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
+    let (src_ea, cycles) = calculate_ea(src, Size::Long, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
 
-    if let EffectiveAddress::Memory(addr) = ea {
+    if let EffectiveAddress::Memory(addr) = src_ea {
         cpu.a[7] = cpu.a[7].wrapping_sub(4);
         cpu.write_long(cpu.a[7], addr, memory);
     }
 
-    // PEA does not affect flags
-    // Cycles: 12 + ea_cycles (standard 68000)
-    12 + cycles
+    cycles + 4
 }
 
 pub fn exec_exg(cpu: &mut Cpu, rx: u8, ry: u8, mode: u8) -> u32 {
     match mode {
-        0x08 => {
+        0x40 => {
             // Data registers
-            cpu.d.swap(rx as usize, ry as usize);
+            let temp = cpu.d[rx as usize];
+            cpu.d[rx as usize] = cpu.d[ry as usize];
+            cpu.d[ry as usize] = temp;
         }
-        0x09 => {
+        0x48 => {
             // Address registers
-            cpu.a.swap(rx as usize, ry as usize);
+            let temp = cpu.a[rx as usize];
+            cpu.a[rx as usize] = cpu.a[ry as usize];
+            cpu.a[ry as usize] = temp;
         }
-        0x11 => {
+        0x50 => {
             // Data and Address register
-            std::mem::swap(&mut cpu.d[rx as usize], &mut cpu.a[ry as usize]);
+            let temp = cpu.d[rx as usize];
+            cpu.d[rx as usize] = cpu.a[ry as usize];
+            cpu.a[ry as usize] = temp;
         }
         _ => {}
     }
@@ -128,51 +135,41 @@ pub fn exec_movep<M: MemoryInterface>(
 ) -> u32 {
     let displacement = cpu.read_word(cpu.pc, memory) as i16;
     cpu.pc = cpu.pc.wrapping_add(2);
-
-    let addr = cpu.a[an as usize].wrapping_add(displacement as i32 as u32);
-    let mut cycles = match size {
-        Size::Word => 16,
-        Size::Long => 24,
-        _ => 0,
-    };
+    let mut addr = (cpu.a[an as usize] as i32 + displacement as i32) as u32;
 
     if direction {
         // Register to memory
         let val = cpu.d[reg as usize];
-        match size {
-            Size::Word => {
-                memory.write_byte(addr, (val >> 8) as u8);
-                memory.write_byte(addr.wrapping_add(2), (val & 0xFF) as u8);
-            }
-            Size::Long => {
-                memory.write_byte(addr, (val >> 24) as u8);
-                memory.write_byte(addr.wrapping_add(2), (val >> 16) as u8);
-                memory.write_byte(addr.wrapping_add(4), (val >> 8) as u8);
-                memory.write_byte(addr.wrapping_add(6), (val & 0xFF) as u8);
-            }
-            _ => cycles = 0,
+        if size == Size::Word {
+            cpu.write_byte(addr, (val >> 8) as u8, memory);
+            cpu.write_byte(addr.wrapping_add(2), (val & 0xFF) as u8, memory);
+        } else {
+            cpu.write_byte(addr, (val >> 24) as u8, memory);
+            cpu.write_byte(addr.wrapping_add(2), (val >> 16) as u8, memory);
+            cpu.write_byte(addr.wrapping_add(4), (val >> 8) as u8, memory);
+            cpu.write_byte(addr.wrapping_add(6), (val & 0xFF) as u8, memory);
         }
     } else {
         // Memory to register
         let mut val = 0u32;
-        match size {
-            Size::Word => {
-                val |= (memory.read_byte(addr) as u32) << 8;
-                val |= memory.read_byte(addr.wrapping_add(2)) as u32;
-                cpu.d[reg as usize] = (cpu.d[reg as usize] & 0xFFFF0000) | val;
-            }
-            Size::Long => {
-                val |= (memory.read_byte(addr) as u32) << 24;
-                val |= (memory.read_byte(addr.wrapping_add(2)) as u32) << 16;
-                val |= (memory.read_byte(addr.wrapping_add(4)) as u32) << 8;
-                val |= memory.read_byte(addr.wrapping_add(6)) as u32;
-                cpu.d[reg as usize] = val;
-            }
-            _ => cycles = 0,
+        if size == Size::Word {
+            val |= (cpu.cpu_read_memory(addr, Size::Byte, memory) << 8);
+            val |= cpu.cpu_read_memory(addr.wrapping_add(2), Size::Byte, memory);
+            cpu.d[reg as usize] = (cpu.d[reg as usize] & 0xFFFF0000) | val;
+        } else {
+            val |= (cpu.cpu_read_memory(addr, Size::Byte, memory) << 24);
+            val |= (cpu.cpu_read_memory(addr.wrapping_add(2), Size::Byte, memory) << 16);
+            val |= (cpu.cpu_read_memory(addr.wrapping_add(4), Size::Byte, memory) << 8);
+            val |= cpu.cpu_read_memory(addr.wrapping_add(6), Size::Byte, memory);
+            cpu.d[reg as usize] = val;
         }
     }
 
-    cycles
+    if size == Size::Word {
+        16
+    } else {
+        24
+    }
 }
 
 pub fn exec_movem<M: MemoryInterface>(
@@ -182,21 +179,16 @@ pub fn exec_movem<M: MemoryInterface>(
     ea: AddressingMode,
     memory: &mut M,
 ) -> u32 {
+    let mut cycles = 0u32;
     let mask = cpu.read_word(cpu.pc, memory);
     cpu.pc = cpu.pc.wrapping_add(2);
 
-    let reg_size: u32 = if size == Size::Word { 2 } else { 4 };
-    let mut cycles = 8u32;
+    let reg_size = size.bytes();
 
     let base_addr = match ea {
+        AddressingMode::AddressPreDecrement(reg) => cpu.a[reg as usize],
         AddressingMode::AddressPostIncrement(reg) => {
             let addr = cpu.a[reg as usize];
-            cycles += 4; // Cycles for (An)+
-            addr
-        }
-        AddressingMode::AddressPreDecrement(reg) => {
-            let addr = cpu.a[reg as usize];
-            cycles += 6; // Cycles for -(An)
             addr
         }
         _ => {
@@ -291,38 +283,44 @@ pub fn exec_movem<M: MemoryInterface>(
         }
     }
 
-    cycles
+    cycles + 8
 }
 
 pub fn exec_swap(cpu: &mut Cpu, reg: u8) -> u32 {
     let val = cpu.d[reg as usize];
-    let swapped = val.rotate_left(16);
-    cpu.d[reg as usize] = swapped;
+    let low = (val & 0xFFFF) << 16;
+    let high = (val & 0xFFFF0000) >> 16;
+    let res = low | high;
+    cpu.d[reg as usize] = res;
 
-    cpu.update_nz_flags(swapped, Size::Long);
-    cpu.set_flag(flags::OVERFLOW, false);
-    cpu.set_flag(flags::CARRY, false);
+    // Update flags
+    cpu.update_nz_flags(res, Size::Long);
+    cpu.set_flag(crate::cpu::flags::CARRY, false);
+    cpu.set_flag(crate::cpu::flags::OVERFLOW, false);
 
     4
 }
 
 pub fn exec_ext(cpu: &mut Cpu, size: Size, reg: u8) -> u32 {
-    let val = cpu.d[reg as usize];
-    let result = match size {
-        Size::Word => (val as i8) as i16 as u16 as u32,
-        Size::Long => (val as i16) as i32 as u32,
-        _ => val,
+    let reg_idx = reg as usize;
+    let val = cpu.d[reg_idx];
+
+    let res = if size == Size::Word {
+        // Byte to Word
+        let low_byte = (val & 0xFF) as i8;
+        (val & 0xFFFF0000) | (low_byte as i16 as u16 as u32)
+    } else {
+        // Word to Long
+        let low_word = (val & 0xFFFF) as i16;
+        low_word as i32 as u32
     };
 
-    match size {
-        Size::Word => cpu.d[reg as usize] = (cpu.d[reg as usize] & 0xFFFF0000) | result,
-        Size::Long => cpu.d[reg as usize] = result,
-        _ => {}
-    }
+    cpu.d[reg_idx] = res;
 
-    cpu.update_nz_flags(result, size);
-    cpu.set_flag(flags::OVERFLOW, false);
-    cpu.set_flag(flags::CARRY, false);
+    // Update flags
+    cpu.update_nz_flags(res, size);
+    cpu.set_flag(crate::cpu::flags::CARRY, false);
+    cpu.set_flag(crate::cpu::flags::OVERFLOW, false);
 
     4
 }
