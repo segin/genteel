@@ -936,7 +936,7 @@ mod tests {
         let cycles = exec_divs(
             &mut cpu,
             AddressingMode::DataRegister(1), // src = D1
-            0, // dst = D0
+            0,                               // dst = D0
             &mut memory,
         );
         // Expected: Quotient 20, Remainder 0 -> 0x00000014
@@ -954,7 +954,7 @@ mod tests {
         exec_divs(
             &mut cpu,
             AddressingMode::DataRegister(1), // src = D1
-            0, // dst = D0
+            0,                               // dst = D0
             &mut memory,
         );
         // Expected: Quotient -20 (0xFFEC), Remainder 0 -> 0x0000FFEC
@@ -971,7 +971,7 @@ mod tests {
         exec_divs(
             &mut cpu,
             AddressingMode::DataRegister(1), // src = D1
-            0, // dst = D0
+            0,                               // dst = D0
             &mut memory,
         );
         // Expected: Quotient -20 (0xFFEC), Remainder 0 -> 0x0000FFEC
@@ -988,7 +988,7 @@ mod tests {
         exec_divs(
             &mut cpu,
             AddressingMode::DataRegister(1), // src = D1
-            0, // dst = D0
+            0,                               // dst = D0
             &mut memory,
         );
         // Expected: Quotient 20 (0x14), Remainder 0 -> 0x00000014
@@ -1005,7 +1005,7 @@ mod tests {
         exec_divs(
             &mut cpu,
             AddressingMode::DataRegister(1), // src = D1
-            0, // dst = D0
+            0,                               // dst = D0
             &mut memory,
         );
         // Expected: Quotient 3, Remainder 1 -> 0x00010003
@@ -1022,7 +1022,7 @@ mod tests {
         exec_divs(
             &mut cpu,
             AddressingMode::DataRegister(1), // src = D1
-            0, // dst = D0
+            0,                               // dst = D0
             &mut memory,
         );
         // Expected: Quotient -3 (0xFFFD), Remainder -1 (0xFFFF) -> 0xFFFFFFFD
@@ -1046,7 +1046,7 @@ mod tests {
         exec_divs(
             &mut cpu,
             AddressingMode::DataRegister(1), // src = D1
-            0, // dst = D0
+            0,                               // dst = D0
             &mut memory,
         );
 
@@ -1064,7 +1064,7 @@ mod tests {
         exec_divs(
             &mut cpu,
             AddressingMode::DataRegister(1), // src = D1
-            0, // dst = D0
+            0,                               // dst = D0
             &mut memory,
         );
 
@@ -1089,7 +1089,7 @@ mod tests {
         exec_divs(
             &mut cpu,
             AddressingMode::DataRegister(1), // src = D1
-            0, // dst = D0
+            0,                               // dst = D0
             &mut memory,
         );
 
@@ -1113,7 +1113,7 @@ mod tests {
         exec_muls(
             &mut cpu,
             AddressingMode::DataRegister(0), // src = D0
-            1, // dst = D1
+            1,                               // dst = D1
             &mut memory,
         );
 
@@ -1135,12 +1135,7 @@ mod tests {
         cpu.d[1] = 0xFFFB;
 
         // MULS D0, D1
-        exec_muls(
-            &mut cpu,
-            AddressingMode::DataRegister(0),
-            1,
-            &mut memory,
-        );
+        exec_muls(&mut cpu, AddressingMode::DataRegister(0), 1, &mut memory);
 
         // Result: -50 (0xFFFFFFCE)
         assert_eq!(cpu.d[1], 0xFFFFFFCE);
@@ -1155,12 +1150,7 @@ mod tests {
         cpu.d[3] = 0xFFFB;
 
         // MULS D2, D3
-        exec_muls(
-            &mut cpu,
-            AddressingMode::DataRegister(2),
-            3,
-            &mut memory,
-        );
+        exec_muls(&mut cpu, AddressingMode::DataRegister(2), 3, &mut memory);
 
         // Result: 50
         assert_eq!(cpu.d[3], 50);
@@ -1179,12 +1169,7 @@ mod tests {
         cpu.d[1] = 12345;
 
         // MULS D0, D1
-        exec_muls(
-            &mut cpu,
-            AddressingMode::DataRegister(0),
-            1,
-            &mut memory,
-        );
+        exec_muls(&mut cpu, AddressingMode::DataRegister(0), 1, &mut memory);
 
         // Result: 0
         assert_eq!(cpu.d[1], 0);

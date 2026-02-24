@@ -1,132 +1,54 @@
-//! M68k CPU Core
-//!
-//! This module implements the Motorola 68000 CPU, the main processor
-//! of the Sega Mega Drive/Genesis.
+use crate::memory::MemoryInterface;
+use serde::{Deserialize, Serialize};
 
 pub mod addressing;
 pub mod decoder;
 pub mod instructions;
 pub mod ops;
 
-use crate::cpu::decoder::decode;
-use crate::cpu::instructions::{
-    ArithmeticInstruction, BitSource, BitsInstruction, Condition, DataInstruction,
-    DecodeCacheEntry, Instruction, Size, SystemInstruction,
-};
-use crate::memory::MemoryInterface;
+pub use decoder::{Condition, Cpu, Size};
 
-/// Status Register flags
 pub mod flags {
-    pub const CARRY: u16 = 0x0001; // C - Carry
-    pub const OVERFLOW: u16 = 0x0002; // V - Overflow
-    pub const ZERO: u16 = 0x0004; // Z - Zero
-    pub const NEGATIVE: u16 = 0x0008; // N - Negative
-    pub const EXTEND: u16 = 0x0010; // X - Extend
-    pub const INTERRUPT_MASK: u16 = 0x0700; // I2-I0 - Interrupt mask
-    pub const SUPERVISOR: u16 = 0x2000; // S - Supervisor mode
-    pub const TRACE: u16 = 0x8000; // T - Trace mode
+    pub const CARRY: u16 = 0x0001;
+    pub const OVERFLOW: u16 = 0x0002;
+    pub const ZERO: u16 = 0x0004;
+    pub const NEGATIVE: u16 = 0x0008;
+    pub const EXTEND: u16 = 0x0010;
+    pub const INTERRUPT_MASK: u16 = 0x0700;
+    pub const MASTER_STATE: u16 = 0x1000;
+    pub const SUPERVISOR: u16 = 0x2000;
+    pub const TRACE: u16 = 0x8000;
 }
 
-/// CPU Cache Configuration
-const CACHE_SIZE: usize = 65536;
-const CACHE_MASK: u32 = 0xFFFF;
-const CACHE_ROM_LIMIT: u32 = 0x400000;
-
-/// Motorola 68000 Central Processing Unit
-#[derive(Debug)]
-pub struct Cpu {
-    // Registers
-    pub d: [u32; 8], // Data registers D0-D7
-    pub a: [u32; 8], // Address registers A0-A7 (A7 is SP)
-    pub pc: u32,     // Program counter
-    pub sr: u16,     // Status register
-
-    // Internal state
-    pub usp: u32, // User stack pointer (saved when in supervisor mode)
-    pub ssp: u32, // Supervisor stack pointer (saved when in user mode)
-
-    // Cycle counter for timing
-    pub cycles: u64,
-
-    // Halted state
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CpuState {
+    pub d: [u32; 8],
+    pub a: [u32; 8],
+    pub pc: u32,
+    pub sr: u16,
     pub halted: bool,
-
-    // Pending interrupt level (0-7, 0 = none)
     pub pending_interrupt: u8,
-    pub pending_exception: bool,
-
-    // Interrupt pending bitmask (bit N = level N is pending)
-    pub interrupt_pending_mask: u8,
-
-    // Instruction cache (Direct Mapped, 64K entries)
-    pub decode_cache: Box<[DecodeCacheEntry]>,
 }
 
 impl Cpu {
-    pub fn new<M: MemoryInterface>(memory: &mut M) -> Self {
-        let mut cpu = Self {
-            d: [0; 8],
-            a: [0; 8],
-            pc: 0,
-            sr: 0x2700, // Supervisor mode, interrupts disabled
-            usp: 0,
-            ssp: 0,
-            cycles: 0,
-            halted: false,
-            pending_interrupt: 0,
-            pending_exception: false,
-            interrupt_pending_mask: 0,
-            decode_cache: vec![DecodeCacheEntry::default(); CACHE_SIZE].into_boxed_slice(),
-        };
-
-        // At startup, the supervisor stack pointer is read from address 0x00000000
-        // and the program counter is read from 0x00000004.
-        cpu.a[7] = memory.read_long(0x0);
-        cpu.ssp = cpu.a[7];
-        cpu.pc = memory.read_long(0x4);
-
-        cpu
-    }
-
-    /// Reset the CPU to initial state
-    pub fn reset<M: MemoryInterface>(&mut self, memory: &mut M) {
-        self.d = [0; 8];
-        self.a = [0; 8];
-        self.sr = 0x2700;
-        self.a[7] = memory.read_long(0x0);
-        self.ssp = self.a[7];
-        self.pc = memory.read_long(0x4);
-        self.cycles = 0;
-        self.halted = false;
-        self.pending_interrupt = 0;
-        self.interrupt_pending_mask = 0;
-        // Invalidate cache on reset
-        self.decode_cache.fill(DecodeCacheEntry::default());
-    }
-
-    /// Invalidate the instruction cache.
-    /// Should be called when code in ROM/RAM is modified (e.g. self-modifying code, or tests).
-    pub fn invalidate_cache(&mut self) {
-        self.decode_cache.fill(DecodeCacheEntry::default());
-    }
-
-    fn invalidate_cache_line(&mut self, addr: u32) {
-        let index = ((addr >> 1) & CACHE_MASK) as usize;
-        if let Some(entry) = self.decode_cache.get_mut(index) {
-            entry.pc = u32::MAX;
+    pub fn get_state(&self) -> CpuState {
+        CpuState {
+            d: self.d,
+            a: self.a,
+            pc: self.pc,
+            sr: self.sr,
+            halted: self.halted,
+            pending_interrupt: self.pending_interrupt,
         }
     }
 
-    /// Request an interrupt at the specified level
-    /// Uses a bitmask to queue multiple interrupt levels
-    pub fn request_interrupt(&mut self, level: u8) {
-        if level == 0 || level > 7 {
-            return;
-        }
-        // Set the bit for this interrupt level
-        self.interrupt_pending_mask |= 1 << level;
-        // Update pending_interrupt to highest priority
-        self.update_pending_interrupt();
+    pub fn set_state(&mut self, state: CpuState) {
+        self.d = state.d;
+        self.a = state.a;
+        self.pc = state.pc;
+        self.sr = state.sr;
+        self.halted = state.halted;
+        self.pending_interrupt = state.pending_interrupt;
     }
 
     /// Update pending_interrupt to highest priority level from bitmask
@@ -304,8 +226,25 @@ impl Cpu {
             return 4;
         }
 
+        let instruction = match self.fetch_next_instruction(memory) {
+            Some(instr) => instr,
+            None => {
+                // Address Error during fetch
+                self.cycles += 34;
+                return 34;
+            }
+        };
+
+        let cycles = self.execute(instruction, memory);
+        self.cycles += cycles as u64;
+        cycles
+    }
+
+    fn fetch_next_instruction<M: MemoryInterface>(
+        &mut self,
+        memory: &mut M,
+    ) -> Option<Instruction> {
         let pc = self.pc;
-        let instruction;
 
         // Optimized instruction fetch with cache
         if pc < CACHE_ROM_LIMIT {
@@ -320,57 +259,38 @@ impl Cpu {
             if let Some(entry) = self.decode_cache.get(cache_index).copied() {
                 if entry.pc == pc {
                     // Cache Hit
-                    instruction = entry.instruction;
                     self.pc = pc.wrapping_add(2);
-                } else {
-                    // Cache Miss
-                    let opcode = self.read_instruction_word(pc, memory);
-                    if self.pending_exception {
-                        // Address Error during fetch
-                        self.cycles += 34;
-                        return 34;
-                    }
-
-                    self.pc = self.pc.wrapping_add(2);
-                    instruction = decode(opcode);
-
-                    // Update Cache
-                    // We know the index is valid because get() succeeded earlier,
-                    // but we use get_mut() for safety in case of concurrent modification (unlikely here)
-                    // or weird edge cases.
-                    if let Some(entry_mut) = self.decode_cache.get_mut(cache_index) {
-                        *entry_mut = DecodeCacheEntry { pc, instruction };
-                    }
+                    return Some(entry.instruction);
                 }
-            } else {
-                // Cache index out of bounds (cache too small/invalid)
-                // Fallback to uncached fetch
+
+                // Cache Miss
                 let opcode = self.read_instruction_word(pc, memory);
                 if self.pending_exception {
-                    // Address Error during fetch
-                    self.cycles += 34;
-                    return 34;
+                    return None;
                 }
 
                 self.pc = self.pc.wrapping_add(2);
-                instruction = decode(opcode);
-            }
-        } else {
-            // Uncached (RAM, I/O, etc.)
-            let opcode = self.read_instruction_word(pc, memory);
-            if self.pending_exception {
-                // Address Error during fetch
-                self.cycles += 34;
-                return 34;
-            }
+                let instruction = decode(opcode);
 
-            self.pc = self.pc.wrapping_add(2);
-            instruction = decode(opcode);
+                // Update Cache
+                // We know the index is valid because get() succeeded earlier,
+                // but we use get_mut() for safety in case of concurrent modification (unlikely here)
+                // or weird edge cases.
+                if let Some(entry_mut) = self.decode_cache.get_mut(cache_index) {
+                    *entry_mut = DecodeCacheEntry { pc, instruction };
+                }
+                return Some(instruction);
+            }
         }
 
-        let cycles = self.execute(instruction, memory);
-        self.cycles += cycles as u64;
-        cycles
+        // Uncached (RAM, I/O, etc.) or Cache index out of bounds
+        let opcode = self.read_instruction_word(pc, memory);
+        if self.pending_exception {
+            return None;
+        }
+
+        self.pc = self.pc.wrapping_add(2);
+        Some(decode(opcode))
     }
 
     fn read_instruction_word<M: MemoryInterface>(&mut self, addr: u32, memory: &mut M) -> u16 {
@@ -586,7 +506,7 @@ impl Cpu {
                 SystemInstruction::Rte => ops::system::exec_rte(self, memory),
                 SystemInstruction::Rtr => ops::system::exec_rtr(self, memory),
                 SystemInstruction::Nop => 4,
-                SystemInstruction::Reset => 132,
+                SystemInstruction::Reset => ops::system::exec_reset(self, memory),
                 SystemInstruction::Stop => ops::system::exec_stop(self, memory),
                 SystemInstruction::MoveUsp { reg, to_usp } => {
                     ops::system::exec_move_usp(self, reg, to_usp, memory)
@@ -604,7 +524,7 @@ impl Cpu {
                     self.pc = self.pc.wrapping_add(2);
                     ops::system::exec_link(self, reg, displacement, memory)
                 }
-                SystemInstruction::Unlk { reg } => ops::system::exec_unlk(self, reg, memory),
+                SystemInstruction::Unlk { reg } => ops::system::unlk(self, reg, memory),
                 SystemInstruction::MoveToSr { src } => {
                     ops::system::exec_move_to_sr(self, src, memory)
                 }
@@ -630,179 +550,13 @@ impl Cpu {
         }
     }
 
-    fn check_interrupts<M: MemoryInterface>(&mut self, memory: &mut M) -> u32 {
-        if self.pending_interrupt == 0 {
-            return 0;
-        }
-
-        let current_mask = (self.sr & flags::INTERRUPT_MASK) >> 8;
-
-        if self.pending_interrupt > current_mask as u8 || self.pending_interrupt == 7 {
-            let level = self.pending_interrupt;
-            self.acknowledge_interrupt(level);
-            self.halted = false;
-
-            let old_sr = self.sr;
-            let mut new_sr = old_sr | flags::SUPERVISOR;
-            new_sr &= !flags::TRACE;
-            new_sr = (new_sr & !flags::INTERRUPT_MASK) | ((level as u16) << 8);
-
-            self.set_sr(new_sr);
-            self.push_long(self.pc, memory);
-            self.push_word(old_sr, memory);
-
-            let vector = 24 + level as u32;
-            let vector_addr = vector * 4;
-            self.pc = memory.read_long(vector_addr);
-
-            return 44;
-        }
-
-        0
-    }
-
-    pub fn read_word<M: MemoryInterface>(&mut self, addr: u32, memory: &mut M) -> u16 {
-        if !addr.is_multiple_of(2) {
-            self.process_exception(3, memory);
-            return 0;
-        }
-        memory.read_word(addr)
-    }
-
-    pub fn read_long<M: MemoryInterface>(&mut self, addr: u32, memory: &mut M) -> u32 {
-        if !addr.is_multiple_of(2) {
-            self.process_exception(3, memory);
-            return 0;
-        }
-        memory.read_long(addr)
-    }
-
-    pub fn write_byte<M: MemoryInterface>(&mut self, addr: u32, val: u8, memory: &mut M) {
-        memory.write_byte(addr, val);
-        self.invalidate_cache_line(addr);
-    }
-
-    pub fn write_word<M: MemoryInterface>(&mut self, addr: u32, val: u16, memory: &mut M) {
-        if !addr.is_multiple_of(2) {
-            self.process_exception(3, memory);
-            return;
-        }
-        memory.write_word(addr, val);
-        self.invalidate_cache_line(addr);
-    }
-
-    pub fn write_long<M: MemoryInterface>(&mut self, addr: u32, val: u32, memory: &mut M) {
-        if !addr.is_multiple_of(2) {
-            self.process_exception(3, memory);
-            return;
-        }
-        memory.write_long(addr, val);
-        self.invalidate_cache_line(addr);
-        self.invalidate_cache_line(addr.wrapping_add(2));
-    }
-
-    pub fn cpu_read_memory<M: MemoryInterface>(
-        &mut self,
-        addr: u32,
-        size: Size,
-        memory: &mut M,
-    ) -> u32 {
-        match size {
-            Size::Byte => memory.read_byte(addr) as u32,
-            Size::Word => self.read_word(addr, memory) as u32,
-            Size::Long => self.read_long(addr, memory),
-        }
-    }
-
-    pub fn cpu_write_memory<M: MemoryInterface>(
-        &mut self,
-        addr: u32,
-        size: Size,
-        val: u32,
-        memory: &mut M,
-    ) {
-        match size {
-            Size::Byte => self.write_byte(addr, val as u8, memory),
-            Size::Word => self.write_word(addr, val as u16, memory),
-            Size::Long => self.write_long(addr, val, memory),
-        }
-    }
-
-    pub fn cpu_read_ea<M: MemoryInterface>(
-        &mut self,
-        ea: addressing::EffectiveAddress,
-        size: Size,
-        memory: &mut M,
-    ) -> u32 {
-        if let addressing::EffectiveAddress::Memory(addr) = ea {
-            if size != Size::Byte && addr % 2 != 0 {
-                self.process_exception(3, memory);
-                return 0;
-            }
-        }
-        addressing::read_ea(ea, size, &self.d, &self.a, memory)
-    }
-
-    pub fn cpu_write_ea<M: MemoryInterface>(
-        &mut self,
-        ea: addressing::EffectiveAddress,
-        size: Size,
-        val: u32,
-        memory: &mut M,
-    ) {
-        match ea {
-            addressing::EffectiveAddress::DataRegister(r) => {
-                let reg = r as usize;
-                match size {
-                    Size::Byte => self.d[reg] = (self.d[reg] & 0xFFFFFF00) | (val & 0xFF),
-                    Size::Word => self.d[reg] = (self.d[reg] & 0xFFFF0000) | (val & 0xFFFF),
-                    Size::Long => self.d[reg] = val,
-                }
-            }
-            addressing::EffectiveAddress::AddressRegister(r) => {
-                let reg = r as usize;
-                match size {
-                    Size::Byte => self.a[reg] = (val as i8) as i32 as u32,
-                    Size::Word => self.a[reg] = (val as i16) as i32 as u32,
-                    Size::Long => self.a[reg] = val,
-                }
-            }
-            addressing::EffectiveAddress::Memory(addr) => {
-                if size != Size::Byte && addr % 2 != 0 {
-                    self.process_exception(3, memory);
-                    return;
-                }
-                self.cpu_write_memory(addr, size, val, memory);
-            }
-        }
-    }
-
-    pub fn fetch_bit_num<M: MemoryInterface>(&mut self, bit: BitSource, memory: &mut M) -> u8 {
-        match bit {
-            BitSource::Immediate => {
-                let val = self.read_word(self.pc, memory) as u8;
-                self.pc = self.pc.wrapping_add(2);
-                val
-            }
-            BitSource::Register(r) => (self.d[r as usize] & 0xFF) as u8,
-        }
-    }
-
-    pub fn resolve_bit_index(&self, bit_num: u8, is_memory: bool) -> u8 {
-        if is_memory {
-            bit_num % 8
-        } else {
-            bit_num % 32
-        }
-    }
-
-    pub fn test_condition(&self, condition: Condition) -> bool {
-        let n = self.get_flag(flags::NEGATIVE);
+    pub fn check_condition(&self, cond: Condition) -> bool {
         let z = self.get_flag(flags::ZERO);
-        let v = self.get_flag(flags::OVERFLOW);
         let c = self.get_flag(flags::CARRY);
+        let n = self.get_flag(flags::NEGATIVE);
+        let v = self.get_flag(flags::OVERFLOW);
 
-        match condition {
+        match cond {
             Condition::True => true,
             Condition::False => false,
             Condition::High => !c && !z,
@@ -815,7 +569,7 @@ impl Cpu {
             Condition::OverflowSet => v,
             Condition::Plus => !n,
             Condition::Minus => n,
-            Condition::GreaterOrEqual => (n && v) || (!n && !v),
+            Condition::GreaterEqual => (n && v) || (!n && !v),
             Condition::LessThan => (n && !v) || (!n && v),
             Condition::GreaterThan => (n && v && !z) || (!n && !v && !z),
             Condition::LessOrEqual => z || (n && !v) || (!n && v),
@@ -824,11 +578,17 @@ impl Cpu {
 }
 
 #[cfg(test)]
+mod bench_decoder;
+#[cfg(test)]
 mod tests_addressing;
 #[cfg(test)]
 mod tests_bug_fixes;
 #[cfg(test)]
 mod tests_cache;
+#[cfg(test)]
+mod tests_decoder_shift;
+#[cfg(test)]
+mod tests_interrupts;
 #[cfg(test)]
 mod tests_m68k_alu;
 #[cfg(test)]
@@ -844,7 +604,11 @@ mod tests_m68k_data;
 #[cfg(test)]
 mod tests_m68k_data_unit;
 #[cfg(test)]
+mod tests_m68k_exhaustive;
+#[cfg(test)]
 mod tests_m68k_extended;
+#[cfg(test)]
+mod tests_m68k_movep;
 #[cfg(test)]
 mod tests_m68k_shift;
 #[cfg(test)]
@@ -853,6 +617,3 @@ mod tests_m68k_torture;
 mod tests_performance;
 #[cfg(test)]
 mod tests_security;
-mod tests_decoder_shift;
-#[cfg(test)]
-mod tests_m68k_exhaustive;
