@@ -716,7 +716,10 @@ impl GdbServer {
             return "E01".to_string();
         }
 
-        // Add other monitor commands here if needed
+        // Unknown monitor command.
+        // We return "OK" to prevent the client from treating this as an error,
+        // effectively ignoring unknown commands.
+        eprintln!("ℹ️  Ignored unknown monitor command: {}", cmd);
         "OK".to_string()
     }
 

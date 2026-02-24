@@ -204,10 +204,10 @@ pub fn exec_shift<M: MemoryInterface>(
     let (dst_ea, cycles) = calculate_ea(dst, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
     let val = read_ea(dst_ea, size, &cpu.d, &cpu.a, memory);
 
-    let (mask, sign_bit) = match size {
-        Size::Byte => (0xFFu32, 0x80u32),
-        Size::Word => (0xFFFF, 0x8000),
-        Size::Long => (0xFFFFFFFF, 0x80000000),
+    let (mask, size_bits, sign_bit) = match size {
+        Size::Byte => (0xFFu32, 8u32, 0x80u32),
+        Size::Word => (0xFFFF, 16, 0x8000),
+        Size::Long => (0xFFFFFFFF, 32, 0x80000000),
     };
 
     let val = val & mask;
@@ -215,21 +215,65 @@ pub fn exec_shift<M: MemoryInterface>(
     let mut carry = false;
     let mut overflow = false;
 
-    for _ in 0..count_val {
+    if count_val > 0 {
         if left {
-            carry = (result & sign_bit) != 0;
-            result = (result << 1) & mask;
-            if arithmetic {
-                overflow = overflow || (carry != ((result & sign_bit) != 0));
+            if count_val >= size_bits {
+                result = 0;
+                carry = if count_val == size_bits {
+                    (val & 1) != 0
+                } else {
+                    false
+                };
+                if arithmetic {
+                    // For ASL, overflow occurs if the result is not the same as the original value multiplied by 2^n
+                    // which for large shifts means we lost non-zero bits.
+                    overflow = val != 0;
+                }
+            } else {
+                carry = ((val >> (size_bits - count_val)) & 1) != 0;
+                result = (val << count_val) & mask;
+                if arithmetic {
+                    // Check if the bits that passed through the MSB were all consistent
+                    // This means bits [size-1 .. size-1-count] must be all 0s or all 1s.
+                    // Mask for these bits:
+                    let check_mask = mask & (!0u32 << (size_bits - count_val - 1));
+                    let masked = val & check_mask;
+                    overflow = (masked != 0) && (masked != check_mask);
+                }
             }
         } else {
-            carry = (result & 1) != 0;
-            if arithmetic {
-                // ASR: preserve sign bit
-                let sign = result & sign_bit;
-                result = (result >> 1) | sign;
+            // Right shift
+            if count_val >= size_bits {
+                if arithmetic && (val & sign_bit) != 0 {
+                    result = mask; // Sign extended -1
+                    carry = true; // Last bit shifted out was sign bit (1)
+                } else {
+                    result = 0;
+                    carry = if arithmetic {
+                        false // Sign bit was 0
+                    } else {
+                        // Logical: Last bit out depends on count
+                        if count_val == size_bits {
+                            (val & sign_bit) != 0
+                        } else {
+                            false
+                        }
+                    };
+                }
             } else {
-                result >>= 1;
+                carry = ((val >> (count_val - 1)) & 1) != 0;
+                if arithmetic {
+                    let shifted = val >> count_val;
+                    if (val & sign_bit) != 0 {
+                        // Sign extend
+                        let sign_mask = mask & (!0u32 << (size_bits - count_val));
+                        result = shifted | sign_mask;
+                    } else {
+                        result = shifted;
+                    }
+                } else {
+                    result = val >> count_val;
+                }
             }
         }
     }
@@ -1241,126 +1285,268 @@ mod tests {
             // LSL.B #1, 0x01 -> 0x02. C=0, V=0, Z=0, N=0, X=0
             TestCase {
                 desc: "LSL.B #1, 0x01",
-                size: Size::Byte, count: 1, use_reg_count: false, left: true, arithmetic: false,
-                initial_val: 0x01, initial_x: false,
-                expected_val: 0x02, expected_c: false, expected_v: false, expected_z: false, expected_n: false, expected_x: None,
+                size: Size::Byte,
+                count: 1,
+                use_reg_count: false,
+                left: true,
+                arithmetic: false,
+                initial_val: 0x01,
+                initial_x: false,
+                expected_val: 0x02,
+                expected_c: false,
+                expected_v: false,
+                expected_z: false,
+                expected_n: false,
+                expected_x: None,
             },
             // LSL.B #1, 0x80 -> 0x00. C=1, V=0, Z=1, N=0, X=1
             TestCase {
                 desc: "LSL.B #1, 0x80",
-                size: Size::Byte, count: 1, use_reg_count: false, left: true, arithmetic: false,
-                initial_val: 0x80, initial_x: false,
-                expected_val: 0x00, expected_c: true, expected_v: false, expected_z: true, expected_n: false, expected_x: None,
+                size: Size::Byte,
+                count: 1,
+                use_reg_count: false,
+                left: true,
+                arithmetic: false,
+                initial_val: 0x80,
+                initial_x: false,
+                expected_val: 0x00,
+                expected_c: true,
+                expected_v: false,
+                expected_z: true,
+                expected_n: false,
+                expected_x: None,
             },
             // LSL.W #1, 0x0001 -> 0x0002.
             TestCase {
                 desc: "LSL.W #1, 0x0001",
-                size: Size::Word, count: 1, use_reg_count: false, left: true, arithmetic: false,
-                initial_val: 0x0001, initial_x: false,
-                expected_val: 0x0002, expected_c: false, expected_v: false, expected_z: false, expected_n: false, expected_x: None,
+                size: Size::Word,
+                count: 1,
+                use_reg_count: false,
+                left: true,
+                arithmetic: false,
+                initial_val: 0x0001,
+                initial_x: false,
+                expected_val: 0x0002,
+                expected_c: false,
+                expected_v: false,
+                expected_z: false,
+                expected_n: false,
+                expected_x: None,
             },
             // LSL.L #1, 0x00010000 -> 0x00020000.
             TestCase {
                 desc: "LSL.L #1, 0x00010000",
-                size: Size::Long, count: 1, use_reg_count: false, left: true, arithmetic: false,
-                initial_val: 0x00010000, initial_x: false,
-                expected_val: 0x00020000, expected_c: false, expected_v: false, expected_z: false, expected_n: false, expected_x: None,
+                size: Size::Long,
+                count: 1,
+                use_reg_count: false,
+                left: true,
+                arithmetic: false,
+                initial_val: 0x00010000,
+                initial_x: false,
+                expected_val: 0x00020000,
+                expected_c: false,
+                expected_v: false,
+                expected_z: false,
+                expected_n: false,
+                expected_x: None,
             },
-
             // --- LSR (Logical Shift Right) ---
             // LSR.B #1, 0x02 -> 0x01.
             TestCase {
                 desc: "LSR.B #1, 0x02",
-                size: Size::Byte, count: 1, use_reg_count: false, left: false, arithmetic: false,
-                initial_val: 0x02, initial_x: false,
-                expected_val: 0x01, expected_c: false, expected_v: false, expected_z: false, expected_n: false, expected_x: None,
+                size: Size::Byte,
+                count: 1,
+                use_reg_count: false,
+                left: false,
+                arithmetic: false,
+                initial_val: 0x02,
+                initial_x: false,
+                expected_val: 0x01,
+                expected_c: false,
+                expected_v: false,
+                expected_z: false,
+                expected_n: false,
+                expected_x: None,
             },
             // LSR.B #1, 0x01 -> 0x00. C=1.
             TestCase {
                 desc: "LSR.B #1, 0x01",
-                size: Size::Byte, count: 1, use_reg_count: false, left: false, arithmetic: false,
-                initial_val: 0x01, initial_x: false,
-                expected_val: 0x00, expected_c: true, expected_v: false, expected_z: true, expected_n: false, expected_x: None,
+                size: Size::Byte,
+                count: 1,
+                use_reg_count: false,
+                left: false,
+                arithmetic: false,
+                initial_val: 0x01,
+                initial_x: false,
+                expected_val: 0x00,
+                expected_c: true,
+                expected_v: false,
+                expected_z: true,
+                expected_n: false,
+                expected_x: None,
             },
-
             // --- ASL (Arithmetic Shift Left) ---
             // ASL is LSL but sets V on sign change.
             // ASL.B #1, 0x40 (01000000) -> 0x80 (10000000). Sign changed 0->1. V=1.
             TestCase {
                 desc: "ASL.B #1, 0x40 (Overflow)",
-                size: Size::Byte, count: 1, use_reg_count: false, left: true, arithmetic: true,
-                initial_val: 0x40, initial_x: false,
-                expected_val: 0x80, expected_c: false, expected_v: true, expected_z: false, expected_n: true, expected_x: None,
+                size: Size::Byte,
+                count: 1,
+                use_reg_count: false,
+                left: true,
+                arithmetic: true,
+                initial_val: 0x40,
+                initial_x: false,
+                expected_val: 0x80,
+                expected_c: false,
+                expected_v: true,
+                expected_z: false,
+                expected_n: true,
+                expected_x: None,
             },
             // ASL.B #1, 0x01 -> 0x02. No sign change. V=0.
             TestCase {
                 desc: "ASL.B #1, 0x01",
-                size: Size::Byte, count: 1, use_reg_count: false, left: true, arithmetic: true,
-                initial_val: 0x01, initial_x: false,
-                expected_val: 0x02, expected_c: false, expected_v: false, expected_z: false, expected_n: false, expected_x: None,
+                size: Size::Byte,
+                count: 1,
+                use_reg_count: false,
+                left: true,
+                arithmetic: true,
+                initial_val: 0x01,
+                initial_x: false,
+                expected_val: 0x02,
+                expected_c: false,
+                expected_v: false,
+                expected_z: false,
+                expected_n: false,
+                expected_x: None,
             },
-
             // --- ASR (Arithmetic Shift Right) ---
             // ASR preserves MSB (sign bit).
             // ASR.B #1, 0x80 (-128) -> 0xC0 (-64). 10000000 -> 11000000.
             TestCase {
                 desc: "ASR.B #1, 0x80",
-                size: Size::Byte, count: 1, use_reg_count: false, left: false, arithmetic: true,
-                initial_val: 0x80, initial_x: false,
-                expected_val: 0xC0, expected_c: false, expected_v: false, expected_z: false, expected_n: true, expected_x: None,
+                size: Size::Byte,
+                count: 1,
+                use_reg_count: false,
+                left: false,
+                arithmetic: true,
+                initial_val: 0x80,
+                initial_x: false,
+                expected_val: 0xC0,
+                expected_c: false,
+                expected_v: false,
+                expected_z: false,
+                expected_n: true,
+                expected_x: None,
             },
             // ASR.B #1, 0x01 -> 0x00. C=1.
             TestCase {
                 desc: "ASR.B #1, 0x01",
-                size: Size::Byte, count: 1, use_reg_count: false, left: false, arithmetic: true,
-                initial_val: 0x01, initial_x: false,
-                expected_val: 0x00, expected_c: true, expected_v: false, expected_z: true, expected_n: false, expected_x: None,
+                size: Size::Byte,
+                count: 1,
+                use_reg_count: false,
+                left: false,
+                arithmetic: true,
+                initial_val: 0x01,
+                initial_x: false,
+                expected_val: 0x00,
+                expected_c: true,
+                expected_v: false,
+                expected_z: true,
+                expected_n: false,
+                expected_x: None,
             },
-
             // --- Shift Counts and Edge Cases ---
 
             // Shift by 0 (Immediate). Should clear C, Clear V, Unaffected X.
             // LSL.B #0, 0xFF. Res=0xFF. C=0, V=0. X=initial (true).
             TestCase {
                 desc: "LSL.B #0, 0xFF",
-                size: Size::Byte, count: 0, use_reg_count: false, left: true, arithmetic: false,
-                initial_val: 0xFF, initial_x: true,
-                expected_val: 0xFF, expected_c: false, expected_v: false, expected_z: false, expected_n: true, expected_x: Some(true),
+                size: Size::Byte,
+                count: 0,
+                use_reg_count: false,
+                left: true,
+                arithmetic: false,
+                initial_val: 0xFF,
+                initial_x: true,
+                expected_val: 0xFF,
+                expected_c: false,
+                expected_v: false,
+                expected_z: false,
+                expected_n: true,
+                expected_x: Some(true),
             },
-
             // Shift by 8 (Size of Byte). Clears register. C=last bit out.
             // LSL.B #8, 0xFF. 11111111 << 8 -> 00000000. Last bit out was 1.
             TestCase {
                 desc: "LSL.B #8, 0xFF",
-                size: Size::Byte, count: 8, use_reg_count: false, left: true, arithmetic: false,
-                initial_val: 0xFF, initial_x: false,
-                expected_val: 0x00, expected_c: true, expected_v: false, expected_z: true, expected_n: false, expected_x: None,
+                size: Size::Byte,
+                count: 8,
+                use_reg_count: false,
+                left: true,
+                arithmetic: false,
+                initial_val: 0xFF,
+                initial_x: false,
+                expected_val: 0x00,
+                expected_c: true,
+                expected_v: false,
+                expected_z: true,
+                expected_n: false,
+                expected_x: None,
             },
-
             // Shift by 9 (Size + 1). Clears register. C=0 (last bit out was 0 from the previous shifts).
             // 0xFF << 8 -> C=1, Val=0. Then << 1 -> C=0, Val=0.
             TestCase {
                 desc: "LSL.B #9, 0xFF",
-                size: Size::Byte, count: 9, use_reg_count: false, left: true, arithmetic: false,
-                initial_val: 0xFF, initial_x: false,
-                expected_val: 0x00, expected_c: false, expected_v: false, expected_z: true, expected_n: false, expected_x: None,
+                size: Size::Byte,
+                count: 9,
+                use_reg_count: false,
+                left: true,
+                arithmetic: false,
+                initial_val: 0xFF,
+                initial_x: false,
+                expected_val: 0x00,
+                expected_c: false,
+                expected_v: false,
+                expected_z: true,
+                expected_n: false,
+                expected_x: None,
             },
-
             // Register Count: Shift by 0.
             // D1 = 0.
             TestCase {
                 desc: "LSL.B D1(0), 0xFF",
-                size: Size::Byte, count: 0, use_reg_count: true, left: true, arithmetic: false,
-                initial_val: 0xFF, initial_x: true,
-                expected_val: 0xFF, expected_c: false, expected_v: false, expected_z: false, expected_n: true, expected_x: Some(true),
+                size: Size::Byte,
+                count: 0,
+                use_reg_count: true,
+                left: true,
+                arithmetic: false,
+                initial_val: 0xFF,
+                initial_x: true,
+                expected_val: 0xFF,
+                expected_c: false,
+                expected_v: false,
+                expected_z: false,
+                expected_n: true,
+                expected_x: Some(true),
             },
-
             // Register Count Modulo 63: Shift by 64 (should be 0).
             TestCase {
                 desc: "LSL.B D1(64), 0xFF",
-                size: Size::Byte, count: 64, use_reg_count: true, left: true, arithmetic: false,
-                initial_val: 0xFF, initial_x: true,
-                expected_val: 0xFF, expected_c: false, expected_v: false, expected_z: false, expected_n: true, expected_x: Some(true),
+                size: Size::Byte,
+                count: 64,
+                use_reg_count: true,
+                left: true,
+                arithmetic: false,
+                initial_val: 0xFF,
+                initial_x: true,
+                expected_val: 0xFF,
+                expected_c: false,
+                expected_v: false,
+                expected_z: false,
+                expected_n: true,
+                expected_x: Some(true),
             },
         ];
 
@@ -1402,17 +1588,103 @@ mod tests {
                 Size::Long => cpu.d[0],
             };
 
-            assert_eq!(res_masked, case.expected_val, "{}: Value mismatch", case.desc);
-            assert_eq!(cpu.get_flag(flags::CARRY), case.expected_c, "{}: C flag mismatch", case.desc);
-            assert_eq!(cpu.get_flag(flags::OVERFLOW), case.expected_v, "{}: V flag mismatch", case.desc);
-            assert_eq!(cpu.get_flag(flags::ZERO), case.expected_z, "{}: Z flag mismatch", case.desc);
-            assert_eq!(cpu.get_flag(flags::NEGATIVE), case.expected_n, "{}: N flag mismatch", case.desc);
+            assert_eq!(
+                res_masked, case.expected_val,
+                "{}: Value mismatch",
+                case.desc
+            );
+            assert_eq!(
+                cpu.get_flag(flags::CARRY),
+                case.expected_c,
+                "{}: C flag mismatch",
+                case.desc
+            );
+            assert_eq!(
+                cpu.get_flag(flags::OVERFLOW),
+                case.expected_v,
+                "{}: V flag mismatch",
+                case.desc
+            );
+            assert_eq!(
+                cpu.get_flag(flags::ZERO),
+                case.expected_z,
+                "{}: Z flag mismatch",
+                case.desc
+            );
+            assert_eq!(
+                cpu.get_flag(flags::NEGATIVE),
+                case.expected_n,
+                "{}: N flag mismatch",
+                case.desc
+            );
 
             if let Some(expected_x) = case.expected_x {
-                assert_eq!(cpu.get_flag(flags::EXTEND), expected_x, "{}: X flag mismatch (Explicit)", case.desc);
+                assert_eq!(
+                    cpu.get_flag(flags::EXTEND),
+                    expected_x,
+                    "{}: X flag mismatch (Explicit)",
+                    case.desc
+                );
             } else {
-                assert_eq!(cpu.get_flag(flags::EXTEND), case.expected_c, "{}: X flag mismatch (Implicit=C)", case.desc);
+                assert_eq!(
+                    cpu.get_flag(flags::EXTEND),
+                    case.expected_c,
+                    "{}: X flag mismatch (Implicit=C)",
+                    case.desc
+                );
             }
         }
+    }
+
+    #[test]
+    fn test_exec_bit_ops_memory_modulo() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.a[0] = 0x2000;
+
+        // BSET bit 8 (mod 8 = 0)
+        memory.write_byte(0x2000, 0x00);
+        cpu.d[0] = 8;
+        exec_bset(&mut cpu, BitSource::Register(0), AddressingMode::AddressIndirect(0), &mut memory);
+        assert_eq!(memory.read_byte(0x2000), 0x01);
+        assert!(cpu.get_flag(flags::ZERO)); // bit 0 was clear
+
+        // BCLR bit 9 (mod 8 = 1)
+        memory.write_byte(0x2000, 0x02);
+        cpu.d[0] = 9;
+        exec_bclr(&mut cpu, BitSource::Register(0), AddressingMode::AddressIndirect(0), &mut memory);
+        assert_eq!(memory.read_byte(0x2000), 0x00);
+        assert!(!cpu.get_flag(flags::ZERO)); // bit 1 was set
+
+        // BCHG bit 10 (mod 8 = 2)
+        memory.write_byte(0x2000, 0x00);
+        cpu.d[0] = 10;
+        exec_bchg(&mut cpu, BitSource::Register(0), AddressingMode::AddressIndirect(0), &mut memory);
+        assert_eq!(memory.read_byte(0x2000), 0x04);
+        assert!(cpu.get_flag(flags::ZERO)); // bit 2 was clear
+
+        // BTST bit 11 (mod 8 = 3)
+        memory.write_byte(0x2000, 0x08);
+        cpu.d[0] = 11;
+        exec_btst(&mut cpu, BitSource::Register(0), AddressingMode::AddressIndirect(0), &mut memory);
+        assert!(!cpu.get_flag(flags::ZERO)); // bit 3 is set
+    }
+
+    #[test]
+    fn test_exec_bit_ops_register_modulo() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // BSET bit 32 (mod 32 = 0)
+        cpu.d[0] = 0x00000000;
+        cpu.d[1] = 32;
+        exec_bset(&mut cpu, BitSource::Register(1), AddressingMode::DataRegister(0), &mut memory);
+        assert_eq!(cpu.d[0], 0x00000001);
+        assert!(cpu.get_flag(flags::ZERO));
+
+        // BCLR bit 33 (mod 32 = 1)
+        cpu.d[0] = 0x00000002;
+        cpu.d[1] = 33;
+        exec_bclr(&mut cpu, BitSource::Register(1), AddressingMode::DataRegister(0), &mut memory);
+        assert_eq!(cpu.d[0], 0x00000000);
+        assert!(!cpu.get_flag(flags::ZERO));
     }
 }
