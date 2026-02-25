@@ -74,6 +74,7 @@ impl Vdp {
             let addr = i * 2;
             if addr + 1 < self.cram.len() {
                 let val = ((self.cram[addr + 1] as u16) << 8) | (self.cram[addr] as u16);
+                // Use helper to avoid duplication
                 self.cram_cache[i] = Self::genesis_color_to_rgb565(val);
             }
         }
