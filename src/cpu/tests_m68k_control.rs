@@ -864,3 +864,34 @@ fn test_address_error_write_word() {
     // Should be in supervisor mode (exception processing)
     assert!(cpu.sr & flags::SUPERVISOR != 0);
 }
+
+#[test]
+fn test_rtr() {
+    let (mut cpu, mut memory) = create_cpu();
+    write_op(&mut memory, &[0x4E77]);
+
+    // Explicitly set SR to a known value to ensure we test preservation
+    cpu.sr = 0x2700;
+
+    let target_pc = 0x2000;
+    // Push PC
+    cpu.a[7] = cpu.a[7].wrapping_sub(4);
+    memory.write_long(cpu.a[7], target_pc);
+
+    // Push CCR
+    let target_ccr = 0x001F;
+    cpu.a[7] = cpu.a[7].wrapping_sub(2);
+    memory.write_word(cpu.a[7], target_ccr);
+
+    let initial_sp = cpu.a[7];
+
+    cpu.step_instruction(&mut memory);
+
+    assert_eq!(cpu.pc, target_pc);
+    // Verify high byte preserved (from 0x2700)
+    assert_eq!(cpu.sr & 0xFF00, 0x2700);
+    // Verify low byte loaded
+    assert_eq!(cpu.sr & 0x00FF, 0x1F);
+    // Verify SP
+    assert_eq!(cpu.a[7], initial_sp + 6);
+}
