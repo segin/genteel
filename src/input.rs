@@ -528,8 +528,8 @@ mod tests {
         manager.advance_frame(); // Frame 0 processed
         let input = manager.advance_frame(); // Frame 1 processed
 
-        assert_eq!(manager.frame(), 2);
         assert!(input.p1.a);
+        assert_eq!(manager.frame(), 2);
         assert!(manager.last_input.p1.a);
 
         manager.reset();
