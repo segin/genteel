@@ -16,7 +16,6 @@ use instructions::{
 const CACHE_ROM_LIMIT: u32 = 0x400000; // 4MB ROM
 const CACHE_MASK: u32 = 0x1FFFFF; // 2M entries
 
-#[derive(Debug)]
 pub struct Cpu {
     pub d: [u32; 8],
     pub a: [u32; 8],
@@ -30,6 +29,28 @@ pub struct Cpu {
     pub pending_exception: bool,
     pub cycles: u64,
     pub decode_cache: Box<[DecodeCacheEntry]>,
+}
+
+pub mod flags {
+    pub const CARRY: u16 = 0x0001;
+    pub const OVERFLOW: u16 = 0x0002;
+    pub const ZERO: u16 = 0x0004;
+    pub const NEGATIVE: u16 = 0x0008;
+    pub const EXTEND: u16 = 0x0010;
+    pub const INTERRUPT_MASK: u16 = 0x0700;
+    pub const MASTER_STATE: u16 = 0x1000;
+    pub const SUPERVISOR: u16 = 0x2000;
+    pub const TRACE: u16 = 0x8000;
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CpuState {
+    pub d: [u32; 8],
+    pub a: [u32; 8],
+    pub pc: u32,
+    pub sr: u16,
+    pub halted: bool,
+    pub pending_interrupt: u8,
 }
 
 impl Cpu {
@@ -81,6 +102,14 @@ impl Cpu {
         memory.read_size(addr, size)
     }
 
+    pub fn cpu_write_memory<M: MemoryInterface>(&mut self, addr: u32, size: Size, value: u32, memory: &mut M) {
+        if size != Size::Byte && (addr & 1 != 0) {
+            self.process_exception(3, memory);
+            return;
+        }
+        memory.write_size(addr, value, size)
+    }
+
     fn check_interrupts<M: MemoryInterface>(&mut self, memory: &mut M) -> u32 {
         if self.pending_interrupt > (((self.sr & flags::INTERRUPT_MASK) >> 8) as u8) {
             let level = self.pending_interrupt;
@@ -112,14 +141,6 @@ impl Cpu {
             return;
         }
         memory.write_word(addr, val);
-    }
-
-    pub fn cpu_write_memory<M: MemoryInterface>(&mut self, addr: u32, size: Size, value: u32, memory: &mut M) {
-        if size != Size::Byte && (addr & 1 != 0) {
-            self.process_exception(3, memory);
-            return;
-        }
-        memory.write_size(addr, value, size)
     }
 
     pub fn write_byte<M: MemoryInterface>(&mut self, addr: u32, val: u8, memory: &mut M) {
@@ -173,31 +194,6 @@ impl Cpu {
         self.check_condition(condition)
     }
 
-}
-
-pub mod flags {
-    pub const CARRY: u16 = 0x0001;
-    pub const OVERFLOW: u16 = 0x0002;
-    pub const ZERO: u16 = 0x0004;
-    pub const NEGATIVE: u16 = 0x0008;
-    pub const EXTEND: u16 = 0x0010;
-    pub const INTERRUPT_MASK: u16 = 0x0700;
-    pub const MASTER_STATE: u16 = 0x1000;
-    pub const SUPERVISOR: u16 = 0x2000;
-    pub const TRACE: u16 = 0x8000;
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CpuState {
-    pub d: [u32; 8],
-    pub a: [u32; 8],
-    pub pc: u32,
-    pub sr: u16,
-    pub halted: bool,
-    pub pending_interrupt: u8,
-}
-
-impl Cpu {
     pub fn get_state(&self) -> CpuState {
         CpuState {
             d: self.d,
@@ -600,6 +596,8 @@ impl Cpu {
                 BitsInstruction::AndI { size, dst } => {
                     ops::bits::exec_andi(self, size, dst, memory)
                 }
+                BitsInstruction::AndToCcr => ops::system::exec_andi_to_ccr(self, memory),
+                BitsInstruction::AndToSr => ops::system::exec_andi_to_sr(self, memory),
                 BitsInstruction::Or {
                     size,
                     src,
@@ -607,12 +605,16 @@ impl Cpu {
                     direction,
                 } => ops::bits::exec_or(self, size, src, dst, direction, memory),
                 BitsInstruction::OrI { size, dst } => ops::bits::exec_ori(self, size, dst, memory),
+                BitsInstruction::OrToCcr => ops::system::exec_ori_to_ccr(self, memory),
+                BitsInstruction::OrToSr => ops::system::exec_ori_to_sr(self, memory),
                 BitsInstruction::Eor { size, src_reg, dst } => {
                     ops::bits::exec_eor(self, size, src_reg, dst, memory)
                 }
                 BitsInstruction::EorI { size, dst } => {
                     ops::bits::exec_eori(self, size, dst, memory)
                 }
+                BitsInstruction::EorToCcr => ops::system::exec_eori_to_ccr(self, memory),
+                BitsInstruction::EorToSr => ops::system::exec_eori_to_sr(self, memory),
                 BitsInstruction::Not { size, dst } => ops::bits::exec_not(self, size, dst, memory),
                 BitsInstruction::Lsl { size, dst, count } => {
                     ops::bits::exec_shift(self, size, dst, count, true, false, memory)

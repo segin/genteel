@@ -106,7 +106,7 @@ fn test_dma_pending_flag() {
 
     // Enable DMA in Reg 1 (Bit 4 = 0x10)
     vdp.write_control(0x8110);
-    assert!(vdp.dma_enabled());
+    assert!((vdp.registers[1] & 0x10) != 0);
 
     // Write DMA command
     // First word: 0x4000 (VRAM write base).

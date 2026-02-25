@@ -214,10 +214,14 @@ fn execute_x0_inc_dec_rp<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>
     6
 }
 
-fn execute_x0_inc_r<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y: u8) -> u8 {
-    // INC r
+fn execute_x0_op_r<M, I, F>(cpu: &mut Z80<M, I>, y: u8, op: F) -> u8
+where
+    M: MemoryInterface,
+    I: IoInterface,
+    F: FnOnce(&mut Z80<M, I>, u8) -> u8,
+{
     let val = cpu.get_reg(y);
-    let result = cpu.inc(val);
+    let result = op(cpu, val);
     cpu.set_reg(y, result);
     if y == 6 {
         11
@@ -226,16 +230,14 @@ fn execute_x0_inc_r<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y: 
     }
 }
 
+fn execute_x0_inc_r<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y: u8) -> u8 {
+    // INC r
+    execute_x0_op_r(cpu, y, |c, v| c.inc(v))
+}
+
 fn execute_x0_dec_r<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y: u8) -> u8 {
     // DEC r
-    let val = cpu.get_reg(y);
-    let result = cpu.dec(val);
-    cpu.set_reg(y, result);
-    if y == 6 {
-        11
-    } else {
-        4
-    }
+    execute_x0_op_r(cpu, y, |c, v| c.dec(v))
 }
 
 fn execute_x0_ld_r_n<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y: u8) -> u8 {

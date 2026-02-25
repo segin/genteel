@@ -84,7 +84,6 @@ fn test_dma_fill_vram() {
 }
 
 #[test]
-#[ignore]
 fn test_dma_copy_vram() {
     let mut vdp = Vdp::new();
 
