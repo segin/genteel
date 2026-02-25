@@ -23,7 +23,7 @@ use apu::Apu;
 use cpu::Cpu;
 use debugger::{GdbMemory, GdbRegisters, GdbServer, StopReason};
 use frontend::InputMapping;
-use input::InputManager;
+use input::{InputManager, InputScript};
 use memory::bus::Bus;
 use memory::{SharedBus, Z80Bus};
 #[cfg(feature = "gui")]
@@ -408,22 +408,29 @@ impl Emulator {
     /// Step one frame with current input state
     pub fn step_frame(&mut self, input: Option<input::FrameInput>) {
         // Apply inputs from script or live input
-        let frame_input = match input {
-            Some(i) => std::borrow::Cow::Owned(i),
-            None => self.input.advance_frame(),
+        let (p1, p2, command) = {
+            let frame_input = match input {
+                Some(i) => {
+                    self.input.record(i.clone());
+                    std::borrow::Cow::Owned(i)
+                }
+                None => self.input.advance_frame(),
+            };
+            (frame_input.p1, frame_input.p2, frame_input.command.clone())
         };
+
         {
             let mut bus = self.bus.borrow_mut();
             if let Some(ctrl) = bus.io.controller(1) {
-                *ctrl = frame_input.p1;
+                *ctrl = p1;
             }
             if let Some(ctrl) = bus.io.controller(2) {
-                *ctrl = frame_input.p2;
+                *ctrl = p2;
             }
         }
 
         // Handle commands (e.g., SCREENSHOT <path>)
-        if let Some(cmd) = frame_input.command {
+        if let Some(cmd) = &command {
             let parts: Vec<&str> = cmd.split_whitespace().collect();
             if !parts.is_empty() {
                 match parts[0].to_uppercase().as_str() {
@@ -753,10 +760,15 @@ impl Emulator {
         }
     }
     /// Run headless for N frames (or until script ends if N is None)
-    pub fn run(&mut self, frames: Option<u32>, screenshot_path: Option<String>) {
+    pub fn run(&mut self, frames: Option<u32>, screenshot_path: Option<String>, record_path: Option<String>) {
         match frames {
             Some(n) => println!("Running {} frames headless...", n),
             None => println!("Running headless until script ends..."),
+        }
+
+        if let Some(path) = &record_path {
+            println!("Recording inputs to: {}", path);
+            self.input.start_recording();
         }
 
         let start_time = std::time::Instant::now();
@@ -791,6 +803,16 @@ impl Emulator {
                 println!("Final screenshot saved to: {}", path);
             }
         }
+
+        if let Some(path) = record_path {
+            let script: InputScript = self.input.stop_recording();
+            if let Err(e) = script.save(&path) {
+                eprintln!("Failed to save recorded script: {}", e);
+            } else {
+                println!("Recorded script saved to: {}", path);
+            }
+        }
+
         println!("Done in {:?} ({:.2} fps).", elapsed, current as f64 / elapsed.as_secs_f64());
     }
 
@@ -943,7 +965,7 @@ impl Emulator {
     }
     /// Run with winit window (interactive play mode)
     #[cfg(feature = "gui")]
-    pub fn run_with_frontend(mut self) -> Result<(), String> {
+    pub fn run_with_frontend(mut self, record_path: Option<String>) -> Result<(), String> {
         use pixels::{Pixels, SurfaceTexture};
         use winit::event::{ElementState, Event, WindowEvent};
         use winit::event_loop::EventLoop;
@@ -955,6 +977,10 @@ impl Emulator {
             println!("Controls: WASD/Arrows=D-pad, J/Z=A, K/X=B, L/C=C, U=X, I=Y, O=Z, Enter=Start, Space=Mode");
         }
         println!("Press Escape to quit.");
+        if let Some(path) = &record_path {
+            println!("Recording inputs to: {}", path);
+            self.input.start_recording();
+        }
         let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
         let size = winit::dpi::LogicalSize::new(
             frontend::GENESIS_WIDTH as f64 * 3.0,
@@ -1016,6 +1042,14 @@ impl Emulator {
                         match event {
                             WindowEvent::CloseRequested => {
                                 println!("Using CloseRequested to exit");
+                                if let Some(path) = &record_path {
+                                    let script: InputScript = self.input.stop_recording();
+                                    if let Err(e) = script.save(path) {
+                                        eprintln!("Failed to save recorded script: {}", e);
+                                    } else {
+                                        println!("Recorded script saved to: {}", path);
+                                    }
+                                }
                                 target.exit();
                             }
                             WindowEvent::KeyboardInput {
@@ -1031,6 +1065,14 @@ impl Emulator {
                                 if let PhysicalKey::Code(keycode) = key_event.physical_key {
                                     if keycode == KeyCode::Escape && pressed {
                                         println!("Escape pressed, exiting");
+                                        if let Some(path) = &record_path {
+                                            let script: InputScript = self.input.stop_recording();
+                                            if let Err(e) = script.save(path) {
+                                                eprintln!("Failed to save recorded script: {}", e);
+                                            } else {
+                                                println!("Recorded script saved to: {}", path);
+                                            }
+                                        }
                                         target.exit();
                                         return;
                                     }
@@ -1161,6 +1203,7 @@ fn print_usage() {
     println!();
     println!("Options:");
     println!("  --script <path>  Load TAS input script");
+    println!("  --record <path>  Record inputs to a script file");
     println!("  --headless <n>   Run N frames without display");
     println!("  --screenshot <path> Save screenshot after headless run");
     println!("  --gdb [port]     Start GDB server (default port: 1234)");
@@ -1214,6 +1257,7 @@ struct Config {
     gdb_port: Option<u16>,
     gdb_password: Option<String>,
     dump_audio_path: Option<String>,
+    record_path: Option<String>,
     input_mapping: InputMapping,
     debug: bool,
     show_help: bool,
@@ -1232,6 +1276,9 @@ impl Config {
                 }
                 "--script" => {
                     config.script_path = iter.next();
+                }
+                "--record" => {
+                    config.record_path = iter.next();
                 }
                 "--headless" => {
                     config.headless = true;
@@ -1353,11 +1400,11 @@ fn main() {
             eprintln!("GDB server error: {}", e);
         }
     } else if config.headless {
-        emulator.run(config.headless_frames, config.screenshot_path);
+        emulator.run(config.headless_frames, config.screenshot_path, config.record_path);
     } else {
         // Interactive mode with SDL2 window
         #[cfg(feature = "gui")]
-        if let Err(e) = emulator.run_with_frontend() {
+        if let Err(e) = emulator.run_with_frontend(config.record_path) {
             eprintln!("Frontend error: {}", e);
         }
         #[cfg(not(feature = "gui"))]
