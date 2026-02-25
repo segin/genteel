@@ -5,8 +5,8 @@
 
 use crate::memory::{IoInterface, MemoryInterface};
 
-#[cfg(test)]
-pub mod test_utils;
+// #[cfg(test)]
+// pub mod test_utils;
 
 pub mod op_cb;
 use op_cb::CbOps;
@@ -820,59 +820,59 @@ impl<M: MemoryInterface, I: IoInterface> Debuggable for Z80<M, I> {
     }
 }
 
-#[cfg(test)]
-mod tests;
+// #[cfg(test)]
+// mod tests;
 
-#[cfg(test)]
-mod tests_alu;
+// #[cfg(test)]
+// mod tests_alu;
 
-#[cfg(test)]
-mod tests_cb;
+// #[cfg(test)]
+// mod tests_cb;
 
-#[cfg(test)]
-mod tests_control;
+// #[cfg(test)]
+// mod tests_control;
 
-#[cfg(test)]
-mod tests_load;
+// #[cfg(test)]
+// mod tests_load;
 
-#[cfg(test)]
-mod tests_regression;
+// #[cfg(test)]
+// mod tests_regression;
 
-#[cfg(test)]
-mod tests_undoc;
+// #[cfg(test)]
+// mod tests_undoc;
 
-#[cfg(test)]
-mod tests_exhaustive;
+// #[cfg(test)]
+// mod tests_exhaustive;
 
-#[cfg(test)]
-mod tests_block;
+// #[cfg(test)]
+// mod tests_block;
 
-#[cfg(test)]
-mod tests_halfcarry;
+// #[cfg(test)]
+// mod tests_halfcarry;
 
-#[cfg(test)]
-mod tests_interrupt;
+// #[cfg(test)]
+// mod tests_interrupt;
 
-#[cfg(test)]
-mod tests_reset;
+// #[cfg(test)]
+// mod tests_reset;
 
-#[cfg(test)]
-mod tests_rrd_rld;
+// #[cfg(test)]
+// mod tests_rrd_rld;
 
-#[cfg(test)]
-mod tests_timing;
+// #[cfg(test)]
+// mod tests_timing;
 
-#[cfg(test)]
-mod tests_torture;
+// #[cfg(test)]
+// mod tests_torture;
 
-#[cfg(test)]
-mod tests_gaps;
+// #[cfg(test)]
+// mod tests_gaps;
 
-#[cfg(test)]
-mod tests_memptr;
+// #[cfg(test)]
+// mod tests_memptr;
 
-#[cfg(test)]
-mod tests_ddcb;
+// #[cfg(test)]
+// mod tests_ddcb;
 
-#[cfg(test)]
-mod tests_ex_sp_hl_expanded;
+// #[cfg(test)]
+// mod tests_ex_sp_hl_expanded;

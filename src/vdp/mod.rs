@@ -137,6 +137,54 @@ pub mod big_array_vsram {
     }
 }
 
+<<<<<<< HEAD
+=======
+mod serde_arrays {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde::ser::SerializeTuple;
+
+    pub fn serialize<S, const N: usize>(data: &[u8; N], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut s = serializer.serialize_tuple(N)?;
+        for item in data {
+            s.serialize_element(item)?;
+        }
+        s.end()
+    }
+
+    pub fn deserialize<'de, D, const N: usize>(deserializer: D) -> Result<[u8; N], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ArrayVisitor<const N: usize>;
+
+        impl<'de, const N: usize> serde::de::Visitor<'de> for ArrayVisitor<N> {
+            type Value = [u8; N];
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_fmt(format_args!("an array of size {}", N))
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<[u8; N], A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
+                let mut arr = [0u8; N];
+                for i in 0..N {
+                    arr[i] = seq.next_element()?
+                        .ok_or_else(|| serde::de::Error::invalid_length(i, &self))?;
+                }
+                Ok(arr)
+            }
+        }
+
+        deserializer.deserialize_tuple(N, ArrayVisitor)
+    }
+}
+
+>>>>>>> origin/main
 fn default_vram() -> [u8; 0x10000] {
     [0; 0x10000]
 }

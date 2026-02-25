@@ -54,6 +54,7 @@ pub struct CpuState {
 }
 
 impl Cpu {
+<<<<<<< HEAD
     pub fn new<M: MemoryInterface>(memory: &mut M) -> Self {
         let ssp = memory.read_long(0);
         let pc = memory.read_long(4);
@@ -64,15 +65,33 @@ impl Cpu {
             sr: 0x2700,
             usp: 0,
             ssp,
+=======
+    pub fn new<M: MemoryInterface>(_memory: &mut M) -> Self {
+        let cache_size = (CACHE_MASK + 1) as usize;
+        let cache = vec![DecodeCacheEntry::default(); cache_size].into_boxed_slice();
+
+        Cpu {
+            d: [0; 8],
+            a: [0; 8],
+            pc: 0,
+            sr: 0x2700,
+            usp: 0,
+            ssp: 0,
+>>>>>>> origin/main
             halted: false,
             pending_interrupt: 0,
             interrupt_pending_mask: 0,
             pending_exception: false,
             cycles: 0,
+<<<<<<< HEAD
             decode_cache: vec![DecodeCacheEntry::default(); (CACHE_MASK + 1) as usize].into_boxed_slice(),
         };
         cpu.a[7] = ssp;
         cpu
+=======
+            decode_cache: cache,
+        }
+>>>>>>> origin/main
     }
 
     pub fn reset<M: MemoryInterface>(&mut self, memory: &mut M) {

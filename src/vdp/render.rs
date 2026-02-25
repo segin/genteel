@@ -107,7 +107,7 @@ pub trait RenderOps {
         screen_x: &mut u16,
         priority_filter: bool,
     );
-    fn get_active_sprites(&self, line: u16) -> (usize, [SpriteAttributes; 80]);
+    fn get_active_sprites<'a>(&self, line: u16, sprites: &'a mut [SpriteAttributes]) -> usize;
     fn render_sprites(
         &mut self,
         sprites: &[SpriteAttributes],
@@ -115,7 +115,8 @@ pub trait RenderOps {
         draw_line: u16,
         priority_filter: bool,
     );
-    fn get_scroll_values(&self, is_plane_a: bool, fetch_line: u16, tile_h: usize) -> (u16, u16);
+    fn get_v_scroll(&self, is_plane_a: bool, tile_h: usize) -> u16;
+    fn get_h_scroll(&self, is_plane_a: bool, fetch_line: u16) -> u16;
     fn fetch_nametable_entry(
         &self,
         base: usize,
@@ -132,7 +133,7 @@ pub trait RenderOps {
         count: u16,
         dest_idx: usize,
     );
-    unsafe fn draw_full_tile_row(&mut self, entry: u16, pixel_v: u16, dest_idx: usize);
+    fn draw_full_tile_row(&mut self, entry: u16, pixel_v: u16, dest_idx: usize);
     fn bg_color(&self) -> (u8, u8);
     fn get_cram_color(&self, palette: u8, index: u8) -> u16;
 }
@@ -224,7 +225,8 @@ fn render_sprite_scanline(
 
                 let eff_col = if attr.h_flip { 7 - i } else { i };
 
-                let byte = patterns[(eff_col as usize) / 2];
+                // SAFETY: eff_col is 0..8, so index 0..3 is valid. patterns is [u8; 4].
+                let byte = unsafe { *patterns.get_unchecked((eff_col as usize) / 2) };
                 let color_idx = if eff_col % 2 == 0 {
                     byte >> 4
                 } else {
@@ -233,8 +235,12 @@ fn render_sprite_scanline(
 
                 if color_idx != 0 {
                     let addr = ((attr.palette as usize) << 4) | (color_idx as usize);
-                    let color = cram_cache[addr];
-                    framebuffer[line_offset + screen_x as usize] = color;
+                    // SAFETY: addr < 64 (palette 0-3, color 0-15).
+                    // line_offset + screen_x < 320*240 (line < 240, x < width <= 320).
+                    unsafe {
+                        let color = *cram_cache.get_unchecked(addr);
+                        *framebuffer.get_unchecked_mut(line_offset + screen_x as usize) = color;
+                    }
                 }
             }
         }
@@ -262,8 +268,9 @@ impl RenderOps for Vdp {
         }
 
         // Pre-calculate visible sprites for this line to avoid traversing the SAT twice
-        let (sprite_count, active_sprites) = self.get_active_sprites(fetch_line);
-        let active_sprites = &active_sprites[..sprite_count];
+        let mut sprite_buffer = [SpriteAttributes::default(); 80];
+        let sprite_count = self.get_active_sprites(fetch_line, &mut sprite_buffer);
+        let active_sprites = &sprite_buffer[..sprite_count];
 
         // Layer order: B Low -> A Low -> Sprites Low -> B High -> A High -> Sprites High
         self.render_plane(false, fetch_line, draw_line, false); // Plane B Low
@@ -299,7 +306,7 @@ impl RenderOps for Vdp {
         let line_offset = (draw_line as usize) * 320;
 
         // Fetch H-scroll once for the line (but may be overridden by Window)
-        let (_, h_scroll) = self.get_scroll_values(is_plane_a, fetch_line, 0);
+        let h_scroll = self.get_h_scroll(is_plane_a, fetch_line);
 
         let mut screen_x: u16 = 0;
 
@@ -349,10 +356,10 @@ impl RenderOps for Vdp {
 
         // Fetch V-scroll for this specific column (per-column VS support)
         // If not using scroll (e.g. Window plane), V-scroll is 0.
-        let (v_scroll, _) = if enable_v_scroll {
-            self.get_scroll_values(is_plane_a, fetch_line, (*screen_x >> 3) as usize)
+        let v_scroll = if enable_v_scroll {
+            self.get_v_scroll(is_plane_a, (*screen_x >> 3) as usize)
         } else {
-            (0, 0)
+            0
         };
 
         // Vertical position in plane
@@ -369,9 +376,7 @@ impl RenderOps for Vdp {
         if priority == priority_filter {
             if pixels_to_process == 8 && pixel_h == 0 {
                 // Fast path for full aligned tile
-                unsafe {
-                    self.draw_full_tile_row(entry, pixel_v, line_offset + *screen_x as usize);
-                }
+                self.draw_full_tile_row(entry, pixel_v, line_offset + *screen_x as usize);
             } else {
                 self.draw_partial_tile_row(
                     entry,
@@ -385,8 +390,7 @@ impl RenderOps for Vdp {
         *screen_x += pixels_to_process;
     }
 
-    fn get_active_sprites(&self, line: u16) -> (usize, [SpriteAttributes; 80]) {
-        let mut sprites = [SpriteAttributes::default(); 80];
+    fn get_active_sprites<'a>(&self, line: u16, sprites: &'a mut [SpriteAttributes]) -> usize {
         let mut count = 0;
 
         let sat_base = self.sprite_table_address() as usize;
@@ -406,14 +410,16 @@ impl RenderOps for Vdp {
             let sprite_v_px = (attr.v_size as u16) * 8;
             // Handle wrapping v_pos (top clipping) correctly using wrapping subtraction
             if line.wrapping_sub(attr.v_pos) < sprite_v_px {
-                sprites[count] = attr;
-                count += 1;
+                if count < sprites.len() {
+                    sprites[count] = attr;
+                    count += 1;
+                }
                 if count >= line_limit {
                     break;
                 }
             }
         }
-        (count, sprites)
+        count
     }
 
     fn render_sprites(
@@ -442,11 +448,11 @@ impl RenderOps for Vdp {
             }
         }
     }
-    fn get_scroll_values(&self, is_plane_a: bool, fetch_line: u16, tile_h: usize) -> (u16, u16) {
+    fn get_v_scroll(&self, is_plane_a: bool, tile_h: usize) -> u16 {
         let mode3 = self.registers[REG_MODE3];
 
         // Vertical Scroll (Bits 2 of Mode 3: 0=Full Screen, 1=2-Cell Strips)
-        let v_scroll = if (mode3 & 0x04) != 0 {
+        if (mode3 & 0x04) != 0 {
             // 2-Cell (16-pixel) strips. Each entry in VSRAM is 4 bytes and handles 2 cells.
             // Entry 0: Plane A Cell 0-1, Entry 1: Plane B Cell 0-1, etc.
             let strip_idx = tile_h >> 1;
@@ -460,7 +466,11 @@ impl RenderOps for Vdp {
             // Full Screen
             let vs_addr = if is_plane_a { 0 } else { 2 };
             (((self.vsram[vs_addr] as u16) << 8) | (self.vsram[vs_addr + 1] as u16)) & 0x03FF
-        };
+        }
+    }
+
+    fn get_h_scroll(&self, is_plane_a: bool, fetch_line: u16) -> u16 {
+        let mode3 = self.registers[REG_MODE3];
 
         // Horizontal Scroll (Bits 1-0 of Mode 3: 00=Full, 01=Invalid/Cell, 10=Cell, 11=Line)
         let hs_mode = mode3 & 0x03;
@@ -481,7 +491,7 @@ impl RenderOps for Vdp {
             h_scroll |= 0xFC00; // Sign extend to 16 bits
         }
 
-        (v_scroll, h_scroll)
+        h_scroll
     }
 
     #[inline(always)]
@@ -558,7 +568,7 @@ impl RenderOps for Vdp {
     }
 
     #[inline(always)]
-    unsafe fn draw_full_tile_row(&mut self, entry: u16, pixel_v: u16, dest_idx: usize) {
+    fn draw_full_tile_row(&mut self, entry: u16, pixel_v: u16, dest_idx: usize) {
         let palette = ((entry >> 13) & 0x03) as u8;
         let v_flip = (entry & 0x1000) != 0;
         let h_flip = (entry & 0x0800) != 0;
@@ -571,91 +581,90 @@ impl RenderOps for Vdp {
             return;
         }
 
+        // Safety check for framebuffer bounds
+        if dest_idx + 8 > self.framebuffer.len() {
+            return;
+        }
+
         let p0 = patterns[0];
         let p1 = patterns[1];
         let p2 = patterns[2];
         let p3 = patterns[3];
 
         let palette_base = (palette as usize) * 16;
-
-        // SAFETY: Caller ensures dest_idx + 7 is within framebuffer bounds.
-        // palette is 2 bits, so palette_base is max 48. col is 4 bits (0-15).
-        // Max index is 63, which is within cram_cache bounds (64).
-        // Get base pointers to avoid repeated offset calculations
-        let cram_ptr = self.cram_cache.as_ptr().add(palette_base);
-        let dest_ptr = self.framebuffer.as_mut_ptr().add(dest_idx);
+        let dest = &mut self.framebuffer[dest_idx..dest_idx + 8];
 
         if h_flip {
             let mut col = p3 & 0x0F;
             if col != 0 {
-                *dest_ptr = *cram_ptr.add(col as usize);
+                dest[0] = self.cram_cache[palette_base + col as usize];
             }
             col = p3 >> 4;
             if col != 0 {
-                *dest_ptr.add(1) = *cram_ptr.add(col as usize);
+                dest[1] = self.cram_cache[palette_base + col as usize];
             }
 
             col = p2 & 0x0F;
             if col != 0 {
-                *dest_ptr.add(2) = *cram_ptr.add(col as usize);
+                dest[2] = self.cram_cache[palette_base + col as usize];
             }
             col = p2 >> 4;
             if col != 0 {
-                *dest_ptr.add(3) = *cram_ptr.add(col as usize);
+                dest[3] = self.cram_cache[palette_base + col as usize];
             }
 
             col = p1 & 0x0F;
             if col != 0 {
-                *dest_ptr.add(4) = *cram_ptr.add(col as usize);
+                dest[4] = self.cram_cache[palette_base + col as usize];
             }
             col = p1 >> 4;
             if col != 0 {
-                *dest_ptr.add(5) = *cram_ptr.add(col as usize);
+                dest[5] = self.cram_cache[palette_base + col as usize];
             }
 
             col = p0 & 0x0F;
             if col != 0 {
-                *dest_ptr.add(6) = *cram_ptr.add(col as usize);
+                dest[6] = self.cram_cache[palette_base + col as usize];
             }
             col = p0 >> 4;
             if col != 0 {
-                *dest_ptr.add(7) = *cram_ptr.add(col as usize);
+                dest[7] = self.cram_cache[palette_base + col as usize];
             }
         } else {
             let mut col = p0 >> 4;
             if col != 0 {
-                *dest_ptr = *cram_ptr.add(col as usize);
+                dest[0] = self.cram_cache[palette_base + col as usize];
             }
             col = p0 & 0x0F;
             if col != 0 {
-                *dest_ptr.add(1) = *cram_ptr.add(col as usize);
+                dest[1] = self.cram_cache[palette_base + col as usize];
             }
 
             col = p1 >> 4;
             if col != 0 {
-                *dest_ptr.add(2) = *cram_ptr.add(col as usize);
+                dest[2] = self.cram_cache[palette_base + col as usize];
             }
             col = p1 & 0x0F;
             if col != 0 {
-                *dest_ptr.add(3) = *cram_ptr.add(col as usize);
+                dest[3] = self.cram_cache[palette_base + col as usize];
             }
 
             col = p2 >> 4;
             if col != 0 {
-                *dest_ptr.add(4) = *cram_ptr.add(col as usize);
+                dest[4] = self.cram_cache[palette_base + col as usize];
             }
             col = p2 & 0x0F;
             if col != 0 {
-                *dest_ptr.add(5) = *cram_ptr.add(col as usize);
+                dest[5] = self.cram_cache[palette_base + col as usize];
             }
 
             col = p3 >> 4;
             if col != 0 {
-                *dest_ptr.add(6) = *cram_ptr.add(col as usize);
+                dest[6] = self.cram_cache[palette_base + col as usize];
             }
             col = p3 & 0x0F;
             if col != 0 {
-                *dest_ptr.add(7) = *cram_ptr.add(col as usize);
+                dest[7] = self.cram_cache[palette_base + col as usize];
             }
         }
     }

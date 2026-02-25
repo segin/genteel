@@ -10,7 +10,7 @@ mod tests {
         let mut cpu = Cpu::new(&mut memory);
 
         // Exploit: Replace cache with a tiny one
-        cpu.decode_cache = vec![DecodeCacheEntry::default(); 1].into_boxed_slice();
+        cpu.decode_cache = vec![DecodeCacheEntry::default(); 1];
 
         // PC at 0x100 maps to index 0x80 (128)
         cpu.pc = 0x100;
