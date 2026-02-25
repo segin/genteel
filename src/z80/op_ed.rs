@@ -1,6 +1,6 @@
-use crate::memory::{IoInterface, MemoryInterface};
-use crate::z80::{Z80, flags};
 use crate::dispatch_z;
+use crate::memory::{IoInterface, MemoryInterface};
+use crate::z80::{flags, Z80};
 
 pub trait EdOps {
     fn execute_ed_prefix(&mut self) -> u8;
@@ -106,7 +106,11 @@ fn execute_ed_block<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y: 
     }
 }
 
-fn execute_ed_sbc_adc_hl<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, p: u8, q: u8) -> u8 {
+fn execute_ed_sbc_adc_hl<M: MemoryInterface, I: IoInterface>(
+    cpu: &mut Z80<M, I>,
+    p: u8,
+    q: u8,
+) -> u8 {
     if q == 0 {
         // SBC HL, rp
         let hl = cpu.hl() as u32;
@@ -159,7 +163,11 @@ fn execute_ed_sbc_adc_hl<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>
     }
 }
 
-fn execute_ed_ld_rp_nn<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, p: u8, q: u8) -> u8 {
+fn execute_ed_ld_rp_nn<M: MemoryInterface, I: IoInterface>(
+    cpu: &mut Z80<M, I>,
+    p: u8,
+    q: u8,
+) -> u8 {
     let nn = cpu.fetch_word();
     if q == 0 {
         // LD (nn), rp

@@ -828,6 +828,74 @@ fn test_rte_supervisor() {
 }
 
 // ============================================================================
+// RTR Tests
+// ============================================================================
+
+#[test]
+fn test_rtr() {
+    let (mut cpu, mut memory) = create_cpu();
+
+    // RTR Opcode
+    write_op(&mut memory, &[0x4E77]);
+
+    // Setup Stack
+    // RTR pops Word (CCR), then Long (PC)
+    // We want to verify:
+    // 1. PC is restored
+    // 2. CCR is restored
+    // 3. SR high byte (System byte) is preserved (RTR only affects CCR)
+
+    let target_pc = 0x2000;
+    let target_ccr = 0x001F; // All flags set
+
+    // Current SR: Supervisor set (from create_cpu) -> 0x2000
+    // We can set some other bits in the system byte to ensure they are preserved.
+    cpu.sr = 0xA700; // Trace (0x8000) + Supervisor (0x2000) + Int Mask 7 (0x0700)
+
+    // Push PC (Long)
+    cpu.push_long(target_pc, &mut memory);
+
+    // Push CCR (Word)
+    // The instruction pops a word, but only the low byte is CCR.
+    // The high byte of the popped word is discarded.
+    cpu.push_word(target_ccr | 0xFF00, &mut memory);
+
+    cpu.step_instruction(&mut memory);
+
+    assert_eq!(cpu.pc, target_pc);
+
+    // Verify CCR parts (low byte of SR)
+    assert_eq!(cpu.sr & 0x00FF, target_ccr & 0x00FF);
+
+    // Verify System parts (high byte of SR)
+    // Should remain 0xA7
+    assert_eq!(cpu.sr & 0xFF00, 0xA700);
+}
+
+#[test]
+fn test_rtr_user_mode() {
+    let (mut cpu, mut memory) = create_cpu();
+    cpu.sr = 0x0000; // User mode
+
+    write_op(&mut memory, &[0x4E77]); // RTR
+
+    let target_pc = 0x3000;
+    let target_ccr = 0x001F;
+
+    // Push PC
+    cpu.push_long(target_pc, &mut memory);
+
+    // Push CCR
+    cpu.push_word(target_ccr, &mut memory);
+
+    cpu.step_instruction(&mut memory);
+
+    assert_eq!(cpu.pc, target_pc);
+    assert_eq!(cpu.sr & 0x00FF, target_ccr);
+    assert_eq!(cpu.sr & 0xFF00, 0x0000); // System byte preserved
+}
+
+// ============================================================================
 // RESET Tests
 // ============================================================================
 

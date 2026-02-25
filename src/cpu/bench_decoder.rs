@@ -23,7 +23,10 @@ fn bench_decode_performance() {
     }
 
     let duration = start.elapsed();
-    println!("Decode 64K opcodes ({} iterations) took: {:?}", iterations, duration);
+    println!(
+        "Decode 64K opcodes ({} iterations) took: {:?}",
+        iterations, duration
+    );
     let total_decodes = iterations as u128 * 65536;
     let nanos_per_decode = duration.as_nanos() / total_decodes;
     println!("Average time per decode: {} ns", nanos_per_decode);
