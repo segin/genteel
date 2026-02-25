@@ -11,11 +11,144 @@ pub use dma::DmaOps;
 pub mod render;
 pub use render::RenderOps;
 
+pub mod big_array_vram {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde::de::{self, SeqAccess, Visitor};
+    use std::fmt;
+
+    pub fn serialize<S>(data: &[u8; 0x10000], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.collect_seq(data)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; 0x10000], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ArrayVisitor;
+
+        impl<'de> Visitor<'de> for ArrayVisitor {
+            type Value = [u8; 0x10000];
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("an array of length 65536")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let mut arr = [0u8; 0x10000];
+                for i in 0..0x10000 {
+                    arr[i] = seq.next_element()?
+                        .ok_or_else(|| de::Error::invalid_length(i, &self))?;
+                }
+                Ok(arr)
+            }
+        }
+
+        deserializer.deserialize_tuple(0x10000, ArrayVisitor)
+    }
+}
+
+pub mod big_array_cram {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde::de::{self, SeqAccess, Visitor};
+    use std::fmt;
+
+    pub fn serialize<S>(data: &[u8; 128], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.collect_seq(data)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; 128], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ArrayVisitor;
+
+        impl<'de> Visitor<'de> for ArrayVisitor {
+            type Value = [u8; 128];
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("an array of length 128")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let mut arr = [0u8; 128];
+                for i in 0..128 {
+                    arr[i] = seq.next_element()?
+                        .ok_or_else(|| de::Error::invalid_length(i, &self))?;
+                }
+                Ok(arr)
+            }
+        }
+
+        deserializer.deserialize_tuple(128, ArrayVisitor)
+    }
+}
+
+pub mod big_array_vsram {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde::de::{self, SeqAccess, Visitor};
+    use std::fmt;
+
+    pub fn serialize<S>(data: &[u8; 80], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.collect_seq(data)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; 80], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ArrayVisitor;
+
+        impl<'de> Visitor<'de> for ArrayVisitor {
+            type Value = [u8; 80];
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("an array of length 80")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let mut arr = [0u8; 80];
+                for i in 0..80 {
+                    arr[i] = seq.next_element()?
+                        .ok_or_else(|| de::Error::invalid_length(i, &self))?;
+                }
+                Ok(arr)
+            }
+        }
+
+        deserializer.deserialize_tuple(80, ArrayVisitor)
+    }
+}
+
+fn default_cram_cache() -> [u16; 64] {
+    [0; 64]
+}
+
 /// Genesis Video Display Processor (VDP)
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Vdp {
+    #[serde(with = "big_array_vram")]
     pub vram: [u8; 0x10000],
+    #[serde(with = "big_array_cram")]
     pub cram: [u8; 128],
+    #[serde(with = "big_array_vsram")]
     pub vsram: [u8; 80],
     pub registers: [u8; NUM_REGISTERS],
     pub status: u16,
@@ -25,7 +158,7 @@ pub struct Vdp {
     pub dma_pending: bool,
 
     /// Cache of CRAM colors in RGB565 format for performance
-    #[serde(skip)]
+    #[serde(skip, default = "default_cram_cache")]
     pub cram_cache: [u16; 64],
 
     pub h_counter: u16,
@@ -282,6 +415,53 @@ impl Vdp {
     pub fn hscroll_address(&self) -> usize {
         // Bits 0-5 specify bits 10-15 of VRAM address
         ((self.registers[REG_HSCROLL] as usize) & 0x3F) << 10
+    }
+
+    pub fn plane_size(&self) -> (usize, usize) {
+        let size_code = self.registers[REG_PLANE_SIZE];
+        let w = match size_code & 0x03 {
+            0x00 => 32,
+            0x01 => 64,
+            0x03 => 128,
+            _ => 32,
+        };
+        let h = match (size_code >> 4) & 0x03 {
+            0x00 => 32,
+            0x01 => 64,
+            0x03 => 128,
+            _ => 32,
+        };
+        (w, h)
+    }
+
+    pub fn window_address(&self) -> usize {
+        // Bits 1-5 specify bits 11-15 of VRAM address
+        ((self.registers[REG_WINDOW] as usize) & 0x3E) << 10
+    }
+
+    pub fn is_window_area(&self, screen_x: u16, screen_y: u16) -> bool {
+        let w_h_pos = self.registers[REG_WINDOW_H_POS];
+        let w_v_pos = self.registers[REG_WINDOW_V_POS];
+
+        let right = (w_h_pos & 0x80) != 0;
+        let h_pos = (w_h_pos & 0x1F) as u16 * 16; // H-pos is in 2-cell units (16 pixels)
+
+        let down = (w_v_pos & 0x80) != 0;
+        let v_pos = (w_v_pos & 0x1F) as u16 * 8; // V-pos is in 1-cell units (8 pixels)
+
+        let in_h_window = if right {
+            screen_x >= h_pos
+        } else {
+            screen_x < h_pos
+        };
+
+        let in_v_window = if down {
+            screen_y >= v_pos
+        } else {
+            screen_y < v_pos
+        };
+
+        in_h_window || in_v_window
     }
 
     pub fn write_vram_word(&mut self, addr: u16, value: u16) {
