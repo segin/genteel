@@ -128,10 +128,7 @@ impl Framework {
                         self.gui_state.show_settings = true;
                         ui.close_menu();
                     }
-                    ui.checkbox(
-                        &mut self.gui_state.show_debug,
-                        "Show Performance & Debug",
-                    );
+                    ui.checkbox(&mut self.gui_state.show_debug, "Show Performance & Debug");
                 });
             });
         });
@@ -445,7 +442,10 @@ impl Emulator {
                             }
 
                             if let Err(e) = self.save_screenshot(path) {
-                                eprintln!("Script Error: Failed to save screenshot to {}: {}", path, e);
+                                eprintln!(
+                                    "Script Error: Failed to save screenshot to {}: {}",
+                                    path, e
+                                );
                             } else {
                                 println!("Script: Saved screenshot to {}", path);
                             }
@@ -791,7 +791,11 @@ impl Emulator {
                 println!("Final screenshot saved to: {}", path);
             }
         }
-        println!("Done in {:?} ({:.2} fps).", elapsed, current as f64 / elapsed.as_secs_f64());
+        println!(
+            "Done in {:?} ({:.2} fps).",
+            elapsed,
+            current as f64 / elapsed.as_secs_f64()
+        );
     }
 
     pub fn save_screenshot(&self, path: &str) -> Result<(), String> {
@@ -806,13 +810,8 @@ impl Emulator {
             rgb_data.push((g6 << 2) | (g6 >> 4));
             rgb_data.push((b5 << 3) | (b5 >> 2));
         }
-        image::save_buffer(
-            path,
-            &rgb_data,
-            320,
-            240,
-            image::ExtendedColorType::Rgb8,
-        ).map_err(|e| e.to_string())
+        image::save_buffer(path, &rgb_data, 320, 240, image::ExtendedColorType::Rgb8)
+            .map_err(|e| e.to_string())
     }
     /// Run with GDB debugger attached
     pub fn run_with_gdb(&mut self, port: u16, password: Option<String>) -> std::io::Result<()> {
@@ -1600,10 +1599,10 @@ mod tests {
 
         // Ensure files don't exist
         if std::path::Path::new(path).exists() {
-             let _ = std::fs::remove_file(path);
+            let _ = std::fs::remove_file(path);
         }
         if std::path::Path::new(sanitized_path).exists() {
-             let _ = std::fs::remove_file(sanitized_path);
+            let _ = std::fs::remove_file(sanitized_path);
         }
 
         // Construct input with command
@@ -1623,7 +1622,10 @@ mod tests {
             // Success: created at sanitized path
             let _ = std::fs::remove_file(sanitized_path);
         } else {
-            panic!("Sanitization failed: file not created at {}", sanitized_path);
+            panic!(
+                "Sanitization failed: file not created at {}",
+                sanitized_path
+            );
         }
     }
 }

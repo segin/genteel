@@ -8,14 +8,17 @@ pub use constants::*;
 pub mod dma;
 pub use dma::DmaOps;
 
-pub mod render;
-pub use render::RenderOps;
+// pub mod render;
+// pub use render::RenderOps;
 
 /// Genesis Video Display Processor (VDP)
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Vdp {
+    #[serde(serialize_with = "serialize_big_array", deserialize_with = "deserialize_vram")]
     pub vram: [u8; 0x10000],
+    #[serde(serialize_with = "serialize_big_array", deserialize_with = "deserialize_cram")]
     pub cram: [u8; 128],
+    #[serde(serialize_with = "serialize_big_array", deserialize_with = "deserialize_vsram")]
     pub vsram: [u8; 80],
     pub registers: [u8; NUM_REGISTERS],
     pub status: u16,
@@ -25,7 +28,7 @@ pub struct Vdp {
     pub dma_pending: bool,
 
     /// Cache of CRAM colors in RGB565 format for performance
-    #[serde(skip)]
+    #[serde(skip, default = "new_cram_cache")]
     pub cram_cache: [u16; 64],
 
     pub h_counter: u16,
@@ -37,6 +40,55 @@ pub struct Vdp {
 
     #[serde(skip)]
     pub framebuffer: Vec<u16>,
+}
+
+fn serialize_big_array<S, T>(array: &[T], serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+    T: Serialize,
+{
+    use serde::ser::SerializeSeq;
+    let mut seq = serializer.serialize_seq(Some(array.len()))?;
+    for e in array {
+        seq.serialize_element(e)?;
+    }
+    seq.end()
+}
+
+fn deserialize_vram<'de, D>(deserializer: D) -> Result<[u8; 0x10000], D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s: Vec<u8> = Deserialize::deserialize(deserializer)?;
+    let mut arr = [0; 0x10000];
+    if s.len() == arr.len() {
+        arr.copy_from_slice(&s);
+    }
+    Ok(arr)
+}
+
+fn deserialize_cram<'de, D>(deserializer: D) -> Result<[u8; 128], D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s: Vec<u8> = Deserialize::deserialize(deserializer)?;
+    let mut arr = [0; 128];
+    if s.len() == arr.len() {
+        arr.copy_from_slice(&s);
+    }
+    Ok(arr)
+}
+
+fn deserialize_vsram<'de, D>(deserializer: D) -> Result<[u8; 80], D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s: Vec<u8> = Deserialize::deserialize(deserializer)?;
+    let mut arr = [0; 80];
+    if s.len() == arr.len() {
+        arr.copy_from_slice(&s);
+    }
+    Ok(arr)
 }
 
 impl Default for Vdp {
@@ -193,7 +245,8 @@ impl Vdp {
             }
 
             // Check if DMA should be triggered (CD1 bit set in code)
-            if (self.control_code & 0x20) != 0 && (self.registers[REG_MODE2] & MODE2_DMA_ENABLE) != 0
+            if (self.control_code & 0x20) != 0
+                && (self.registers[REG_MODE2] & MODE2_DMA_ENABLE) != 0
             {
                 self.dma_pending = true;
             }
@@ -354,6 +407,10 @@ impl Debuggable for Vdp {
 
         *self = new_vdp;
     }
+}
+
+fn new_cram_cache() -> [u16; 64] {
+    [0; 64]
 }
 
 #[cfg(test)]

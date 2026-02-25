@@ -713,7 +713,6 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         self.cycles += t_states as u64;
         t_states
     }
-
 }
 
 #[derive(Serialize, Deserialize)]

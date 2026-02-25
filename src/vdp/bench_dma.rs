@@ -8,7 +8,7 @@ fn bench_dma_fill_performance() {
     vdp.write_control(0x8114); // Enable DMA
     vdp.write_control(0x9780); // DMA Fill
     vdp.write_control(0x8F01); // Auto-inc 1
-    // Set length to max (0xFFFF)
+                               // Set length to max (0xFFFF)
     vdp.write_control(0x93FF);
     vdp.write_control(0x94FF);
 
@@ -59,5 +59,8 @@ fn bench_dma_fill_write_data() {
     }
 
     let duration = start.elapsed();
-    println!("DMA Fill via write_data ({} iterations) took: {:?}", iterations, duration);
+    println!(
+        "DMA Fill via write_data ({} iterations) took: {:?}",
+        iterations, duration
+    );
 }
