@@ -80,7 +80,8 @@ pub fn exec_lea<M: MemoryInterface>(
     dst_reg: u8,
     memory: &mut M,
 ) -> u32 {
-    let (src_ea, cycles) = calculate_ea(src, Size::Long, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
+    let (src_ea, cycles) =
+        calculate_ea(src, Size::Long, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
 
     if let EffectiveAddress::Memory(addr) = src_ea {
         cpu.a[dst_reg as usize] = addr;
@@ -90,7 +91,8 @@ pub fn exec_lea<M: MemoryInterface>(
 }
 
 pub fn exec_pea<M: MemoryInterface>(cpu: &mut Cpu, src: AddressingMode, memory: &mut M) -> u32 {
-    let (src_ea, cycles) = calculate_ea(src, Size::Long, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
+    let (src_ea, cycles) =
+        calculate_ea(src, Size::Long, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
 
     if let EffectiveAddress::Memory(addr) = src_ea {
         cpu.a[7] = cpu.a[7].wrapping_sub(4);

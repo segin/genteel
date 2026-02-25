@@ -1,5 +1,14 @@
 use super::*;
 
+fn write_data_bulk(vdp: &mut Vdp, data: &[u8]) {
+    for chunk in data.chunks(2) {
+        if chunk.len() == 2 {
+            let val = ((chunk[0] as u16) << 8) | (chunk[1] as u16);
+            vdp.write_data(val);
+        }
+    }
+}
+
 #[test]
 fn test_bulk_write_optimization() {
     let mut vdp = Vdp::new();
@@ -19,7 +28,7 @@ fn test_bulk_write_optimization() {
     let data = [0x11, 0x22, 0x33, 0x44];
 
     // Execute
-    vdp.write_data_bulk(&data);
+    write_data_bulk(&mut vdp, &data);
 
     // Verify VRAM content
     assert_eq!(vdp.vram[0], 0x11);
@@ -45,7 +54,7 @@ fn test_bulk_write_fallback() {
     vdp.write_control(0x0000);
 
     let data = [0xAA, 0xBB, 0xCC, 0xDD];
-    vdp.write_data_bulk(&data);
+    write_data_bulk(&mut vdp, &data);
 
     // Verify behavior with auto-inc=1
     assert_eq!(vdp.vram[0], 0xDD);
@@ -58,7 +67,7 @@ fn test_bulk_write_fallback() {
     vdp.write_control(0x0000);
 
     let data_cram = [0x0E, 0xEE]; // White (0EEE)
-    vdp.write_data_bulk(&data_cram);
+    write_data_bulk(&mut vdp, &data_cram);
 
     assert_eq!(vdp.cram[0], 0xEE);
     assert_eq!(vdp.cram[1], 0x0E);
@@ -79,7 +88,7 @@ fn test_bulk_write_wrapping() {
     assert_eq!(vdp.control_address, 0xFFFE);
 
     let data = [0x11, 0x22, 0x33, 0x44];
-    vdp.write_data_bulk(&data);
+    write_data_bulk(&mut vdp, &data);
 
     // Verify wrapping
     assert_eq!(vdp.vram[0xFFFE], 0x11);

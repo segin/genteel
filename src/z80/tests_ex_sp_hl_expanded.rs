@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::memory::Memory;
-use crate::z80::test_utils::{TestIo, CombinedBus};
+use crate::z80::test_utils::{CombinedBus, TestIo};
 use proptest::prelude::*;
 
 fn create_z80(program: &[u8]) -> (Z80, CombinedBus) {
