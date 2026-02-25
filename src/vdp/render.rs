@@ -224,7 +224,8 @@ fn render_sprite_scanline(
 
                 let eff_col = if attr.h_flip { 7 - i } else { i };
 
-                let byte = patterns[(eff_col as usize) / 2];
+                // SAFETY: eff_col is 0..8, so index 0..3 is valid. patterns is [u8; 4].
+                let byte = unsafe { *patterns.get_unchecked((eff_col as usize) / 2) };
                 let color_idx = if eff_col % 2 == 0 {
                     byte >> 4
                 } else {
@@ -233,8 +234,12 @@ fn render_sprite_scanline(
 
                 if color_idx != 0 {
                     let addr = ((attr.palette as usize) << 4) | (color_idx as usize);
-                    let color = cram_cache[addr];
-                    framebuffer[line_offset + screen_x as usize] = color;
+                    // SAFETY: addr < 64 (palette 0-3, color 0-15).
+                    // line_offset + screen_x < 320*240 (line < 240, x < width <= 320).
+                    unsafe {
+                        let color = *cram_cache.get_unchecked(addr);
+                        *framebuffer.get_unchecked_mut(line_offset + screen_x as usize) = color;
+                    }
                 }
             }
         }
