@@ -137,8 +137,6 @@ pub mod big_array_vsram {
     }
 }
 
-<<<<<<< HEAD
-=======
 mod serde_arrays {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use serde::ser::SerializeTuple;
@@ -184,7 +182,6 @@ mod serde_arrays {
     }
 }
 
->>>>>>> origin/main
 fn default_vram() -> [u8; 0x10000] {
     [0; 0x10000]
 }
