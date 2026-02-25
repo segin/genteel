@@ -161,7 +161,7 @@ mod serde_arrays {
         impl<'de, const N: usize> serde::de::Visitor<'de> for ArrayVisitor<N> {
             type Value = [u8; N];
 
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> fmt::Result {
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
                 formatter.write_fmt(format_args!("an array of size {}", N))
             }
 
@@ -579,6 +579,21 @@ impl Vdp {
 
     pub fn set_region(&mut self, is_pal: bool) {
         self.is_pal = is_pal;
+    }
+
+    pub fn mode1(&self) -> u8 {
+        self.registers[REG_MODE1]
+    }
+
+    pub fn mode2(&self) -> u8 {
+        self.registers[REG_MODE2]
+    }
+
+    pub fn dma_enabled(&self) -> bool {
+        (self.registers[REG_MODE2] & MODE2_DMA_ENABLE) != 0
+    }
+
+    pub fn update_v30_offset(&mut self) {
     }
 }
 

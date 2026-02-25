@@ -208,13 +208,13 @@ impl Emulator {
         ))
     }
     /// Step one frame with current input state
-    pub fn step_frame(&mut self, input: Option<input::FrameInput>) {
+    pub fn step_frame(&mut self, input: Option<&input::FrameInput>) {
         // Apply inputs from script or live input
         let (p1, p2, command) = {
             let frame_input = match input {
                 Some(i) => {
                     self.input.record(i.clone());
-                    std::borrow::Cow::Owned(i)
+                    std::borrow::Cow::Borrowed(i)
                 }
                 None => self.input.advance_frame(),
             };
@@ -551,14 +551,14 @@ impl Emulator {
                 if bus.vdp.line_counter == 0 {
                     // Counter expired - trigger HInt and reload
                     self.cpu.request_interrupt(4);
-                    bus.vdp.line_counter = bus.vdp.registers[10];
+                    bus.vdp.line_counter = bus.vdp.registers[10] as u16;
                 } else {
                     bus.vdp.line_counter = bus.vdp.line_counter.saturating_sub(1);
                 }
             }
         } else {
             // During VBlank, reload HInt counter every line
-            bus.vdp.line_counter = bus.vdp.registers[10];
+            bus.vdp.line_counter = bus.vdp.registers[10] as u16;
         }
     }
     /// Run headless for N frames (or until script ends if N is None)
@@ -1226,7 +1226,7 @@ mod tests {
         let mut input = crate::input::FrameInput::default();
         input.command = Some(format!("SCREENSHOT {}", path));
 
-        emulator.step_frame(Some(input));
+        emulator.step_frame(Some(&input));
 
         // Check vulnerability is fixed
         if std::path::Path::new(path).exists() {
@@ -1242,4 +1242,5 @@ mod tests {
             panic!("Sanitization failed: file not created at {}", sanitized_path);
         }
     }
+
 }

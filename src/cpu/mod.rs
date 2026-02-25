@@ -74,6 +74,18 @@ impl Cpu {
         }
     }
 
+    pub fn reset<M: MemoryInterface>(&mut self, memory: &mut M) {
+        self.ssp = memory.read_long(0);
+        self.pc = memory.read_long(4);
+        self.sr = 0x2700;
+        self.a[7] = self.ssp;
+        self.halted = false;
+        self.pending_interrupt = 0;
+        self.interrupt_pending_mask = 0;
+        self.pending_exception = false;
+        self.invalidate_cache();
+    }
+
     pub fn cpu_read_ea<M: MemoryInterface>(&mut self, ea: EffectiveAddress, size: Size, memory: &mut M) -> u32 {
         if let EffectiveAddress::Memory(addr) = ea {
             if size != Size::Byte && (addr & 1 != 0) {
@@ -133,65 +145,6 @@ impl Cpu {
             self.interrupt_pending_mask |= 1 << level;
             self.update_pending_interrupt();
         }
-    }
-
-    pub fn write_word<M: MemoryInterface>(&mut self, addr: u32, val: u16, memory: &mut M) {
-        if addr & 1 != 0 {
-            self.process_exception(3, memory);
-            return;
-        }
-        memory.write_word(addr, val);
-    }
-
-    pub fn write_byte<M: MemoryInterface>(&mut self, addr: u32, val: u8, memory: &mut M) {
-        memory.write_byte(addr, val);
-    }
-
-    pub fn fetch_bit_num<M: MemoryInterface>(&mut self, source: BitSource, memory: &mut M) -> u32 {
-        match source {
-            BitSource::Immediate => {
-                let word = self.read_word(self.pc, memory);
-                self.pc = self.pc.wrapping_add(2);
-                (word & 0xFF) as u32
-            }
-            BitSource::Register(reg) => self.d[reg as usize] as u32,
-        }
-    }
-
-    pub fn resolve_bit_index(&self, bit_num: u32, is_memory: bool) -> u32 {
-        if is_memory {
-            bit_num % 8
-        } else {
-            bit_num % 32
-        }
-    }
-
-    pub fn read_word<M: MemoryInterface>(&mut self, addr: u32, memory: &mut M) -> u16 {
-        if addr & 1 != 0 {
-            self.process_exception(3, memory);
-            return 0;
-        }
-        memory.read_word(addr)
-    }
-
-    pub fn read_long<M: MemoryInterface>(&mut self, addr: u32, memory: &mut M) -> u32 {
-        if addr & 1 != 0 {
-            self.process_exception(3, memory);
-            return 0;
-        }
-        memory.read_long(addr)
-    }
-
-    pub fn write_long<M: MemoryInterface>(&mut self, addr: u32, val: u32, memory: &mut M) {
-        if addr & 1 != 0 {
-            self.process_exception(3, memory);
-            return;
-        }
-        memory.write_long(addr, val);
-    }
-
-    pub fn test_condition(&self, condition: Condition) -> bool {
-        self.check_condition(condition)
     }
 
     pub fn get_state(&self) -> CpuState {
