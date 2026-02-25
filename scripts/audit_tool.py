@@ -54,18 +54,19 @@ RISK_CSV = os.path.join(REPORT_DIR, "RISK_REGISTER.csv")
 findings = []
 
 # Pre-compiled regex patterns at global scope for performance.
-# Note: String concatenation is used to prevent this script from detecting itself as a false positive.
+# Note: String concatenation is used for some patterns (e.g., Private Key) to prevent this script from detecting itself as a false positive.
 SECRET_PATTERNS = {
-    "Generic Secret": re.compile(r"(?i)secret" + r"\s*[:=]\s*['\"]"),
-    "API Key": re.compile(r"(?i)api" + r"[_-]?key\s*[:=]\s*['\"]"),
-    "Password": re.compile(r"(?i)password" + r"\s*[:=]\s*['\"]"),
-    "AWS Key": re.compile(r"AKIA" + r"[0-9A-Z]{16}"),
+    "Generic Secret": re.compile(r"(?i)secret\s*[:=]\s*['\"]"),
+    "API Key": re.compile(r"(?i)api[_-]?key\s*[:=]\s*['\"]"),
+    "Password": re.compile(r"(?i)password\s*[:=]\s*['\"]"),
+    "AWS Key": re.compile(r"AKIA[0-9A-Z]{16}"),
+    # Split string to avoid self-flagging (the pattern itself matches the source code string otherwise)
     "Private Key": re.compile(r"-----BEGIN .* PRIVATE " + r"KEY-----"),
-    "Generic Token": re.compile(r"token" + r"\s*=\s*['\"][a-zA-Z0-9]{20,}['\"]")
+    "Generic Token": re.compile(r"token\s*=\s*['\"][a-zA-Z0-9]{20,}['\"]")
 }
 
-TODO_PATTERN = re.compile(r"(TODO|FIXME|XXX)" + r":")
-UNSAFE_PATTERN = re.compile(r"unsafe" + r"\s*\{")
+TODO_PATTERN = re.compile(r"(TODO|FIXME|XXX):")
+UNSAFE_PATTERN = re.compile(r"unsafe\s*\{")
 
 def add_finding(title, severity, description, file_path, line_number=None):
     findings.append({
