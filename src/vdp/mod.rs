@@ -419,3 +419,6 @@ mod bench_dma;
 
 #[cfg(test)]
 mod test_repro_white_screen;
+
+#[cfg(test)]
+mod tests_draw_row_refactor;

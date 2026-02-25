@@ -133,7 +133,7 @@ pub trait RenderOps {
         count: u16,
         dest_idx: usize,
     );
-    unsafe fn draw_full_tile_row(&mut self, entry: u16, pixel_v: u16, dest_idx: usize);
+    fn draw_full_tile_row(&mut self, entry: u16, pixel_v: u16, dest_idx: usize);
     fn bg_color(&self) -> (u8, u8);
     fn get_cram_color(&self, palette: u8, index: u8) -> u16;
 }
@@ -370,9 +370,7 @@ impl RenderOps for Vdp {
         if priority == priority_filter {
             if pixels_to_process == 8 && pixel_h == 0 {
                 // Fast path for full aligned tile
-                unsafe {
-                    self.draw_full_tile_row(entry, pixel_v, line_offset + *screen_x as usize);
-                }
+                self.draw_full_tile_row(entry, pixel_v, line_offset + *screen_x as usize);
             } else {
                 self.draw_partial_tile_row(
                     entry,
@@ -563,7 +561,7 @@ impl RenderOps for Vdp {
     }
 
     #[inline(always)]
-    unsafe fn draw_full_tile_row(&mut self, entry: u16, pixel_v: u16, dest_idx: usize) {
+    fn draw_full_tile_row(&mut self, entry: u16, pixel_v: u16, dest_idx: usize) {
         let palette = ((entry >> 13) & 0x03) as u8;
         let v_flip = (entry & 0x1000) != 0;
         let h_flip = (entry & 0x0800) != 0;
@@ -576,91 +574,90 @@ impl RenderOps for Vdp {
             return;
         }
 
+        // Safety check for framebuffer bounds
+        if dest_idx + 8 > self.framebuffer.len() {
+            return;
+        }
+
         let p0 = patterns[0];
         let p1 = patterns[1];
         let p2 = patterns[2];
         let p3 = patterns[3];
 
         let palette_base = (palette as usize) * 16;
-
-        // SAFETY: Caller ensures dest_idx + 7 is within framebuffer bounds.
-        // palette is 2 bits, so palette_base is max 48. col is 4 bits (0-15).
-        // Max index is 63, which is within cram_cache bounds (64).
-        // Get base pointers to avoid repeated offset calculations
-        let cram_ptr = self.cram_cache.as_ptr().add(palette_base);
-        let dest_ptr = self.framebuffer.as_mut_ptr().add(dest_idx);
+        let dest = &mut self.framebuffer[dest_idx..dest_idx + 8];
 
         if h_flip {
             let mut col = p3 & 0x0F;
             if col != 0 {
-                *dest_ptr = *cram_ptr.add(col as usize);
+                dest[0] = self.cram_cache[palette_base + col as usize];
             }
             col = p3 >> 4;
             if col != 0 {
-                *dest_ptr.add(1) = *cram_ptr.add(col as usize);
+                dest[1] = self.cram_cache[palette_base + col as usize];
             }
 
             col = p2 & 0x0F;
             if col != 0 {
-                *dest_ptr.add(2) = *cram_ptr.add(col as usize);
+                dest[2] = self.cram_cache[palette_base + col as usize];
             }
             col = p2 >> 4;
             if col != 0 {
-                *dest_ptr.add(3) = *cram_ptr.add(col as usize);
+                dest[3] = self.cram_cache[palette_base + col as usize];
             }
 
             col = p1 & 0x0F;
             if col != 0 {
-                *dest_ptr.add(4) = *cram_ptr.add(col as usize);
+                dest[4] = self.cram_cache[palette_base + col as usize];
             }
             col = p1 >> 4;
             if col != 0 {
-                *dest_ptr.add(5) = *cram_ptr.add(col as usize);
+                dest[5] = self.cram_cache[palette_base + col as usize];
             }
 
             col = p0 & 0x0F;
             if col != 0 {
-                *dest_ptr.add(6) = *cram_ptr.add(col as usize);
+                dest[6] = self.cram_cache[palette_base + col as usize];
             }
             col = p0 >> 4;
             if col != 0 {
-                *dest_ptr.add(7) = *cram_ptr.add(col as usize);
+                dest[7] = self.cram_cache[palette_base + col as usize];
             }
         } else {
             let mut col = p0 >> 4;
             if col != 0 {
-                *dest_ptr = *cram_ptr.add(col as usize);
+                dest[0] = self.cram_cache[palette_base + col as usize];
             }
             col = p0 & 0x0F;
             if col != 0 {
-                *dest_ptr.add(1) = *cram_ptr.add(col as usize);
+                dest[1] = self.cram_cache[palette_base + col as usize];
             }
 
             col = p1 >> 4;
             if col != 0 {
-                *dest_ptr.add(2) = *cram_ptr.add(col as usize);
+                dest[2] = self.cram_cache[palette_base + col as usize];
             }
             col = p1 & 0x0F;
             if col != 0 {
-                *dest_ptr.add(3) = *cram_ptr.add(col as usize);
+                dest[3] = self.cram_cache[palette_base + col as usize];
             }
 
             col = p2 >> 4;
             if col != 0 {
-                *dest_ptr.add(4) = *cram_ptr.add(col as usize);
+                dest[4] = self.cram_cache[palette_base + col as usize];
             }
             col = p2 & 0x0F;
             if col != 0 {
-                *dest_ptr.add(5) = *cram_ptr.add(col as usize);
+                dest[5] = self.cram_cache[palette_base + col as usize];
             }
 
             col = p3 >> 4;
             if col != 0 {
-                *dest_ptr.add(6) = *cram_ptr.add(col as usize);
+                dest[6] = self.cram_cache[palette_base + col as usize];
             }
             col = p3 & 0x0F;
             if col != 0 {
-                *dest_ptr.add(7) = *cram_ptr.add(col as usize);
+                dest[7] = self.cram_cache[palette_base + col as usize];
             }
         }
     }
