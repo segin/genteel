@@ -90,6 +90,66 @@ impl Cpu {
         self.invalidate_cache();
     }
 
+    pub fn cpu_read_ea<M: MemoryInterface>(&mut self, ea: EffectiveAddress, size: Size, memory: &mut M) -> u32 {
+        if let EffectiveAddress::Memory(addr) = ea {
+            if (size == Size::Word || size == Size::Long) && addr % 2 != 0 {
+                self.process_exception(3, memory);
+                return 0;
+            }
+        }
+        addressing::read_ea(ea, size, &self.d, &self.a, memory)
+    }
+
+    pub fn cpu_write_ea<M: MemoryInterface>(&mut self, ea: EffectiveAddress, size: Size, value: u32, memory: &mut M) {
+        if let EffectiveAddress::Memory(addr) = ea {
+            if (size == Size::Word || size == Size::Long) && addr % 2 != 0 {
+                self.process_exception(3, memory);
+                return;
+            }
+        }
+        addressing::write_ea(ea, size, value, &mut self.d, &mut self.a, memory)
+    }
+
+    pub fn cpu_read_memory<M: MemoryInterface>(&mut self, addr: u32, size: Size, memory: &mut M) -> u32 {
+        if (size == Size::Word || size == Size::Long) && addr % 2 != 0 {
+            self.process_exception(3, memory);
+            return 0;
+        }
+        memory.read_size(addr, size)
+    }
+
+    pub fn cpu_write_memory<M: MemoryInterface>(&mut self, addr: u32, size: Size, value: u32, memory: &mut M) {
+        if (size == Size::Word || size == Size::Long) && addr % 2 != 0 {
+            self.process_exception(3, memory);
+            return;
+        }
+        memory.write_size(addr, value, size)
+    }
+
+    fn check_interrupts<M: MemoryInterface>(&mut self, memory: &mut M) -> u32 {
+        let mask = (self.sr & flags::INTERRUPT_MASK) >> 8;
+        if self.pending_interrupt > mask as u8 {
+            let level = self.pending_interrupt;
+            let vector = 24 + level as u32;
+            let _cycles = self.process_exception(vector, memory);
+            self.sr = (self.sr & !flags::INTERRUPT_MASK) | ((level as u16) << 8);
+            self.acknowledge_interrupt(level);
+            return 44;
+        }
+        0
+    }
+
+    pub fn invalidate_cache(&mut self) {
+        self.decode_cache.fill(DecodeCacheEntry::default());
+    }
+
+    pub fn request_interrupt(&mut self, level: u8) {
+        if level > 0 && level <= 7 {
+            self.interrupt_pending_mask |= 1 << level;
+            self.update_pending_interrupt();
+        }
+    }
+
     pub fn get_state(&self) -> CpuState {
         CpuState {
             d: self.d,
@@ -110,18 +170,9 @@ impl Cpu {
         self.pending_interrupt = state.pending_interrupt;
     }
 
-    pub fn invalidate_cache(&mut self) {
-        self.decode_cache.fill(DecodeCacheEntry::default());
-    }
-
-    pub fn request_interrupt(&mut self, level: u8) {
-        if level > 0 && level <= 7 {
-            self.interrupt_pending_mask |= 1 << level;
-            self.update_pending_interrupt();
-        }
-    }
-
+    /// Update pending_interrupt to highest priority level from bitmask
     fn update_pending_interrupt(&mut self) {
+        // Find highest set bit in mask
         for level in (1..=7).rev() {
             if (self.interrupt_pending_mask & (1 << level)) != 0 {
                 self.pending_interrupt = level;
@@ -131,11 +182,14 @@ impl Cpu {
         self.pending_interrupt = 0;
     }
 
+    /// Acknowledge an interrupt (called after processing)
     pub fn acknowledge_interrupt(&mut self, level: u8) {
         if level > 7 {
             return;
         }
+        // Clear the bit for this interrupt level
         self.interrupt_pending_mask &= !(1 << level);
+        // Update to next highest priority
         self.update_pending_interrupt();
     }
 
@@ -175,48 +229,16 @@ impl Cpu {
         memory.write_byte(addr, val);
     }
 
-    pub fn cpu_read_memory<M: MemoryInterface>(&mut self, addr: u32, size: Size, memory: &mut M) -> u32 {
-        if size != Size::Byte && addr % 2 != 0 {
-            self.process_exception(3, memory);
-            return 0;
-        }
-        memory.read_size(addr, size)
-    }
-
-    pub fn cpu_write_memory<M: MemoryInterface>(&mut self, addr: u32, size: Size, value: u32, memory: &mut M) {
-        if size != Size::Byte && addr % 2 != 0 {
-            self.process_exception(3, memory);
-            return;
-        }
-        memory.write_size(addr, value, size)
-    }
-
-    pub fn cpu_read_ea<M: MemoryInterface>(&mut self, ea: EffectiveAddress, size: Size, memory: &mut M) -> u32 {
-        if let EffectiveAddress::Memory(addr) = ea {
-            if size != Size::Byte && addr % 2 != 0 {
-                self.process_exception(3, memory);
-                return 0;
-            }
-        }
-        addressing::read_ea(ea, size, &self.d, &self.a, memory)
-    }
-
-    pub fn cpu_write_ea<M: MemoryInterface>(&mut self, ea: EffectiveAddress, size: Size, value: u32, memory: &mut M) {
-        if let EffectiveAddress::Memory(addr) = ea {
-            if size != Size::Byte && addr % 2 != 0 {
-                self.process_exception(3, memory);
-                return;
-            }
-        }
-        addressing::write_ea(ea, size, value, &mut self.d, &mut self.a, memory)
+    pub fn test_condition(&self, condition: Condition) -> bool {
+        self.check_condition(condition)
     }
 
     pub fn fetch_bit_num<M: MemoryInterface>(&mut self, source: BitSource, memory: &mut M) -> u32 {
         match source {
             BitSource::Immediate => {
-                let val = self.read_instruction_word(self.pc, memory);
+                let word = self.read_instruction_word(self.pc, memory);
                 self.pc = self.pc.wrapping_add(2);
-                val as u32
+                (word & 0xFF) as u32
             }
             BitSource::Register(reg) => self.d[reg as usize],
         }
@@ -228,19 +250,6 @@ impl Cpu {
         } else {
             bit_num % 32
         }
-    }
-
-    pub fn check_interrupts<M: MemoryInterface>(&mut self, memory: &mut M) -> u32 {
-        let mask = (self.sr & flags::INTERRUPT_MASK) >> 8;
-        if self.pending_interrupt > mask as u8 {
-            let level = self.pending_interrupt;
-            let vector = 24 + level as u32;
-            let _cycles = self.process_exception(vector, memory);
-            self.sr = (self.sr & !flags::INTERRUPT_MASK) | ((level as u16) << 8);
-            self.acknowledge_interrupt(level);
-            return 44;
-        }
-        0
     }
 
     pub fn get_flag(&self, flag: u16) -> bool {
@@ -699,10 +708,6 @@ impl Cpu {
                 }
             },
         }
-    }
-
-    pub fn test_condition(&self, condition: Condition) -> bool {
-        self.check_condition(condition)
     }
 
     pub fn check_condition(&self, cond: Condition) -> bool {
