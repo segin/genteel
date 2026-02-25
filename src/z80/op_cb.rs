@@ -1,25 +1,25 @@
-use crate::memory::{MemoryInterface, Z80Interface};
+use crate::memory::{IoInterface, MemoryInterface};
 use crate::z80::{flags, Z80};
 
 pub trait CbOps {
-    fn execute_cb_prefix<T: Z80Interface>(&mut self, bus: &mut T) -> u8;
-    fn execute_indexed_cb<T: Z80Interface>(&mut self, bus: &mut T, opcode: u8, addr: u16) -> u8;
+    fn execute_cb_prefix(&mut self) -> u8;
+    fn execute_indexed_cb(&mut self, opcode: u8, addr: u16) -> u8;
 }
 
-impl CbOps for Z80 {
-    fn execute_cb_prefix<T: Z80Interface>(&mut self, bus: &mut T) -> u8 {
-        let opcode = self.fetch_byte(bus);
+impl<M: MemoryInterface, I: IoInterface> CbOps for Z80<M, I> {
+    fn execute_cb_prefix(&mut self) -> u8 {
+        let opcode = self.fetch_byte();
         let x = (opcode >> 6) & 0x03;
         let y = (opcode >> 3) & 0x07;
         let z = opcode & 0x07;
 
-        let val = self.get_reg(bus, z);
+        let val = self.get_reg(z);
 
         match x {
             0 => {
                 // Rotate/shift
                 let result = cb_rotate_shift(self, val, y);
-                self.set_reg(bus, z, result);
+                self.set_reg(z, result);
                 if z == 6 {
                     15
                 } else {
@@ -49,7 +49,7 @@ impl CbOps for Z80 {
             2 => {
                 // RES y, r
                 let result = cb_res(val, y);
-                self.set_reg(bus, z, result);
+                self.set_reg(z, result);
                 if z == 6 {
                     15
                 } else {
@@ -59,7 +59,7 @@ impl CbOps for Z80 {
             3 => {
                 // SET y, r
                 let result = cb_set(val, y);
-                self.set_reg(bus, z, result);
+                self.set_reg(z, result);
                 if z == 6 {
                     15
                 } else {
@@ -70,19 +70,19 @@ impl CbOps for Z80 {
         }
     }
 
-    fn execute_indexed_cb<T: Z80Interface>(&mut self, bus: &mut T, opcode: u8, addr: u16) -> u8 {
+    fn execute_indexed_cb(&mut self, opcode: u8, addr: u16) -> u8 {
         let x = (opcode >> 6) & 0x03;
         let y = (opcode >> 3) & 0x07;
         let z = opcode & 0x07;
-        let val = self.read_byte(bus, addr);
+        let val = self.read_byte(addr);
 
         match x {
             0 => {
                 // Rotate/shift
                 let result = cb_rotate_shift(self, val, y);
-                self.write_byte(bus, addr, result);
+                self.write_byte(addr, result);
                 if z != 6 {
-                    self.set_reg(bus, z, result);
+                    self.set_reg(z, result);
                 }
                 23
             }
@@ -99,18 +99,18 @@ impl CbOps for Z80 {
             2 => {
                 // RES y, (IX/IY+d)
                 let result = cb_res(val, y);
-                self.write_byte(bus, addr, result);
+                self.write_byte(addr, result);
                 if z != 6 {
-                    self.set_reg(bus, z, result);
+                    self.set_reg(z, result);
                 }
                 23
             }
             3 => {
                 // SET y, (IX/IY+d)
                 let result = cb_set(val, y);
-                self.write_byte(bus, addr, result);
+                self.write_byte(addr, result);
                 if z != 6 {
-                    self.set_reg(bus, z, result);
+                    self.set_reg(z, result);
                 }
                 23
             }
@@ -119,7 +119,7 @@ impl CbOps for Z80 {
     }
 }
 
-fn cb_rotate_shift(cpu: &mut Z80, val: u8, y: u8) -> u8 {
+fn cb_rotate_shift<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, val: u8, y: u8) -> u8 {
     let result = match y {
         0 => {
             // RLC
@@ -180,7 +180,7 @@ fn cb_rotate_shift(cpu: &mut Z80, val: u8, y: u8) -> u8 {
     result
 }
 
-fn cb_bit(cpu: &mut Z80, val: u8, bit: u8) {
+fn cb_bit<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, val: u8, bit: u8) {
     let b = (val >> bit) & 1;
     cpu.set_flag(flags::ZERO, b == 0);
     cpu.set_flag(flags::HALF_CARRY, true);

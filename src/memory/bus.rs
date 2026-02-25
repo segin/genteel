@@ -153,7 +153,8 @@ impl Bus {
     fn read_rom(&self, addr: u32) -> u8 {
         let rom_addr = addr as usize;
         if rom_addr < self.rom.len() {
-            self.rom[rom_addr]
+            // SAFETY: rom_addr is checked against self.rom.len() above
+            unsafe { *self.rom.get_unchecked(rom_addr) }
         } else {
             0xFF // Unmapped ROM area
         }
@@ -192,7 +193,13 @@ impl Bus {
                     0x01
                 }
             }
-            0xA14000..=0xA14003 => if self.tmss_unlocked { 0x01 } else { 0x00 },
+            0xA14000..=0xA14003 => {
+                if self.tmss_unlocked {
+                    0x01
+                } else {
+                    0x00
+                }
+            }
             _ => 0xFF,
         }
     }
@@ -201,7 +208,7 @@ impl Bus {
         match addr {
             0xC00000..=0xC00003 => {
                 // Byte read from data port (even=hi, odd=lo)
-                // Note: Real hardware behavior for byte reads is complex, 
+                // Note: Real hardware behavior for byte reads is complex,
                 // but usually we return the appropriate byte of the last data word.
                 if (addr & 1) == 0 {
                     (self.vdp.read_data() >> 8) as u8

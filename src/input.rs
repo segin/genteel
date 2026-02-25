@@ -158,6 +158,28 @@ impl InputScript {
     pub fn get(&self, frame: u64) -> Option<&FrameInput> {
         self.frames.get(&frame)
     }
+
+    /// Save script to a file
+    pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<(), String> {
+        use std::io::Write;
+        let mut file = File::create(path).map_err(|e| format!("Failed to create input script: {}", e))?;
+
+        writeln!(file, "# frame,p1_buttons,p2_buttons").map_err(|e| e.to_string())?;
+
+        // Sort frames to ensure deterministic output
+        let mut frames_list: Vec<_> = self.frames.iter().collect();
+        frames_list.sort_by_key(|(&f, _)| f);
+
+        for (frame, input) in frames_list {
+            write!(file, "{},{},{}", frame, input.p1, input.p2).map_err(|e| e.to_string())?;
+            if let Some(cmd) = &input.command {
+                write!(file, ",{}", cmd).map_err(|e| e.to_string())?;
+            }
+            writeln!(file).map_err(|e| e.to_string())?;
+        }
+
+        Ok(())
+    }
 }
 
 /// Input manager handling script playback and live input
@@ -526,10 +548,10 @@ mod tests {
 
         // Advance to frame 1
         manager.advance_frame(); // Frame 0 processed
-        let input = manager.advance_frame(); // Frame 1 processed
+        let input = manager.advance_frame().into_owned(); // Frame 1 processed
 
-        assert_eq!(manager.frame(), 2);
         assert!(input.p1.a);
+        assert_eq!(manager.frame(), 2);
         assert!(manager.last_input.p1.a);
 
         manager.reset();
