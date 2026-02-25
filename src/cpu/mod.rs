@@ -6,7 +6,17 @@ pub mod decoder;
 pub mod instructions;
 pub mod ops;
 
-pub use decoder::{Condition, Cpu, Size};
+pub use decoder::{Condition, Size};
+use decoder::decode;
+use instructions::{
+    ArithmeticInstruction, BitSource, BitsInstruction, DataInstruction, DecodeCacheEntry,
+    Instruction, SystemInstruction,
+};
+use addressing::EffectiveAddress;
+
+pub const CACHE_SIZE: usize = 0x10000;
+pub const CACHE_MASK: u32 = (CACHE_SIZE as u32) - 1;
+pub const CACHE_ROM_LIMIT: u32 = 0x400000;
 
 pub mod flags {
     pub const CARRY: u16 = 0x0001;
@@ -30,7 +40,39 @@ pub struct CpuState {
     pub pending_interrupt: u8,
 }
 
+pub struct Cpu {
+    pub d: [u32; 8],
+    pub a: [u32; 8],
+    pub pc: u32,
+    pub sr: u16,
+    pub usp: u32,
+    pub ssp: u32,
+    pub halted: bool,
+    pub pending_interrupt: u8,
+    pub interrupt_pending_mask: u8,
+    pub pending_exception: bool,
+    pub cycles: u64,
+    pub decode_cache: Box<[DecodeCacheEntry]>,
+}
+
 impl Cpu {
+    pub fn new<M: MemoryInterface>(_memory: &mut M) -> Self {
+        Self {
+            d: [0; 8],
+            a: [0; 8],
+            pc: 0,
+            sr: 0x2700,
+            usp: 0,
+            ssp: 0,
+            halted: false,
+            pending_interrupt: 0,
+            interrupt_pending_mask: 0,
+            pending_exception: false,
+            cycles: 0,
+            decode_cache: vec![DecodeCacheEntry::default(); CACHE_SIZE].into_boxed_slice(),
+        }
+    }
+
     pub fn get_state(&self) -> CpuState {
         CpuState {
             d: self.d,
@@ -40,6 +82,126 @@ impl Cpu {
             halted: self.halted,
             pending_interrupt: self.pending_interrupt,
         }
+    }
+
+    pub fn invalidate_cache(&mut self) {
+        self.decode_cache.fill(DecodeCacheEntry::default());
+    }
+
+    pub fn request_interrupt(&mut self, level: u8) {
+        self.interrupt_pending_mask |= 1 << level;
+        self.update_pending_interrupt();
+    }
+
+    pub fn write_word<M: MemoryInterface>(&mut self, addr: u32, val: u16, memory: &mut M) {
+        if addr % 2 != 0 {
+            self.process_exception(3, memory);
+            return;
+        }
+        memory.write_word(addr, val);
+    }
+
+    pub fn write_long<M: MemoryInterface>(&mut self, addr: u32, val: u32, memory: &mut M) {
+        if addr % 2 != 0 {
+            self.process_exception(3, memory);
+            return;
+        }
+        memory.write_long(addr, val);
+    }
+
+    pub fn read_word<M: MemoryInterface>(&mut self, addr: u32, memory: &mut M) -> u16 {
+        if addr % 2 != 0 {
+            self.process_exception(3, memory);
+            return 0;
+        }
+        memory.read_word(addr)
+    }
+
+    pub fn read_long<M: MemoryInterface>(&mut self, addr: u32, memory: &mut M) -> u32 {
+        if addr % 2 != 0 {
+            self.process_exception(3, memory);
+            return 0;
+        }
+        memory.read_long(addr)
+    }
+
+    pub fn cpu_read_memory<M: MemoryInterface>(&mut self, address: u32, size: Size, memory: &mut M) -> u32 {
+        memory.read_size(address, size)
+    }
+
+    pub fn cpu_read_ea<M: MemoryInterface>(&mut self, ea: EffectiveAddress, size: Size, memory: &mut M) -> u32 {
+        if let EffectiveAddress::Memory(addr) = ea {
+            if (size == Size::Word || size == Size::Long) && addr % 2 != 0 {
+                self.process_exception(3, memory);
+                return 0;
+            }
+        }
+        addressing::read_ea(ea, size, &self.d, &self.a, memory)
+    }
+
+    pub fn cpu_write_ea<M: MemoryInterface>(&mut self, ea: EffectiveAddress, size: Size, val: u32, memory: &mut M) {
+        if let EffectiveAddress::Memory(addr) = ea {
+            if (size == Size::Word || size == Size::Long) && addr % 2 != 0 {
+                self.process_exception(3, memory);
+                return;
+            }
+        }
+        addressing::write_ea(ea, size, val, &mut self.d, &mut self.a, memory);
+    }
+
+    pub fn write_byte<M: MemoryInterface>(&mut self, addr: u32, val: u8, memory: &mut M) {
+        memory.write_byte(addr, val);
+    }
+
+    pub fn cpu_write_memory<M: MemoryInterface>(&mut self, address: u32, size: Size, value: u32, memory: &mut M) {
+        memory.write_size(address, value, size);
+    }
+
+    pub fn fetch_bit_num<M: MemoryInterface>(&mut self, bit: BitSource, memory: &mut M) -> u32 {
+        match bit {
+            BitSource::Immediate => {
+                let val = self.read_instruction_word(self.pc, memory);
+                self.pc = self.pc.wrapping_add(2);
+                val as u32
+            }
+            BitSource::Register(reg) => self.d[reg as usize],
+        }
+    }
+
+    pub fn resolve_bit_index(&self, bit_num: u32, is_memory: bool) -> u32 {
+        if is_memory {
+            bit_num % 8
+        } else {
+            bit_num % 32
+        }
+    }
+
+    pub fn test_condition(&self, cond: Condition) -> bool {
+        self.check_condition(cond)
+    }
+
+    pub fn check_interrupts<M: MemoryInterface>(&mut self, memory: &mut M) -> u32 {
+        let mask = (self.sr & 0x0700) >> 8;
+        if self.pending_interrupt > mask as u8 {
+            let level = self.pending_interrupt;
+            // Autovector: 24 + level
+            let vector = 24 + level as u32;
+
+            // Standard exception processing
+            // This pushes PC and old SR, and sets S-bit and clears T-bit.
+            let cycles = self.process_exception(vector, memory);
+
+            // Interrupt specific: update mask to current level
+            self.sr = (self.sr & !0x0700) | ((level as u16) << 8);
+
+            // Acknowledge interrupt (clear pending bit for this level)
+            self.acknowledge_interrupt(level);
+
+            // Exception processing takes ~34 cycles, interrupts take ~44.
+            // process_exception returns 34.
+            return 44;
+        }
+        0
     }
 
     pub fn set_state(&mut self, state: CpuState) {
@@ -311,7 +473,7 @@ impl Cpu {
                     ops::data::exec_movea(self, size, src, dst_reg, memory)
                 }
                 DataInstruction::MoveQ { dst_reg, data } => {
-                    ops::data::exec_moveq(self, dst_reg, data)
+                    ops::data::exec_moveq(self, dst_reg, data as u8)
                 }
                 DataInstruction::Lea { src, dst_reg } => {
                     ops::data::exec_lea(self, src, dst_reg, memory)
@@ -524,7 +686,7 @@ impl Cpu {
                     self.pc = self.pc.wrapping_add(2);
                     ops::system::exec_link(self, reg, displacement, memory)
                 }
-                SystemInstruction::Unlk { reg } => ops::system::unlk(self, reg, memory),
+                SystemInstruction::Unlk { reg } => ops::system::exec_unlk(self, reg, memory),
                 SystemInstruction::MoveToSr { src } => {
                     ops::system::exec_move_to_sr(self, src, memory)
                 }
@@ -569,7 +731,7 @@ impl Cpu {
             Condition::OverflowSet => v,
             Condition::Plus => !n,
             Condition::Minus => n,
-            Condition::GreaterEqual => (n && v) || (!n && !v),
+            Condition::GreaterOrEqual => (n && v) || (!n && !v),
             Condition::LessThan => (n && !v) || (!n && v),
             Condition::GreaterThan => (n && v && !z) || (!n && !v && !z),
             Condition::LessOrEqual => z || (n && !v) || (!n && v),
@@ -585,7 +747,6 @@ mod tests_addressing;
 mod tests_bug_fixes;
 #[cfg(test)]
 mod tests_cache;
-mod tests_decoder_shift;
 #[cfg(test)]
 mod tests_decoder_shift;
 #[cfg(test)]
