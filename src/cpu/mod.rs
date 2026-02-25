@@ -6,39 +6,15 @@ pub mod decoder;
 pub mod instructions;
 pub mod ops;
 
-use crate::cpu::addressing::{self as cpu_addressing, EffectiveAddress};
-use crate::cpu::instructions::{
-    ArithmeticInstruction, BitSource, BitsInstruction, DataInstruction, DecodeCacheEntry,
-    Instruction, SystemInstruction,
+pub use addressing::EffectiveAddress;
+pub use decoder::{Condition, Size, decode};
+use instructions::{
+    ArithmeticInstruction, BitSource, BitsInstruction, DataInstruction, DecodeCacheEntry, Instruction,
+    SystemInstruction,
 };
-pub use decoder::{Condition, Size};
-use decoder::decode;
 
-pub mod flags {
-    pub const CARRY: u16 = 0x0001;
-    pub const OVERFLOW: u16 = 0x0002;
-    pub const ZERO: u16 = 0x0004;
-    pub const NEGATIVE: u16 = 0x0008;
-    pub const EXTEND: u16 = 0x0010;
-    pub const INTERRUPT_MASK: u16 = 0x0700;
-    pub const MASTER_STATE: u16 = 0x1000;
-    pub const SUPERVISOR: u16 = 0x2000;
-    pub const TRACE: u16 = 0x8000;
-}
-
-const CACHE_SIZE: usize = 65536;
-const CACHE_MASK: u32 = (CACHE_SIZE as u32) - 1;
-const CACHE_ROM_LIMIT: u32 = 0x400000;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CpuState {
-    pub d: [u32; 8],
-    pub a: [u32; 8],
-    pub pc: u32,
-    pub sr: u16,
-    pub halted: bool,
-    pub pending_interrupt: u8,
-}
+const CACHE_ROM_LIMIT: u32 = 0x400000; // 4MB ROM
+const CACHE_MASK: u32 = 0x1FFFFF; // 2M entries
 
 pub struct Cpu {
     pub d: [u32; 8],
@@ -52,27 +28,50 @@ pub struct Cpu {
     pub interrupt_pending_mask: u8,
     pub pending_exception: bool,
     pub cycles: u64,
-    pub decode_cache: Vec<DecodeCacheEntry>,
+    pub decode_cache: Box<[DecodeCacheEntry]>,
+}
+
+pub mod flags {
+    pub const CARRY: u16 = 0x0001;
+    pub const OVERFLOW: u16 = 0x0002;
+    pub const ZERO: u16 = 0x0004;
+    pub const NEGATIVE: u16 = 0x0008;
+    pub const EXTEND: u16 = 0x0010;
+    pub const INTERRUPT_MASK: u16 = 0x0700;
+    pub const MASTER_STATE: u16 = 0x1000;
+    pub const SUPERVISOR: u16 = 0x2000;
+    pub const TRACE: u16 = 0x8000;
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CpuState {
+    pub d: [u32; 8],
+    pub a: [u32; 8],
+    pub pc: u32,
+    pub sr: u16,
+    pub halted: bool,
+    pub pending_interrupt: u8,
 }
 
 impl Cpu {
-    pub fn new<M: MemoryInterface>(memory: &mut M) -> Self {
-        let mut cpu = Self {
+    pub fn new<M: MemoryInterface>(_memory: &mut M) -> Self {
+        let cache_size = (CACHE_MASK + 1) as usize;
+        let cache = vec![DecodeCacheEntry::default(); cache_size].into_boxed_slice();
+
+        Cpu {
             d: [0; 8],
             a: [0; 8],
-            pc: memory.read_long(4),
+            pc: 0,
             sr: 0x2700,
             usp: 0,
-            ssp: memory.read_long(0),
+            ssp: 0,
             halted: false,
             pending_interrupt: 0,
             interrupt_pending_mask: 0,
             pending_exception: false,
             cycles: 0,
-            decode_cache: vec![DecodeCacheEntry::default(); CACHE_SIZE],
-        };
-        cpu.a[7] = cpu.ssp;
-        cpu
+            decode_cache: cache,
+        }
     }
 
     pub fn reset<M: MemoryInterface>(&mut self, memory: &mut M) {
@@ -84,7 +83,68 @@ impl Cpu {
         self.pending_interrupt = 0;
         self.interrupt_pending_mask = 0;
         self.pending_exception = false;
-        self.decode_cache.fill(DecodeCacheEntry::default());
+        self.invalidate_cache();
+    }
+
+    pub fn cpu_read_ea<M: MemoryInterface>(&mut self, ea: EffectiveAddress, size: Size, memory: &mut M) -> u32 {
+        if let EffectiveAddress::Memory(addr) = ea {
+            if size != Size::Byte && (addr & 1 != 0) {
+                self.process_exception(3, memory);
+                return 0;
+            }
+        }
+        addressing::read_ea(ea, size, &self.d, &self.a, memory)
+    }
+
+    pub fn cpu_write_ea<M: MemoryInterface>(&mut self, ea: EffectiveAddress, size: Size, value: u32, memory: &mut M) {
+        if let EffectiveAddress::Memory(addr) = ea {
+            if size != Size::Byte && (addr & 1 != 0) {
+                self.process_exception(3, memory);
+                return;
+            }
+        }
+        addressing::write_ea(ea, size, value, &mut self.d, &mut self.a, memory)
+    }
+
+    pub fn cpu_read_memory<M: MemoryInterface>(&mut self, addr: u32, size: Size, memory: &mut M) -> u32 {
+        if size != Size::Byte && (addr & 1 != 0) {
+            self.process_exception(3, memory);
+            return 0;
+        }
+        memory.read_size(addr, size)
+    }
+
+    pub fn cpu_write_memory<M: MemoryInterface>(&mut self, addr: u32, size: Size, value: u32, memory: &mut M) {
+        if size != Size::Byte && (addr & 1 != 0) {
+            self.process_exception(3, memory);
+            return;
+        }
+        memory.write_size(addr, value, size)
+    }
+
+    fn check_interrupts<M: MemoryInterface>(&mut self, memory: &mut M) -> u32 {
+        if self.pending_interrupt > (((self.sr & flags::INTERRUPT_MASK) >> 8) as u8) {
+            let level = self.pending_interrupt;
+            let vector = 24 + level as u32;
+            let cycles = self.process_exception(vector, memory);
+            self.sr = (self.sr & !flags::INTERRUPT_MASK) | ((level as u16) << 8);
+            self.acknowledge_interrupt(level);
+            return cycles;
+        }
+        0
+    }
+
+    pub fn invalidate_cache(&mut self) {
+        for entry in self.decode_cache.iter_mut() {
+            entry.pc = u32::MAX;
+        }
+    }
+
+    pub fn request_interrupt(&mut self, level: u8) {
+        if level > 0 && level <= 7 {
+            self.interrupt_pending_mask |= 1 << level;
+            self.update_pending_interrupt();
+        }
     }
 
     pub fn get_state(&self) -> CpuState {
@@ -128,98 +188,6 @@ impl Cpu {
         self.interrupt_pending_mask &= !(1 << level);
         // Update to next highest priority
         self.update_pending_interrupt();
-    }
-
-    pub fn read_word<M: MemoryInterface>(&mut self, addr: u32, memory: &mut M) -> u16 {
-        memory.read_word(addr)
-    }
-
-    pub fn read_long<M: MemoryInterface>(&mut self, addr: u32, memory: &mut M) -> u32 {
-        memory.read_long(addr)
-    }
-
-    pub fn write_word<M: MemoryInterface>(&mut self, addr: u32, val: u16, memory: &mut M) {
-        memory.write_word(addr, val)
-    }
-
-    pub fn write_long<M: MemoryInterface>(&mut self, addr: u32, val: u32, memory: &mut M) {
-        memory.write_long(addr, val)
-    }
-
-    pub fn write_byte<M: MemoryInterface>(&mut self, addr: u32, val: u8, memory: &mut M) {
-        memory.write_byte(addr, val)
-    }
-
-    pub fn cpu_read_ea<M: MemoryInterface>(&mut self, ea: EffectiveAddress, size: Size, memory: &mut M) -> u32 {
-        cpu_addressing::read_ea(ea, size, &self.d, &self.a, memory)
-    }
-
-    pub fn cpu_write_ea<M: MemoryInterface>(&mut self, ea: EffectiveAddress, size: Size, val: u32, memory: &mut M) {
-        cpu_addressing::write_ea(ea, size, val, &mut self.d, &mut self.a, memory)
-    }
-
-    pub fn cpu_read_memory<M: MemoryInterface>(&mut self, addr: u32, size: Size, memory: &mut M) -> u32 {
-        match size {
-            Size::Byte => memory.read_byte(addr) as u32,
-            Size::Word => memory.read_word(addr) as u32,
-            Size::Long => memory.read_long(addr),
-        }
-    }
-
-    pub fn cpu_write_memory<M: MemoryInterface>(&mut self, addr: u32, size: Size, val: u32, memory: &mut M) {
-        match size {
-            Size::Byte => memory.write_byte(addr, val as u8),
-            Size::Word => memory.write_word(addr, val as u16),
-            Size::Long => memory.write_long(addr, val),
-        }
-    }
-
-    pub fn test_condition(&self, cond: Condition) -> bool {
-        self.check_condition(cond)
-    }
-
-    pub fn fetch_bit_num<M: MemoryInterface>(&mut self, bit: BitSource, memory: &mut M) -> u8 {
-        match bit {
-            BitSource::Immediate => {
-                let val = self.read_word(self.pc, memory);
-                self.pc = self.pc.wrapping_add(2);
-                (val & 0xFF) as u8
-            }
-            BitSource::Register(reg) => self.d[reg as usize] as u8,
-        }
-    }
-
-    pub fn resolve_bit_index(&self, bit_num: u8, is_memory: bool) -> u8 {
-        if is_memory {
-            bit_num % 8
-        } else {
-            bit_num % 32
-        }
-    }
-
-    pub fn check_interrupts<M: MemoryInterface>(&mut self, memory: &mut M) -> u32 {
-        let level = self.pending_interrupt;
-        let mask = (self.sr & flags::INTERRUPT_MASK) >> 8;
-        if level > mask as u8 && level > 0 {
-             // Process interrupt
-             // Genesis autovectors: Vector = 24 + level.
-             self.process_exception(24 + level as u32, memory);
-
-             // Update Mask
-             self.sr = (self.sr & !flags::INTERRUPT_MASK) | ((level as u16) << 8);
-
-             self.acknowledge_interrupt(level);
-
-             return 44; // Interrupt cycles
-        }
-        0
-    }
-
-    pub fn request_interrupt(&mut self, level: u8) {
-        if level > 0 && level <= 7 {
-            self.interrupt_pending_mask |= 1 << level;
-            self.update_pending_interrupt();
-        }
     }
 
     pub fn get_flag(&self, flag: u16) -> bool {
@@ -581,6 +549,8 @@ impl Cpu {
                 BitsInstruction::AndI { size, dst } => {
                     ops::bits::exec_andi(self, size, dst, memory)
                 }
+                BitsInstruction::AndToCcr => ops::system::exec_andi_to_ccr(self, memory),
+                BitsInstruction::AndToSr => ops::system::exec_andi_to_sr(self, memory),
                 BitsInstruction::Or {
                     size,
                     src,
@@ -588,12 +558,16 @@ impl Cpu {
                     direction,
                 } => ops::bits::exec_or(self, size, src, dst, direction, memory),
                 BitsInstruction::OrI { size, dst } => ops::bits::exec_ori(self, size, dst, memory),
+                BitsInstruction::OrToCcr => ops::system::exec_ori_to_ccr(self, memory),
+                BitsInstruction::OrToSr => ops::system::exec_ori_to_sr(self, memory),
                 BitsInstruction::Eor { size, src_reg, dst } => {
                     ops::bits::exec_eor(self, size, src_reg, dst, memory)
                 }
                 BitsInstruction::EorI { size, dst } => {
                     ops::bits::exec_eori(self, size, dst, memory)
                 }
+                BitsInstruction::EorToCcr => ops::system::exec_eori_to_ccr(self, memory),
+                BitsInstruction::EorToSr => ops::system::exec_eori_to_sr(self, memory),
                 BitsInstruction::Not { size, dst } => ops::bits::exec_not(self, size, dst, memory),
                 BitsInstruction::Lsl { size, dst, count } => {
                     ops::bits::exec_shift(self, size, dst, count, true, false, memory)
@@ -733,7 +707,6 @@ mod tests_addressing;
 mod tests_bug_fixes;
 #[cfg(test)]
 mod tests_cache;
-mod tests_decoder_shift;
 #[cfg(test)]
 mod tests_decoder_shift;
 #[cfg(test)]

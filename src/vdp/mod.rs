@@ -11,14 +11,205 @@ pub use dma::DmaOps;
 pub mod render;
 pub use render::RenderOps;
 
+pub mod big_array_vram {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde::de::{self, SeqAccess, Visitor};
+    use std::fmt;
+
+    pub fn serialize<S>(data: &[u8; 0x10000], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.collect_seq(data)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; 0x10000], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ArrayVisitor;
+
+        impl<'de> Visitor<'de> for ArrayVisitor {
+            type Value = [u8; 0x10000];
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("an array of length 65536")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let mut arr = [0u8; 0x10000];
+                for i in 0..0x10000 {
+                    arr[i] = seq.next_element()?
+                        .ok_or_else(|| de::Error::invalid_length(i, &self))?;
+                }
+                Ok(arr)
+            }
+        }
+
+        deserializer.deserialize_tuple(0x10000, ArrayVisitor)
+    }
+}
+
+pub mod big_array_cram {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde::de::{self, SeqAccess, Visitor};
+    use std::fmt;
+
+    pub fn serialize<S>(data: &[u8; 128], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.collect_seq(data)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; 128], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ArrayVisitor;
+
+        impl<'de> Visitor<'de> for ArrayVisitor {
+            type Value = [u8; 128];
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("an array of length 128")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let mut arr = [0u8; 128];
+                for i in 0..128 {
+                    arr[i] = seq.next_element()?
+                        .ok_or_else(|| de::Error::invalid_length(i, &self))?;
+                }
+                Ok(arr)
+            }
+        }
+
+        deserializer.deserialize_tuple(128, ArrayVisitor)
+    }
+}
+
+pub mod big_array_vsram {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde::de::{self, SeqAccess, Visitor};
+    use std::fmt;
+
+    pub fn serialize<S>(data: &[u8; 80], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.collect_seq(data)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; 80], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ArrayVisitor;
+
+        impl<'de> Visitor<'de> for ArrayVisitor {
+            type Value = [u8; 80];
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("an array of length 80")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let mut arr = [0u8; 80];
+                for i in 0..80 {
+                    arr[i] = seq.next_element()?
+                        .ok_or_else(|| de::Error::invalid_length(i, &self))?;
+                }
+                Ok(arr)
+            }
+        }
+
+        deserializer.deserialize_tuple(80, ArrayVisitor)
+    }
+}
+
+mod serde_arrays {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde::ser::SerializeTuple;
+
+    pub fn serialize<S, const N: usize>(data: &[u8; N], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut s = serializer.serialize_tuple(N)?;
+        for item in data {
+            s.serialize_element(item)?;
+        }
+        s.end()
+    }
+
+    pub fn deserialize<'de, D, const N: usize>(deserializer: D) -> Result<[u8; N], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ArrayVisitor<const N: usize>;
+
+        impl<'de, const N: usize> serde::de::Visitor<'de> for ArrayVisitor<N> {
+            type Value = [u8; N];
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_fmt(format_args!("an array of size {}", N))
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<[u8; N], A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
+                let mut arr = [0u8; N];
+                for i in 0..N {
+                    arr[i] = seq.next_element()?
+                        .ok_or_else(|| serde::de::Error::invalid_length(i, &self))?;
+                }
+                Ok(arr)
+            }
+        }
+
+        deserializer.deserialize_tuple(N, ArrayVisitor)
+    }
+}
+
+fn default_vram() -> [u8; 0x10000] {
+    [0; 0x10000]
+}
+
+fn default_cram() -> [u8; 128] {
+    [0; 128]
+}
+
+fn default_vsram() -> [u8; 80] {
+    [0; 80]
+}
+
+fn default_cram_cache() -> [u16; 64] {
+    [0; 64]
+}
+
+fn default_framebuffer() -> Vec<u16> {
+    vec![0; 320 * 240]
+}
+
 /// Genesis Video Display Processor (VDP)
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Vdp {
-    #[serde(skip, default = "default_vram")]
+    #[serde(with = "big_array_vram", default = "default_vram")]
     pub vram: [u8; 0x10000],
-    #[serde(skip, default = "default_cram")]
+    #[serde(with = "big_array_cram", default = "default_cram")]
     pub cram: [u8; 128],
-    #[serde(skip, default = "default_vsram")]
+    #[serde(with = "big_array_vsram", default = "default_vsram")]
     pub vsram: [u8; 80],
     pub registers: [u8; NUM_REGISTERS],
     pub status: u16,
@@ -38,7 +229,7 @@ pub struct Vdp {
     pub v30_offset: u16,
     pub is_pal: bool,
 
-    #[serde(skip)]
+    #[serde(skip, default = "default_framebuffer")]
     pub framebuffer: Vec<u16>,
 }
 
@@ -50,7 +241,7 @@ impl Default for Vdp {
 
 impl Vdp {
     pub fn new() -> Self {
-        Self {
+        let mut vdp = Self {
             vram: [0; 0x10000],
             cram: [0; 128],
             vsram: [0; 80],
@@ -68,7 +259,9 @@ impl Vdp {
             v30_offset: 0,
             is_pal: false,
             framebuffer: vec![0; 320 * 240],
-        }
+        };
+        vdp.reset();
+        vdp
     }
 
     /// Reconstruct cram_cache from cram
@@ -77,6 +270,7 @@ impl Vdp {
             let addr = i * 2;
             if addr + 1 < self.cram.len() {
                 let val = ((self.cram[addr + 1] as u16) << 8) | (self.cram[addr] as u16);
+                // Use helper to avoid duplication
                 self.cram_cache[i] = Self::genesis_color_to_rgb565(val);
             }
         }
@@ -175,31 +369,31 @@ impl Vdp {
     }
 
     pub fn write_control(&mut self, value: u16) {
-        if !self.control_pending {
-            // First word of command
-            self.control_code = (self.control_code & 0xFC) | ((value >> 14) & 0x03) as u8;
-            self.control_address = (self.control_address & 0xC000) | (value & 0x3FFF);
-            self.control_pending = true;
-        } else {
+        if self.control_pending {
             // Second word of command
             self.control_code = (self.control_code & 0x03) | ((value >> 2) & 0x3C) as u8;
             self.control_address = (self.control_address & 0x3FFF) | ((value & 0x0003) << 14);
             self.control_pending = false;
 
-            // Check if this was a register write
+            // Check if DMA should be triggered (CD5 bit set in code)
+            if (self.control_code & 0x20) != 0 && (self.registers[REG_MODE2] & MODE2_DMA_ENABLE) != 0 {
+                self.dma_pending = true;
+            }
+        } else {
+            // Check if this is a register write (Bits 15,14 = 10)
             if (value & 0xC000) == 0x8000 {
                 let reg = ((value >> 8) & 0x1F) as usize;
                 let val = (value & 0xFF) as u8;
                 if reg < NUM_REGISTERS {
                     self.registers[reg] = val;
                 }
+                return;
             }
 
-            // Check if DMA should be triggered (CD1 bit set in code)
-            if (self.control_code & 0x20) != 0 && (self.registers[REG_MODE2] & MODE2_DMA_ENABLE) != 0
-            {
-                self.dma_pending = true;
-            }
+            // First word of command
+            self.control_code = (self.control_code & 0xFC) | ((value >> 14) & 0x03) as u8;
+            self.control_address = (self.control_address & 0xC000) | (value & 0x3FFF);
+            self.control_pending = true;
         }
     }
 
@@ -207,7 +401,10 @@ impl Vdp {
     pub fn read_status(&mut self) -> u16 {
         // Reading the status register clears the write pending flag (resets the command state machine).
         self.control_pending = false;
-        let res = self.status;
+        let mut res = self.status;
+        if self.dma_pending {
+            res |= 0x0002; // DMA Busy
+        }
         // Reading status clears the VInt pending bit (Bit 7)
         self.status &= !STATUS_VINT_PENDING;
         res
@@ -287,67 +484,6 @@ impl Vdp {
         ((self.registers[REG_HSCROLL] as usize) & 0x3F) << 10
     }
 
-    pub fn plane_size(&self) -> (usize, usize) {
-        let size_reg = self.registers[REG_PLANE_SIZE];
-        let w = match size_reg & 0x03 {
-            0 => 32,
-            1 => 64,
-            3 => 128,
-            _ => 64,
-        };
-        let h = match (size_reg >> 4) & 0x03 {
-            0 => 32,
-            1 => 64,
-            3 => 128,
-            _ => 64,
-        };
-        (w, h)
-    }
-
-    pub fn window_address(&self) -> usize {
-        let reg = self.registers[REG_WINDOW] as usize;
-        (reg & 0x3E) << 10
-    }
-
-    pub fn is_window_area(&self, x: u16, y: u16) -> bool {
-        let h_pos_reg = self.registers[REG_WINDOW_H_POS];
-        let h_right = (h_pos_reg & 0x80) != 0;
-        let h_base = (h_pos_reg & 0x1F) as u16 * 16;
-
-        let h_active = if h_right {
-            x >= h_base
-        } else {
-            x < h_base
-        };
-
-        let v_pos_reg = self.registers[REG_WINDOW_V_POS];
-        let v_bottom = (v_pos_reg & 0x80) != 0;
-        let v_base = (v_pos_reg & 0x1F) as u16 * 8;
-
-        let v_active = if v_bottom {
-            y >= v_base
-        } else {
-            y < v_base
-        };
-
-        h_active || v_active
-    }
-
-    pub fn mode1(&self) -> u8 {
-        self.registers[REG_MODE1]
-    }
-
-    pub fn mode2(&self) -> u8 {
-        self.registers[REG_MODE2]
-    }
-
-    pub fn dma_enabled(&self) -> bool {
-        (self.registers[REG_MODE2] & MODE2_DMA_ENABLE) != 0
-    }
-
-    pub fn update_v30_offset(&mut self) {
-    }
-
     pub fn write_vram_word(&mut self, addr: u16, value: u16) {
         let addr = addr as usize;
         if addr < 0x10000 {
@@ -393,6 +529,71 @@ impl Vdp {
 
     pub fn set_h_counter(&mut self, h: u16) {
         self.h_counter = h;
+    }
+
+    pub(crate) fn plane_size(&self) -> (usize, usize) {
+        let val = self.registers[REG_PLANE_SIZE];
+        let w = match (val >> 4) & 0x03 {
+            0x00 => 32,
+            0x01 => 64,
+            0x03 => 128,
+            _ => 32,
+        };
+        let h = match val & 0x03 {
+            0x00 => 32,
+            0x01 => 64,
+            0x03 => 128,
+            _ => 32,
+        };
+        (w, h)
+    }
+
+    pub(crate) fn window_address(&self) -> usize {
+        ((self.registers[REG_WINDOW] as usize) & 0x3E) << 11
+    }
+
+    pub(crate) fn is_window_area(&self, x: u16, y: u16) -> bool {
+        let h_pos = self.registers[REG_WINDOW_H_POS];
+        let v_pos = self.registers[REG_WINDOW_V_POS];
+
+        let h_point = (h_pos as u16 & 0x1F) * 16;
+        let v_point = (v_pos as u16 & 0x1F) * 8;
+
+        let h_dir = (h_pos & 0x80) != 0;
+        let v_dir = (v_pos & 0x80) != 0;
+
+        let in_h_window = if h_dir {
+            x >= h_point
+        } else {
+            x < h_point
+        };
+
+        let in_v_window = if v_dir {
+            y >= v_point
+        } else {
+            y < v_point
+        };
+
+        in_h_window || in_v_window
+    }
+
+    pub fn set_region(&mut self, is_pal: bool) {
+        self.is_pal = is_pal;
+    }
+
+    pub fn mode1(&self) -> u8 {
+        self.registers[REG_MODE1]
+    }
+
+    pub fn mode2(&self) -> u8 {
+        self.registers[REG_MODE2]
+    }
+
+    pub fn dma_enabled(&self) -> bool {
+        (self.registers[REG_MODE2] & MODE2_DMA_ENABLE) != 0
+    }
+
+    pub fn update_v30_offset(&mut self) {
     }
 }
 
@@ -450,7 +651,5 @@ mod bench_dma;
 #[cfg(test)]
 mod test_repro_white_screen;
 
-fn default_vram() -> [u8; 0x10000] { [0; 0x10000] }
-fn default_cram() -> [u8; 128] { [0; 128] }
-fn default_vsram() -> [u8; 80] { [0; 80] }
-fn default_cram_cache() -> [u16; 64] { [0; 64] }
+#[cfg(test)]
+mod tests_draw_row_refactor;

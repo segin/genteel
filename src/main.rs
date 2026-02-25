@@ -28,8 +28,6 @@ use frontend::InputMapping;
 use input::{InputManager, InputScript};
 use memory::bus::Bus;
 use memory::{SharedBus, Z80Bus};
-#[cfg(feature = "gui")]
-use pixels::wgpu;
 use std::cell::RefCell;
 use std::rc::Rc;
 use z80::Z80;
