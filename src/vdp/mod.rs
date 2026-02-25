@@ -137,8 +137,6 @@ pub mod big_array_vsram {
     }
 }
 
-<<<<<<< HEAD
-=======
 mod serde_arrays {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use serde::ser::SerializeTuple;
@@ -163,7 +161,7 @@ mod serde_arrays {
         impl<'de, const N: usize> serde::de::Visitor<'de> for ArrayVisitor<N> {
             type Value = [u8; N];
 
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> fmt::Result {
                 formatter.write_fmt(format_args!("an array of size {}", N))
             }
 
@@ -184,7 +182,6 @@ mod serde_arrays {
     }
 }
 
->>>>>>> origin/main
 fn default_vram() -> [u8; 0x10000] {
     [0; 0x10000]
 }
