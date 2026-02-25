@@ -88,6 +88,30 @@ impl ControllerState {
     pub fn clear(&mut self) {
         *self = Self::default();
     }
+
+    /// Convert state to button string format: UDLRABCSXYZM
+    pub fn to_button_string(&self) -> String {
+        let mut s = String::with_capacity(12);
+        s.push(if self.up { 'U' } else { '.' });
+        s.push(if self.down { 'D' } else { '.' });
+        s.push(if self.left { 'L' } else { '.' });
+        s.push(if self.right { 'R' } else { '.' });
+        s.push(if self.a { 'A' } else { '.' });
+        s.push(if self.b { 'B' } else { '.' });
+        s.push(if self.c { 'C' } else { '.' });
+        s.push(if self.start { 'S' } else { '.' });
+        s.push(if self.x { 'X' } else { '.' });
+        s.push(if self.y { 'Y' } else { '.' });
+        s.push(if self.z { 'Z' } else { '.' });
+        s.push(if self.mode { 'M' } else { '.' });
+        s
+    }
+}
+
+impl std::fmt::Display for ControllerState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.to_button_string())
+    }
 }
 
 /// Controller type
