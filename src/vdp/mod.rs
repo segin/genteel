@@ -165,7 +165,7 @@ mod serde_arrays {
                 formatter.write_fmt(format_args!("an array of size {}", N))
             }
 
-            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            fn visit_seq<A>(self, mut seq: A) -> Result<[u8; N], A::Error>
             where
                 A: serde::de::SeqAccess<'de>,
             {
