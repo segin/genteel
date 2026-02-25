@@ -11,6 +11,132 @@ pub use dma::DmaOps;
 pub mod render;
 pub use render::RenderOps;
 
+pub mod big_array_vram {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde::de::{self, SeqAccess, Visitor};
+    use std::fmt;
+
+    pub fn serialize<S>(data: &[u8; 0x10000], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.collect_seq(data)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; 0x10000], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ArrayVisitor;
+
+        impl<'de> Visitor<'de> for ArrayVisitor {
+            type Value = [u8; 0x10000];
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("an array of length 65536")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let mut arr = [0u8; 0x10000];
+                for i in 0..0x10000 {
+                    arr[i] = seq.next_element()?
+                        .ok_or_else(|| de::Error::invalid_length(i, &self))?;
+                }
+                Ok(arr)
+            }
+        }
+
+        deserializer.deserialize_tuple(0x10000, ArrayVisitor)
+    }
+}
+
+pub mod big_array_cram {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde::de::{self, SeqAccess, Visitor};
+    use std::fmt;
+
+    pub fn serialize<S>(data: &[u8; 128], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.collect_seq(data)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; 128], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ArrayVisitor;
+
+        impl<'de> Visitor<'de> for ArrayVisitor {
+            type Value = [u8; 128];
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("an array of length 128")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let mut arr = [0u8; 128];
+                for i in 0..128 {
+                    arr[i] = seq.next_element()?
+                        .ok_or_else(|| de::Error::invalid_length(i, &self))?;
+                }
+                Ok(arr)
+            }
+        }
+
+        deserializer.deserialize_tuple(128, ArrayVisitor)
+    }
+}
+
+pub mod big_array_vsram {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde::de::{self, SeqAccess, Visitor};
+    use std::fmt;
+
+    pub fn serialize<S>(data: &[u8; 80], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.collect_seq(data)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; 80], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ArrayVisitor;
+
+        impl<'de> Visitor<'de> for ArrayVisitor {
+            type Value = [u8; 80];
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("an array of length 80")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let mut arr = [0u8; 80];
+                for i in 0..80 {
+                    arr[i] = seq.next_element()?
+                        .ok_or_else(|| de::Error::invalid_length(i, &self))?;
+                }
+                Ok(arr)
+            }
+        }
+
+        deserializer.deserialize_tuple(80, ArrayVisitor)
+    }
+}
+
 fn default_vram() -> [u8; 0x10000] {
     [0; 0x10000]
 }
@@ -34,11 +160,11 @@ fn default_framebuffer() -> Vec<u16> {
 /// Genesis Video Display Processor (VDP)
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Vdp {
-    #[serde(skip, default = "default_vram")]
+    #[serde(with = "big_array_vram", default = "default_vram")]
     pub vram: [u8; 0x10000],
-    #[serde(skip, default = "default_cram")]
+    #[serde(with = "big_array_cram", default = "default_cram")]
     pub cram: [u8; 128],
-    #[serde(skip, default = "default_vsram")]
+    #[serde(with = "big_array_vsram", default = "default_vsram")]
     pub vsram: [u8; 80],
     pub registers: [u8; NUM_REGISTERS],
     pub status: u16,
@@ -97,6 +223,7 @@ impl Vdp {
             let addr = i * 2;
             if addr + 1 < self.cram.len() {
                 let val = ((self.cram[addr + 1] as u16) << 8) | (self.cram[addr] as u16);
+                // Use helper to avoid duplication
                 self.cram_cache[i] = Self::genesis_color_to_rgb565(val);
             }
         }
@@ -311,45 +438,47 @@ impl Vdp {
     }
 
     pub fn plane_size(&self) -> (usize, usize) {
-        let reg = self.registers[REG_PLANE_SIZE];
-        let w = match reg & 0x03 {
-            0 => 32,
-            1 => 64,
-            3 => 128,
+        let size_code = self.registers[REG_PLANE_SIZE];
+        let w = match size_code & 0x03 {
+            0x00 => 32,
+            0x01 => 64,
+            0x03 => 128,
             _ => 32,
         };
-        let h = match (reg >> 4) & 0x03 {
-            0 => 32,
-            1 => 64,
-            3 => 128,
+        let h = match (size_code >> 4) & 0x03 {
+            0x00 => 32,
+            0x01 => 64,
+            0x03 => 128,
             _ => 32,
         };
         (w, h)
     }
 
     pub fn window_address(&self) -> usize {
+        // Bits 1-5 specify bits 11-15 of VRAM address
         ((self.registers[REG_WINDOW] as usize) & 0x3E) << 10
     }
 
     pub fn is_window_area(&self, screen_x: u16, screen_y: u16) -> bool {
-        let h_pos_reg = self.registers[REG_WINDOW_H_POS];
-        let h_right = (h_pos_reg & 0x80) != 0;
-        let h_base = (h_pos_reg & 0x1F) as u16 * 16;
+        let w_h_pos = self.registers[REG_WINDOW_H_POS];
+        let w_v_pos = self.registers[REG_WINDOW_V_POS];
 
-        let v_pos_reg = self.registers[REG_WINDOW_V_POS];
-        let v_down = (v_pos_reg & 0x80) != 0;
-        let v_base = (v_pos_reg & 0x1F) as u16 * 8;
+        let right = (w_h_pos & 0x80) != 0;
+        let h_pos = (w_h_pos & 0x1F) as u16 * 16; // H-pos is in 2-cell units (16 pixels)
 
-        let in_h_window = if h_right {
-            screen_x >= h_base
+        let down = (w_v_pos & 0x80) != 0;
+        let v_pos = (w_v_pos & 0x1F) as u16 * 8; // V-pos is in 1-cell units (8 pixels)
+
+        let in_h_window = if right {
+            screen_x >= h_pos
         } else {
-            screen_x < h_base
+            screen_x < h_pos
         };
 
-        let in_v_window = if v_down {
-            screen_y >= v_base
+        let in_v_window = if down {
+            screen_y >= v_pos
         } else {
-            screen_y < v_base
+            screen_y < v_pos
         };
 
         in_h_window || in_v_window
@@ -456,3 +585,6 @@ mod bench_dma;
 
 #[cfg(test)]
 mod test_repro_white_screen;
+
+#[cfg(test)]
+mod tests_draw_row_refactor;

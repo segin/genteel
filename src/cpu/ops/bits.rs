@@ -1644,28 +1644,48 @@ mod tests {
         // BSET bit 8 (mod 8 = 0)
         memory.write_byte(0x2000, 0x00);
         cpu.d[0] = 8;
-        exec_bset(&mut cpu, BitSource::Register(0), AddressingMode::AddressIndirect(0), &mut memory);
+        exec_bset(
+            &mut cpu,
+            BitSource::Register(0),
+            AddressingMode::AddressIndirect(0),
+            &mut memory,
+        );
         assert_eq!(memory.read_byte(0x2000), 0x01);
         assert!(cpu.get_flag(flags::ZERO)); // bit 0 was clear
 
         // BCLR bit 9 (mod 8 = 1)
         memory.write_byte(0x2000, 0x02);
         cpu.d[0] = 9;
-        exec_bclr(&mut cpu, BitSource::Register(0), AddressingMode::AddressIndirect(0), &mut memory);
+        exec_bclr(
+            &mut cpu,
+            BitSource::Register(0),
+            AddressingMode::AddressIndirect(0),
+            &mut memory,
+        );
         assert_eq!(memory.read_byte(0x2000), 0x00);
         assert!(!cpu.get_flag(flags::ZERO)); // bit 1 was set
 
         // BCHG bit 10 (mod 8 = 2)
         memory.write_byte(0x2000, 0x00);
         cpu.d[0] = 10;
-        exec_bchg(&mut cpu, BitSource::Register(0), AddressingMode::AddressIndirect(0), &mut memory);
+        exec_bchg(
+            &mut cpu,
+            BitSource::Register(0),
+            AddressingMode::AddressIndirect(0),
+            &mut memory,
+        );
         assert_eq!(memory.read_byte(0x2000), 0x04);
         assert!(cpu.get_flag(flags::ZERO)); // bit 2 was clear
 
         // BTST bit 11 (mod 8 = 3)
         memory.write_byte(0x2000, 0x08);
         cpu.d[0] = 11;
-        exec_btst(&mut cpu, BitSource::Register(0), AddressingMode::AddressIndirect(0), &mut memory);
+        exec_btst(
+            &mut cpu,
+            BitSource::Register(0),
+            AddressingMode::AddressIndirect(0),
+            &mut memory,
+        );
         assert!(!cpu.get_flag(flags::ZERO)); // bit 3 is set
     }
 
@@ -1676,15 +1696,226 @@ mod tests {
         // BSET bit 32 (mod 32 = 0)
         cpu.d[0] = 0x00000000;
         cpu.d[1] = 32;
-        exec_bset(&mut cpu, BitSource::Register(1), AddressingMode::DataRegister(0), &mut memory);
+        exec_bset(
+            &mut cpu,
+            BitSource::Register(1),
+            AddressingMode::DataRegister(0),
+            &mut memory,
+        );
         assert_eq!(cpu.d[0], 0x00000001);
         assert!(cpu.get_flag(flags::ZERO));
 
         // BCLR bit 33 (mod 32 = 1)
         cpu.d[0] = 0x00000002;
         cpu.d[1] = 33;
-        exec_bclr(&mut cpu, BitSource::Register(1), AddressingMode::DataRegister(0), &mut memory);
+        exec_bclr(
+            &mut cpu,
+            BitSource::Register(1),
+            AddressingMode::DataRegister(0),
+            &mut memory,
+        );
         assert_eq!(cpu.d[0], 0x00000000);
         assert!(!cpu.get_flag(flags::ZERO));
+    }
+
+    #[test]
+    fn test_exec_bset_memory_modulo_comprehensive() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.a[0] = 0x3000;
+
+        // BSET on memory: bit number modulo 8
+        // Test bits 0, 8, 16, 24 -> should all affect bit 0
+        let offsets: [u32; 5] = [0, 8, 16, 24, 32];
+        for &bit in &offsets {
+            memory.write_byte(0x3000, 0x00);
+            cpu.d[0] = bit;
+
+            // BSET D0, (A0)
+            exec_bset(
+                &mut cpu,
+                BitSource::Register(0),
+                AddressingMode::AddressIndirect(0),
+                &mut memory,
+            );
+
+            assert_eq!(
+                memory.read_byte(0x3000),
+                0x01,
+                "Bit {} (mod 8 = 0) did not set bit 0",
+                bit
+            );
+            assert!(cpu.get_flag(flags::ZERO), "Z flag should be set (bit was 0)");
+        }
+
+        // Test bits 1, 9, 17 -> should all affect bit 1
+        let offsets: [u32; 3] = [1, 9, 17];
+        for &bit in &offsets {
+            memory.write_byte(0x3000, 0x00);
+            cpu.d[0] = bit;
+
+            exec_bset(
+                &mut cpu,
+                BitSource::Register(0),
+                AddressingMode::AddressIndirect(0),
+                &mut memory,
+            );
+
+            assert_eq!(
+                memory.read_byte(0x3000),
+                0x02,
+                "Bit {} (mod 8 = 1) did not set bit 1",
+                bit
+            );
+            assert!(cpu.get_flag(flags::ZERO), "Z flag should be set (bit was 0)");
+        }
+
+        // Test edge case: bit 7, 15 -> bit 7
+        let offsets: [u32; 3] = [7, 15, 255];
+        for &bit in &offsets {
+            memory.write_byte(0x3000, 0x00);
+            cpu.d[0] = bit;
+
+            exec_bset(
+                &mut cpu,
+                BitSource::Register(0),
+                AddressingMode::AddressIndirect(0),
+                &mut memory,
+            );
+
+            assert_eq!(
+                memory.read_byte(0x3000),
+                0x80,
+                "Bit {} (mod 8 = 7) did not set bit 7",
+                bit
+            );
+            assert!(cpu.get_flag(flags::ZERO), "Z flag should be set (bit was 0)");
+        }
+    }
+
+    #[test]
+    fn test_exec_bclr_memory_modulo_comprehensive() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.a[0] = 0x3000;
+
+        // BCLR on memory: bit number modulo 8
+        // Test bits 0, 8, 16 -> should clear bit 0
+        let offsets: [u32; 3] = [0, 8, 16];
+        for &bit in &offsets {
+            memory.write_byte(0x3000, 0xFF); // Start with all set
+            cpu.d[0] = bit;
+
+            exec_bclr(
+                &mut cpu,
+                BitSource::Register(0),
+                AddressingMode::AddressIndirect(0),
+                &mut memory,
+            );
+
+            assert_eq!(
+                memory.read_byte(0x3000),
+                0xFE,
+                "Bit {} (mod 8 = 0) did not clear bit 0",
+                bit
+            );
+            assert!(
+                !cpu.get_flag(flags::ZERO),
+                "Z flag should be clear (bit was 1)"
+            );
+        }
+    }
+
+    #[test]
+    fn test_exec_bchg_memory_modulo_comprehensive() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.a[0] = 0x3000;
+
+        // BCHG on memory: bit number modulo 8
+        // Test bits 2, 10, 18 -> should toggle bit 2
+        let offsets: [u32; 3] = [2, 10, 18];
+        for &bit in &offsets {
+            // Case 1: Bit 2 is 0 -> 1
+            memory.write_byte(0x3000, 0x00);
+            cpu.d[0] = bit;
+
+            exec_bchg(
+                &mut cpu,
+                BitSource::Register(0),
+                AddressingMode::AddressIndirect(0),
+                &mut memory,
+            );
+
+            assert_eq!(
+                memory.read_byte(0x3000),
+                0x04,
+                "Bit {} (mod 8 = 2) did not toggle bit 2 (0->1)",
+                bit
+            );
+            assert!(cpu.get_flag(flags::ZERO), "Z flag should be set (bit was 0)");
+
+            // Case 2: Bit 2 is 1 -> 0
+            memory.write_byte(0x3000, 0xFF);
+            cpu.d[0] = bit;
+
+            exec_bchg(
+                &mut cpu,
+                BitSource::Register(0),
+                AddressingMode::AddressIndirect(0),
+                &mut memory,
+            );
+
+            assert_eq!(
+                memory.read_byte(0x3000),
+                0xFB,
+                "Bit {} (mod 8 = 2) did not toggle bit 2 (1->0)",
+                bit
+            );
+            assert!(
+                !cpu.get_flag(flags::ZERO),
+                "Z flag should be clear (bit was 1)"
+            );
+        }
+    }
+
+    #[test]
+    fn test_exec_btst_memory_modulo_comprehensive() {
+        let (mut cpu, mut memory) = create_test_setup();
+        cpu.a[0] = 0x3000;
+
+        // Bit 3 set, others clear
+        memory.write_byte(0x3000, 0x08);
+
+        // Test bits 3, 11, 19 -> should test bit 3 (which is 1)
+        let offsets: [u32; 3] = [3, 11, 19];
+        for &bit in &offsets {
+            cpu.d[0] = bit;
+            exec_btst(
+                &mut cpu,
+                BitSource::Register(0),
+                AddressingMode::AddressIndirect(0),
+                &mut memory,
+            );
+            assert!(
+                !cpu.get_flag(flags::ZERO),
+                "Bit {} (mod 8 = 3) should report not zero (bit set)",
+                bit
+            );
+        }
+
+        // Test bits 4, 12 -> should test bit 4 (which is 0)
+        let offsets: [u32; 2] = [4, 12];
+        for &bit in &offsets {
+            cpu.d[0] = bit;
+            exec_btst(
+                &mut cpu,
+                BitSource::Register(0),
+                AddressingMode::AddressIndirect(0),
+                &mut memory,
+            );
+            assert!(
+                cpu.get_flag(flags::ZERO),
+                "Bit {} (mod 8 = 4) should report zero (bit clear)",
+                bit
+            );
+        }
     }
 }
