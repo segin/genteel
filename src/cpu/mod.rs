@@ -6,6 +6,19 @@ pub mod decoder;
 pub mod instructions;
 pub mod ops;
 
+<<<<<<< HEAD
+use instructions::{
+    ArithmeticInstruction, BitsInstruction, BitSource, DataInstruction, DecodeCacheEntry,
+    Instruction, SystemInstruction,
+};
+
+use decoder::decode;
+pub use decoder::{Condition, Size};
+
+const CACHE_ROM_LIMIT: u32 = 0x400000;
+const CACHE_MASK: u32 = 0xFFFF;
+const CACHE_SIZE: usize = (CACHE_MASK + 1) as usize;
+=======
 pub use addressing::EffectiveAddress;
 pub use decoder::{Condition, Size, decode};
 use instructions::{
@@ -30,6 +43,7 @@ pub struct Cpu {
     pub cycles: u64,
     pub decode_cache: Box<[DecodeCacheEntry]>,
 }
+>>>>>>> main
 
 pub mod flags {
     pub const CARRY: u16 = 0x0001;
@@ -53,7 +67,44 @@ pub struct CpuState {
     pub pending_interrupt: u8,
 }
 
+#[derive(Clone)]
+pub struct Cpu {
+    pub d: [u32; 8],
+    pub a: [u32; 8],
+    pub pc: u32,
+    pub sr: u16,
+    pub halted: bool,
+    pub pending_interrupt: u8,
+    pub interrupt_pending_mask: u16,
+    pub usp: u32,
+    pub ssp: u32,
+    pub cycles: u64,
+    pub pending_exception: bool,
+    pub decode_cache: Box<[DecodeCacheEntry]>,
+}
+
 impl Cpu {
+    pub fn new<M: MemoryInterface>(memory: &mut M) -> Self {
+        let mut cpu = Self {
+            d: [0; 8],
+            a: [0; 8],
+            pc: 0,
+            sr: 0x2700,
+            halted: false,
+            pending_interrupt: 0,
+            interrupt_pending_mask: 0,
+            usp: 0,
+            ssp: 0,
+            cycles: 0,
+            pending_exception: false,
+            decode_cache: vec![DecodeCacheEntry::default(); CACHE_SIZE].into_boxed_slice(),
+        };
+        cpu.ssp = memory.read_long(0);
+        cpu.a[7] = cpu.ssp;
+        cpu.pc = memory.read_long(4);
+        cpu
+=======
+<<<<<<< HEAD
     pub fn new<M: MemoryInterface>(memory: &mut M) -> Self {
         let ssp = memory.read_long(0);
         let pc = memory.read_long(4);
@@ -137,16 +188,178 @@ impl Cpu {
             return 44;
         }
         0
+>>>>>>> main
     }
 
     pub fn invalidate_cache(&mut self) {
         self.decode_cache.fill(DecodeCacheEntry::default());
     }
 
+<<<<<<< HEAD
+    fn check_interrupts<M: MemoryInterface>(&mut self, memory: &mut M) -> u32 {
+        if self.pending_interrupt > 0 {
+            let level = self.pending_interrupt;
+            let mask = (self.sr & flags::INTERRUPT_MASK) >> 8;
+            if (level as u16) > mask {
+                let vector = 24 + level as u32;
+                self.process_exception(vector, memory);
+                self.sr = (self.sr & !flags::INTERRUPT_MASK) | ((level as u16) << 8);
+                self.halted = false;
+                return 44;
+            }
+        }
+        0
+    }
+
+    pub fn read_word<M: MemoryInterface>(&mut self, addr: u32, memory: &mut M) -> u16 {
+        if addr & 1 != 0 {
+            self.process_exception(3, memory);
+            return 0;
+        }
+        memory.read_word(addr)
+    }
+
+    pub fn write_word<M: MemoryInterface>(&mut self, addr: u32, val: u16, memory: &mut M) {
+        if addr & 1 != 0 {
+            self.process_exception(3, memory);
+            return;
+        }
+        memory.write_word(addr, val);
+    }
+
+    pub fn write_long<M: MemoryInterface>(&mut self, addr: u32, val: u32, memory: &mut M) {
+        if addr & 1 != 0 {
+            self.process_exception(3, memory);
+            return;
+        }
+        memory.write_long(addr, val);
+    }
+
+    pub fn request_interrupt(&mut self, level: u8) {
+        self.interrupt_pending_mask |= 1 << level;
+        self.update_pending_interrupt();
+    }
+
+    pub fn cpu_read_memory<M: MemoryInterface>(
+        &mut self,
+        addr: u32,
+        size: Size,
+        memory: &mut M,
+    ) -> u32 {
+        memory.read_size(addr, size)
+    }
+
+    pub fn cpu_write_memory<M: MemoryInterface>(
+        &mut self,
+        addr: u32,
+        size: Size,
+        val: u32,
+        memory: &mut M,
+    ) {
+        memory.write_size(addr, val, size);
+    }
+
+    pub fn cpu_read_ea<M: MemoryInterface>(
+        &mut self,
+        ea: addressing::EffectiveAddress,
+        size: Size,
+        memory: &mut M,
+    ) -> u32 {
+        match ea {
+            addressing::EffectiveAddress::DataRegister(reg) => {
+                let val = self.d[reg as usize];
+                match size {
+                    Size::Byte => val & 0xFF,
+                    Size::Word => val & 0xFFFF,
+                    Size::Long => val,
+                }
+            }
+            addressing::EffectiveAddress::AddressRegister(reg) => {
+                let val = self.a[reg as usize];
+                match size {
+                    Size::Word => (val as i16) as i32 as u32,
+                    Size::Long => val,
+                    _ => val,
+                }
+            }
+            addressing::EffectiveAddress::Memory(addr) => {
+                if size != Size::Byte && (addr & 1 != 0) {
+                    self.process_exception(3, memory);
+                    return 0;
+                }
+                memory.read_size(addr, size)
+            }
+        }
+    }
+
+    pub fn write_byte<M: MemoryInterface>(&self, addr: u32, val: u8, memory: &mut M) {
+        memory.write_byte(addr, val);
+    }
+
+    pub fn read_long<M: MemoryInterface>(&mut self, addr: u32, memory: &mut M) -> u32 {
+        if addr & 1 != 0 {
+            self.process_exception(3, memory);
+            return 0;
+        }
+        memory.read_long(addr)
+    }
+
+    pub fn fetch_bit_num<M: MemoryInterface>(&mut self, bit: BitSource, memory: &mut M) -> u32 {
+        match bit {
+            BitSource::Register(reg) => self.d[reg as usize],
+            BitSource::Immediate => {
+                let val = memory.read_word(self.pc);
+                self.pc = self.pc.wrapping_add(2);
+                val as u32
+            }
+        }
+    }
+
+    pub fn resolve_bit_index(&self, bit_num: u32, is_memory: bool) -> u32 {
+        if is_memory {
+            bit_num % 8
+        } else {
+            bit_num % 32
+        }
+    }
+
+    pub fn cpu_write_ea<M: MemoryInterface>(
+        &mut self,
+        ea: addressing::EffectiveAddress,
+        size: Size,
+        val: u32,
+        memory: &mut M,
+    ) {
+        match ea {
+            addressing::EffectiveAddress::DataRegister(reg) => {
+                let old = self.d[reg as usize];
+                self.d[reg as usize] = size.apply(old, val);
+                // Flag updates are typically handled by instruction logic, not EA write
+                // But some instructions might rely on it if I implemented it that way.
+                // Safest is to NOT update flags here unless I know for sure.
+                // Standard m68k design separates EA write from flag updates.
+            }
+            addressing::EffectiveAddress::AddressRegister(reg) => {
+                let val = if size == Size::Word {
+                    (val as i16) as i32 as u32
+                } else {
+                    val
+                };
+                self.a[reg as usize] = val;
+            }
+            addressing::EffectiveAddress::Memory(addr) => {
+                if size != Size::Byte && (addr & 1 != 0) {
+                    self.process_exception(3, memory);
+                    return;
+                }
+                memory.write_size(addr, val, size);
+            }
+=======
     pub fn request_interrupt(&mut self, level: u8) {
         if level > 0 && level <= 7 {
             self.interrupt_pending_mask |= 1 << level;
             self.update_pending_interrupt();
+>>>>>>> main
         }
     }
 
@@ -732,6 +945,10 @@ impl Cpu {
                 }
             },
         }
+    }
+
+    pub fn test_condition(&self, cond: Condition) -> bool {
+        self.check_condition(cond)
     }
 
     pub fn check_condition(&self, cond: Condition) -> bool {
