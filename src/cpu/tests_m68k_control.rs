@@ -312,49 +312,77 @@ fn check_scc(opcode: u16, setup_met: impl Fn(&mut Cpu), setup_not_met: impl Fn(&
 fn test_st_always_true() {
     let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0x50C0]); // ST D0
+
+    // Test with all flags cleared
+    cpu.sr = 0;
     cpu.d[0] = 0;
+    cpu.pc = 0x1000;
     cpu.step_instruction(&mut memory);
-    assert_eq!(cpu.d[0] & 0xFF, 0xFF);
+    assert_eq!(cpu.d[0] & 0xFF, 0xFF, "ST should be true with no flags");
+
+    // Test with all flags set
+    cpu.sr = 0xFFFF; // Set all flags (including undefined bits, which is fine)
+    cpu.d[0] = 0;
+    cpu.pc = 0x1000;
+    cpu.step_instruction(&mut memory);
+    assert_eq!(cpu.d[0] & 0xFF, 0xFF, "ST should be true with all flags");
 }
 
 #[test]
 fn test_sf_always_false() {
     let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0x51C0]); // SF D0
+
+    // Test with all flags cleared
+    cpu.sr = 0;
     cpu.d[0] = 0xFF;
+    cpu.pc = 0x1000;
     cpu.step_instruction(&mut memory);
-    assert_eq!(cpu.d[0] & 0xFF, 0x00);
+    assert_eq!(cpu.d[0] & 0xFF, 0x00, "SF should be false with no flags");
+
+    // Test with all flags set
+    cpu.sr = 0xFFFF;
+    cpu.d[0] = 0xFF;
+    cpu.pc = 0x1000;
+    cpu.step_instruction(&mut memory);
+    assert_eq!(cpu.d[0] & 0xFF, 0x00, "SF should be false with all flags");
 }
 
 #[test]
 fn test_seq_zero_set() {
-    let (mut cpu, mut memory) = create_cpu();
-    write_op(&mut memory, &[0x57C0]); // SEQ D0
-    cpu.d[0] = 0;
-    cpu.set_flag(flags::ZERO, true);
-    cpu.step_instruction(&mut memory);
-    assert_eq!(cpu.d[0] & 0xFF, 0xFF);
+    check_scc(
+        0x57C0,
+        |cpu: &mut Cpu| {
+            cpu.set_flag(flags::ZERO, true);
+        },
+        |cpu: &mut Cpu| {
+            cpu.set_flag(flags::ZERO, false);
+        },
+    );
 }
 
 #[test]
 fn test_sne_zero_clear() {
-    let (mut cpu, mut memory) = create_cpu();
-    write_op(&mut memory, &[0x56C0]); // SNE D0
-    cpu.d[0] = 0;
-    cpu.set_flag(flags::ZERO, false);
-    cpu.step_instruction(&mut memory);
-    assert_eq!(cpu.d[0] & 0xFF, 0xFF);
+    check_scc(
+        0x56C0,
+        |cpu: &mut Cpu| {
+            cpu.set_flag(flags::ZERO, false);
+        },
+        |cpu: &mut Cpu| {
+            cpu.set_flag(flags::ZERO, true);
+        },
+    );
 }
 
 #[test]
 fn test_shi_unsigned_higher() {
     check_scc(
         0x52C0,
-        |cpu| {
+        |cpu: &mut Cpu| {
             cpu.set_flag(flags::CARRY, false);
             cpu.set_flag(flags::ZERO, false);
         },
-        |cpu| {
+        |cpu: &mut Cpu| {
             cpu.set_flag(flags::CARRY, true);
         },
     );
@@ -364,10 +392,10 @@ fn test_shi_unsigned_higher() {
 fn test_sls_unsigned_lower_same() {
     check_scc(
         0x53C0,
-        |cpu| {
+        |cpu: &mut Cpu| {
             cpu.set_flag(flags::CARRY, true);
         },
-        |cpu| {
+        |cpu: &mut Cpu| {
             cpu.set_flag(flags::CARRY, false);
             cpu.set_flag(flags::ZERO, false);
         },
@@ -378,10 +406,10 @@ fn test_sls_unsigned_lower_same() {
 fn test_scc_carry_clear() {
     check_scc(
         0x54C0,
-        |cpu| {
+        |cpu: &mut Cpu| {
             cpu.set_flag(flags::CARRY, false);
         },
-        |cpu| {
+        |cpu: &mut Cpu| {
             cpu.set_flag(flags::CARRY, true);
         },
     );
@@ -391,10 +419,10 @@ fn test_scc_carry_clear() {
 fn test_scs_carry_set() {
     check_scc(
         0x55C0,
-        |cpu| {
+        |cpu: &mut Cpu| {
             cpu.set_flag(flags::CARRY, true);
         },
-        |cpu| {
+        |cpu: &mut Cpu| {
             cpu.set_flag(flags::CARRY, false);
         },
     );
@@ -404,10 +432,10 @@ fn test_scs_carry_set() {
 fn test_svc_overflow_clear() {
     check_scc(
         0x58C0,
-        |cpu| {
+        |cpu: &mut Cpu| {
             cpu.set_flag(flags::OVERFLOW, false);
         },
-        |cpu| {
+        |cpu: &mut Cpu| {
             cpu.set_flag(flags::OVERFLOW, true);
         },
     );
@@ -417,10 +445,10 @@ fn test_svc_overflow_clear() {
 fn test_svs_overflow_set() {
     check_scc(
         0x59C0,
-        |cpu| {
+        |cpu: &mut Cpu| {
             cpu.set_flag(flags::OVERFLOW, true);
         },
-        |cpu| {
+        |cpu: &mut Cpu| {
             cpu.set_flag(flags::OVERFLOW, false);
         },
     );
@@ -430,10 +458,10 @@ fn test_svs_overflow_set() {
 fn test_spl_plus() {
     check_scc(
         0x5AC0,
-        |cpu| {
+        |cpu: &mut Cpu| {
             cpu.set_flag(flags::NEGATIVE, false);
         },
-        |cpu| {
+        |cpu: &mut Cpu| {
             cpu.set_flag(flags::NEGATIVE, true);
         },
     );
@@ -443,10 +471,10 @@ fn test_spl_plus() {
 fn test_smi_minus() {
     check_scc(
         0x5BC0,
-        |cpu| {
+        |cpu: &mut Cpu| {
             cpu.set_flag(flags::NEGATIVE, true);
         },
-        |cpu| {
+        |cpu: &mut Cpu| {
             cpu.set_flag(flags::NEGATIVE, false);
         },
     );
@@ -456,11 +484,11 @@ fn test_smi_minus() {
 fn test_sge_signed_ge() {
     check_scc(
         0x5CC0,
-        |cpu| {
+        |cpu: &mut Cpu| {
             cpu.set_flag(flags::NEGATIVE, false);
             cpu.set_flag(flags::OVERFLOW, false);
         },
-        |cpu| {
+        |cpu: &mut Cpu| {
             cpu.set_flag(flags::NEGATIVE, true);
             cpu.set_flag(flags::OVERFLOW, false);
         },
@@ -471,11 +499,11 @@ fn test_sge_signed_ge() {
 fn test_slt_signed_lt() {
     check_scc(
         0x5DC0,
-        |cpu| {
+        |cpu: &mut Cpu| {
             cpu.set_flag(flags::NEGATIVE, true);
             cpu.set_flag(flags::OVERFLOW, false);
         },
-        |cpu| {
+        |cpu: &mut Cpu| {
             cpu.set_flag(flags::NEGATIVE, false);
             cpu.set_flag(flags::OVERFLOW, false);
         },
@@ -486,12 +514,12 @@ fn test_slt_signed_lt() {
 fn test_sgt_signed_gt() {
     check_scc(
         0x5EC0,
-        |cpu| {
+        |cpu: &mut Cpu| {
             cpu.set_flag(flags::NEGATIVE, false);
             cpu.set_flag(flags::OVERFLOW, false);
             cpu.set_flag(flags::ZERO, false);
         },
-        |cpu| {
+        |cpu: &mut Cpu| {
             cpu.set_flag(flags::ZERO, true);
         },
     );
@@ -501,10 +529,10 @@ fn test_sgt_signed_gt() {
 fn test_sle_signed_le() {
     check_scc(
         0x5FC0,
-        |cpu| {
+        |cpu: &mut Cpu| {
             cpu.set_flag(flags::ZERO, true);
         },
-        |cpu| {
+        |cpu: &mut Cpu| {
             cpu.set_flag(flags::NEGATIVE, false);
             cpu.set_flag(flags::OVERFLOW, false);
             cpu.set_flag(flags::ZERO, false);
@@ -613,7 +641,7 @@ fn test_link_unlk() {
 
 #[test]
 fn test_trap_vector() {
-    let (mut cpu, mut memory) = create_test_cpu();
+    let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0x4E40]); // TRAP #0
     memory.write_long(0x80, 0x3000); // Vector 32 (TRAP #0)
     cpu.step_instruction(&mut memory);
@@ -622,7 +650,7 @@ fn test_trap_vector() {
 
 #[test]
 fn test_trap_15() {
-    let (mut cpu, mut memory) = create_test_cpu();
+    let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0x4E4F]); // TRAP #15
     memory.write_long(0xBC, 0x4000); // Vector 47 (TRAP #15)
     cpu.step_instruction(&mut memory);
