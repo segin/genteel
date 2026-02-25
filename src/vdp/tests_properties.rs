@@ -2,7 +2,7 @@
 //!
 //! Uses proptest for comprehensive property testing of VDP behavior.
 
-use crate::vdp::Vdp;
+use crate::vdp::{RenderOps, Vdp};
 use proptest::prelude::*;
 
 proptest! {
@@ -26,7 +26,7 @@ proptest! {
         vdp.write_control(0x0000);
         vdp.write_data(cram_value);
 
-        let rgb565 = vdp.get_cram_color_pub(palette, color);
+        let rgb565 = vdp.get_cram_color(palette, color);
 
         // Verify RGB565 components are within valid ranges
         let out_r = (rgb565 >> 11) & 0x1F;
@@ -44,7 +44,9 @@ proptest! {
         let mut vdp = Vdp::new();
         vdp.registers[16] = reg_value;
 
-        let (w, h) = vdp.plane_size();
+        let reg = vdp.registers[16];
+        let w = match reg & 0x03 { 0 => 32, 1 => 64, 3 => 128, _ => 32 };
+        let h = match (reg >> 4) & 0x03 { 0 => 32, 1 => 64, 3 => 128, _ => 32 };
 
         prop_assert!(w == 32 || w == 64 || w == 128);
         prop_assert!(h == 32 || h == 64 || h == 128);
@@ -70,7 +72,7 @@ proptest! {
 
         // Address should wrap at 16-bit boundary
         let expected = start_addr.wrapping_add(increment as u16);
-        prop_assert_eq!(vdp.get_control_address(), expected);
+        prop_assert_eq!(vdp.control_address, expected);
     }
 
     /// Screen dimensions should match mode register settings

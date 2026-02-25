@@ -1,7 +1,6 @@
-
-use genteel::input::{InputManager, InputScript, FrameInput};
-use std::time::Instant;
+use genteel::input::{FrameInput, InputManager, InputScript};
 use std::borrow::Cow;
+use std::time::Instant;
 
 fn main() {
     let mut manager = InputManager::new();
@@ -17,7 +16,7 @@ fn main() {
         manager.record(input);
         manager.advance_frame();
     }
-    let script = manager.stop_recording();
+    let script: InputScript = manager.stop_recording();
 
     manager.reset();
     manager.set_script(script);

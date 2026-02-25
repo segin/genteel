@@ -658,63 +658,77 @@ impl GdbServer {
         }
     }
 
-    fn handle_monitor_command(&mut self, cmd_hex: &str) -> String {
-        if !cmd_hex.len().is_multiple_of(2) {
-            return "E01".to_string();
+    fn decode_hex_command(&self, hex: &str) -> Option<String> {
+        if !hex.len().is_multiple_of(2) {
+            return None;
         }
 
-        let mut bytes = Vec::with_capacity(cmd_hex.len() / 2);
+        let mut bytes = Vec::with_capacity(hex.len() / 2);
         let mut i = 0;
-        while i + 2 <= cmd_hex.len() {
-            match u8::from_str_radix(&cmd_hex[i..i + 2], 16) {
+        while i + 2 <= hex.len() {
+            match u8::from_str_radix(&hex[i..i + 2], 16) {
                 Ok(byte) => bytes.push(byte),
-                Err(_) => return "E01".to_string(),
+                Err(_) => return None,
             }
             i += 2;
         }
 
-        let cmd = String::from_utf8_lossy(&bytes);
-        if let Some(stripped) = cmd.strip_prefix("auth ") {
-            // Check for lockout
-            if let Some(lockout_time) = self.auth_lockout_until {
-                if Instant::now() < lockout_time {
-                    return "E01".to_string();
-                } else {
-                    // Lockout expired
-                    self.auth_lockout_until = None;
-                    self.auth_failed_attempts = 0;
-                }
-            }
+        Some(String::from_utf8_lossy(&bytes).into_owned())
+    }
 
-            let provided_pass = stripped.trim();
-            if let Some(ref correct_pass) = self.password {
-                if constant_time_eq(provided_pass, correct_pass) {
-                    self.authenticated = true;
-                    self.auth_failed_attempts = 0;
-                    self.auth_lockout_until = None;
-                    return "OK".to_string();
-                } else {
-                    self.auth_failed_attempts += 1;
-                    if self.auth_failed_attempts >= MAX_AUTH_ATTEMPTS {
-                        self.auth_lockout_until = Some(Instant::now() + AUTH_LOCKOUT_DURATION);
-                        eprintln!(
-                            "⚠️  SECURITY ALERT: GDB authentication lockout active for {}s",
-                            AUTH_LOCKOUT_DURATION.as_secs()
-                        );
-                    }
-                    return "E01".to_string(); // Invalid password
-                }
+    fn handle_auth_command(&mut self, provided_pass: &str) -> String {
+        // Check for lockout
+        if let Some(lockout_time) = self.auth_lockout_until {
+            if Instant::now() < lockout_time {
+                return "E01".to_string();
             } else {
-                // No password set, already authenticated
-                self.authenticated = true;
-                return "OK".to_string();
+                // Lockout expired
+                self.auth_lockout_until = None;
+                self.auth_failed_attempts = 0;
             }
         }
 
-        // Other monitor commands?
+        if let Some(ref correct_pass) = self.password {
+            if constant_time_eq(provided_pass.trim(), correct_pass) {
+                self.authenticated = true;
+                self.auth_failed_attempts = 0;
+                self.auth_lockout_until = None;
+                return "OK".to_string();
+            } else {
+                self.auth_failed_attempts += 1;
+                if self.auth_failed_attempts >= MAX_AUTH_ATTEMPTS {
+                    self.auth_lockout_until = Some(Instant::now() + AUTH_LOCKOUT_DURATION);
+                    eprintln!(
+                        "⚠️  SECURITY ALERT: GDB authentication lockout active for {}s",
+                        AUTH_LOCKOUT_DURATION.as_secs()
+                    );
+                }
+                return "E01".to_string(); // Invalid password
+            }
+        } else {
+            // No password set, already authenticated
+            self.authenticated = true;
+            return "OK".to_string();
+        }
+    }
+
+    fn handle_monitor_command(&mut self, cmd_hex: &str) -> String {
+        let cmd = match self.decode_hex_command(cmd_hex) {
+            Some(c) => c,
+            None => return "E01".to_string(),
+        };
+
+        if let Some(stripped) = cmd.strip_prefix("auth ") {
+            return self.handle_auth_command(stripped);
+        }
+
+        // All other commands require authentication
         if !self.authenticated {
             return "E01".to_string();
         }
+
+        // Handle other monitor commands here using match
+        // match cmd.as_str() { ... }
 
         // Unknown monitor command.
         // We return "OK" to prevent the client from treating this as an error,

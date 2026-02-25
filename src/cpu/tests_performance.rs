@@ -98,14 +98,17 @@ fn benchmark_movem_sparse() {
             Size::Long,
             true,
             AddressingMode::AddressIndirect(0),
-            &mut memory
+            &mut memory,
         );
     }
 
     let duration = start.elapsed();
     println!("MOVEM Sparse (1 bit) duration: {:?}", duration);
     // Print in nanoseconds per iteration for easier comparison
-    println!("MOVEM Sparse (1 bit) ns/iter: {}", duration.as_nanos() / iterations as u128);
+    println!(
+        "MOVEM Sparse (1 bit) ns/iter: {}",
+        duration.as_nanos() / iterations as u128
+    );
 }
 
 #[test]
@@ -132,13 +135,16 @@ fn benchmark_movem_dense() {
             Size::Long,
             true,
             AddressingMode::AddressIndirect(0),
-            &mut memory
+            &mut memory,
         );
     }
 
     let duration = start.elapsed();
     println!("MOVEM Dense (16 bits) duration: {:?}", duration);
-    println!("MOVEM Dense (16 bits) ns/iter: {}", duration.as_nanos() / iterations as u128);
+    println!(
+        "MOVEM Dense (16 bits) ns/iter: {}",
+        duration.as_nanos() / iterations as u128
+    );
 }
 
 #[test]
@@ -165,13 +171,16 @@ fn benchmark_movem_predec_sparse() {
             Size::Long,
             true,
             AddressingMode::AddressPreDecrement(0),
-            &mut memory
+            &mut memory,
         );
     }
 
     let duration = start.elapsed();
     println!("MOVEM PreDec Sparse (1 bit) duration: {:?}", duration);
-    println!("MOVEM PreDec Sparse (1 bit) ns/iter: {}", duration.as_nanos() / iterations as u128);
+    println!(
+        "MOVEM PreDec Sparse (1 bit) ns/iter: {}",
+        duration.as_nanos() / iterations as u128
+    );
 }
 
 #[test]
@@ -196,11 +205,14 @@ fn benchmark_movem_mem2reg_sparse() {
             Size::Long,
             false, // Mem to Reg
             AddressingMode::AddressIndirect(0),
-            &mut memory
+            &mut memory,
         );
     }
 
     let duration = start.elapsed();
     println!("MOVEM Mem2Reg Sparse (1 bit) duration: {:?}", duration);
-    println!("MOVEM Mem2Reg Sparse (1 bit) ns/iter: {}", duration.as_nanos() / iterations as u128);
+    println!(
+        "MOVEM Mem2Reg Sparse (1 bit) ns/iter: {}",
+        duration.as_nanos() / iterations as u128
+    );
 }
