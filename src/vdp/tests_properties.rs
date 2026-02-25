@@ -2,7 +2,7 @@
 //!
 //! Uses proptest for comprehensive property testing of VDP behavior.
 
-use crate::vdp::Vdp;
+use crate::vdp::{RenderOps, Vdp};
 use proptest::prelude::*;
 
 proptest! {
@@ -26,7 +26,7 @@ proptest! {
         vdp.write_control(0x0000);
         vdp.write_data(cram_value);
 
-        let rgb565 = vdp.cram_cache[(palette as usize) * 16 + (color as usize)];
+        let rgb565 = vdp.get_cram_color(palette, color);
 
         // Verify RGB565 components are within valid ranges
         let out_r = (rgb565 >> 11) & 0x1F;

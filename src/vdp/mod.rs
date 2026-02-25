@@ -137,6 +137,51 @@ pub mod big_array_vsram {
     }
 }
 
+mod serde_arrays {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde::ser::SerializeTuple;
+
+    pub fn serialize<S, const N: usize>(data: &[u8; N], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut s = serializer.serialize_tuple(N)?;
+        for item in data {
+            s.serialize_element(item)?;
+        }
+        s.end()
+    }
+
+    pub fn deserialize<'de, D, const N: usize>(deserializer: D) -> Result<[u8; N], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ArrayVisitor<const N: usize>;
+
+        impl<'de, const N: usize> serde::de::Visitor<'de> for ArrayVisitor<N> {
+            type Value = [u8; N];
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> fmt::Result {
+                formatter.write_fmt(format_args!("an array of size {}", N))
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<[u8; N], A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
+                let mut arr = [0u8; N];
+                for i in 0..N {
+                    arr[i] = seq.next_element()?
+                        .ok_or_else(|| serde::de::Error::invalid_length(i, &self))?;
+                }
+                Ok(arr)
+            }
+        }
+
+        deserializer.deserialize_tuple(N, ArrayVisitor)
+    }
+}
+
 fn default_vram() -> [u8; 0x10000] {
     [0; 0x10000]
 }
@@ -196,7 +241,7 @@ impl Default for Vdp {
 
 impl Vdp {
     pub fn new() -> Self {
-        Self {
+        let mut vdp = Self {
             vram: [0; 0x10000],
             cram: [0; 128],
             vsram: [0; 80],
@@ -214,7 +259,9 @@ impl Vdp {
             v30_offset: 0,
             is_pal: false,
             framebuffer: vec![0; 320 * 240],
-        }
+        };
+        vdp.reset();
+        vdp
     }
 
     /// Reconstruct cram_cache from cram
@@ -437,53 +484,6 @@ impl Vdp {
         ((self.registers[REG_HSCROLL] as usize) & 0x3F) << 10
     }
 
-    pub fn plane_size(&self) -> (usize, usize) {
-        let size_code = self.registers[REG_PLANE_SIZE];
-        let w = match size_code & 0x03 {
-            0x00 => 32,
-            0x01 => 64,
-            0x03 => 128,
-            _ => 32,
-        };
-        let h = match (size_code >> 4) & 0x03 {
-            0x00 => 32,
-            0x01 => 64,
-            0x03 => 128,
-            _ => 32,
-        };
-        (w, h)
-    }
-
-    pub fn window_address(&self) -> usize {
-        // Bits 1-5 specify bits 11-15 of VRAM address
-        ((self.registers[REG_WINDOW] as usize) & 0x3E) << 10
-    }
-
-    pub fn is_window_area(&self, screen_x: u16, screen_y: u16) -> bool {
-        let w_h_pos = self.registers[REG_WINDOW_H_POS];
-        let w_v_pos = self.registers[REG_WINDOW_V_POS];
-
-        let right = (w_h_pos & 0x80) != 0;
-        let h_pos = (w_h_pos & 0x1F) as u16 * 16; // H-pos is in 2-cell units (16 pixels)
-
-        let down = (w_v_pos & 0x80) != 0;
-        let v_pos = (w_v_pos & 0x1F) as u16 * 8; // V-pos is in 1-cell units (8 pixels)
-
-        let in_h_window = if right {
-            screen_x >= h_pos
-        } else {
-            screen_x < h_pos
-        };
-
-        let in_v_window = if down {
-            screen_y >= v_pos
-        } else {
-            screen_y < v_pos
-        };
-
-        in_h_window || in_v_window
-    }
-
     pub fn write_vram_word(&mut self, addr: u16, value: u16) {
         let addr = addr as usize;
         if addr < 0x10000 {
@@ -529,6 +529,56 @@ impl Vdp {
 
     pub fn set_h_counter(&mut self, h: u16) {
         self.h_counter = h;
+    }
+
+    pub(crate) fn plane_size(&self) -> (usize, usize) {
+        let val = self.registers[REG_PLANE_SIZE];
+        let w = match (val >> 4) & 0x03 {
+            0x00 => 32,
+            0x01 => 64,
+            0x03 => 128,
+            _ => 32,
+        };
+        let h = match val & 0x03 {
+            0x00 => 32,
+            0x01 => 64,
+            0x03 => 128,
+            _ => 32,
+        };
+        (w, h)
+    }
+
+    pub(crate) fn window_address(&self) -> usize {
+        ((self.registers[REG_WINDOW] as usize) & 0x3E) << 11
+    }
+
+    pub(crate) fn is_window_area(&self, x: u16, y: u16) -> bool {
+        let h_pos = self.registers[REG_WINDOW_H_POS];
+        let v_pos = self.registers[REG_WINDOW_V_POS];
+
+        let h_point = (h_pos as u16 & 0x1F) * 16;
+        let v_point = (v_pos as u16 & 0x1F) * 8;
+
+        let h_dir = (h_pos & 0x80) != 0;
+        let v_dir = (v_pos & 0x80) != 0;
+
+        let in_h_window = if h_dir {
+            x >= h_point
+        } else {
+            x < h_point
+        };
+
+        let in_v_window = if v_dir {
+            y >= v_point
+        } else {
+            y < v_point
+        };
+
+        in_h_window || in_v_window
+    }
+
+    pub fn set_region(&mut self, is_pal: bool) {
+        self.is_pal = is_pal;
     }
 }
 

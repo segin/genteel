@@ -107,3 +107,29 @@ fn test_control_state_machine() {
         "Next write should be treated as first word of new command"
     );
 }
+
+#[test]
+fn test_write_state_reconstructs_cram_cache() {
+    use crate::debugger::Debuggable;
+
+    let mut source_vdp = Vdp::new();
+
+    // Set color 1 to Red manually in CRAM
+    // 0x000E -> B=0, G=0, R=7
+    // CRAM is little-endian byte array in Vdp struct logic (index 2 is low byte)
+    source_vdp.cram[2] = 0x0E;
+    source_vdp.cram[3] = 0x00;
+
+    // Serialize
+    let state = source_vdp.read_state();
+
+    // Create new Vdp
+    let mut dest_vdp = Vdp::new();
+
+    // Write state (should trigger reconstruct_cram_cache)
+    dest_vdp.write_state(&state);
+
+    // Verify CRAM cache in dest_vdp
+    // Genesis 0x000E -> RGB565 0xF800 (Red)
+    assert_eq!(dest_vdp.cram_cache[1], 0xF800, "CRAM cache should be reconstructed from state");
+}
