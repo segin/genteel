@@ -330,6 +330,39 @@ impl Vdp {
     pub fn set_h_counter(&mut self, h: u16) {
         self.h_counter = h;
     }
+
+    pub fn plane_size(&self) -> (usize, usize) {
+        let val = self.registers[REG_PLANE_SIZE];
+        let h_bits = val & 0x03;
+        let v_bits = (val >> 4) & 0x03;
+
+        let w = match h_bits {
+            0 => 32,
+            1 => 64,
+            3 => 128,
+            _ => 32,
+        };
+
+        let h = match v_bits {
+            0 => 32,
+            1 => 64,
+            3 => 128,
+            _ => 32,
+        };
+        (w, h)
+    }
+
+    pub fn window_address(&self) -> usize {
+        let reg = self.registers[REG_WINDOW] as usize;
+        // Assuming H40 mode behavior (most common)
+        // Reg bits 1-5 specify bits 11-15.
+        // (reg & 0x3E) << 10
+        (reg & 0x3E) << 10
+    }
+
+    pub fn is_window_area(&self, _screen_x: u16, _fetch_line: u16) -> bool {
+        false
+    }
 }
 
 impl Debuggable for Vdp {
