@@ -161,7 +161,7 @@ mod serde_arrays {
         impl<'de, const N: usize> serde::de::Visitor<'de> for ArrayVisitor<N> {
             type Value = [u8; N];
 
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> fmt::Result {
                 formatter.write_fmt(format_args!("an array of size {}", N))
             }
 
