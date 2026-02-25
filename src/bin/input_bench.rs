@@ -17,7 +17,7 @@ fn main() {
         manager.record(input);
         manager.advance_frame();
     }
-    let script = manager.stop_recording();
+    let script: InputScript = manager.stop_recording();
 
     manager.reset();
     manager.set_script(script);
