@@ -107,7 +107,7 @@ pub trait RenderOps {
         screen_x: &mut u16,
         priority_filter: bool,
     );
-    fn get_active_sprites(&self, line: u16) -> (usize, [SpriteAttributes; 80]);
+    fn get_active_sprites<'a>(&self, line: u16, sprites: &'a mut [SpriteAttributes]) -> usize;
     fn render_sprites(
         &mut self,
         sprites: &[SpriteAttributes],
@@ -263,8 +263,9 @@ impl RenderOps for Vdp {
         }
 
         // Pre-calculate visible sprites for this line to avoid traversing the SAT twice
-        let (sprite_count, active_sprites) = self.get_active_sprites(fetch_line);
-        let active_sprites = &active_sprites[..sprite_count];
+        let mut sprite_buffer = [SpriteAttributes::default(); 80];
+        let sprite_count = self.get_active_sprites(fetch_line, &mut sprite_buffer);
+        let active_sprites = &sprite_buffer[..sprite_count];
 
         // Layer order: B Low -> A Low -> Sprites Low -> B High -> A High -> Sprites High
         self.render_plane(false, fetch_line, draw_line, false); // Plane B Low
@@ -384,8 +385,7 @@ impl RenderOps for Vdp {
         *screen_x += pixels_to_process;
     }
 
-    fn get_active_sprites(&self, line: u16) -> (usize, [SpriteAttributes; 80]) {
-        let mut sprites = [SpriteAttributes::default(); 80];
+    fn get_active_sprites<'a>(&self, line: u16, sprites: &'a mut [SpriteAttributes]) -> usize {
         let mut count = 0;
 
         let sat_base = self.sprite_table_address() as usize;
@@ -405,14 +405,16 @@ impl RenderOps for Vdp {
             let sprite_v_px = (attr.v_size as u16) * 8;
             // Handle wrapping v_pos (top clipping) correctly using wrapping subtraction
             if line.wrapping_sub(attr.v_pos) < sprite_v_px {
-                sprites[count] = attr;
-                count += 1;
+                if count < sprites.len() {
+                    sprites[count] = attr;
+                    count += 1;
+                }
                 if count >= line_limit {
                     break;
                 }
             }
         }
-        (count, sprites)
+        count
     }
 
     fn render_sprites(
