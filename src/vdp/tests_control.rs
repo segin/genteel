@@ -18,14 +18,14 @@ fn test_control_state_machine() {
     );
     // CD1-0 = 01 (VRAM Write)
     assert_eq!(
-        vdp.get_control_code() & 0x03,
+        vdp.control_code & 0x03,
         0x01,
         "Control code bits 1-0 should be 01"
     );
     // Address part 1: A13-0 are bits 13-0 of value. 0x4000 is 0100 0000 0000 0000.
     // control_address = (value & 0x3FFF) = 0.
     assert_eq!(
-        vdp.get_control_address(),
+        vdp.control_address,
         0x0000,
         "Control address should be 0"
     );
@@ -39,7 +39,7 @@ fn test_control_state_machine() {
         "Control pending should be false after second word"
     );
     assert_eq!(
-        vdp.get_control_address(),
+        vdp.control_address,
         0x4000,
         "Control address should be 0x4000"
     );
@@ -64,7 +64,7 @@ fn test_control_state_machine() {
     // Verify address/code updated based on this 2nd word.
     // 0x8144 -> 0x11
     assert_eq!(
-        vdp.get_control_code(),
+        vdp.control_code,
         0x11,
         "Control code should be 0x11 (0x01 | 0x10)"
     );

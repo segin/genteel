@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn test_render_plane_basic() {
     let mut vdp = Vdp::new();
-    vdp.set_region(false); // NTSC
+    vdp.set_pal(false); // NTSC
 
     // Enable Display: Reg 1, bit 6 (0x40)
     vdp.registers[1] = 0x40;
@@ -40,7 +40,7 @@ fn test_render_plane_basic() {
 #[test]
 fn test_render_plane_hflip_quirk() {
     let mut vdp = Vdp::new();
-    vdp.set_region(false);
+    vdp.set_pal(false);
     vdp.registers[1] = 0x40; // Display Enable
     vdp.registers[2] = 0x30; // Plane A Addr 0xC000
     vdp.registers[16] = 0x00; // 32x32
@@ -96,7 +96,7 @@ fn test_render_plane_hflip_quirk() {
 #[test]
 fn test_render_plane_scroll() {
     let mut vdp = Vdp::new();
-    vdp.set_region(false);
+    vdp.set_pal(false);
     vdp.registers[1] = 0x40; // Display
     vdp.registers[2] = 0x30; // Plane A 0xC000
     vdp.registers[4] = 0x07; // Plane B 0xE000
@@ -133,7 +133,7 @@ fn test_render_plane_scroll() {
 #[test]
 fn test_render_plane_b_isolation() {
     let mut vdp = Vdp::new();
-    vdp.set_region(false);
+    vdp.set_pal(false);
     vdp.registers[1] = 0x40;
     vdp.registers[2] = 0x30; // Plane A 0xC000
     vdp.registers[4] = 0x07; // Plane B 0xE000
@@ -170,7 +170,7 @@ fn test_render_plane_b_isolation() {
 #[test]
 fn test_render_line_performance() {
     let mut vdp = Vdp::new();
-    vdp.set_region(false);
+    vdp.set_pal(false);
     vdp.registers[1] |= 0x40; // Display enabled
 
     let start = std::time::Instant::now();
@@ -194,7 +194,7 @@ fn test_render_line_performance() {
 #[test]
 fn test_sprite_rendering_correctness() {
     let mut vdp = Vdp::new();
-    vdp.set_region(false);
+    vdp.set_pal(false);
     vdp.registers[1] = 0x40; // Display Enable
     vdp.registers[12] = 0x81; // H40 Mode
     vdp.registers[5] = 0x6A; // SAT at 0xD400
@@ -245,7 +245,7 @@ fn test_sprite_rendering_correctness() {
 #[test]
 fn test_sprite_hflip() {
     let mut vdp = Vdp::new();
-    vdp.set_region(false);
+    vdp.set_pal(false);
     vdp.registers[1] = 0x40;
     vdp.registers[12] = 0x81;
     vdp.registers[5] = 0x6A;
@@ -290,7 +290,7 @@ fn test_sprite_hflip() {
 #[test]
 fn test_render_sprite_basic() {
     let mut vdp = Vdp::new();
-    vdp.set_region(false);
+    vdp.set_pal(false);
     vdp.registers[1] = 0x40; // Display
     vdp.registers[5] = 0x68; // SAT at 0xD000
 
@@ -339,7 +339,7 @@ fn test_render_sprite_basic() {
 #[test]
 fn test_render_sprite_hflip_v3() {
     let mut vdp = Vdp::new();
-    vdp.set_region(false);
+    vdp.set_pal(false);
     vdp.registers[1] = 0x40; // Display
     vdp.registers[5] = 0x68; // SAT at 0xD000
 
@@ -398,7 +398,7 @@ fn test_render_sprite_hflip_v3() {
 #[test]
 fn test_sprite_rendering_correctness_v2() {
     let mut vdp = Vdp::new();
-    vdp.set_region(false);
+    vdp.set_pal(false);
     vdp.registers[1] = 0x40; // Display
     vdp.registers[5] = 0x6C; // SAT 0xD800
 
@@ -433,7 +433,7 @@ fn test_sprite_rendering_correctness_v2() {
 #[test]
 fn test_sprite_hflip_v2() {
     let mut vdp = Vdp::new();
-    vdp.set_region(false);
+    vdp.set_pal(false);
     vdp.registers[1] = 0x40; // Display
     vdp.registers[5] = 0x6C; // SAT 0xD800
 

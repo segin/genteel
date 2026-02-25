@@ -137,18 +137,34 @@ pub mod big_array_vsram {
     }
 }
 
+fn default_vram() -> [u8; 0x10000] {
+    [0; 0x10000]
+}
+
+fn default_cram() -> [u8; 128] {
+    [0; 128]
+}
+
+fn default_vsram() -> [u8; 80] {
+    [0; 80]
+}
+
 fn default_cram_cache() -> [u16; 64] {
     [0; 64]
+}
+
+fn default_framebuffer() -> Vec<u16> {
+    vec![0; 320 * 240]
 }
 
 /// Genesis Video Display Processor (VDP)
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Vdp {
-    #[serde(with = "big_array_vram")]
+    #[serde(with = "big_array_vram", default = "default_vram")]
     pub vram: [u8; 0x10000],
-    #[serde(with = "big_array_cram")]
+    #[serde(with = "big_array_cram", default = "default_cram")]
     pub cram: [u8; 128],
-    #[serde(with = "big_array_vsram")]
+    #[serde(with = "big_array_vsram", default = "default_vsram")]
     pub vsram: [u8; 80],
     pub registers: [u8; NUM_REGISTERS],
     pub status: u16,
@@ -168,7 +184,7 @@ pub struct Vdp {
     pub v30_offset: u16,
     pub is_pal: bool,
 
-    #[serde(skip)]
+    #[serde(skip, default = "default_framebuffer")]
     pub framebuffer: Vec<u16>,
 }
 
@@ -306,31 +322,31 @@ impl Vdp {
     }
 
     pub fn write_control(&mut self, value: u16) {
-        if !self.control_pending {
-            // First word of command
-            self.control_code = (self.control_code & 0xFC) | ((value >> 14) & 0x03) as u8;
-            self.control_address = (self.control_address & 0xC000) | (value & 0x3FFF);
-            self.control_pending = true;
-        } else {
+        if self.control_pending {
             // Second word of command
             self.control_code = (self.control_code & 0x03) | ((value >> 2) & 0x3C) as u8;
             self.control_address = (self.control_address & 0x3FFF) | ((value & 0x0003) << 14);
             self.control_pending = false;
 
-            // Check if this was a register write
+            // Check if DMA should be triggered (CD5 bit set in code)
+            if (self.control_code & 0x20) != 0 && (self.registers[REG_MODE2] & MODE2_DMA_ENABLE) != 0 {
+                self.dma_pending = true;
+            }
+        } else {
+            // Check if this is a register write (Bits 15,14 = 10)
             if (value & 0xC000) == 0x8000 {
                 let reg = ((value >> 8) & 0x1F) as usize;
                 let val = (value & 0xFF) as u8;
                 if reg < NUM_REGISTERS {
                     self.registers[reg] = val;
                 }
+                return;
             }
 
-            // Check if DMA should be triggered (CD1 bit set in code)
-            if (self.control_code & 0x20) != 0 && (self.registers[REG_MODE2] & MODE2_DMA_ENABLE) != 0
-            {
-                self.dma_pending = true;
-            }
+            // First word of command
+            self.control_code = (self.control_code & 0xFC) | ((value >> 14) & 0x03) as u8;
+            self.control_address = (self.control_address & 0xC000) | (value & 0x3FFF);
+            self.control_pending = true;
         }
     }
 
@@ -338,7 +354,10 @@ impl Vdp {
     pub fn read_status(&mut self) -> u16 {
         // Reading the status register clears the write pending flag (resets the command state machine).
         self.control_pending = false;
-        let res = self.status;
+        let mut res = self.status;
+        if self.dma_pending {
+            res |= 0x0002; // DMA Busy
+        }
         // Reading status clears the VInt pending bit (Bit 7)
         self.status &= !STATUS_VINT_PENDING;
         res
@@ -510,39 +529,6 @@ impl Vdp {
 
     pub fn set_h_counter(&mut self, h: u16) {
         self.h_counter = h;
-    }
-
-    pub fn plane_size(&self) -> (usize, usize) {
-        let val = self.registers[REG_PLANE_SIZE];
-        let h_bits = val & 0x03;
-        let v_bits = (val >> 4) & 0x03;
-
-        let w = match h_bits {
-            0 => 32,
-            1 => 64,
-            3 => 128,
-            _ => 32,
-        };
-
-        let h = match v_bits {
-            0 => 32,
-            1 => 64,
-            3 => 128,
-            _ => 32,
-        };
-        (w, h)
-    }
-
-    pub fn window_address(&self) -> usize {
-        let reg = self.registers[REG_WINDOW] as usize;
-        // Assuming H40 mode behavior (most common)
-        // Reg bits 1-5 specify bits 11-15.
-        // (reg & 0x3E) << 10
-        (reg & 0x3E) << 10
-    }
-
-    pub fn is_window_area(&self, _screen_x: u16, _fetch_line: u16) -> bool {
-        false
     }
 }
 
