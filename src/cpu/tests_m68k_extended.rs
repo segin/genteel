@@ -583,3 +583,141 @@ fn test_addx_subx_memory() {
     assert_eq!(cpu.a[0], 0x2000);
     assert_eq!(cpu.a[1], 0x3000);
 }
+
+#[test]
+fn test_chk_addressing_modes() {
+    let (mut cpu, mut memory) = create_test_cpu();
+
+    // Set up exception vector 6 (CHK)
+    memory.write_long(0x18, 0x6000);
+
+    // Case 1: Immediate Addressing
+    // CHK #10, D0
+    // Opcode: 0100 000 1 10 111 100 = 0x41BC
+    memory.write_word(0x100, 0x41BC);
+    memory.write_word(0x102, 0x000A); // Bound = 10
+
+    // Subcase 1a: Value in bounds (5)
+    cpu.d[0] = 5;
+    cpu.pc = 0x100;
+    cpu.step_instruction(&mut memory);
+    assert_eq!(cpu.pc, 0x104); // Next instruction (Instruction length 4 bytes)
+    assert!(!cpu.get_flag(flags::NEGATIVE));
+
+    // Subcase 1b: Value exceeds bounds (11)
+    cpu.d[0] = 11;
+    cpu.pc = 0x100;
+    cpu.step_instruction(&mut memory);
+    assert_eq!(cpu.pc, 0x6000); // Trap
+    // N clear for > bound
+    assert!(!cpu.get_flag(flags::NEGATIVE));
+
+    // Restore stack pointer for next test
+    cpu.a[7] = 0x1000;
+
+    // Case 2: Address Register Indirect
+    // CHK (A0), D0
+    // Opcode: 0100 000 1 10 010 000 = 0x4190
+    memory.write_word(0x200, 0x4190);
+    cpu.a[0] = 0x3000;
+    memory.write_word(0x3000, 0x0014); // Bound = 20
+
+    // Subcase 2a: Value in bounds (20)
+    cpu.d[0] = 20;
+    cpu.pc = 0x200;
+    cpu.step_instruction(&mut memory);
+    assert_eq!(cpu.pc, 0x202); // Next instruction (2 bytes)
+    assert!(!cpu.get_flag(flags::NEGATIVE));
+
+    // Subcase 2b: Value exceeds bounds (21)
+    cpu.d[0] = 21;
+    cpu.pc = 0x200;
+    cpu.step_instruction(&mut memory);
+    assert_eq!(cpu.pc, 0x6000); // Trap
+    // N clear for > bound
+    assert!(!cpu.get_flag(flags::NEGATIVE));
+}
+
+#[test]
+fn test_chk_edge_cases() {
+    let (mut cpu, mut memory) = create_test_cpu();
+
+    // Set up exception vector 6 (CHK)
+    memory.write_long(0x18, 0x6000);
+
+    // CHK D1, D0 (Register Direct)
+    // Opcode: 0x4181
+    memory.write_word(0x100, 0x4181);
+
+    // Case 1: Negative Upper Bound (-10)
+    // Any value >= 0 is > -10 (positive > negative), so Trap (N clear).
+    // Any value < 0 is < 0, so Trap (N set).
+    // Thus ALWAYS traps.
+    cpu.d[1] = 0xFFF6; // -10 (word)
+
+    // Subcase 1a: Value = 0 (Should trap because 0 > -10)
+    cpu.d[0] = 0;
+    cpu.pc = 0x100;
+    cpu.step_instruction(&mut memory);
+    assert_eq!(cpu.pc, 0x6000, "Failed at Negative Bound with 0");
+    assert!(!cpu.get_flag(flags::NEGATIVE)); // N clear because val > bound
+
+    // Restore SP
+    cpu.a[7] = 0x1000;
+
+    // Subcase 1b: Value = -5 (Should trap because -5 < 0)
+    cpu.d[0] = 0xFFFB; // -5
+    cpu.pc = 0x100;
+    cpu.step_instruction(&mut memory);
+    assert_eq!(cpu.pc, 0x6000, "Failed at Negative Bound with -5");
+    assert!(cpu.get_flag(flags::NEGATIVE)); // N set because val < 0
+
+    // Restore SP
+    cpu.a[7] = 0x1000;
+
+    // Subcase 1c: Value = -20 (Should trap because -20 < 0)
+    cpu.d[0] = 0xFFEC; // -20
+    cpu.pc = 0x100;
+    cpu.step_instruction(&mut memory);
+    assert_eq!(cpu.pc, 0x6000, "Failed at Negative Bound with -20");
+    assert!(cpu.get_flag(flags::NEGATIVE)); // N set because val < 0
+
+    // Restore SP
+    cpu.a[7] = 0x1000;
+
+    // Case 2: Zero Upper Bound
+    cpu.d[1] = 0;
+
+    // Subcase 2a: Value = 0 (Pass)
+    cpu.d[0] = 0;
+    cpu.pc = 0x100;
+    cpu.step_instruction(&mut memory);
+    assert_eq!(cpu.pc, 0x102, "Failed at Zero Bound with 0");
+    assert!(!cpu.get_flag(flags::NEGATIVE)); // N clear (val == 0 >= 0)
+
+    // Subcase 2b: Value = 1 (Trap)
+    cpu.d[0] = 1;
+    cpu.pc = 0x100;
+    cpu.step_instruction(&mut memory);
+    assert_eq!(cpu.pc, 0x6000, "Failed at Zero Bound with 1");
+    assert!(!cpu.get_flag(flags::NEGATIVE)); // N clear because val > bound
+
+    // Restore SP
+    cpu.a[7] = 0x1000;
+
+    // Case 3: Max Positive Upper Bound (0x7FFF = 32767)
+    cpu.d[1] = 0x7FFF;
+
+    // Subcase 3a: Value = 0x7FFF (Pass)
+    cpu.d[0] = 0x7FFF;
+    cpu.pc = 0x100;
+    cpu.step_instruction(&mut memory);
+    assert_eq!(cpu.pc, 0x102, "Failed at Max Bound with Max Val");
+
+    // Subcase 3b: Value = 0x8000 (-32768) (Trap because < 0)
+    cpu.d[0] = 0x8000;
+    cpu.pc = 0x100;
+    cpu.step_instruction(&mut memory);
+    assert_eq!(cpu.pc, 0x6000, "Failed at Max Bound with Min Val");
+    assert!(cpu.get_flag(flags::NEGATIVE)); // N set because val < 0
+}
