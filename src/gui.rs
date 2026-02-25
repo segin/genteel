@@ -377,7 +377,7 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                                 emulator.log_debug(frame_count);
                             }
                             // Run one frame of emulation
-                            emulator.step_frame(Some(input.clone()));
+                            emulator.step_frame(Some(&input));
                             // Process audio
                             if let Ok(mut buf) = audio_buffer.lock() {
                                 buf.push(&emulator.audio_buffer);
@@ -394,7 +394,7 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                                     m68k_pc: emulator.cpu.pc,
                                     z80_pc: emulator.z80.pc,
                                     frame_count: emulator.internal_frame_count,
-                                    vdp_status: bus.vdp.peek_status(),
+                                    vdp_status: bus.vdp.read_status(),
                                     display_enabled: bus.vdp.display_enabled(),
                                     bg_color_index: bus.vdp.registers[7],
                                     cram0: bus.vdp.cram_cache[0],

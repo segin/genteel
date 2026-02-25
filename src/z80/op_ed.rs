@@ -1,4 +1,3 @@
-use crate::dispatch_z;
 use crate::memory::{IoInterface, MemoryInterface};
 use crate::z80::{flags, Z80};
 

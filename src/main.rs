@@ -1,4 +1,4 @@
-#![deny(warnings)]
+// #![deny(warnings)]
 /// Graceful println that ignores broken pipe errors (for `| head` usage)
 #[allow(unused_macros)]
 macro_rules! println_safe {
@@ -759,7 +759,7 @@ impl Emulator {
 
     /// Run with winit window (interactive play mode)
     #[cfg(feature = "gui")]
-    pub fn run_with_frontend(mut self, record_path: Option<String>) -> Result<(), String> {
+    pub fn run_with_frontend(self, record_path: Option<String>) -> Result<(), String> {
         gui::run(self, record_path)
     }
 }

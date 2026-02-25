@@ -12,7 +12,7 @@ pub mod render;
 pub use render::RenderOps;
 
 pub mod big_array_vram {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde::{Deserializer, Serializer};
     use serde::de::{self, SeqAccess, Visitor};
     use std::fmt;
 
@@ -54,7 +54,7 @@ pub mod big_array_vram {
 }
 
 pub mod big_array_cram {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde::{Deserializer, Serializer};
     use serde::de::{self, SeqAccess, Visitor};
     use std::fmt;
 
@@ -96,7 +96,7 @@ pub mod big_array_cram {
 }
 
 pub mod big_array_vsram {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde::{Deserializer, Serializer};
     use serde::de::{self, SeqAccess, Visitor};
     use std::fmt;
 
@@ -138,8 +138,9 @@ pub mod big_array_vsram {
 }
 
 mod serde_arrays {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde::{Deserializer, Serializer};
     use serde::ser::SerializeTuple;
+    use std::fmt;
 
     pub fn serialize<S, const N: usize>(data: &[u8; N], serializer: S) -> Result<S::Ok, S::Error>
     where

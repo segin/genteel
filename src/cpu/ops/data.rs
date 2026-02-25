@@ -137,7 +137,7 @@ pub fn exec_movep<M: MemoryInterface>(
 ) -> u32 {
     let displacement = cpu.read_word(cpu.pc, memory) as i16;
     cpu.pc = cpu.pc.wrapping_add(2);
-    let mut addr = (cpu.a[an as usize] as i32 + displacement as i32) as u32;
+    let addr = (cpu.a[an as usize] as i32 + displacement as i32) as u32;
 
     if direction {
         // Register to memory
