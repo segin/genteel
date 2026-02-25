@@ -1,9 +1,9 @@
 //! Tests for MOVEP instruction
 
-#[cfg(test)]
-use crate::cpu::Cpu;
 use crate::cpu::decoder::Size;
 use crate::cpu::ops::data::exec_movep;
+#[cfg(test)]
+use crate::cpu::Cpu;
 use crate::memory::{Memory, MemoryInterface};
 
 fn create_cpu() -> (Cpu, Memory) {

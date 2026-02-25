@@ -1,9 +1,9 @@
+use crate::dispatch_z;
 use crate::memory::{IoInterface, MemoryInterface};
-use crate::z80::{Z80, flags};
 use crate::z80::op_cb::CbOps;
 use crate::z80::op_ed::EdOps;
 use crate::z80::op_index::IndexOps;
-use crate::dispatch_z;
+use crate::z80::{flags, Z80};
 
 pub trait GeneralOps {
     fn execute_x0(&mut self, opcode: u8, y: u8, z: u8, p: u8, q: u8) -> u8;
@@ -214,10 +214,14 @@ fn execute_x0_inc_dec_rp<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>
     6
 }
 
-fn execute_x0_inc_r<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y: u8) -> u8 {
-    // INC r
+fn execute_x0_op_r<M, I, F>(cpu: &mut Z80<M, I>, y: u8, op: F) -> u8
+where
+    M: MemoryInterface,
+    I: IoInterface,
+    F: FnOnce(&mut Z80<M, I>, u8) -> u8,
+{
     let val = cpu.get_reg(y);
-    let result = cpu.inc(val);
+    let result = op(cpu, val);
     cpu.set_reg(y, result);
     if y == 6 {
         11
@@ -226,16 +230,14 @@ fn execute_x0_inc_r<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y: 
     }
 }
 
+fn execute_x0_inc_r<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y: u8) -> u8 {
+    // INC r
+    execute_x0_op_r(cpu, y, |c, v| c.inc(v))
+}
+
 fn execute_x0_dec_r<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y: u8) -> u8 {
     // DEC r
-    let val = cpu.get_reg(y);
-    let result = cpu.dec(val);
-    cpu.set_reg(y, result);
-    if y == 6 {
-        11
-    } else {
-        4
-    }
+    execute_x0_op_r(cpu, y, |c, v| c.dec(v))
 }
 
 fn execute_x0_ld_r_n<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y: u8) -> u8 {
@@ -249,7 +251,10 @@ fn execute_x0_ld_r_n<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y:
     }
 }
 
-fn execute_x0_rotate_accum_flags<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y: u8) -> u8 {
+fn execute_x0_rotate_accum_flags<M: MemoryInterface, I: IoInterface>(
+    cpu: &mut Z80<M, I>,
+    y: u8,
+) -> u8 {
     match y {
         0 => {
             cpu.rlca();
@@ -391,7 +396,10 @@ fn execute_x3_jp_cc<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y: 
     10
 }
 
-fn execute_x3_jp_out_ex_di_ei<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y: u8) -> u8 {
+fn execute_x3_jp_out_ex_di_ei<M: MemoryInterface, I: IoInterface>(
+    cpu: &mut Z80<M, I>,
+    y: u8,
+) -> u8 {
     match y {
         0 => {
             // JP nn
@@ -460,7 +468,10 @@ fn execute_x3_call_cc<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y
     }
 }
 
-fn execute_x3_push_call_prefixes<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y: u8) -> u8 {
+fn execute_x3_push_call_prefixes<M: MemoryInterface, I: IoInterface>(
+    cpu: &mut Z80<M, I>,
+    y: u8,
+) -> u8 {
     let p = (y >> 1) & 0x03;
     let q = y & 0x01;
     if q == 0 {

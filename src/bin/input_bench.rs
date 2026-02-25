@@ -1,7 +1,6 @@
-
-use genteel::input::{InputManager, InputScript, FrameInput};
-use std::time::Instant;
+use genteel::input::{FrameInput, InputManager, InputScript};
 use std::borrow::Cow;
+use std::time::Instant;
 
 fn main() {
     let mut manager = InputManager::new();
