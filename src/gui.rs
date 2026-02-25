@@ -10,6 +10,7 @@ use winit::{
 use crate::frontend::{self, InputMapping};
 use crate::audio;
 use crate::Emulator;
+use crate::input::InputScript;
 
 #[cfg(feature = "gui")]
 pub struct GuiState {
@@ -214,13 +215,17 @@ impl Framework {
 }
 
 #[cfg(feature = "gui")]
-pub fn run(mut emulator: Emulator) -> Result<(), String> {
+pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), String> {
     if emulator.input_mapping == InputMapping::Original {
         println!("Controls: Arrow keys=D-pad, Z=A, X=B, C=C, Enter=Start");
     } else {
         println!("Controls: WASD/Arrows=D-pad, J/Z=A, K/X=B, L/C=C, U=X, I=Y, O=Z, Enter=Start, Space=Mode");
     }
     println!("Press Escape to quit.");
+    if let Some(path) = &record_path {
+        println!("Recording inputs to: {}", path);
+        emulator.input.start_recording();
+    }
     let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
     let size = winit::dpi::LogicalSize::new(
         frontend::GENESIS_WIDTH as f64 * 3.0,
@@ -282,6 +287,14 @@ pub fn run(mut emulator: Emulator) -> Result<(), String> {
                     match event {
                         WindowEvent::CloseRequested => {
                             println!("Using CloseRequested to exit");
+                            if let Some(path) = &record_path {
+                                let script: InputScript = emulator.input.stop_recording();
+                                if let Err(e) = script.save(path) {
+                                    eprintln!("Failed to save recorded script: {}", e);
+                                } else {
+                                    println!("Recorded script saved to: {}", path);
+                                }
+                            }
                             target.exit();
                         }
                         WindowEvent::KeyboardInput {
@@ -297,6 +310,14 @@ pub fn run(mut emulator: Emulator) -> Result<(), String> {
                             if let PhysicalKey::Code(keycode) = key_event.physical_key {
                                 if keycode == KeyCode::Escape && pressed {
                                     println!("Escape pressed, exiting");
+                                    if let Some(path) = &record_path {
+                                        let script: InputScript = emulator.input.stop_recording();
+                                        if let Err(e) = script.save(path) {
+                                            eprintln!("Failed to save recorded script: {}", e);
+                                        } else {
+                                            println!("Recorded script saved to: {}", path);
+                                        }
+                                    }
                                     target.exit();
                                     return;
                                 }
