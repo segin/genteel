@@ -114,4 +114,19 @@ mod tests {
         assert_eq!(join_u32_words(0x1234, 0x5678), 0x12345678);
         assert_eq!(split_u32_to_words(0x12345678), (0x1234, 0x5678));
     }
+
+    #[test]
+    fn test_u32_word_ops_extended() {
+        // Edge cases for join_u32_words
+        assert_eq!(join_u32_words(0x0000, 0x0000), 0x00000000);
+        assert_eq!(join_u32_words(0xFFFF, 0xFFFF), 0xFFFFFFFF);
+        assert_eq!(join_u32_words(0x0000, 0xFFFF), 0x0000FFFF);
+        assert_eq!(join_u32_words(0xFFFF, 0x0000), 0xFFFF0000);
+
+        // Edge cases for split_u32_to_words
+        assert_eq!(split_u32_to_words(0x00000000), (0x0000, 0x0000));
+        assert_eq!(split_u32_to_words(0xFFFFFFFF), (0xFFFF, 0xFFFF));
+        assert_eq!(split_u32_to_words(0x0000FFFF), (0x0000, 0xFFFF));
+        assert_eq!(split_u32_to_words(0xFFFF0000), (0xFFFF, 0x0000));
+    }
 }
