@@ -213,7 +213,7 @@ impl Emulator {
         let (p1, p2, command) = {
             let frame_input = match input {
                 Some(i) => {
-                    self.input.record(i.clone());
+                    self.input.record((*i).clone());
                     std::borrow::Cow::Borrowed(i)
                 }
                 None => self.input.advance_frame(),
@@ -254,7 +254,10 @@ impl Emulator {
                             }
 
                             if let Err(e) = self.save_screenshot(path) {
-                                eprintln!("Script Error: Failed to save screenshot to {}: {}", path, e);
+                                eprintln!(
+                                    "Script Error: Failed to save screenshot to {}: {}",
+                                    path, e
+                                );
                             } else {
                                 println!("Script: Saved screenshot to {}", path);
                             }
@@ -630,13 +633,8 @@ impl Emulator {
             rgb_data.push((g6 << 2) | (g6 >> 4));
             rgb_data.push((b5 << 3) | (b5 >> 2));
         }
-        image::save_buffer(
-            path,
-            &rgb_data,
-            320,
-            240,
-            image::ExtendedColorType::Rgb8,
-        ).map_err(|e| e.to_string())
+        image::save_buffer(path, &rgb_data, 320, 240, image::ExtendedColorType::Rgb8)
+            .map_err(|e| e.to_string())
     }
     /// Run with GDB debugger attached
     pub fn run_with_gdb(&mut self, port: u16, password: Option<String>) -> std::io::Result<()> {
@@ -1216,10 +1214,10 @@ mod tests {
 
         // Ensure files don't exist
         if std::path::Path::new(path).exists() {
-             let _ = std::fs::remove_file(path);
+            let _ = std::fs::remove_file(path);
         }
         if std::path::Path::new(sanitized_path).exists() {
-             let _ = std::fs::remove_file(sanitized_path);
+            let _ = std::fs::remove_file(sanitized_path);
         }
 
         // Construct input with command
@@ -1239,8 +1237,10 @@ mod tests {
             // Success: created at sanitized path
             let _ = std::fs::remove_file(sanitized_path);
         } else {
-            panic!("Sanitization failed: file not created at {}", sanitized_path);
+            panic!(
+                "Sanitization failed: file not created at {}",
+                sanitized_path
+            );
         }
     }
-
 }

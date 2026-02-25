@@ -1,5 +1,5 @@
-use super::Vdp;
 use super::constants::*;
+use super::Vdp;
 
 pub trait DmaOps {
     fn dma_mode(&self) -> u8;

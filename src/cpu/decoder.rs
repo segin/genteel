@@ -616,7 +616,7 @@ fn decode_sub(opcode: u16) -> Instruction {
                 // reg=Rx, direction=1, size=size, ea_mode=0, m=m, ea_reg=Ry
                 // This means opmode is 4, 5, or 6 (size + 4) and ea_mode is 0 or 1.
                 // Wait, if bit 8 is set, opmode is 4, 5, 6, or 7.
-                
+
                 // Let's re-read the SUBX encoding: 1001 reg 1 size 00 m reg
                 if (opcode & 0x0130) == 0x0100 {
                     let memory_mode = (opcode & 0x0008) != 0;
