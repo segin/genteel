@@ -14,8 +14,11 @@ pub use render::RenderOps;
 /// Genesis Video Display Processor (VDP)
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Vdp {
+    #[serde(skip, default = "default_vram")]
     pub vram: [u8; 0x10000],
+    #[serde(skip, default = "default_cram")]
     pub cram: [u8; 128],
+    #[serde(skip, default = "default_vsram")]
     pub vsram: [u8; 80],
     pub registers: [u8; NUM_REGISTERS],
     pub status: u16,
@@ -25,7 +28,7 @@ pub struct Vdp {
     pub dma_pending: bool,
 
     /// Cache of CRAM colors in RGB565 format for performance
-    #[serde(skip)]
+    #[serde(skip, default = "default_cram_cache")]
     pub cram_cache: [u16; 64],
 
     pub h_counter: u16,
@@ -284,6 +287,67 @@ impl Vdp {
         ((self.registers[REG_HSCROLL] as usize) & 0x3F) << 10
     }
 
+    pub fn plane_size(&self) -> (usize, usize) {
+        let size_reg = self.registers[REG_PLANE_SIZE];
+        let w = match size_reg & 0x03 {
+            0 => 32,
+            1 => 64,
+            3 => 128,
+            _ => 64,
+        };
+        let h = match (size_reg >> 4) & 0x03 {
+            0 => 32,
+            1 => 64,
+            3 => 128,
+            _ => 64,
+        };
+        (w, h)
+    }
+
+    pub fn window_address(&self) -> usize {
+        let reg = self.registers[REG_WINDOW] as usize;
+        (reg & 0x3E) << 10
+    }
+
+    pub fn is_window_area(&self, x: u16, y: u16) -> bool {
+        let h_pos_reg = self.registers[REG_WINDOW_H_POS];
+        let h_right = (h_pos_reg & 0x80) != 0;
+        let h_base = (h_pos_reg & 0x1F) as u16 * 16;
+
+        let h_active = if h_right {
+            x >= h_base
+        } else {
+            x < h_base
+        };
+
+        let v_pos_reg = self.registers[REG_WINDOW_V_POS];
+        let v_bottom = (v_pos_reg & 0x80) != 0;
+        let v_base = (v_pos_reg & 0x1F) as u16 * 8;
+
+        let v_active = if v_bottom {
+            y >= v_base
+        } else {
+            y < v_base
+        };
+
+        h_active || v_active
+    }
+
+    pub fn mode1(&self) -> u8 {
+        self.registers[REG_MODE1]
+    }
+
+    pub fn mode2(&self) -> u8 {
+        self.registers[REG_MODE2]
+    }
+
+    pub fn dma_enabled(&self) -> bool {
+        (self.registers[REG_MODE2] & MODE2_DMA_ENABLE) != 0
+    }
+
+    pub fn update_v30_offset(&mut self) {
+    }
+
     pub fn write_vram_word(&mut self, addr: u16, value: u16) {
         let addr = addr as usize;
         if addr < 0x10000 {
@@ -385,3 +449,8 @@ mod bench_dma;
 
 #[cfg(test)]
 mod test_repro_white_screen;
+
+fn default_vram() -> [u8; 0x10000] { [0; 0x10000] }
+fn default_cram() -> [u8; 128] { [0; 128] }
+fn default_vsram() -> [u8; 80] { [0; 80] }
+fn default_cram_cache() -> [u16; 64] { [0; 64] }

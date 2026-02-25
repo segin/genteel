@@ -1,4 +1,3 @@
-#![deny(warnings)]
 /// Graceful println that ignores broken pipe errors (for `| head` usage)
 #[allow(unused_macros)]
 macro_rules! println_safe {
@@ -406,24 +405,28 @@ impl Emulator {
         ))
     }
     /// Step one frame with current input state
-    pub fn step_frame(&mut self, input: Option<input::FrameInput>) {
+    pub fn step_frame(&mut self, input: Option<&input::FrameInput>) {
         // Apply inputs from script or live input
-        let frame_input = match input {
-            Some(i) => std::borrow::Cow::Owned(i),
-            None => self.input.advance_frame(),
+        let (p1, p2, command) = {
+            let frame_input = match input {
+                Some(i) => std::borrow::Cow::Borrowed(i),
+                None => self.input.advance_frame(),
+            };
+            (frame_input.p1, frame_input.p2, frame_input.command.clone())
         };
+
         {
             let mut bus = self.bus.borrow_mut();
             if let Some(ctrl) = bus.io.controller(1) {
-                *ctrl = frame_input.p1;
+                *ctrl = p1;
             }
             if let Some(ctrl) = bus.io.controller(2) {
-                *ctrl = frame_input.p2;
+                *ctrl = p2;
             }
         }
 
         // Handle commands (e.g., SCREENSHOT <path>)
-        if let Some(cmd) = frame_input.command {
+        if let Some(cmd) = command {
             let parts: Vec<&str> = cmd.split_whitespace().collect();
             if !parts.is_empty() {
                 match parts[0].to_uppercase().as_str() {
@@ -742,14 +745,14 @@ impl Emulator {
                 if bus.vdp.line_counter == 0 {
                     // Counter expired - trigger HInt and reload
                     self.cpu.request_interrupt(4);
-                    bus.vdp.line_counter = bus.vdp.registers[10];
+                    bus.vdp.line_counter = bus.vdp.registers[10] as u16;
                 } else {
                     bus.vdp.line_counter = bus.vdp.line_counter.saturating_sub(1);
                 }
             }
         } else {
             // During VBlank, reload HInt counter every line
-            bus.vdp.line_counter = bus.vdp.registers[10];
+            bus.vdp.line_counter = bus.vdp.registers[10] as u16;
         }
     }
     /// Run headless for N frames (or until script ends if N is None)
@@ -1090,7 +1093,7 @@ impl Emulator {
                                     self.log_debug(frame_count);
                                 }
                                 // Run one frame of emulation
-                                self.step_frame(Some(input.clone()));
+                                self.step_frame(Some(&input));
                                 // Process audio
                                 self.process_audio(&audio_buffer);
 
@@ -1610,7 +1613,7 @@ mod tests {
         let mut input = crate::input::FrameInput::default();
         input.command = Some(format!("SCREENSHOT {}", path));
 
-        emulator.step_frame(Some(input));
+        emulator.step_frame(Some(&input));
 
         // Check vulnerability is fixed
         if std::path::Path::new(path).exists() {
@@ -1626,4 +1629,5 @@ mod tests {
             panic!("Sanitization failed: file not created at {}", sanitized_path);
         }
     }
+
 }

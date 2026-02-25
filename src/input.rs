@@ -526,7 +526,7 @@ mod tests {
 
         // Advance to frame 1
         manager.advance_frame(); // Frame 0 processed
-        let input = manager.advance_frame(); // Frame 1 processed
+        let input = manager.advance_frame().into_owned(); // Frame 1 processed
 
         assert_eq!(manager.frame(), 2);
         assert!(input.p1.a);
