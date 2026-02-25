@@ -11,11 +11,18 @@ pub use dma::DmaOps;
 pub mod render;
 pub use render::RenderOps;
 
+fn default_cram_cache() -> [u16; 64] {
+    [0; 64]
+}
+
 /// Genesis Video Display Processor (VDP)
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Vdp {
+    #[serde(with = "crate::memory::byte_utils::big_array")]
     pub vram: [u8; 0x10000],
+    #[serde(with = "crate::memory::byte_utils::big_array")]
     pub cram: [u8; 128],
+    #[serde(with = "crate::memory::byte_utils::big_array")]
     pub vsram: [u8; 80],
     pub registers: [u8; NUM_REGISTERS],
     pub status: u16,
@@ -25,7 +32,7 @@ pub struct Vdp {
     pub dma_pending: bool,
 
     /// Cache of CRAM colors in RGB565 format for performance
-    #[serde(skip)]
+    #[serde(skip, default = "default_cram_cache")]
     pub cram_cache: [u16; 64],
 
     pub h_counter: u16,
@@ -338,7 +345,7 @@ impl Debuggable for Vdp {
     }
 
     fn write_state(&mut self, state: &Value) {
-        let mut new_vdp: Vdp = match serde_json::from_value(state.clone()) {
+        let mut new_vdp: Vdp = match Vdp::deserialize(state) {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("Error deserializing VDP state: {}", e);
