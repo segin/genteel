@@ -1437,4 +1437,90 @@ mod tests {
         assert!(!cpu.get_flag(flags::ZERO));
         assert!(cpu.get_flag(flags::NEGATIVE));
     }
+
+    #[test]
+    fn test_exec_nbcd_basic() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // D0 = 0x10 (BCD 10)
+        cpu.d[0] = 0x10;
+
+        // NBCD D0
+        exec_nbcd(&mut cpu, AddressingMode::DataRegister(0), &mut memory);
+
+        // Expected: 0 - 10 = 90 (0x90) with borrow
+        assert_eq!(cpu.d[0] & 0xFF, 0x90);
+        assert!(cpu.get_flag(flags::CARRY));
+        assert!(cpu.get_flag(flags::EXTEND));
+    }
+
+    #[test]
+    fn test_exec_nbcd_zero() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // D0 = 0
+        cpu.d[0] = 0x00;
+        cpu.set_flag(flags::ZERO, true);
+        cpu.set_flag(flags::EXTEND, false);
+
+        // NBCD D0
+        exec_nbcd(&mut cpu, AddressingMode::DataRegister(0), &mut memory);
+
+        // Expected: 0 - 0 = 0
+        assert_eq!(cpu.d[0] & 0xFF, 0x00);
+        assert!(!cpu.get_flag(flags::CARRY));
+        assert!(!cpu.get_flag(flags::EXTEND));
+        assert!(cpu.get_flag(flags::ZERO)); // Z remains set
+    }
+
+    #[test]
+    fn test_exec_nbcd_with_extend() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // D0 = 0
+        cpu.d[0] = 0x00;
+        cpu.set_flag(flags::EXTEND, true);
+
+        // NBCD D0
+        exec_nbcd(&mut cpu, AddressingMode::DataRegister(0), &mut memory);
+
+        // Expected: 0 - 0 - 1 = 99 (0x99) with borrow
+        assert_eq!(cpu.d[0] & 0xFF, 0x99);
+        assert!(cpu.get_flag(flags::CARRY));
+        assert!(cpu.get_flag(flags::EXTEND));
+    }
+
+    #[test]
+    fn test_exec_nbcd_memory() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        memory.write_byte(0x2000, 0x10);
+        cpu.a[0] = 0x2000;
+
+        // NBCD (A0)
+        exec_nbcd(&mut cpu, AddressingMode::AddressIndirect(0), &mut memory);
+
+        // Expected: 0 - 10 = 90 (0x90)
+        assert_eq!(memory.read_byte(0x2000), 0x90);
+    }
+
+    #[test]
+    fn test_exec_nbcd_z_flag() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // Case 1: Result Non-Zero, Z originally set -> Z cleared
+        cpu.d[0] = 0x10;
+        cpu.set_flag(flags::ZERO, true);
+        exec_nbcd(&mut cpu, AddressingMode::DataRegister(0), &mut memory);
+        assert_eq!(cpu.d[0] & 0xFF, 0x90);
+        assert!(!cpu.get_flag(flags::ZERO));
+
+        // Case 2: Result Zero, Z originally clear -> Z remains clear
+        cpu.d[0] = 0x00;
+        cpu.set_flag(flags::ZERO, false);
+        cpu.set_flag(flags::EXTEND, false);
+        exec_nbcd(&mut cpu, AddressingMode::DataRegister(0), &mut memory);
+        assert_eq!(cpu.d[0] & 0xFF, 0x00);
+        assert!(!cpu.get_flag(flags::ZERO));
+    }
 }
