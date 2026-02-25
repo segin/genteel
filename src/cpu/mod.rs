@@ -6,7 +6,12 @@ pub mod decoder;
 pub mod instructions;
 pub mod ops;
 
-pub use decoder::{Condition, Cpu, Size};
+pub use decoder::{Condition, Size};
+use instructions::{
+    ArithmeticInstruction, BitSource, BitsInstruction, DataInstruction, DecodeCacheEntry,
+    Instruction, SystemInstruction,
+};
+use decoder::decode;
 
 pub mod flags {
     pub const CARRY: u16 = 0x0001;
@@ -30,7 +35,120 @@ pub struct CpuState {
     pub pending_interrupt: u8,
 }
 
+const CACHE_SIZE_BITS: usize = 16;
+const CACHE_SIZE: usize = 1 << CACHE_SIZE_BITS;
+const CACHE_MASK: u32 = (CACHE_SIZE - 1) as u32;
+const CACHE_ROM_LIMIT: u32 = 0x400000;
+
+#[derive(Debug, Clone)]
+pub struct Cpu {
+    pub d: [u32; 8],
+    pub a: [u32; 8],
+    pub pc: u32,
+    pub sr: u16,
+    pub usp: u32,
+    pub ssp: u32,
+    pub halted: bool,
+    pub pending_interrupt: u8,
+    pub cycles: u64,
+    pub pending_exception: bool,
+    pub interrupt_pending_mask: u8,
+    pub decode_cache: Vec<DecodeCacheEntry>,
+}
+
 impl Cpu {
+    pub fn new<M: MemoryInterface>(memory: &mut M) -> Self {
+        let sp = memory.read_long(0);
+        let pc = memory.read_long(4);
+        let mut a = [0; 8];
+        a[7] = sp;
+        Cpu {
+            d: [0; 8],
+            a,
+            pc,
+            sr: 0x2700,
+            usp: 0,
+            ssp: sp,
+            halted: false,
+            pending_interrupt: 0,
+            cycles: 0,
+            pending_exception: false,
+            interrupt_pending_mask: 0,
+            decode_cache: vec![DecodeCacheEntry::default(); CACHE_SIZE],
+        }
+    }
+
+    pub fn check_interrupts<M: MemoryInterface>(&mut self, _memory: &mut M) -> u32 {
+        0
+    }
+
+    pub fn read_byte<M: MemoryInterface>(&mut self, addr: u32, memory: &mut M) -> u8 {
+        memory.read_byte(addr)
+    }
+    pub fn read_word<M: MemoryInterface>(&mut self, addr: u32, memory: &mut M) -> u16 {
+        memory.read_word(addr)
+    }
+    pub fn read_long<M: MemoryInterface>(&mut self, addr: u32, memory: &mut M) -> u32 {
+        memory.read_long(addr)
+    }
+    pub fn write_byte<M: MemoryInterface>(&mut self, addr: u32, val: u8, memory: &mut M) {
+        memory.write_byte(addr, val);
+    }
+    pub fn write_word<M: MemoryInterface>(&mut self, addr: u32, val: u16, memory: &mut M) {
+        memory.write_word(addr, val);
+    }
+    pub fn write_long<M: MemoryInterface>(&mut self, addr: u32, val: u32, memory: &mut M) {
+        memory.write_long(addr, val);
+    }
+
+    pub fn test_condition(&self, cond: Condition) -> bool {
+        self.check_condition(cond)
+    }
+
+    pub fn cpu_read_ea<M: MemoryInterface>(&mut self, _ea: addressing::EffectiveAddress, _size: Size, _memory: &mut M) -> u32 {
+        panic!("cpu_read_ea unimplemented");
+    }
+
+    pub fn cpu_write_ea<M: MemoryInterface>(&mut self, _ea: addressing::EffectiveAddress, _size: Size, _val: u32, _memory: &mut M) {
+        panic!("cpu_write_ea unimplemented");
+    }
+
+    pub fn cpu_read_memory<M: MemoryInterface>(&mut self, addr: u32, size: Size, memory: &mut M) -> u32 {
+        match size {
+            Size::Byte => self.read_byte(addr, memory) as u32,
+            Size::Word => self.read_word(addr, memory) as u32,
+            Size::Long => self.read_long(addr, memory),
+        }
+    }
+
+    pub fn cpu_write_memory<M: MemoryInterface>(&mut self, addr: u32, size: Size, val: u32, memory: &mut M) {
+        match size {
+            Size::Byte => self.write_byte(addr, val as u8, memory),
+            Size::Word => self.write_word(addr, val as u16, memory),
+            Size::Long => self.write_long(addr, val, memory),
+        }
+    }
+
+    pub fn fetch_bit_num<M: MemoryInterface>(&mut self, _bit: BitSource, _memory: &mut M) -> u32 {
+        0
+    }
+
+    pub fn resolve_bit_index(&self, bit_num: u32, _is_memory: bool) -> u32 {
+        bit_num
+    }
+
+    pub fn request_interrupt(&mut self, level: u8) {
+        if level > 7 {
+            return;
+        }
+        self.interrupt_pending_mask |= 1 << level;
+        self.update_pending_interrupt();
+    }
+
+    pub fn invalidate_cache(&mut self) {
+        // Stub
+    }
+
     pub fn get_state(&self) -> CpuState {
         CpuState {
             d: self.d,
@@ -311,7 +429,7 @@ impl Cpu {
                     ops::data::exec_movea(self, size, src, dst_reg, memory)
                 }
                 DataInstruction::MoveQ { dst_reg, data } => {
-                    ops::data::exec_moveq(self, dst_reg, data)
+                    ops::data::exec_moveq(self, dst_reg, data as u8)
                 }
                 DataInstruction::Lea { src, dst_reg } => {
                     ops::data::exec_lea(self, src, dst_reg, memory)
@@ -524,7 +642,7 @@ impl Cpu {
                     self.pc = self.pc.wrapping_add(2);
                     ops::system::exec_link(self, reg, displacement, memory)
                 }
-                SystemInstruction::Unlk { reg } => ops::system::unlk(self, reg, memory),
+                SystemInstruction::Unlk { reg } => ops::system::exec_unlk(self, reg, memory),
                 SystemInstruction::MoveToSr { src } => {
                     ops::system::exec_move_to_sr(self, src, memory)
                 }
@@ -569,7 +687,7 @@ impl Cpu {
             Condition::OverflowSet => v,
             Condition::Plus => !n,
             Condition::Minus => n,
-            Condition::GreaterEqual => (n && v) || (!n && !v),
+            Condition::GreaterOrEqual => (n && v) || (!n && !v),
             Condition::LessThan => (n && !v) || (!n && v),
             Condition::GreaterThan => (n && v && !z) || (!n && !v && !z),
             Condition::LessOrEqual => z || (n && !v) || (!n && v),
