@@ -1,4 +1,4 @@
-use crate::memory::{IoInterface, MemoryInterface, Z80Interface};
+use crate::memory::{MemoryInterface, Z80Interface};
 use crate::z80::{flags, Z80};
 
 pub trait CbOps {

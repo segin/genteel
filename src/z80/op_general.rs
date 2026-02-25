@@ -3,7 +3,6 @@ use crate::z80::{Z80, flags};
 use crate::z80::op_cb::CbOps;
 use crate::z80::op_ed::EdOps;
 use crate::z80::op_index::IndexOps;
-use crate::dispatch_z;
 
 pub trait GeneralOps {
     fn execute_x0(&mut self, opcode: u8, y: u8, z: u8, p: u8, q: u8) -> u8;

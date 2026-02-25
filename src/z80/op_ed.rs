@@ -1,6 +1,5 @@
 use crate::memory::{IoInterface, MemoryInterface};
 use crate::z80::{Z80, flags};
-use crate::dispatch_z;
 
 pub trait EdOps {
     fn execute_ed_prefix(&mut self) -> u8;

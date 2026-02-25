@@ -9,7 +9,6 @@ use crate::memory::{IoInterface, MemoryInterface};
 pub mod test_utils;
 
 pub mod op_cb;
-use op_cb::CbOps;
 
 /// Z80 Flag bits in the F register
 pub mod flags {
@@ -34,10 +33,8 @@ pub mod op_general;
 use op_general::GeneralOps;
 
 pub mod op_ed;
-use op_ed::EdOps;
 
 pub mod op_index;
-use op_index::IndexOps;
 
 /// Z80 CPU
 #[derive(Debug)]
