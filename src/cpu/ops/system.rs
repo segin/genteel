@@ -503,7 +503,7 @@ mod tests {
 
         // 1. Test Privilege Violation (User Mode)
         cpu.sr = 0x0000; // User mode
-        // Setup Exception Vector 8 (Privilege Violation)
+                         // Setup Exception Vector 8 (Privilege Violation)
         let vector_addr = 8 * 4;
         let handler_addr = 0x4000;
         memory.write_long(vector_addr, handler_addr);
