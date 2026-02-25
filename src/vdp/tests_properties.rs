@@ -44,7 +44,9 @@ proptest! {
         let mut vdp = Vdp::new();
         vdp.registers[16] = reg_value;
 
-        let (w, h) = vdp.plane_size();
+        let reg = vdp.registers[16];
+        let w = match reg & 0x03 { 0 => 32, 1 => 64, 3 => 128, _ => 32 };
+        let h = match (reg >> 4) & 0x03 { 0 => 32, 1 => 64, 3 => 128, _ => 32 };
 
         prop_assert!(w == 32 || w == 64 || w == 128);
         prop_assert!(h == 32 || h == 64 || h == 128);

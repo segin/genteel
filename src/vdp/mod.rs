@@ -11,6 +11,132 @@ pub use dma::DmaOps;
 pub mod render;
 pub use render::RenderOps;
 
+pub mod big_array_vram {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde::de::{self, SeqAccess, Visitor};
+    use std::fmt;
+
+    pub fn serialize<S>(data: &[u8; 0x10000], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.collect_seq(data)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; 0x10000], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ArrayVisitor;
+
+        impl<'de> Visitor<'de> for ArrayVisitor {
+            type Value = [u8; 0x10000];
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("an array of length 65536")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let mut arr = [0u8; 0x10000];
+                for i in 0..0x10000 {
+                    arr[i] = seq.next_element()?
+                        .ok_or_else(|| de::Error::invalid_length(i, &self))?;
+                }
+                Ok(arr)
+            }
+        }
+
+        deserializer.deserialize_tuple(0x10000, ArrayVisitor)
+    }
+}
+
+pub mod big_array_cram {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde::de::{self, SeqAccess, Visitor};
+    use std::fmt;
+
+    pub fn serialize<S>(data: &[u8; 128], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.collect_seq(data)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; 128], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ArrayVisitor;
+
+        impl<'de> Visitor<'de> for ArrayVisitor {
+            type Value = [u8; 128];
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("an array of length 128")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let mut arr = [0u8; 128];
+                for i in 0..128 {
+                    arr[i] = seq.next_element()?
+                        .ok_or_else(|| de::Error::invalid_length(i, &self))?;
+                }
+                Ok(arr)
+            }
+        }
+
+        deserializer.deserialize_tuple(128, ArrayVisitor)
+    }
+}
+
+pub mod big_array_vsram {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde::de::{self, SeqAccess, Visitor};
+    use std::fmt;
+
+    pub fn serialize<S>(data: &[u8; 80], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.collect_seq(data)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; 80], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ArrayVisitor;
+
+        impl<'de> Visitor<'de> for ArrayVisitor {
+            type Value = [u8; 80];
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("an array of length 80")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let mut arr = [0u8; 80];
+                for i in 0..80 {
+                    arr[i] = seq.next_element()?
+                        .ok_or_else(|| de::Error::invalid_length(i, &self))?;
+                }
+                Ok(arr)
+            }
+        }
+
+        deserializer.deserialize_tuple(80, ArrayVisitor)
+    }
+}
+
 mod serde_arrays {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use serde::ser::SerializeTuple;
@@ -35,7 +161,7 @@ mod serde_arrays {
         impl<'de, const N: usize> serde::de::Visitor<'de> for ArrayVisitor<N> {
             type Value = [u8; N];
 
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> fmt::Result {
                 formatter.write_fmt(format_args!("an array of size {}", N))
             }
 
@@ -56,18 +182,34 @@ mod serde_arrays {
     }
 }
 
+fn default_vram() -> [u8; 0x10000] {
+    [0; 0x10000]
+}
+
+fn default_cram() -> [u8; 128] {
+    [0; 128]
+}
+
+fn default_vsram() -> [u8; 80] {
+    [0; 80]
+}
+
 fn default_cram_cache() -> [u16; 64] {
     [0; 64]
+}
+
+fn default_framebuffer() -> Vec<u16> {
+    vec![0; 320 * 240]
 }
 
 /// Genesis Video Display Processor (VDP)
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Vdp {
-    #[serde(with = "serde_arrays")]
+    #[serde(with = "big_array_vram", default = "default_vram")]
     pub vram: [u8; 0x10000],
-    #[serde(with = "serde_arrays")]
+    #[serde(with = "big_array_cram", default = "default_cram")]
     pub cram: [u8; 128],
-    #[serde(with = "serde_arrays")]
+    #[serde(with = "big_array_vsram", default = "default_vsram")]
     pub vsram: [u8; 80],
     pub registers: [u8; NUM_REGISTERS],
     pub status: u16,
@@ -87,7 +229,7 @@ pub struct Vdp {
     pub v30_offset: u16,
     pub is_pal: bool,
 
-    #[serde(skip)]
+    #[serde(skip, default = "default_framebuffer")]
     pub framebuffer: Vec<u16>,
 }
 
@@ -99,7 +241,7 @@ impl Default for Vdp {
 
 impl Vdp {
     pub fn new() -> Self {
-        Self {
+        let mut vdp = Self {
             vram: [0; 0x10000],
             cram: [0; 128],
             vsram: [0; 80],
@@ -117,7 +259,9 @@ impl Vdp {
             v30_offset: 0,
             is_pal: false,
             framebuffer: vec![0; 320 * 240],
-        }
+        };
+        vdp.reset();
+        vdp
     }
 
     /// Reconstruct cram_cache from cram
@@ -126,6 +270,7 @@ impl Vdp {
             let addr = i * 2;
             if addr + 1 < self.cram.len() {
                 let val = ((self.cram[addr + 1] as u16) << 8) | (self.cram[addr] as u16);
+                // Use helper to avoid duplication
                 self.cram_cache[i] = Self::genesis_color_to_rgb565(val);
             }
         }
@@ -224,31 +369,31 @@ impl Vdp {
     }
 
     pub fn write_control(&mut self, value: u16) {
-        if !self.control_pending {
-            // First word of command
-            self.control_code = (self.control_code & 0xFC) | ((value >> 14) & 0x03) as u8;
-            self.control_address = (self.control_address & 0xC000) | (value & 0x3FFF);
-            self.control_pending = true;
-        } else {
+        if self.control_pending {
             // Second word of command
             self.control_code = (self.control_code & 0x03) | ((value >> 2) & 0x3C) as u8;
             self.control_address = (self.control_address & 0x3FFF) | ((value & 0x0003) << 14);
             self.control_pending = false;
 
-            // Check if this was a register write
+            // Check if DMA should be triggered (CD5 bit set in code)
+            if (self.control_code & 0x20) != 0 && (self.registers[REG_MODE2] & MODE2_DMA_ENABLE) != 0 {
+                self.dma_pending = true;
+            }
+        } else {
+            // Check if this is a register write (Bits 15,14 = 10)
             if (value & 0xC000) == 0x8000 {
                 let reg = ((value >> 8) & 0x1F) as usize;
                 let val = (value & 0xFF) as u8;
                 if reg < NUM_REGISTERS {
                     self.registers[reg] = val;
                 }
+                return;
             }
 
-            // Check if DMA should be triggered (CD1 bit set in code)
-            if (self.control_code & 0x20) != 0 && (self.registers[REG_MODE2] & MODE2_DMA_ENABLE) != 0
-            {
-                self.dma_pending = true;
-            }
+            // First word of command
+            self.control_code = (self.control_code & 0xFC) | ((value >> 14) & 0x03) as u8;
+            self.control_address = (self.control_address & 0xC000) | (value & 0x3FFF);
+            self.control_pending = true;
         }
     }
 
@@ -256,7 +401,10 @@ impl Vdp {
     pub fn read_status(&mut self) -> u16 {
         // Reading the status register clears the write pending flag (resets the command state machine).
         self.control_pending = false;
-        let res = self.status;
+        let mut res = self.status;
+        if self.dma_pending {
+            res |= 0x0002; // DMA Busy
+        }
         // Reading status clears the VInt pending bit (Bit 7)
         self.status &= !STATUS_VINT_PENDING;
         res
@@ -487,3 +635,6 @@ mod bench_dma;
 
 #[cfg(test)]
 mod test_repro_white_screen;
+
+#[cfg(test)]
+mod tests_draw_row_refactor;
