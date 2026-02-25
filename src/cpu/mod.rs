@@ -54,10 +54,12 @@ pub struct CpuState {
 }
 
 impl Cpu {
-<<<<<<< HEAD
     pub fn new<M: MemoryInterface>(memory: &mut M) -> Self {
         let ssp = memory.read_long(0);
         let pc = memory.read_long(4);
+        let cache_size = (CACHE_MASK + 1) as usize;
+        let cache = vec![DecodeCacheEntry::default(); cache_size].into_boxed_slice();
+
         let mut cpu = Self {
             d: [0; 8],
             a: [0; 8],
@@ -65,33 +67,15 @@ impl Cpu {
             sr: 0x2700,
             usp: 0,
             ssp,
-=======
-    pub fn new<M: MemoryInterface>(_memory: &mut M) -> Self {
-        let cache_size = (CACHE_MASK + 1) as usize;
-        let cache = vec![DecodeCacheEntry::default(); cache_size].into_boxed_slice();
-
-        Cpu {
-            d: [0; 8],
-            a: [0; 8],
-            pc: 0,
-            sr: 0x2700,
-            usp: 0,
-            ssp: 0,
->>>>>>> origin/main
             halted: false,
             pending_interrupt: 0,
             interrupt_pending_mask: 0,
             pending_exception: false,
             cycles: 0,
-<<<<<<< HEAD
-            decode_cache: vec![DecodeCacheEntry::default(); (CACHE_MASK + 1) as usize].into_boxed_slice(),
+            decode_cache: cache,
         };
         cpu.a[7] = ssp;
         cpu
-=======
-            decode_cache: cache,
-        }
->>>>>>> origin/main
     }
 
     pub fn reset<M: MemoryInterface>(&mut self, memory: &mut M) {
@@ -108,7 +92,7 @@ impl Cpu {
 
     pub fn cpu_read_ea<M: MemoryInterface>(&mut self, ea: EffectiveAddress, size: Size, memory: &mut M) -> u32 {
         if let EffectiveAddress::Memory(addr) = ea {
-            if size != Size::Byte && (addr & 1 != 0) {
+            if (size == Size::Word || size == Size::Long) && addr % 2 != 0 {
                 self.process_exception(3, memory);
                 return 0;
             }
@@ -118,7 +102,7 @@ impl Cpu {
 
     pub fn cpu_write_ea<M: MemoryInterface>(&mut self, ea: EffectiveAddress, size: Size, value: u32, memory: &mut M) {
         if let EffectiveAddress::Memory(addr) = ea {
-            if size != Size::Byte && (addr & 1 != 0) {
+            if (size == Size::Word || size == Size::Long) && addr % 2 != 0 {
                 self.process_exception(3, memory);
                 return;
             }
@@ -127,7 +111,7 @@ impl Cpu {
     }
 
     pub fn cpu_read_memory<M: MemoryInterface>(&mut self, addr: u32, size: Size, memory: &mut M) -> u32 {
-        if size != Size::Byte && (addr & 1 != 0) {
+        if (size == Size::Word || size == Size::Long) && addr % 2 != 0 {
             self.process_exception(3, memory);
             return 0;
         }
@@ -135,7 +119,7 @@ impl Cpu {
     }
 
     pub fn cpu_write_memory<M: MemoryInterface>(&mut self, addr: u32, size: Size, value: u32, memory: &mut M) {
-        if size != Size::Byte && (addr & 1 != 0) {
+        if (size == Size::Word || size == Size::Long) && addr % 2 != 0 {
             self.process_exception(3, memory);
             return;
         }
@@ -143,21 +127,20 @@ impl Cpu {
     }
 
     fn check_interrupts<M: MemoryInterface>(&mut self, memory: &mut M) -> u32 {
-        if self.pending_interrupt > (((self.sr & flags::INTERRUPT_MASK) >> 8) as u8) {
+        let mask = (self.sr & flags::INTERRUPT_MASK) >> 8;
+        if self.pending_interrupt > mask as u8 {
             let level = self.pending_interrupt;
             let vector = 24 + level as u32;
             let cycles = self.process_exception(vector, memory);
             self.sr = (self.sr & !flags::INTERRUPT_MASK) | ((level as u16) << 8);
             self.acknowledge_interrupt(level);
-            return cycles;
+            return 44;
         }
         0
     }
 
     pub fn invalidate_cache(&mut self) {
-        for entry in self.decode_cache.iter_mut() {
-            entry.pc = u32::MAX;
-        }
+        self.decode_cache.fill(DecodeCacheEntry::default());
     }
 
     pub fn request_interrupt(&mut self, level: u8) {
@@ -211,7 +194,7 @@ impl Cpu {
     }
 
     pub fn read_word<M: MemoryInterface>(&mut self, addr: u32, memory: &mut M) -> u16 {
-        if addr & 1 != 0 {
+        if addr % 2 != 0 {
             self.process_exception(3, memory);
             return 0;
         }
@@ -219,7 +202,7 @@ impl Cpu {
     }
 
     pub fn read_long<M: MemoryInterface>(&mut self, addr: u32, memory: &mut M) -> u32 {
-        if addr & 1 != 0 {
+        if addr % 2 != 0 {
             self.process_exception(3, memory);
             return 0;
         }
@@ -227,7 +210,7 @@ impl Cpu {
     }
 
     pub fn write_word<M: MemoryInterface>(&mut self, addr: u32, val: u16, memory: &mut M) {
-        if addr & 1 != 0 {
+        if addr % 2 != 0 {
             self.process_exception(3, memory);
             return;
         }
@@ -235,7 +218,7 @@ impl Cpu {
     }
 
     pub fn write_long<M: MemoryInterface>(&mut self, addr: u32, val: u32, memory: &mut M) {
-        if addr & 1 != 0 {
+        if addr % 2 != 0 {
             self.process_exception(3, memory);
             return;
         }
