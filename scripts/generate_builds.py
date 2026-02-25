@@ -9,7 +9,7 @@ def run_command(command, description):
     try:
         if isinstance(command, str):
             command = shlex.split(command)
-        subprocess.check_call(command)
+        subprocess.check_call(command, shell=False)
     except subprocess.CalledProcessError as e:
         print(f"Error during {description}: {e}")
         return False
