@@ -70,7 +70,7 @@ mod performance_tests {
         let start = Instant::now();
 
         for _ in 0..iterations {
-            bus.vdp.dma_pending = true;
+            bus.vdp.command.dma_pending = true;
             bus.write_word(0xC00004, 0x4000);
             bus.write_word(0xC00004, 0x0080);
         }
@@ -122,6 +122,7 @@ mod performance_tests {
     #[test]
     fn test_vdp_long_access_correctness() {
         let mut bus = Bus::new();
+        bus.vdp.bypass_fifo = true;
 
         // 1. Setup VDP Auto-Increment to 2
         bus.vdp.registers[15] = 2;
@@ -149,7 +150,7 @@ mod performance_tests {
         // Let's use internal state via debug interface which is easier in test
         // But we are in bus test, so we can access bus.vdp directly.
         // Wait, Vdp struct fields are public in crate, but `control_address` is public? Yes.
-        assert_eq!(bus.vdp.control_address, 4);
+        assert_eq!(bus.vdp.command.address, 4);
 
         // 4. Setup VRAM Read from address 0x0000
         bus.write_word(0xC00004, 0x0000);
@@ -159,6 +160,6 @@ mod performance_tests {
         let val = bus.read_long(0xC00000);
 
         assert_eq!(val, 0x11223344);
-        assert_eq!(bus.vdp.control_address, 4);
+        assert_eq!(bus.vdp.command.address, 6);
     }
 }

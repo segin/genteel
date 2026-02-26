@@ -12,8 +12,8 @@ pub mod render;
 pub use render::RenderOps;
 
 pub mod big_array_vram {
-    use serde::{Deserializer, Serializer};
     use serde::de::{self, SeqAccess, Visitor};
+    use serde::{Deserializer, Serializer};
     use std::fmt;
 
     pub fn serialize<S>(data: &[u8; 0x10000], serializer: S) -> Result<S::Ok, S::Error>
@@ -41,8 +41,9 @@ pub mod big_array_vram {
                 A: SeqAccess<'de>,
             {
                 let mut arr = [0u8; 0x10000];
-                for i in 0..0x10000 {
-                    arr[i] = seq.next_element()?
+                for (i, item) in arr.iter_mut().enumerate() {
+                    *item = seq
+                        .next_element()?
                         .ok_or_else(|| de::Error::invalid_length(i, &self))?;
                 }
                 Ok(arr)
@@ -54,8 +55,8 @@ pub mod big_array_vram {
 }
 
 pub mod big_array_cram {
-    use serde::{Deserializer, Serializer};
     use serde::de::{self, SeqAccess, Visitor};
+    use serde::{Deserializer, Serializer};
     use std::fmt;
 
     pub fn serialize<S>(data: &[u8; 128], serializer: S) -> Result<S::Ok, S::Error>
@@ -83,8 +84,9 @@ pub mod big_array_cram {
                 A: SeqAccess<'de>,
             {
                 let mut arr = [0u8; 128];
-                for i in 0..128 {
-                    arr[i] = seq.next_element()?
+                for (i, item) in arr.iter_mut().enumerate() {
+                    *item = seq
+                        .next_element()?
                         .ok_or_else(|| de::Error::invalid_length(i, &self))?;
                 }
                 Ok(arr)
@@ -96,8 +98,8 @@ pub mod big_array_cram {
 }
 
 pub mod big_array_vsram {
-    use serde::{Deserializer, Serializer};
     use serde::de::{self, SeqAccess, Visitor};
+    use serde::{Deserializer, Serializer};
     use std::fmt;
 
     pub fn serialize<S>(data: &[u8; 80], serializer: S) -> Result<S::Ok, S::Error>
@@ -125,8 +127,9 @@ pub mod big_array_vsram {
                 A: SeqAccess<'de>,
             {
                 let mut arr = [0u8; 80];
-                for i in 0..80 {
-                    arr[i] = seq.next_element()?
+                for (i, item) in arr.iter_mut().enumerate() {
+                    *item = seq
+                        .next_element()?
                         .ok_or_else(|| de::Error::invalid_length(i, &self))?;
                 }
                 Ok(arr)
@@ -134,52 +137,6 @@ pub mod big_array_vsram {
         }
 
         deserializer.deserialize_tuple(80, ArrayVisitor)
-    }
-}
-
-mod serde_arrays {
-    use serde::{Deserializer, Serializer};
-    use serde::ser::SerializeTuple;
-    use std::fmt;
-
-    pub fn serialize<S, const N: usize>(data: &[u8; N], serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let mut s = serializer.serialize_tuple(N)?;
-        for item in data {
-            s.serialize_element(item)?;
-        }
-        s.end()
-    }
-
-    pub fn deserialize<'de, D, const N: usize>(deserializer: D) -> Result<[u8; N], D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct ArrayVisitor<const N: usize>;
-
-        impl<'de, const N: usize> serde::de::Visitor<'de> for ArrayVisitor<N> {
-            type Value = [u8; N];
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> fmt::Result {
-                formatter.write_fmt(format_args!("an array of size {}", N))
-            }
-
-            fn visit_seq<A>(self, mut seq: A) -> Result<[u8; N], A::Error>
-            where
-                A: serde::de::SeqAccess<'de>,
-            {
-                let mut arr = [0u8; N];
-                for i in 0..N {
-                    arr[i] = seq.next_element()?
-                        .ok_or_else(|| serde::de::Error::invalid_length(i, &self))?;
-                }
-                Ok(arr)
-            }
-        }
-
-        deserializer.deserialize_tuple(N, ArrayVisitor)
     }
 }
 
@@ -203,6 +160,27 @@ fn default_framebuffer() -> Vec<u16> {
     vec![0; 320 * 240]
 }
 
+/// VDP Command State Machine
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct CommandState {
+    pub pending: bool,
+    pub code: u8,
+    pub address: u16,
+    pub dma_pending: bool,
+    #[serde(default)]
+    pub read_buffer: u16,
+    #[serde(default)]
+    pub cd4_flag: bool,
+}
+
+/// VDP Write FIFO Entry
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct FifoEntry {
+    pub address: u16,
+    pub code: u8,
+    pub value: u16,
+}
+
 /// Genesis Video Display Processor (VDP)
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Vdp {
@@ -214,21 +192,25 @@ pub struct Vdp {
     pub vsram: [u8; 80],
     pub registers: [u8; NUM_REGISTERS],
     pub status: u16,
-    pub control_pending: bool,
-    pub control_code: u8,
-    pub control_address: u16,
-    pub dma_pending: bool,
+    pub command: CommandState,
 
     /// Cache of CRAM colors in RGB565 format for performance
     #[serde(skip, default = "default_cram_cache")]
     pub cram_cache: [u16; 64],
 
+    // Timing and Sequencer
+    pub mclk_line_clocks: u32,
     pub h_counter: u16,
     pub v_counter: u16,
     pub line_counter: u16,
     pub last_data_write: u16,
     pub v30_offset: u16,
     pub is_pal: bool,
+
+    // FIFO
+    pub fifo: Vec<FifoEntry>,
+    pub fifo_full: bool,
+    pub bypass_fifo: bool,
 
     #[serde(skip, default = "default_framebuffer")]
     pub framebuffer: Vec<u16>,
@@ -247,18 +229,19 @@ impl Vdp {
             cram: [0; 128],
             vsram: [0; 80],
             registers: [0; NUM_REGISTERS],
-            status: 0x3400, // Initial status (FIFO empty, etc)
-            control_pending: false,
-            control_code: 0,
-            control_address: 0,
-            dma_pending: false,
+            status: STATUS_FIFO_EMPTY | 0x3400,
+            command: CommandState::default(),
             cram_cache: [0; 64],
+            mclk_line_clocks: 0,
             h_counter: 0,
             v_counter: 0,
             line_counter: 0,
             last_data_write: 0,
             v30_offset: 0,
             is_pal: false,
+            fifo: Vec::with_capacity(4),
+            fifo_full: false,
+            bypass_fifo: false,
             framebuffer: vec![0; 320 * 240],
         };
         vdp.reset();
@@ -279,9 +262,12 @@ impl Vdp {
 
     pub fn reset(&mut self) {
         self.registers.fill(0);
-        self.status = 0x3400;
-        self.control_pending = false;
-        self.dma_pending = false;
+        self.status = STATUS_FIFO_EMPTY | 0x3400;
+        self.command = CommandState::default();
+        self.fifo.clear();
+        self.fifo_full = false;
+        self.bypass_fifo = false;
+        self.mclk_line_clocks = 0;
         self.reconstruct_cram_cache();
     }
 
@@ -290,20 +276,72 @@ impl Vdp {
     }
 
     pub fn write_data(&mut self, value: u16) {
-        self.control_pending = false;
+        self.command.pending = false;
         self.last_data_write = value;
 
-        // Check for DMA Fill (Mode 2, code 1, bit 7 of source high set)
-        if (self.registers[REG_MODE2] & MODE2_DMA_ENABLE) != 0
-            && (self.registers[REG_DMA_SRC_HI] & DMA_MODE_MASK) == DMA_MODE_FILL
-            && self.dma_pending
-        {
-            self.execute_dma();
-            return;
+        if self.bypass_fifo {
+            // Check for DMA Fill (Mode 2, code 1, bit 7 of source high set)
+            if (self.registers[REG_MODE2] & MODE2_DMA_ENABLE) != 0
+                && (self.registers[REG_DMA_SRC_HI] & DMA_MODE_MASK) == DMA_MODE_FILL
+                && self.command.dma_pending
+            {
+                self.execute_dma();
+                return;
+            }
+
+            self.process_fifo_entry(FifoEntry {
+                address: self.command.address,
+                code: self.command.code,
+                value,
+            });
+        } else {
+            // Check for DMA Fill - on real hardware, writing to data port triggers the fill.
+            // If the FIFO is used, the trigger itself might be delayed?
+            // In most implementations, the *write* that triggers it is what matters.
+            if (self.registers[REG_MODE2] & MODE2_DMA_ENABLE) != 0
+                && (self.registers[REG_DMA_SRC_HI] & DMA_MODE_MASK) == DMA_MODE_FILL
+                && self.command.dma_pending
+            {
+                // For now, we still handle DMA Fill synchronously to pass existing tests,
+                // but we will move it to process_slot soon for full cycle accuracy.
+                self.execute_dma();
+                return;
+            }
+
+            // If FIFO is not bypassed, queue the write.
+            if self.fifo.len() < 4 {
+                self.fifo.push(FifoEntry {
+                    address: self.command.address,
+                    code: self.command.code,
+                    value,
+                });
+                if self.fifo.len() == 4 {
+                    self.fifo_full = true;
+                }
+                self.status &= !STATUS_FIFO_EMPTY;
+                if self.fifo_full {
+                    self.status |= STATUS_FIFO_FULL;
+                }
+            } else {
+                // Stall modeling - currently force process
+                self.process_fifo_entry(FifoEntry {
+                    address: self.command.address,
+                    code: self.command.code,
+                    value,
+                });
+            }
         }
 
-        let addr = self.control_address;
-        let code = self.control_code;
+        self.command.address = self
+            .command
+            .address
+            .wrapping_add(self.auto_increment() as u16);
+    }
+
+    fn process_fifo_entry(&mut self, entry: FifoEntry) {
+        let addr = entry.address;
+        let code = entry.code;
+        let value = entry.value;
 
         match code & 0x0F {
             VRAM_WRITE => {
@@ -328,57 +366,89 @@ impl Vdp {
             }
             _ => {}
         }
-
-        self.control_address = addr.wrapping_add(self.auto_increment() as u16);
     }
 
     pub fn read_data(&mut self) -> u16 {
-        self.control_pending = false;
-        let addr = self.control_address;
-        let code = self.control_code;
-
-        let val = match code & 0x0F {
-            VRAM_READ => {
-                let idx = addr as usize;
-                if idx + 1 < self.vram.len() {
-                    ((self.vram[idx] as u16) << 8) | (self.vram[idx + 1] as u16)
-                } else {
-                    0
-                }
-            }
-            CRAM_READ => {
-                let idx = (addr as usize) % 128;
-                if idx + 1 < self.cram.len() {
-                    ((self.cram[idx + 1] as u16) << 8) | (self.cram[idx] as u16)
-                } else {
-                    0
-                }
-            }
-            VSRAM_READ => {
-                let idx = (addr as usize) % 80;
-                if idx + 1 < self.vsram.len() {
-                    ((self.vsram[idx] as u16) << 8) | (self.vsram[idx + 1] as u16)
-                } else {
-                    0
-                }
-            }
-            _ => 0,
-        };
-
-        self.control_address = addr.wrapping_add(self.auto_increment() as u16);
+        self.command.pending = false;
+        
+        let val = self.command.read_buffer;
+        self.command.cd4_flag = false;
+        
+        self.try_prefetch();
+        
         val
     }
 
+    pub(crate) fn try_prefetch(&mut self) {
+        if !self.fifo.is_empty() {
+            // Wait for FIFO to drain before prefetching
+            return;
+        }
+
+        let addr = self.command.address;
+        let code = self.command.code;
+
+        match code & 0x0F {
+            VRAM_READ => {
+                let idx = addr as usize;
+                let val = if idx + 1 < self.vram.len() {
+                    ((self.vram[idx] as u16) << 8) | (self.vram[idx + 1] as u16)
+                } else {
+                    0
+                };
+                self.command.read_buffer = val;
+                self.command.cd4_flag = true;
+            }
+            CRAM_READ => {
+                let idx = (addr as usize) % 128;
+                let mut val = if idx + 1 < self.cram.len() {
+                    ((self.cram[idx + 1] as u16) << 8) | (self.cram[idx] as u16)
+                } else {
+                    0
+                };
+                // Borrow undefined bits from FIFO history (approximated by last_data_write)
+                val |= self.last_data_write & 0xF000;
+                self.command.read_buffer = val;
+                self.command.cd4_flag = true;
+            }
+            VSRAM_READ => {
+                let idx = (addr as usize) % 80;
+                let mut val = if idx + 1 < self.vsram.len() {
+                    ((self.vsram[idx] as u16) << 8) | (self.vsram[idx + 1] as u16)
+                } else {
+                    0
+                };
+                // VSRAM has 10 bits, borrow undefined top bits
+                val |= self.last_data_write & 0xFC00;
+                self.command.read_buffer = val;
+                self.command.cd4_flag = true;
+            }
+            _ => {
+                self.command.cd4_flag = true;
+                return; // Do not increment address on invalid read target
+            }
+        }
+
+        self.command.address = self.command.address.wrapping_add(self.auto_increment() as u16);
+    }
+
     pub fn write_control(&mut self, value: u16) {
-        if self.control_pending {
+        if self.command.pending {
             // Second word of command
-            self.control_code = (self.control_code & 0x03) | ((value >> 2) & 0x3C) as u8;
-            self.control_address = (self.control_address & 0x3FFF) | ((value & 0x0003) << 14);
-            self.control_pending = false;
+            self.command.code = (self.command.code & 0x03) | ((value >> 2) & 0x3C) as u8;
+            self.command.address = (self.command.address & 0x3FFF) | ((value & 0x0003) << 14);
+            self.command.pending = false;
 
             // Check if DMA should be triggered (CD5 bit set in code)
-            if (self.control_code & 0x20) != 0 && (self.registers[REG_MODE2] & MODE2_DMA_ENABLE) != 0 {
-                self.dma_pending = true;
+            if (self.command.code & 0x20) != 0
+                && (self.registers[REG_MODE2] & MODE2_DMA_ENABLE) != 0
+            {
+                self.command.dma_pending = true;
+            }
+
+            // Prefetch if target is a read
+            if (self.command.code & 0x01) == 0 {
+                self.try_prefetch();
             }
         } else {
             // Check if this is a register write (Bits 15,14 = 10)
@@ -392,19 +462,19 @@ impl Vdp {
             }
 
             // First word of command
-            self.control_code = (self.control_code & 0xFC) | ((value >> 14) & 0x03) as u8;
-            self.control_address = (self.control_address & 0xC000) | (value & 0x3FFF);
-            self.control_pending = true;
+            self.command.code = (self.command.code & 0xFC) | ((value >> 14) & 0x03) as u8;
+            self.command.address = (self.command.address & 0xC000) | (value & 0x3FFF);
+            self.command.pending = true;
         }
     }
 
     #[inline(always)]
     pub fn read_status(&mut self) -> u16 {
         // Reading the status register clears the write pending flag (resets the command state machine).
-        self.control_pending = false;
+        self.command.pending = false;
         let mut res = self.status;
-        if self.dma_pending {
-            res |= 0x0002; // DMA Busy
+        if self.command.dma_pending {
+            res |= STATUS_DMA;
         }
         // Reading status clears the VInt pending bit (Bit 7)
         self.status &= !STATUS_VINT_PENDING;
@@ -430,7 +500,7 @@ impl Vdp {
     }
 
     pub fn is_control_pending(&self) -> bool {
-        self.control_pending
+        self.command.pending
     }
 
     pub fn display_enabled(&self) -> bool {
@@ -515,12 +585,11 @@ impl Vdp {
     }
 
     pub fn read_hv_counter(&self) -> u16 {
+        // H counter: 0-487 (NTSC) or 0-481 (PAL).
+        // H32: 0x00-0x93, H40: 0x00-0xB6
+        // This is a simplified implementation.
         let h = (self.h_counter >> 1) as u8;
-        let v = if self.v_counter > 0xFF {
-            (self.v_counter - 0x100) as u8
-        } else {
-            self.v_counter as u8
-        };
+        let v = (self.v_counter & 0xFF) as u8;
         ((v as u16) << 8) | (h as u16)
     }
 
@@ -563,17 +632,9 @@ impl Vdp {
         let h_dir = (h_pos & 0x80) != 0;
         let v_dir = (v_pos & 0x80) != 0;
 
-        let in_h_window = if h_dir {
-            x >= h_point
-        } else {
-            x < h_point
-        };
+        let in_h_window = if h_dir { x >= h_point } else { x < h_point };
 
-        let in_v_window = if v_dir {
-            y >= v_point
-        } else {
-            y < v_point
-        };
+        let in_v_window = if v_dir { y >= v_point } else { y < v_point };
 
         in_h_window || in_v_window
     }
@@ -595,6 +656,99 @@ impl Vdp {
     }
 
     pub fn update_v30_offset(&mut self) {
+        // Increment frame-based rolling offset for V30 mode
+        self.v30_offset = self.v30_offset.wrapping_add(1);
+    }
+
+    /// Advance VDP state by N Master Clock (MCLK) cycles.
+    pub fn tick(&mut self, mclk: u32) {
+        let prev_line_clocks = self.mclk_line_clocks;
+        self.mclk_line_clocks += mclk;
+
+        let is_h40 = self.h40_mode();
+        let total_slots = if is_h40 { 210 } else { 171 };
+
+        let prev_slot = if is_h40 {
+            (prev_line_clocks * 210) / 3420
+        } else {
+            prev_line_clocks / 20
+        };
+
+        let curr_slot = if is_h40 {
+            (self.mclk_line_clocks * 210) / 3420
+        } else {
+            self.mclk_line_clocks / 20
+        };
+        
+        let process_limit = std::cmp::min(curr_slot, total_slots as u32);
+
+        for slot_idx in prev_slot..process_limit {
+            self.process_slot(slot_idx as usize, is_h40);
+        }
+
+        // Handle line wrapping (3420 MCLK per line)
+        if self.mclk_line_clocks >= 3420 {
+            self.mclk_line_clocks -= 3420;
+            self.v_counter = (self.v_counter + 1) % 262; // NTSC: 262 lines
+
+            let active_lines = self.screen_height();
+
+            // Handle VBlank status flag based on V counter
+            if self.v_counter == active_lines {
+                self.status |= STATUS_VBLANK;
+                self.status |= STATUS_VINT_PENDING;
+            } else if self.v_counter == 0 {
+                self.status &= !STATUS_VBLANK;
+            }
+            
+            let next_line_curr_slot = if is_h40 {
+                (self.mclk_line_clocks * 210) / 3420
+            } else {
+                self.mclk_line_clocks / 20
+            };
+            for slot_idx in 0..next_line_curr_slot {
+                self.process_slot(slot_idx as usize, is_h40);
+            }
+        }
+
+        // HBlank status flag based on H counter approximation (mclk_line_clocks)
+        // HBlank starts roughly 85% through the line clocks
+        if self.mclk_line_clocks >= 2900 {
+            self.status |= STATUS_HBLANK;
+        } else {
+            self.status &= !STATUS_HBLANK;
+        }
+    }
+
+    fn process_slot(&mut self, slot_idx: usize, is_h40: bool) {
+        let is_external = if is_h40 {
+            if slot_idx < 210 { H40_EXTERNAL_SLOTS[slot_idx] } else { false }
+        } else {
+            if slot_idx < 171 { H32_EXTERNAL_SLOTS[slot_idx] } else { false }
+        };
+
+        if !is_external {
+            return;
+        }
+
+        if !self.fifo.is_empty() {
+            let entry = self.fifo.remove(0);
+            self.process_fifo_entry(entry);
+
+            self.fifo_full = false;
+            self.status &= !STATUS_FIFO_FULL;
+            if self.fifo.is_empty() {
+                self.status |= STATUS_FIFO_EMPTY;
+                
+                // Trigger deferred prefetch if waiting
+                if !self.command.cd4_flag && (self.command.code & 0x01) == 0 {
+                    self.try_prefetch();
+                }
+            }
+        } else if self.command.dma_pending && !self.is_dma_transfer() {
+            // Internal DMA (Fill/Copy) uses slots
+            // This is a placeholder for step-based DMA
+        }
     }
 }
 

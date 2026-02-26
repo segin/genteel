@@ -43,7 +43,18 @@ pub const DMA_MODE_FILL: u8 = 0x80;
 pub const DMA_MODE_COPY: u8 = 0xC0;
 
 // Status bits
+pub const STATUS_PAL: u16 = 0x0001;
+pub const STATUS_DMA: u16 = 0x0002;
+pub const STATUS_HBLANK: u16 = 0x0004;
 pub const STATUS_VBLANK: u16 = 0x0008;
+pub const STATUS_ODD_FRAME: u16 = 0x0010;
+pub const STATUS_COLLISION: u16 = 0x0020;
+pub const STATUS_ODD_SCANLINE: u16 = 0x0040;
 pub const STATUS_VINT_PENDING: u16 = 0x0080;
+pub const STATUS_FIFO_FULL: u16 = 0x0100;
+pub const STATUS_FIFO_EMPTY: u16 = 0x0200;
 
 pub const NUM_REGISTERS: usize = 24;
+
+pub const H40_EXTERNAL_SLOTS: [bool; 210] = [false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false];
+pub const H32_EXTERNAL_SLOTS: [bool; 171] = [false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, true, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, true];
