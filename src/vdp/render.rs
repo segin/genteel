@@ -1,5 +1,5 @@
-use super::Vdp;
 use super::constants::*;
+use super::Vdp;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
@@ -13,6 +13,8 @@ pub struct SpriteAttributes {
     pub v_flip: bool,
     pub h_flip: bool,
     pub base_tile: u16,
+    pub index: u8,
+    pub link: u8,
 }
 
 pub struct SpriteIterator<'a> {
@@ -71,6 +73,8 @@ impl<'a> Iterator for SpriteIterator<'a> {
             v_flip,
             h_flip,
             base_tile,
+            index: self.next_idx,
+            link,
         };
 
         self.count += 1;
@@ -93,6 +97,7 @@ pub trait RenderOps {
         draw_line: u16,
         priority_filter: bool,
     );
+    #[allow(clippy::too_many_arguments)]
     fn render_tile(
         &mut self,
         is_plane_a: bool,
@@ -107,7 +112,7 @@ pub trait RenderOps {
         screen_x: &mut u16,
         priority_filter: bool,
     );
-    fn get_active_sprites<'a>(&self, line: u16, sprites: &'a mut [SpriteAttributes]) -> usize;
+    fn get_active_sprites(&self, line: u16, sprites: &mut [SpriteAttributes]) -> usize;
     fn render_sprites(
         &mut self,
         sprites: &[SpriteAttributes],
@@ -169,10 +174,11 @@ fn render_sprite_scanline(
         };
 
         // In a multi-tile sprite, tiles are arranged vertically first
-        let tile_idx = attr
+        let tile_idx = (attr
             .base_tile
             .wrapping_add(fetch_tile_h_offset * attr.v_size as u16)
-            .wrapping_add(tile_v_offset);
+            .wrapping_add(tile_v_offset))
+            & 0x07FF;
 
         // Calculate pattern address for the row (pixel_v is 0..7)
         // Each tile is 32 bytes (4 bytes per row)
@@ -187,7 +193,9 @@ fn render_sprite_scanline(
         // row_addr is guaranteed to be 4-byte aligned (32*k + 4*j).
         // We already checked row_addr + 4 <= 0x10000.
         let patterns: [u8; 4] = unsafe {
-             vram.get_unchecked(row_addr..row_addr + 4).try_into().unwrap_unchecked()
+            vram.get_unchecked(row_addr..row_addr + 4)
+                .try_into()
+                .unwrap_unchecked()
         };
 
         let base_screen_x = attr.h_pos.wrapping_add(tile_h_offset * 8);
@@ -305,18 +313,19 @@ impl RenderOps for Vdp {
         let screen_width = self.screen_width();
         let line_offset = (draw_line as usize) * 320;
 
-        // Fetch H-scroll once for the line (but may be overridden by Window)
-        let h_scroll = self.get_h_scroll(is_plane_a, fetch_line);
-
         let mut screen_x: u16 = 0;
 
         while screen_x < screen_width {
-            let (tile_base, tile_h_scroll, use_v_scroll, tile_w) = if is_plane_a && self.is_window_area(screen_x, fetch_line) {
-                let win_w = if self.h40_mode() { 64 } else { 32 };
-                (self.window_address(), 0, false, win_w)
-            } else {
-                (name_table_base, h_scroll, true, plane_w)
-            };
+            // Fetch H-scroll for every tile column to allow mid-line changes
+            let h_scroll = self.get_h_scroll(is_plane_a, fetch_line);
+
+            let (tile_base, tile_h_scroll, use_v_scroll, tile_w) =
+                if is_plane_a && self.is_window_area(screen_x, fetch_line) {
+                    let win_w = if self.h40_mode() { 64 } else { 32 };
+                    (self.window_address(), 0, false, win_w)
+                } else {
+                    (name_table_base, h_scroll, true, plane_w)
+                };
 
             self.render_tile(
                 is_plane_a,
@@ -363,8 +372,8 @@ impl RenderOps for Vdp {
         };
 
         // Vertical position in plane
-        let scrolled_v = fetch_line.wrapping_add(v_scroll);
-        let tile_v = (scrolled_v as usize / 8) % plane_h;
+        let scrolled_v = fetch_line.wrapping_sub(v_scroll);
+        let tile_v = ((scrolled_v / 8) as usize) % plane_h;
         let pixel_v = scrolled_v % 8;
 
         let pixels_left_in_tile = 8 - pixel_h;
@@ -390,11 +399,14 @@ impl RenderOps for Vdp {
         *screen_x += pixels_to_process;
     }
 
-    fn get_active_sprites<'a>(&self, line: u16, sprites: &'a mut [SpriteAttributes]) -> usize {
+    fn get_active_sprites(&self, line: u16, sprites: &mut [SpriteAttributes]) -> usize {
         let mut count = 0;
+        let mut pixels = 0;
 
-        let sat_base = self.sprite_table_address() as usize;
+        let sat_base = self.sprite_table_address();
         let max_sprites = if self.h40_mode() { 80 } else { 64 };
+        let line_limit = if self.h40_mode() { 20 } else { 16 };
+        let pixel_limit = if self.h40_mode() { 320 } else { 256 };
 
         let iter = SpriteIterator {
             vram: &self.vram,
@@ -404,17 +416,30 @@ impl RenderOps for Vdp {
             sat_base,
         };
 
-        let line_limit = if self.h40_mode() { 20 } else { 16 };
-
         for attr in iter {
             let sprite_v_px = (attr.v_size as u16) * 8;
+            
+            // X=0 suppression mode
+            if attr.h_pos == 0 {
+                // Technically hardware suppresses rendering but continues processing,
+                // but for our buffer we can just skip it visually
+            }
+
             // Handle wrapping v_pos (top clipping) correctly using wrapping subtraction
             if line.wrapping_sub(attr.v_pos) < sprite_v_px {
+                // If the sprite falls on this scanline, add it
                 if count < sprites.len() {
                     sprites[count] = attr;
                     count += 1;
+                    
+                    pixels += (attr.h_size as usize) * 8;
                 }
+                
                 if count >= line_limit {
+                    break;
+                }
+                
+                if pixels >= pixel_limit {
                     break;
                 }
             }
@@ -448,11 +473,14 @@ impl RenderOps for Vdp {
             }
         }
     }
+    /// Fetch Vertical scroll value for the given column.
+    /// Supports both Full-screen and 2-cell (16-pixel) strip modes.
+    /// V-scroll values in VSRAM are 10-bit signed integers.
     fn get_v_scroll(&self, is_plane_a: bool, tile_h: usize) -> u16 {
         let mode3 = self.registers[REG_MODE3];
 
         // Vertical Scroll (Bits 2 of Mode 3: 0=Full Screen, 1=2-Cell Strips)
-        if (mode3 & 0x04) != 0 {
+        let mut v_scroll = if (mode3 & 0x04) != 0 {
             // 2-Cell (16-pixel) strips. Each entry in VSRAM is 4 bytes and handles 2 cells.
             // Entry 0: Plane A Cell 0-1, Entry 1: Plane B Cell 0-1, etc.
             let strip_idx = tile_h >> 1;
@@ -466,29 +494,45 @@ impl RenderOps for Vdp {
             // Full Screen
             let vs_addr = if is_plane_a { 0 } else { 2 };
             (((self.vsram[vs_addr] as u16) << 8) | (self.vsram[vs_addr + 1] as u16)) & 0x03FF
+        };
+
+        if (v_scroll & 0x0200) != 0 {
+            v_scroll |= 0xFC00; // Sign extend 10-bit to 16-bit
         }
+        v_scroll
     }
 
+    /// Fetch Horizontal scroll value for the given line.
+    /// Supports Full-screen, 8-pixel strip (Cell), and Per-line modes.
+    /// H-scroll values in VRAM are 10-bit signed integers.
     fn get_h_scroll(&self, is_plane_a: bool, fetch_line: u16) -> u16 {
         let mode3 = self.registers[REG_MODE3];
 
-        // Horizontal Scroll (Bits 1-0 of Mode 3: 00=Full, 01=Invalid/Cell, 10=Cell, 11=Line)
+        // Horizontal Scroll (Bits 1-0 of Mode 3: 00=Full, 01=Invalid(Full), 10=Cell(8px), 11=Line)
         let hs_mode = mode3 & 0x03;
         let hs_base = self.hscroll_address();
 
         let hs_addr = match hs_mode {
-            0x00 => hs_base, // Full screen
-            0x01 | 0x02 => hs_base + (((fetch_line as usize) >> 3) * 4), // 8-pixel high strips (Cell)
-            0x03 => hs_base + ((fetch_line as usize) * 4),               // Per-line
+            0x00 | 0x01 => hs_base,                                // Full screen
+            0x02 => hs_base + (((fetch_line as usize) >> 3) * 32), // 8-pixel high strips (Cell)
+            0x03 => hs_base + ((fetch_line as usize) * 4),         // Per-line
             _ => hs_base,
-        } + (if is_plane_a { 0 } else { 2 });
+        };
 
-        let hi = self.vram[hs_addr & 0xFFFF];
-        let lo = self.vram[(hs_addr + 1) & 0xFFFF];
-        // H-scroll is 10-bit signed value.
-        let mut h_scroll = (((hi as u16) << 8) | (lo as u16)) & 0x03FF;
+        let final_hs_addr = if is_plane_a {
+            hs_addr
+        } else {
+            hs_addr.wrapping_add(2)
+        };
+
+        let hi = self.vram[final_hs_addr & 0xFFFF];
+        let lo = self.vram[final_hs_addr.wrapping_add(1) & 0xFFFF];
+
+        // H-scroll is 10-bit signed value (bits 0-9).
+        let val = ((hi as u16) << 8) | (lo as u16);
+        let mut h_scroll = val & 0x03FF;
         if (h_scroll & 0x0200) != 0 {
-            h_scroll |= 0xFC00; // Sign extend to 16 bits
+            h_scroll |= 0xFC00; // Sign extend 10-bit to 16-bit
         }
 
         h_scroll
