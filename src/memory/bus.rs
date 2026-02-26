@@ -224,7 +224,14 @@ impl Bus {
                     (val & 0xFF) as u8
                 }
             }
-            0xC00008..=0xC0000F => (self.vdp.read_hv_counter() >> 8) as u8,
+            0xC00008..=0xC0000F => {
+                let val = self.vdp.read_hv_counter();
+                if (addr & 1) == 0 {
+                    (val >> 8) as u8
+                } else {
+                    (val & 0xFF) as u8
+                }
+            }
             0xC00010..=0xC00011 => 0xFF,
             _ => 0xFF,
         }
@@ -294,7 +301,6 @@ impl Bus {
                 // Control Port Byte Write: duplicate byte to both halves
                 let val16 = ((value as u16) << 8) | (value as u16);
                 self.vdp.write_control(val16);
-                self.handle_dma();
             }
             0x11 => self.apu.psg.write(value),
             _ => {}
@@ -365,7 +371,6 @@ impl Bus {
                 self.vdp.write_data(value);
             } else {
                 self.vdp.write_control(value);
-                self.handle_dma();
             }
             return;
         }
@@ -465,9 +470,7 @@ impl Bus {
         if (0xC00004..=0xC00007).contains(&addr) {
             let (high, low) = byte_utils::split_u32_to_words(value);
             self.vdp.write_control(high);
-            self.handle_dma();
             self.vdp.write_control(low);
-            self.handle_dma();
             return;
         }
 
@@ -491,29 +494,40 @@ impl Bus {
         self.write_byte(address.wrapping_add(3), b3);
     }
 
-    fn handle_dma(&mut self) {
-        if self.vdp.dma_pending {
-            if self.vdp.is_dma_transfer() {
-                self.run_dma();
-            } else {
-                self.vdp.execute_dma();
-            }
-        }
+    pub fn dma_active(&self) -> bool {
+        self.vdp.command.dma_pending && self.vdp.is_dma_transfer()
     }
 
-    fn run_dma(&mut self) {
-        if !self.vdp.is_dma_transfer() {
-            return;
-        }
-        let length = self.vdp.dma_length() as usize;
-        let source = self.vdp.dma_source_transfer();
-        let _step = self.vdp.registers[15] as u16;
-        for i in 0..length {
-            let src_addr = source + (i * 2) as u32;
-            let val = self.read_word(src_addr);
-            self.vdp.write_data(val);
-        }
-        self.vdp.dma_pending = false;
+    /// Advance system state by N MCLK cycles.
+    pub fn tick(&mut self, mclk: u32) {
+        let rom = &self.rom;
+        let work_ram = &self.work_ram;
+
+        self.vdp.tick(mclk, |addr| {
+            if addr <= 0x3FFFFF {
+                let idx = addr as usize;
+                if idx + 1 < rom.len() {
+                    let bytes = &rom[idx..idx + 2];
+                    u16::from_be_bytes(bytes.try_into().unwrap())
+                } else if idx < rom.len() {
+                    byte_utils::join_u16(rom[idx], 0xFF)
+                } else {
+                    0xFFFF
+                }
+            } else if addr >= 0xE00000 {
+                let r_addr = (addr & 0xFFFF) as usize;
+                if r_addr < 0xFFFF {
+                    byte_utils::join_u16(work_ram[r_addr], work_ram[r_addr + 1])
+                } else {
+                    0xFFFF
+                }
+            } else {
+                0xFFFF // Unmapped or unused DMA source
+            }
+        });
+
+        // Z80 runs at MCLK/15
+        // APU timing: handled by audio_accumulator currently.
     }
 }
 

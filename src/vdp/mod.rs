@@ -171,6 +171,8 @@ pub struct CommandState {
     pub read_buffer: u16,
     #[serde(default)]
     pub cd4_flag: bool,
+    #[serde(default)]
+    pub dma_fill_first: bool,
 }
 
 /// VDP Write FIFO Entry
@@ -661,7 +663,10 @@ impl Vdp {
     }
 
     /// Advance VDP state by N Master Clock (MCLK) cycles.
-    pub fn tick(&mut self, mclk: u32) {
+    pub fn tick<F>(&mut self, mclk: u32, mut read_bus_word: F)
+    where
+        F: FnMut(u32) -> u16,
+    {
         let prev_line_clocks = self.mclk_line_clocks;
         self.mclk_line_clocks += mclk;
 
@@ -683,7 +688,7 @@ impl Vdp {
         let process_limit = std::cmp::min(curr_slot, total_slots as u32);
 
         for slot_idx in prev_slot..process_limit {
-            self.process_slot(slot_idx as usize, is_h40);
+            self.process_slot(slot_idx as usize, is_h40, &mut read_bus_word);
         }
 
         // Handle line wrapping (3420 MCLK per line)
@@ -707,7 +712,7 @@ impl Vdp {
                 self.mclk_line_clocks / 20
             };
             for slot_idx in 0..next_line_curr_slot {
-                self.process_slot(slot_idx as usize, is_h40);
+                self.process_slot(slot_idx as usize, is_h40, &mut read_bus_word);
             }
         }
 
@@ -720,14 +725,21 @@ impl Vdp {
         }
     }
 
-    fn process_slot(&mut self, slot_idx: usize, is_h40: bool) {
+    fn process_slot<F>(&mut self, slot_idx: usize, is_h40: bool, read_bus_word: &mut F)
+    where
+        F: FnMut(u32) -> u16,
+    {
         let is_external = if is_h40 {
             if slot_idx < 210 { H40_EXTERNAL_SLOTS[slot_idx] } else { false }
         } else {
             if slot_idx < 171 { H32_EXTERNAL_SLOTS[slot_idx] } else { false }
         };
 
-        if !is_external {
+        // If in VBlank, nearly all slots are external opportunities
+        let in_vblank = (self.status & STATUS_VBLANK) != 0;
+        let is_available = is_external || in_vblank;
+
+        if !is_available {
             return;
         }
 
@@ -745,9 +757,8 @@ impl Vdp {
                     self.try_prefetch();
                 }
             }
-        } else if self.command.dma_pending && !self.is_dma_transfer() {
-            // Internal DMA (Fill/Copy) uses slots
-            // This is a placeholder for step-based DMA
+        } else if self.command.dma_pending {
+            self.step_dma(read_bus_word);
         }
     }
 }

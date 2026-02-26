@@ -1,4 +1,4 @@
-// #![deny(warnings)]
+#![deny(warnings)]
 /// Graceful println that ignores broken pipe errors (for `| head` usage)
 #[allow(unused_macros)]
 macro_rules! println_safe {
@@ -263,6 +263,129 @@ impl Emulator {
                             }
                         }
                     }
+                    "READ_BYTE" => {
+                        if parts.len() > 1 {
+                            if let Ok(addr) =
+                                u32::from_str_radix(parts[1].trim_start_matches("0x"), 16)
+                            {
+                                let val = self.bus.borrow_mut().read_byte(addr);
+                                println!("Script: READ_BYTE 0x{:06X} = 0x{:02X}", addr, val);
+                            }
+                        }
+                    }
+                    "WRITE_BYTE" => {
+                        if parts.len() > 2 {
+                            let addr_res =
+                                u32::from_str_radix(parts[1].trim_start_matches("0x"), 16);
+                            let val_res = u8::from_str_radix(parts[2].trim_start_matches("0x"), 16);
+                            if let (Ok(addr), Ok(val)) = (addr_res, val_res) {
+                                self.bus.borrow_mut().write_byte(addr, val);
+                                println!("Script: WRITE_BYTE 0x{:06X} = 0x{:02X}", addr, val);
+                            }
+                        }
+                    }
+                    "ASSERT_BYTE" => {
+                        if parts.len() > 2 {
+                            let addr_res =
+                                u32::from_str_radix(parts[1].trim_start_matches("0x"), 16);
+                            let val_res = u8::from_str_radix(parts[2].trim_start_matches("0x"), 16);
+                            if let (Ok(addr), Ok(expected)) = (addr_res, val_res) {
+                                let actual = self.bus.borrow_mut().read_byte(addr);
+                                if actual != expected {
+                                    panic!("Script Assertion Failed: [0x{:06X}] == 0x{:02X} (Expected 0x{:02X})", addr, actual, expected);
+                                }
+                                println!(
+                                    "Script: ASSERT_BYTE 0x{:06X} == 0x{:02X} OK",
+                                    addr, expected
+                                );
+                            }
+                        }
+                    }
+                    "READ_WORD" => {
+                        if parts.len() > 1 {
+                            if let Ok(addr) =
+                                u32::from_str_radix(parts[1].trim_start_matches("0x"), 16)
+                            {
+                                let val = self.bus.borrow_mut().read_word(addr);
+                                println!("Script: READ_WORD 0x{:06X} = 0x{:04X}", addr, val);
+                            }
+                        }
+                    }
+                    "WRITE_WORD" => {
+                        if parts.len() > 2 {
+                            let addr_res =
+                                u32::from_str_radix(parts[1].trim_start_matches("0x"), 16);
+                            let val_res =
+                                u16::from_str_radix(parts[2].trim_start_matches("0x"), 16);
+                            if let (Ok(addr), Ok(val)) = (addr_res, val_res) {
+                                self.bus.borrow_mut().write_word(addr, val);
+                                println!("Script: WRITE_WORD 0x{:06X} = 0x{:04X}", addr, val);
+                            }
+                        }
+                    }
+                    "ASSERT_WORD" => {
+                        if parts.len() > 2 {
+                            let addr_res =
+                                u32::from_str_radix(parts[1].trim_start_matches("0x"), 16);
+                            let val_res =
+                                u16::from_str_radix(parts[2].trim_start_matches("0x"), 16);
+                            if let (Ok(addr), Ok(expected)) = (addr_res, val_res) {
+                                let actual = self.bus.borrow_mut().read_word(addr);
+                                if actual != expected {
+                                    panic!("Script Assertion Failed: [0x{:06X}] == 0x{:04X} (Expected 0x{:04X})", addr, actual, expected);
+                                }
+                                println!(
+                                    "Script: ASSERT_WORD 0x{:06X} == 0x{:04X} OK",
+                                    addr, expected
+                                );
+                            }
+                        }
+                    }
+                    "READ_LONG" => {
+                        if parts.len() > 1 {
+                            if let Ok(addr) =
+                                u32::from_str_radix(parts[1].trim_start_matches("0x"), 16)
+                            {
+                                let val = self.bus.borrow_mut().read_long(addr);
+                                println!("Script: READ_LONG 0x{:06X} = 0x{:08X}", addr, val);
+                            }
+                        }
+                    }
+                    "WRITE_LONG" => {
+                        if parts.len() > 2 {
+                            let addr_res =
+                                u32::from_str_radix(parts[1].trim_start_matches("0x"), 16);
+                            let val_res =
+                                u32::from_str_radix(parts[2].trim_start_matches("0x"), 16);
+                            if let (Ok(addr), Ok(val)) = (addr_res, val_res) {
+                                self.bus.borrow_mut().write_long(addr, val);
+                                println!("Script: WRITE_LONG 0x{:06X} = 0x{:08X}", addr, val);
+                            }
+                        }
+                    }
+                    "ASSERT_LONG" => {
+                        if parts.len() > 2 {
+                            let addr_res =
+                                u32::from_str_radix(parts[1].trim_start_matches("0x"), 16);
+                            let val_res =
+                                u32::from_str_radix(parts[2].trim_start_matches("0x"), 16);
+                            if let (Ok(addr), Ok(expected)) = (addr_res, val_res) {
+                                let actual = self.bus.borrow_mut().read_long(addr);
+                                if actual != expected {
+                                    panic!("Script Assertion Failed: [0x{:06X}] == 0x{:08X} (Expected 0x{:08X})", addr, actual, expected);
+                                }
+                                println!(
+                                    "Script: ASSERT_LONG 0x{:06X} == 0x{:08X} OK",
+                                    addr, expected
+                                );
+                            }
+                        }
+                    }
+                    "LOG" => {
+                        if parts.len() > 1 {
+                            println!("Script LOG: {}", parts[1..].join(" "));
+                        }
+                    }
                     _ => {
                         eprintln!("Script Warning: Unknown command '{}'", parts[0]);
                     }
@@ -309,22 +432,15 @@ impl Emulator {
         self.run_cpu_loop(line, active_lines, z80_cycle_debt);
         self.handle_interrupts(line, active_lines);
     }
-    fn vdp_scanline_setup(&mut self, line: u16, active_lines: u16) {
+    fn vdp_scanline_setup(&mut self, line: u16, _active_lines: u16) {
         let mut bus = self.bus.borrow_mut();
-        bus.vdp.set_v_counter(line);
-
-        // VBlank Management
-        if line == active_lines {
-            bus.vdp.set_vblank(true);
-        } else if line == 0 {
-            bus.vdp.set_vblank(false);
-        }
 
         // Process scanline if within framebuffer bounds (320x240)
         if line < 240 {
             bus.vdp.render_line(line);
         }
     }
+    #[allow(clippy::too_many_arguments)]
     fn sync_components(
         bus_rc: &SharedBus,
         m68k_cycles: u32,
@@ -338,7 +454,15 @@ impl Emulator {
         cpu_pc: u32,
         debug: bool,
     ) {
-        // 1. Z80 State and Timing
+        let mclk = m68k_cycles * 7;
+
+        // 1. Tick the Bus (VDP, etc)
+        {
+            let mut bus = bus_rc.bus.borrow_mut();
+            bus.tick(mclk);
+        }
+
+        // 2. Z80 State and Timing
         let (z80_can_run, z80_is_reset, cycles_per_sample) = {
             let bus = bus_rc.bus.borrow();
             let prev = *z80_last_bus_req;
@@ -379,7 +503,7 @@ impl Emulator {
             z80.trigger_interrupt(0xFF);
         }
 
-        // 2. Catch up Z80
+        // 3. Catch up Z80
         if z80_can_run {
             const Z80_CYCLES_PER_M68K_CYCLE: f32 = 3.58 / 7.67;
             *z80_cycle_debt += m68k_cycles as f32 * Z80_CYCLES_PER_M68K_CYCLE;
@@ -389,7 +513,7 @@ impl Emulator {
             }
         }
 
-        // 3. Update APU and generate audio samples
+        // 4. Update APU and generate audio samples
         {
             let mut bus = bus_rc.bus.borrow_mut();
             bus.audio_accumulator += m68k_cycles as f32;
@@ -405,6 +529,7 @@ impl Emulator {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn run_cpu_batch_static(
         cpu: &mut Cpu,
         bus_rc: &SharedBus,
@@ -433,7 +558,11 @@ impl Emulator {
             }
             let m68k_cycles = {
                 let mut bus = bus_rc.bus.borrow_mut();
-                cpu.step_instruction(&mut *bus)
+                if bus.dma_active() {
+                    2 // Yield 2 cycles to let the bus step during DMA
+                } else {
+                    cpu.step_instruction(&mut *bus)
+                }
             };
 
             let trigger_vint = line == active_lines && pending_cycles < 10;
@@ -565,7 +694,12 @@ impl Emulator {
         }
     }
     /// Run headless for N frames (or until script ends if N is None)
-    pub fn run(&mut self, frames: Option<u32>, screenshot_path: Option<String>, record_path: Option<String>) {
+    pub fn run(
+        &mut self,
+        frames: Option<u32>,
+        screenshot_path: Option<String>,
+        record_path: Option<String>,
+    ) {
         match frames {
             Some(n) => println!("Running {} frames headless...", n),
             None => println!("Running headless until script ends..."),
@@ -618,7 +752,11 @@ impl Emulator {
             }
         }
 
-        println!("Done in {:?} ({:.2} fps).", elapsed, current as f64 / elapsed.as_secs_f64());
+        println!(
+            "Done in {:?} ({:.2} fps).",
+            elapsed,
+            current as f64 / elapsed.as_secs_f64()
+        );
     }
 
     pub fn save_screenshot(&self, path: &str) -> Result<(), String> {
@@ -967,7 +1105,11 @@ fn main() {
             eprintln!("GDB server error: {}", e);
         }
     } else if config.headless {
-        emulator.run(config.headless_frames, config.screenshot_path, config.record_path);
+        emulator.run(
+            config.headless_frames,
+            config.screenshot_path,
+            config.record_path,
+        );
     } else {
         // Interactive mode with SDL2 window
         #[cfg(feature = "gui")]
