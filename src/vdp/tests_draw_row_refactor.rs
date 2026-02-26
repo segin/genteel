@@ -1,5 +1,5 @@
-use super::*;
 use super::render::RenderOps;
+use super::*;
 
 #[test]
 fn test_draw_full_tile_row_refactor() {
@@ -21,12 +21,13 @@ fn test_draw_full_tile_row_refactor() {
     let pixel_v = 0; // Top row of tile
     let dest_idx = 0; // Start of framebuffer
 
-    vdp.draw_full_tile_row(entry, pixel_v, dest_idx);
+    let mut buf = [0u8; 320];
+    vdp.draw_full_tile_row(entry, pixel_v, dest_idx, &mut buf);
 
     // Check pixels
-    assert_eq!(vdp.framebuffer[0], 0xF800, "Pixel 0");
-    assert_eq!(vdp.framebuffer[1], 0xF800, "Pixel 1");
-    assert_eq!(vdp.framebuffer[2], 0x0000, "Pixel 2");
+    assert_eq!(buf[0], 0x01, "Pixel 0");
+    assert_eq!(buf[1], 0x01, "Pixel 1");
+    assert_eq!(buf[2], 0x00, "Pixel 2");
 }
 
 #[test]
@@ -34,8 +35,9 @@ fn test_draw_full_tile_row_bounds_safe() {
     let mut vdp = Vdp::new();
     // Try to draw at end of framebuffer
     let dest_idx = vdp.framebuffer.len() - 4; // Not enough space for 8 pixels
-    // Should not panic
-    vdp.draw_full_tile_row(0, 0, dest_idx);
+                                              // Should not panic
+    let mut buf = [0u8; 320];
+    vdp.draw_full_tile_row(0, 0, dest_idx, &mut buf);
 }
 
 #[test]
@@ -54,13 +56,14 @@ fn test_draw_full_tile_row_hflip() {
     // Entry with H-Flip (0x0800)
     let entry = 0x0800;
 
-    vdp.draw_full_tile_row(entry, 0, 0);
+    let mut buf = [0u8; 320];
+    vdp.draw_full_tile_row(entry, 0, 0, &mut buf);
 
     // H-Flip:
     // Original: 1, 2, 0, 0, 0, 0, 0, 0
     // Flipped:  0, 0, 0, 0, 0, 0, 2, 1
 
-    assert_eq!(vdp.framebuffer[7], 0xF00, "Pixel 7 should be Red (1)");
-    assert_eq!(vdp.framebuffer[6], 0x0F0, "Pixel 6 should be Green (2)");
-    assert_eq!(vdp.framebuffer[0], 0x000, "Pixel 0 should be empty");
+    assert_eq!(buf[7], 0x01, "Pixel 7 should be Red (1)");
+    assert_eq!(buf[6], 0x02, "Pixel 6 should be Green (2)");
+    assert_eq!(buf[0], 0x00, "Pixel 0 should be empty");
 }

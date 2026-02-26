@@ -91,15 +91,14 @@ impl<'a> Iterator for SpriteIterator<'a> {
 pub trait RenderOps {
     fn render_line(&mut self, line: u16);
     fn render_plane(
-        &mut self,
+        &self,
         is_plane_a: bool,
         fetch_line: u16,
-        draw_line: u16,
-        priority_filter: bool,
+        line_buf: &mut [u8; 320],
     );
     #[allow(clippy::too_many_arguments)]
     fn render_tile(
-        &mut self,
+        &self,
         is_plane_a: bool,
         enable_v_scroll: bool,
         name_table_base: usize,
@@ -108,17 +107,15 @@ pub trait RenderOps {
         plane_w_mask: usize,
         h_scroll: u16,
         fetch_line: u16,
-        line_offset: usize,
         screen_x: &mut u16,
-        priority_filter: bool,
+        line_buf: &mut [u8; 320],
     );
     fn get_active_sprites(&self, line: u16, sprites: &mut [SpriteAttributes]) -> usize;
     fn render_sprites(
-        &mut self,
+        &self,
         sprites: &[SpriteAttributes],
         fetch_line: u16,
-        draw_line: u16,
-        priority_filter: bool,
+        line_buf: &mut [u8; 320],
     );
     fn get_v_scroll(&self, is_plane_a: bool, tile_h: usize) -> u16;
     fn get_h_scroll(&self, is_plane_a: bool, fetch_line: u16) -> u16;
@@ -131,25 +128,24 @@ pub trait RenderOps {
     ) -> u16;
     fn fetch_tile_pattern(&self, tile_index: u16, pixel_v: u16, v_flip: bool) -> [u8; 4];
     fn draw_partial_tile_row(
-        &mut self,
+        &self,
         entry: u16,
         pixel_v: u16,
         pixel_h: u16,
         count: u16,
         dest_idx: usize,
+        line_buf: &mut [u8; 320],
     );
-    fn draw_full_tile_row(&mut self, entry: u16, pixel_v: u16, dest_idx: usize);
+    fn draw_full_tile_row(&self, entry: u16, pixel_v: u16, dest_idx: usize, line_buf: &mut [u8; 320]);
     fn bg_color(&self) -> (u8, u8);
     fn get_cram_color(&self, palette: u8, index: u8) -> u16;
 }
 
 fn render_sprite_scanline(
     vram: &[u8],
-    framebuffer: &mut [u16],
-    cram_cache: &[u16; 64],
+    line_buf: &mut [u8; 320],
     line: u16,
     attr: &SpriteAttributes,
-    line_offset: usize,
     screen_width: u16,
 ) {
     let sprite_v_px = (attr.v_size as u16) * 8;
@@ -216,11 +212,14 @@ fn render_sprite_scanline(
                 };
 
                 if color_idx != 0 {
-                    let addr = ((attr.palette as usize) << 4) | (color_idx as usize);
-                    // SAFETY: cram_cache size 64. addr < 64.
+                    let addr = ((attr.palette as u8) << 4) | (color_idx as u8);
+                    let pri_mask = if attr.priority { 0x80 } else { 0x00 };
+                    // Only write if not already occupied by a higher-priority sprite (in this case we draw in reverse order, so we overwrite, wait actually sprite 0 is highest priority.
+                    // If we draw in reverse order (sprites.iter().rev()), the highest priority sprite is drawn last and overwrites.
+                    // Wait, S/H operators only apply if they are the TOP sprite pixel.
+                    // By drawing in reverse order, the last drawn pixel is the top one.
                     unsafe {
-                        let color = *cram_cache.get_unchecked(addr);
-                        *framebuffer.get_unchecked_mut(line_offset + screen_x as usize) = color;
+                        *line_buf.get_unchecked_mut(screen_x as usize) = addr | pri_mask;
                     }
                 }
             }
@@ -242,12 +241,10 @@ fn render_sprite_scanline(
                 };
 
                 if color_idx != 0 {
-                    let addr = ((attr.palette as usize) << 4) | (color_idx as usize);
-                    // SAFETY: addr < 64 (palette 0-3, color 0-15).
-                    // line_offset + screen_x < 320*240 (line < 240, x < width <= 320).
+                    let addr = ((attr.palette as u8) << 4) | (color_idx as u8);
+                    let pri_mask = if attr.priority { 0x80 } else { 0x00 };
                     unsafe {
-                        let color = *cram_cache.get_unchecked(addr);
-                        *framebuffer.get_unchecked_mut(line_offset + screen_x as usize) = color;
+                        *line_buf.get_unchecked_mut(screen_x as usize) = addr | pri_mask;
                     }
                 }
             }
@@ -263,45 +260,138 @@ impl RenderOps for Vdp {
 
         let draw_line = line;
         let fetch_line = line;
-
         let line_offset = (draw_line as usize) * 320;
 
         let (pal_line, color_idx) = self.bg_color();
-        let bg_color = self.get_cram_color(pal_line, color_idx);
-
-        self.framebuffer[line_offset..line_offset + 320].fill(bg_color);
+        let bg_color_val = self.get_cram_color(pal_line, color_idx);
+        let bg_color_idx = (pal_line << 4) | color_idx;
 
         if !self.display_enabled() || line >= self.screen_height() {
+            self.framebuffer[line_offset..line_offset + 320].fill(bg_color_val);
             return;
         }
 
-        // Pre-calculate visible sprites for this line to avoid traversing the SAT twice
         let mut sprite_buffer = [SpriteAttributes::default(); 80];
         let sprite_count = self.get_active_sprites(fetch_line, &mut sprite_buffer);
         let active_sprites = &sprite_buffer[..sprite_count];
 
-        // Layer order: B Low -> A Low -> Sprites Low -> B High -> A High -> Sprites High
-        self.render_plane(false, fetch_line, draw_line, false); // Plane B Low
-        self.render_plane(true, fetch_line, draw_line, false); // Plane A Low
-        self.render_sprites(active_sprites, fetch_line, draw_line, false);
-        self.render_plane(false, fetch_line, draw_line, true); // Plane B High
-        self.render_plane(true, fetch_line, draw_line, true); // Plane A High
-        self.render_sprites(active_sprites, fetch_line, draw_line, true);
+        let mut buf_b = [0u8; 320];
+        let mut buf_a = [0u8; 320];
+        let mut buf_s = [0u8; 320];
 
-        // Apply Register 0 Bit 5 (Mask 1st Column)
-        if (self.registers[REG_MODE1] & 0x20) != 0 {
-            let (pal_line, color_idx) = self.bg_color();
-            let bg_color = self.get_cram_color(pal_line, color_idx);
-            self.framebuffer[line_offset..line_offset + 8].fill(bg_color);
+        self.render_plane(false, fetch_line, &mut buf_b);
+        self.render_plane(true, fetch_line, &mut buf_a);
+        self.render_sprites(active_sprites, fetch_line, &mut buf_s);
+
+        let sh_enabled = (self.registers[REG_MODE4] & 0x08) != 0;
+        let mask_col0 = (self.registers[REG_MODE1] & 0x20) != 0;
+
+        // Composite
+        for x in 0..320 {
+            if mask_col0 && x < 8 {
+                self.framebuffer[line_offset + x] = bg_color_val;
+                continue;
+            }
+
+            let b = buf_b[x];
+            let a = buf_a[x];
+            let s = buf_s[x];
+
+            let b_pri = (b & 0x80) != 0;
+            let a_pri = (a & 0x80) != 0;
+            let s_pri = (s & 0x80) != 0;
+
+            let b_col = b & 0x3F;
+            let a_col = a & 0x3F;
+            let s_col = s & 0x3F;
+
+            let b_trans = (b_col & 0x0F) == 0;
+            let a_trans = (a_col & 0x0F) == 0;
+            let s_trans = (s_col & 0x0F) == 0;
+
+            let any_high = b_pri || a_pri || s_pri;
+
+            let mut top_col = bg_color_idx;
+            let mut top_layer = 0; // 0=BG, 1=B, 2=A, 3=S
+
+            if s_pri && !s_trans {
+                top_col = s_col;
+                top_layer = 3;
+            } else if a_pri && !a_trans {
+                top_col = a_col;
+                top_layer = 2;
+            } else if b_pri && !b_trans {
+                top_col = b_col;
+                top_layer = 1;
+            } else if !s_trans {
+                top_col = s_col;
+                top_layer = 3;
+            } else if !a_trans {
+                top_col = a_col;
+                top_layer = 2;
+            } else if !b_trans {
+                top_col = b_col;
+                top_layer = 1;
+            }
+
+            if !sh_enabled {
+                self.framebuffer[line_offset + x] = self.cram_cache[top_col as usize];
+            } else {
+                let mut state = if any_high { 1 } else { 0 };
+
+                if top_layer == 3 {
+                    if s_col == 0x3E {
+                        top_layer = 0;
+                        top_col = bg_color_idx;
+                        if a_pri && !a_trans { top_col = a_col; top_layer = 2; }
+                        else if b_pri && !b_trans { top_col = b_col; top_layer = 1; }
+                        else if !a_trans { top_col = a_col; top_layer = 2; }
+                        else if !b_trans { top_col = b_col; top_layer = 1; }
+                        if state < 2 { state += 1; }
+                    } else if s_col == 0x3F {
+                        top_layer = 0;
+                        top_col = bg_color_idx;
+                        if a_pri && !a_trans { top_col = a_col; top_layer = 2; }
+                        else if b_pri && !b_trans { top_col = b_col; top_layer = 1; }
+                        else if !a_trans { top_col = a_col; top_layer = 2; }
+                        else if !b_trans { top_col = b_col; top_layer = 1; }
+                        if state > 0 { state -= 1; }
+                    } else if (s_col & 0x0F) == 0x0E {
+                        state = 1;
+                    }
+                }
+
+                let color = self.cram_cache[top_col as usize];
+                let final_color = match state {
+                    0 => {
+                        // Shadow (halve brightness)
+                        let r = ((color >> 11) & 0x1E) >> 1;
+                        let g = ((color >> 6) & 0x1E) >> 1;
+                        let b = ((color >> 1) & 0x1E) >> 1;
+                        (r << 11) | (g << 6) | (b << 1)
+                    }
+                    2 => {
+                        // Highlight (double brightness + offset)
+                        let r = (color >> 11) & 0x1E;
+                        let g = (color >> 6) & 0x1E;
+                        let b = (color >> 1) & 0x1E;
+                        let r2 = r + 0x10; let r_final = if r2 > 0x1E { 0x1E } else { r2 };
+                        let g2 = g + 0x10; let g_final = if g2 > 0x1E { 0x1E } else { g2 };
+                        let b2 = b + 0x10; let b_final = if b2 > 0x1E { 0x1E } else { b2 };
+                        (r_final << 11) | (g_final << 6) | (b_final << 1)
+                    }
+                    _ => color,
+                };
+                self.framebuffer[line_offset + x] = final_color;
+            }
         }
     }
 
     fn render_plane(
-        &mut self,
+        &self,
         is_plane_a: bool,
         fetch_line: u16,
-        draw_line: u16,
-        priority_filter: bool,
+        line_buf: &mut [u8; 320],
     ) {
         let (plane_w, plane_h) = self.plane_size();
         let name_table_base = if is_plane_a {
@@ -311,7 +401,6 @@ impl RenderOps for Vdp {
         };
 
         let screen_width = self.screen_width();
-        let line_offset = (draw_line as usize) * 320;
 
         let mut screen_x: u16 = 0;
 
@@ -336,16 +425,15 @@ impl RenderOps for Vdp {
                 tile_w - 1, // tile_w_mask
                 tile_h_scroll,
                 fetch_line,
-                line_offset,
                 &mut screen_x,
-                priority_filter,
+                line_buf,
             );
         }
     }
 
     #[allow(clippy::too_many_arguments)]
     fn render_tile(
-        &mut self,
+        &self,
         is_plane_a: bool,
         enable_v_scroll: bool,
         name_table_base: usize,
@@ -354,9 +442,8 @@ impl RenderOps for Vdp {
         plane_w_mask: usize,
         h_scroll: u16,
         fetch_line: u16,
-        line_offset: usize,
         screen_x: &mut u16,
-        priority_filter: bool,
+        line_buf: &mut [u8; 320],
     ) {
         // Horizontal position in plane
         let scrolled_h = (*screen_x).wrapping_sub(h_scroll);
@@ -380,21 +467,19 @@ impl RenderOps for Vdp {
         let pixels_to_process = std::cmp::min(pixels_left_in_tile, self.screen_width() - *screen_x);
 
         let entry = self.fetch_nametable_entry(name_table_base, tile_v, tile_h, plane_w);
-        let priority = (entry & 0x8000) != 0;
 
-        if priority == priority_filter {
-            if pixels_to_process == 8 && pixel_h == 0 {
-                // Fast path for full aligned tile
-                self.draw_full_tile_row(entry, pixel_v, line_offset + *screen_x as usize);
-            } else {
-                self.draw_partial_tile_row(
-                    entry,
-                    pixel_v,
-                    pixel_h,
-                    pixels_to_process,
-                    line_offset + *screen_x as usize,
-                );
-            }
+        if pixels_to_process == 8 && pixel_h == 0 {
+            // Fast path for full aligned tile
+            self.draw_full_tile_row(entry, pixel_v, *screen_x as usize, line_buf);
+        } else {
+            self.draw_partial_tile_row(
+                entry,
+                pixel_v,
+                pixel_h,
+                pixels_to_process,
+                *screen_x as usize,
+                line_buf,
+            );
         }
         *screen_x += pixels_to_process;
     }
@@ -448,29 +533,23 @@ impl RenderOps for Vdp {
     }
 
     fn render_sprites(
-        &mut self,
+        &self,
         sprites: &[SpriteAttributes],
         fetch_line: u16,
-        draw_line: u16,
-        priority_filter: bool,
+        line_buf: &mut [u8; 320],
     ) {
         let screen_width = self.screen_width();
-        let line_offset = (draw_line as usize) * 320;
-
+        
         // Render in reverse order so that sprites with lower indices (higher priority)
         // are drawn last and appear on top.
         for attr in sprites.iter().rev() {
-            if attr.priority == priority_filter {
-                render_sprite_scanline(
-                    &self.vram,
-                    &mut self.framebuffer,
-                    &self.cram_cache,
-                    fetch_line,
-                    attr,
-                    line_offset,
-                    screen_width,
-                );
-            }
+            render_sprite_scanline(
+                &self.vram,
+                line_buf,
+                fetch_line,
+                attr,
+                screen_width,
+            );
         }
     }
     /// Fetch Vertical scroll value for the given column.
@@ -576,19 +655,22 @@ impl RenderOps for Vdp {
     }
 
     fn draw_partial_tile_row(
-        &mut self,
+        &self,
         entry: u16,
         pixel_v: u16,
         pixel_h: u16,
         count: u16,
         dest_idx: usize,
+        line_buf: &mut [u8; 320],
     ) {
+        let priority = (entry & 0x8000) != 0;
         let palette = ((entry >> 13) & 0x03) as u8;
         let v_flip = (entry & 0x1000) != 0;
         let h_flip = (entry & 0x0800) != 0;
         let tile_index = entry & 0x07FF;
 
         let patterns = self.fetch_tile_pattern(tile_index, pixel_v, v_flip);
+        let pri_mask = if priority { 0x80 } else { 0x00 };
 
         for i in 0..count {
             let current_pixel_h = pixel_h + i;
@@ -604,15 +686,15 @@ impl RenderOps for Vdp {
                 byte & 0x0F
             };
 
-            if col != 0 {
-                let color = self.get_cram_color(palette, col);
-                self.framebuffer[dest_idx + i as usize] = color;
-            }
+            // Write even if transparent! "Preserve priority bits even for transparent pixels"
+            let final_val = (palette << 4) | col | pri_mask;
+            line_buf[dest_idx + i as usize] = final_val;
         }
     }
 
     #[inline(always)]
-    fn draw_full_tile_row(&mut self, entry: u16, pixel_v: u16, dest_idx: usize) {
+    fn draw_full_tile_row(&self, entry: u16, pixel_v: u16, dest_idx: usize, line_buf: &mut [u8; 320]) {
+        let priority = (entry & 0x8000) != 0;
         let palette = ((entry >> 13) & 0x03) as u8;
         let v_flip = (entry & 0x1000) != 0;
         let h_flip = (entry & 0x0800) != 0;
@@ -620,13 +702,15 @@ impl RenderOps for Vdp {
 
         let patterns = self.fetch_tile_pattern(tile_index, pixel_v, v_flip);
 
-        // Optimization: Skip empty rows
-        if u32::from_ne_bytes(patterns) == 0 {
+        let pri_mask = if priority { 0x80 } else { 0x00 };
+        let pal_base = palette << 4;
+
+        // Optimization: Skip empty rows if priority is also low
+        if !priority && u32::from_ne_bytes(patterns) == 0 {
             return;
         }
 
-        // Safety check for framebuffer bounds
-        if dest_idx + 8 > self.framebuffer.len() {
+        if dest_idx + 8 > line_buf.len() {
             return;
         }
 
@@ -635,81 +719,26 @@ impl RenderOps for Vdp {
         let p2 = patterns[2];
         let p3 = patterns[3];
 
-        let palette_base = (palette as usize) * 16;
-        let dest = &mut self.framebuffer[dest_idx..dest_idx + 8];
+        let dest = &mut line_buf[dest_idx..dest_idx + 8];
 
-        if h_flip {
-            let mut col = p3 & 0x0F;
-            if col != 0 {
-                dest[0] = self.cram_cache[palette_base + col as usize];
-            }
-            col = p3 >> 4;
-            if col != 0 {
-                dest[1] = self.cram_cache[palette_base + col as usize];
-            }
-
-            col = p2 & 0x0F;
-            if col != 0 {
-                dest[2] = self.cram_cache[palette_base + col as usize];
-            }
-            col = p2 >> 4;
-            if col != 0 {
-                dest[3] = self.cram_cache[palette_base + col as usize];
-            }
-
-            col = p1 & 0x0F;
-            if col != 0 {
-                dest[4] = self.cram_cache[palette_base + col as usize];
-            }
-            col = p1 >> 4;
-            if col != 0 {
-                dest[5] = self.cram_cache[palette_base + col as usize];
-            }
-
-            col = p0 & 0x0F;
-            if col != 0 {
-                dest[6] = self.cram_cache[palette_base + col as usize];
-            }
-            col = p0 >> 4;
-            if col != 0 {
-                dest[7] = self.cram_cache[palette_base + col as usize];
-            }
+        if !h_flip {
+            dest[0] = pal_base | (p0 >> 4) | pri_mask;
+            dest[1] = pal_base | (p0 & 0x0F) | pri_mask;
+            dest[2] = pal_base | (p1 >> 4) | pri_mask;
+            dest[3] = pal_base | (p1 & 0x0F) | pri_mask;
+            dest[4] = pal_base | (p2 >> 4) | pri_mask;
+            dest[5] = pal_base | (p2 & 0x0F) | pri_mask;
+            dest[6] = pal_base | (p3 >> 4) | pri_mask;
+            dest[7] = pal_base | (p3 & 0x0F) | pri_mask;
         } else {
-            let mut col = p0 >> 4;
-            if col != 0 {
-                dest[0] = self.cram_cache[palette_base + col as usize];
-            }
-            col = p0 & 0x0F;
-            if col != 0 {
-                dest[1] = self.cram_cache[palette_base + col as usize];
-            }
-
-            col = p1 >> 4;
-            if col != 0 {
-                dest[2] = self.cram_cache[palette_base + col as usize];
-            }
-            col = p1 & 0x0F;
-            if col != 0 {
-                dest[3] = self.cram_cache[palette_base + col as usize];
-            }
-
-            col = p2 >> 4;
-            if col != 0 {
-                dest[4] = self.cram_cache[palette_base + col as usize];
-            }
-            col = p2 & 0x0F;
-            if col != 0 {
-                dest[5] = self.cram_cache[palette_base + col as usize];
-            }
-
-            col = p3 >> 4;
-            if col != 0 {
-                dest[6] = self.cram_cache[palette_base + col as usize];
-            }
-            col = p3 & 0x0F;
-            if col != 0 {
-                dest[7] = self.cram_cache[palette_base + col as usize];
-            }
+            dest[0] = pal_base | (p3 & 0x0F) | pri_mask;
+            dest[1] = pal_base | (p3 >> 4) | pri_mask;
+            dest[2] = pal_base | (p2 & 0x0F) | pri_mask;
+            dest[3] = pal_base | (p2 >> 4) | pri_mask;
+            dest[4] = pal_base | (p1 & 0x0F) | pri_mask;
+            dest[5] = pal_base | (p1 >> 4) | pri_mask;
+            dest[6] = pal_base | (p0 & 0x0F) | pri_mask;
+            dest[7] = pal_base | (p0 >> 4) | pri_mask;
         }
     }
 
