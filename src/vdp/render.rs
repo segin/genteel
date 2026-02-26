@@ -341,20 +341,18 @@ impl RenderOps for Vdp {
 
                 if top_layer == 3 {
                     if s_col == 0x3E {
-                        top_layer = 0;
                         top_col = bg_color_idx;
-                        if a_pri && !a_trans { top_col = a_col; top_layer = 2; }
-                        else if b_pri && !b_trans { top_col = b_col; top_layer = 1; }
-                        else if !a_trans { top_col = a_col; top_layer = 2; }
-                        else if !b_trans { top_col = b_col; top_layer = 1; }
+                        if a_pri && !a_trans { top_col = a_col; }
+                        else if b_pri && !b_trans { top_col = b_col; }
+                        else if !a_trans { top_col = a_col; }
+                        else if !b_trans { top_col = b_col; }
                         if state < 2 { state += 1; }
                     } else if s_col == 0x3F {
-                        top_layer = 0;
                         top_col = bg_color_idx;
-                        if a_pri && !a_trans { top_col = a_col; top_layer = 2; }
-                        else if b_pri && !b_trans { top_col = b_col; top_layer = 1; }
-                        else if !a_trans { top_col = a_col; top_layer = 2; }
-                        else if !b_trans { top_col = b_col; top_layer = 1; }
+                        if a_pri && !a_trans { top_col = a_col; }
+                        else if b_pri && !b_trans { top_col = b_col; }
+                        else if !a_trans { top_col = a_col; }
+                        else if !b_trans { top_col = b_col; }
                         if state > 0 { state -= 1; }
                     } else if (s_col & 0x0F) == 0x0E {
                         state = 1;
