@@ -268,11 +268,27 @@ impl Framework {
     pub fn prepare(&mut self, window: &winit::window::Window, debug_info: &DebugInfo) {
         let raw_input = self.egui_state.take_egui_input(window);
         self.egui_ctx.begin_frame(raw_input);
+
+        // Global shortcuts
+        let ctrl = self.egui_ctx.input(|i| i.modifiers.command);
+        if ctrl && self.egui_ctx.input(|i| i.key_pressed(egui::Key::O)) {
+            self.gui_state.pick_rom_requested = true;
+        }
+        if ctrl && self.egui_ctx.input(|i| i.key_pressed(egui::Key::R)) && debug_info.has_rom {
+            self.gui_state.reset_requested = true;
+        }
+        if self.egui_ctx.input(|i| i.key_pressed(egui::Key::F5)) && debug_info.has_rom {
+            self.gui_state.save_requested = Some(0); // Default to slot 0
+        }
+        if self.egui_ctx.input(|i| i.key_pressed(egui::Key::F8)) && debug_info.has_rom {
+            self.gui_state.load_requested = Some(0); // Default to slot 0
+        }
+
         // Draw the GUI
         egui::TopBottomPanel::top("menubar_container").show(&self.egui_ctx, |ui| {
             egui::menu::bar(ui, |ui| {
                 ui.menu_button("File", |ui| {
-                    if ui.button("Open...").clicked() {
+                    if ui.add(egui::Button::new("Open...").shortcut_text("Ctrl+O")).clicked() {
                         self.gui_state.pick_rom_requested = true;
                         ui.close_menu();
                     }
@@ -291,7 +307,8 @@ impl Framework {
                             }
                         }
                     });
-                    if ui.add_enabled(debug_info.has_rom, egui::Button::new("Reset ROM")).clicked() {
+                    ui.separator();
+                    if ui.add_enabled(debug_info.has_rom, egui::Button::new("Reset ROM").shortcut_text("Ctrl+R")).clicked() {
                         self.gui_state.reset_requested = true;
                         ui.close_menu();
                     }
@@ -302,7 +319,12 @@ impl Framework {
                     ui.separator();
                     ui.menu_button("Save State", |ui| {
                         for slot in 0..10 {
-                            if ui.add_enabled(debug_info.has_rom, egui::Button::new(format!("Slot {}", slot))).clicked() {
+                            let btn = if slot == 0 {
+                                egui::Button::new(format!("Slot {}", slot)).shortcut_text("F5")
+                            } else {
+                                egui::Button::new(format!("Slot {}", slot))
+                            };
+                            if ui.add_enabled(debug_info.has_rom, btn).clicked() {
                                 self.gui_state.save_requested = Some(slot);
                                 ui.close_menu();
                             }
@@ -310,7 +332,12 @@ impl Framework {
                     });
                     ui.menu_button("Load State", |ui| {
                         for slot in 0..10 {
-                            if ui.add_enabled(debug_info.has_rom, egui::Button::new(format!("Slot {}", slot))).clicked() {
+                            let btn = if slot == 0 {
+                                egui::Button::new(format!("Slot {}", slot)).shortcut_text("F8")
+                            } else {
+                                egui::Button::new(format!("Slot {}", slot))
+                            };
+                            if ui.add_enabled(debug_info.has_rom, btn).clicked() {
                                 self.gui_state.load_requested = Some(slot);
                                 ui.close_menu();
                             }
