@@ -224,6 +224,18 @@ impl Emulator {
         self.load_state_from_path(state_path);
     }
 
+    pub fn delete_state(&self, slot: u8) {
+        let Some(path) = &self.current_rom_path else { return };
+        let state_path = path.with_extension(format!("s{}", slot));
+        if state_path.exists() {
+            if let Err(e) = std::fs::remove_file(&state_path) {
+                eprintln!("Failed to delete state {:?}: {}", state_path, e);
+            } else {
+                println!("Deleted state {:?}", state_path);
+            }
+        }
+    }
+
     pub fn load_state_from_path(&mut self, state_path: std::path::PathBuf) {
         if let Ok(json) = std::fs::read_to_string(&state_path) {
             match serde_json::from_str::<Self>(&json) {

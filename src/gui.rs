@@ -45,6 +45,8 @@ pub struct GuiState {
     pub save_requested: Option<u8>,
     #[serde(skip)]
     pub load_requested: Option<u8>,
+    #[serde(skip)]
+    pub delete_state_requested: Option<u8>,
 }
 
 #[cfg(feature = "gui")]
@@ -65,6 +67,7 @@ impl GuiState {
             pick_rom_requested: false,
             save_requested: None,
             load_requested: None,
+            delete_state_requested: None,
         };
         state.register_default_windows();
         state
@@ -98,6 +101,7 @@ impl GuiState {
             "Audio Channel Waveforms",
             "Controller Viewer",
             "Expansion Status",
+            "State Browser",
         ];
         for &name in &defaults {
             if !self.windows.contains_key(name) {
@@ -178,6 +182,7 @@ pub struct DebugInfo {
     pub port2_state: crate::io::ControllerState,
     pub port2_type: crate::io::ControllerType,
     pub has_rom: bool,
+    pub current_rom_path: Option<PathBuf>,
 }
 
 #[cfg(feature = "gui")]
@@ -311,6 +316,10 @@ impl Framework {
                             }
                         }
                     });
+                    if ui.add_enabled(debug_info.has_rom, egui::Button::new("State Browser...")).clicked() {
+                        self.gui_state.set_window_open("State Browser", true);
+                        ui.close_menu();
+                    }
                     ui.separator();
                     if ui.button("Quit").clicked() {
                         std::process::exit(0);
@@ -1044,6 +1053,59 @@ impl Framework {
                 self.gui_state.set_window_open("Expansion Status", false);
             }
         }
+
+        if self.gui_state.is_window_open("State Browser") {
+            let mut open = true;
+            egui::Window::new("State Browser")
+                .open(&mut open)
+                .show(&self.egui_ctx, |ui| {
+                if let Some(path) = &debug_info.current_rom_path {
+                    egui::Grid::new("state_browser_grid").striped(true).show(ui, |ui| {
+                        ui.label("Slot");
+                        ui.label("Status");
+                        ui.label("Actions");
+                        ui.end_row();
+                        
+                        for slot in 0..10 {
+                            ui.label(format!("Slot {}", slot));
+                            let state_path = path.with_extension(format!("s{}", slot));
+                            if state_path.exists() {
+                                let meta = state_path.metadata().ok();
+                                let time = meta.and_then(|m| m.modified().ok())
+                                    .map(|t| {
+                                        let duration = std::time::SystemTime::now().duration_since(t).unwrap_or_default();
+                                        format!("{:.1}m ago", duration.as_secs_f32() / 60.0)
+                                    })
+                                    .unwrap_or_else(|| "Exists".to_string());
+                                ui.label(time);
+                                ui.horizontal(|ui| {
+                                    if ui.button("Load").clicked() {
+                                        self.gui_state.load_requested = Some(slot);
+                                    }
+                                    if ui.button("Overwrite").clicked() {
+                                        self.gui_state.save_requested = Some(slot);
+                                    }
+                                    if ui.button("🗑").on_hover_text("Delete").clicked() {
+                                        self.gui_state.delete_state_requested = Some(slot);
+                                    }
+                                });
+                            } else {
+                                ui.label("Empty");
+                                if ui.button("Save").clicked() {
+                                    self.gui_state.save_requested = Some(slot);
+                                }
+                            }
+                            ui.end_row();
+                        }
+                    });
+                } else {
+                    ui.label("No ROM loaded");
+                }
+            });
+            if !open {
+                self.gui_state.set_window_open("State Browser", false);
+            }
+        }
     }
     pub fn render(
         &mut self,
@@ -1298,6 +1360,10 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                                 emulator.load_state(slot);
                                 framework.gui_state.load_requested = None;
                             }
+                            if let Some(slot) = framework.gui_state.delete_state_requested {
+                                emulator.delete_state(slot);
+                                framework.gui_state.delete_state_requested = None;
+                            }
 
                             // Sync settings from GUI
                             emulator.input_mapping = framework.gui_state.input_mapping;
@@ -1424,6 +1490,7 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                                     port2_state: bus.io.port2.state,
                                     port2_type: bus.io.port2.controller_type,
                                     has_rom: !bus.rom.is_empty(),
+                                    current_rom_path: emulator.current_rom_path.clone(),
                                 };
                                 frontend::rgb565_to_rgba8(&bus.vdp.framebuffer, pixels.frame_mut());
                                 info
