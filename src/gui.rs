@@ -33,6 +33,10 @@ pub struct GuiState {
     pub single_step: bool,
     #[serde(skip)]
     pub show_about: bool,
+    #[serde(skip)]
+    pub reset_requested: bool,
+    #[serde(skip)]
+    pub close_requested: bool,
 }
 
 #[cfg(feature = "gui")]
@@ -46,6 +50,8 @@ impl GuiState {
             paused: false,
             single_step: false,
             show_about: false,
+            reset_requested: false,
+            close_requested: false,
         };
         state.register_default_windows();
         state
@@ -158,6 +164,7 @@ pub struct DebugInfo {
     pub port1_type: crate::io::ControllerType,
     pub port2_state: crate::io::ControllerState,
     pub port2_type: crate::io::ControllerType,
+    pub has_rom: bool,
 }
 
 #[cfg(feature = "gui")]
@@ -249,6 +256,14 @@ impl Framework {
                 ui.menu_button("File", |ui| {
                     if ui.button("Open...").clicked() {
                         self.pick_rom();
+                        ui.close_menu();
+                    }
+                    if ui.add_enabled(debug_info.has_rom, egui::Button::new("Reset ROM")).clicked() {
+                        self.gui_state.reset_requested = true;
+                        ui.close_menu();
+                    }
+                    if ui.add_enabled(debug_info.has_rom, egui::Button::new("Close ROM")).clicked() {
+                        self.gui_state.close_requested = true;
                         ui.close_menu();
                     }
                     ui.separator();
@@ -1186,6 +1201,16 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                                     eprintln!("Failed to load ROM: {}", e);
                                 }
                             }
+                            if framework.gui_state.reset_requested {
+                                println!("Hard resetting emulator");
+                                emulator.hard_reset();
+                                framework.gui_state.reset_requested = false;
+                            }
+                            if framework.gui_state.close_requested {
+                                println!("Closing ROM");
+                                emulator.close_rom();
+                                framework.gui_state.close_requested = false;
+                            }
 
                             // Sync settings from GUI
                             emulator.input_mapping = framework.gui_state.input_mapping;
@@ -1311,6 +1336,7 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                                     port1_type: bus.io.port1.controller_type,
                                     port2_state: bus.io.port2.state,
                                     port2_type: bus.io.port2.controller_type,
+                                    has_rom: !bus.rom.is_empty(),
                                 };
                                 frontend::rgb565_to_rgba8(&bus.vdp.framebuffer, pixels.frame_mut());
                                 info

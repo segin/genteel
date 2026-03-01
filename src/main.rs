@@ -106,6 +106,41 @@ impl Emulator {
         emulator.z80.reset();
         emulator
     }
+
+    /// Hard reset of the emulator (clears RAM, VRAM, resets CPUs, keeps ROM)
+    pub fn hard_reset(&mut self) {
+        let rom = {
+            let bus = self.bus.borrow();
+            bus.rom.clone()
+        };
+        
+        let mut new_bus = Bus::new();
+        new_bus.load_rom(&rom);
+        
+        {
+            let mut bus_lock = self.bus.borrow_mut();
+            *bus_lock = new_bus;
+        }
+        
+        {
+            let mut bus = self.bus.borrow_mut();
+            self.cpu.reset(&mut *bus);
+        }
+        self.z80.reset();
+        self.internal_frame_count = 0;
+    }
+
+    /// Close current ROM and return to default state
+    pub fn close_rom(&mut self) {
+        let allowed_paths = self.allowed_paths.clone();
+        let mapping = self.input_mapping;
+        
+        *self = Self::new();
+        
+        self.allowed_paths = allowed_paths;
+        self.input_mapping = mapping;
+    }
+
     /// Add a path to the whitelist of allowed ROM directories.
     /// If no paths are added, `load_rom` will fail (secure by default).
     /// The path is canonicalized before addition.
