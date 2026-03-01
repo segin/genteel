@@ -6,12 +6,12 @@
 - [x] Task: Implement window state persistence (saving/loading positions and visibility). 0438429
 - [x] Task: Conductor - User Manual Verification 'Phase 1: Infrastructure & UI Framework' (Protocol in workflow.md) f3a29f8
 
-## Phase 2: CPU & Execution Debugging
+## Phase 2: CPU & Execution Debugging [checkpoint: 63b4c8a]
 - [x] Task: Implement Execution Control UI (Pause, Resume, Single Step). aad1c70
 - [x] Task: Implement M68k Status Window (Registers, PC, SR, Flags). c36a695
 - [x] Task: Implement Z80 Status Window (Registers, Flags, MEMPTR). afc0a13
 - [x] Task: Implement Disassembly Viewer (Instruction stream around current PC). 221fa7f
-- [ ] Task: Conductor - User Manual Verification 'Phase 2: CPU & Execution Debugging' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 2: CPU & Execution Debugging' (Protocol in workflow.md) 63b4c8a
 
 ## Phase 3: VDP Debugging Tools
 - [ ] Task: Implement Palette Viewer (CRAM visualization with hex values).
