@@ -605,13 +605,15 @@ impl Vdp {
 
     pub(crate) fn plane_size(&self) -> (usize, usize) {
         let val = self.registers[REG_PLANE_SIZE];
-        let w = match (val >> 4) & 0x03 {
+        // Bits 0-1 (HSZ1-0): horizontal size (width in tiles)
+        let w = match val & 0x03 {
             0x00 => 32,
             0x01 => 64,
             0x03 => 128,
             _ => 32,
         };
-        let h = match val & 0x03 {
+        // Bits 4-5 (VSZ1-0): vertical size (height in tiles)
+        let h = match (val >> 4) & 0x03 {
             0x00 => 32,
             0x01 => 64,
             0x03 => 128,
