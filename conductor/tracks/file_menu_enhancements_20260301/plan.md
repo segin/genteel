@@ -13,7 +13,7 @@
 - [x] Task: Conductor - User Manual Verification 'Phase 2: Native File Dialogs and Basic Menu' (Protocol in workflow.md) 8ef4a7a
 
 ## Phase 3: SRAM and State Management
-- [ ] Task: Implement SRAM persistence logic (loading/saving .srm files automatically based on ROM filename).
+- [x] Task: Implement SRAM persistence logic (loading/saving .srm files automatically based on ROM filename). 0eaaba8
 - [ ] Task: Add 10 Save/Load State slots to the File menu with automated filename generation.
 - [ ] Task: Implement optional Auto-Save on exit and Auto-Load on start functionality.
 - [ ] Task: Conductor - User Manual Verification 'Phase 3: SRAM and State Management' (Protocol in workflow.md)
