@@ -29,6 +29,7 @@ pub struct GuiState {
     pub integer_scaling: bool,
     pub force_red: bool,
     pub paused: bool,
+    pub recent_roms: Vec<PathBuf>,
     #[serde(skip)]
     pub single_step: bool,
     #[serde(skip)]
@@ -48,6 +49,7 @@ impl GuiState {
             integer_scaling: true,
             force_red: false,
             paused: false,
+            recent_roms: Vec::new(),
             single_step: false,
             show_about: false,
             reset_requested: false,
@@ -258,6 +260,21 @@ impl Framework {
                         self.pick_rom();
                         ui.close_menu();
                     }
+                    ui.menu_button("Open Recent", |ui| {
+                        if self.gui_state.recent_roms.is_empty() {
+                            ui.label("No recent ROMs");
+                        } else {
+                            let recent = self.gui_state.recent_roms.clone();
+                            for path in recent {
+                                let filename = path.file_name().and_then(|f| f.to_str()).unwrap_or("Unknown");
+                                if ui.button(filename).clicked() {
+                                    let mut lock = self.pending_rom_path.lock().unwrap();
+                                    *lock = Some(path);
+                                    ui.close_menu();
+                                }
+                            }
+                        }
+                    });
                     if ui.add_enabled(debug_info.has_rom, egui::Button::new("Reset ROM")).clicked() {
                         self.gui_state.reset_requested = true;
                         ui.close_menu();
@@ -1199,6 +1216,14 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                                 }
                                 if let Err(e) = emulator.load_rom(path.to_str().unwrap_or("")) {
                                     eprintln!("Failed to load ROM: {}", e);
+                                } else {
+                                    // Update recent ROMs
+                                    let mut recent = framework.gui_state.recent_roms.clone();
+                                    recent.retain(|p| p != &path);
+                                    recent.insert(0, path.clone());
+                                    recent.truncate(10);
+                                    framework.gui_state.recent_roms = recent;
+                                    framework.gui_state.save();
                                 }
                             }
                             if framework.gui_state.reset_requested {
