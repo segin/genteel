@@ -116,6 +116,22 @@ pub struct DebugInfo {
     pub m68k_usp: u32,
     pub m68k_ssp: u32,
     pub z80_pc: u16,
+    pub z80_a: u8,
+    pub z80_f: u8,
+    pub z80_b: u8,
+    pub z80_c: u8,
+    pub z80_d: u8,
+    pub z80_e: u8,
+    pub z80_h: u8,
+    pub z80_l: u8,
+    pub z80_ix: u16,
+    pub z80_iy: u16,
+    pub z80_sp: u16,
+    pub z80_i: u8,
+    pub z80_r: u8,
+    pub z80_memptr: u16,
+    pub z80_iff1: bool,
+    pub z80_im: u8,
     pub frame_count: u64,
     pub vdp_status: u16,
     pub display_enabled: bool,
@@ -339,6 +355,49 @@ impl Framework {
             });
             if !open {
                 self.gui_state.set_window_open("M68k Status", false);
+            }
+        }
+
+        if self.gui_state.is_window_open("Z80 Status") {
+            let mut open = true;
+            egui::Window::new("Z80 Status")
+                .open(&mut open)
+                .show(&self.egui_ctx, |ui| {
+                ui.label(format!("PC: {:04X}", debug_info.z80_pc));
+                ui.label(format!("SP: {:04X}", debug_info.z80_sp));
+                ui.label(format!("MEMPTR (WZ): {:04X}", debug_info.z80_memptr));
+                ui.separator();
+                let f = debug_info.z80_f;
+                ui.horizontal(|ui| {
+                    ui.label(format!("Flags: [ {} {} {} {} {} {} {} {} ]",
+                        if f & 0x80 != 0 { "S" } else { "s" },
+                        if f & 0x40 != 0 { "Z" } else { "z" },
+                        if f & 0x20 != 0 { "Y" } else { "y" },
+                        if f & 0x10 != 0 { "H" } else { "h" },
+                        if f & 0x08 != 0 { "X" } else { "x" },
+                        if f & 0x04 != 0 { "P" } else { "p" },
+                        if f & 0x02 != 0 { "N" } else { "n" },
+                        if f & 0x01 != 0 { "C" } else { "c" },
+                    ));
+                });
+                ui.separator();
+                ui.columns(2, |columns| {
+                    columns[0].label(format!("A:  {:02X}", debug_info.z80_a));
+                    columns[1].label(format!("F:  {:02X}", debug_info.z80_f));
+                    columns[0].label(format!("BC: {:02X}{:02X}", debug_info.z80_b, debug_info.z80_c));
+                    columns[1].label(format!("DE: {:02X}{:02X}", debug_info.z80_d, debug_info.z80_e));
+                    columns[0].label(format!("HL: {:02X}{:02X}", debug_info.z80_h, debug_info.z80_l));
+                    columns[1].label(format!("IX: {:04X}", debug_info.z80_ix));
+                    columns[0].label(format!("IY: {:04X}", debug_info.z80_iy));
+                    columns[1].label(format!("I:  {:02X}", debug_info.z80_i));
+                    columns[0].label(format!("R:  {:02X}", debug_info.z80_r));
+                });
+                ui.separator();
+                ui.label(format!("IM: {}", debug_info.z80_im));
+                ui.label(format!("IFF1: {}", debug_info.z80_iff1));
+            });
+            if !open {
+                self.gui_state.set_window_open("Z80 Status", false);
             }
         }
     }
@@ -575,6 +634,22 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                                     m68k_usp: emulator.cpu.usp,
                                     m68k_ssp: emulator.cpu.ssp,
                                     z80_pc: emulator.z80.pc,
+                                    z80_a: emulator.z80.a,
+                                    z80_f: emulator.z80.f,
+                                    z80_b: emulator.z80.b,
+                                    z80_c: emulator.z80.c,
+                                    z80_d: emulator.z80.d,
+                                    z80_e: emulator.z80.e,
+                                    z80_h: emulator.z80.h,
+                                    z80_l: emulator.z80.l,
+                                    z80_ix: emulator.z80.ix,
+                                    z80_iy: emulator.z80.iy,
+                                    z80_sp: emulator.z80.sp,
+                                    z80_i: emulator.z80.i,
+                                    z80_r: emulator.z80.r,
+                                    z80_memptr: emulator.z80.memptr,
+                                    z80_iff1: emulator.z80.iff1,
+                                    z80_im: emulator.z80.im,
                                     frame_count: emulator.internal_frame_count,
                                     vdp_status: bus.vdp.read_status(),
                                     display_enabled: bus.vdp.display_enabled(),
