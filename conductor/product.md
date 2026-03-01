@@ -13,7 +13,7 @@ Genteel is an instrumentable Sega Mega Drive/Genesis emulator designed for autom
 
 ## Key Features
 *   **GDB Protocol Support**: Implement GDB Remote Serial Protocol (RSP) to allow standard debugging tools to connect and control the emulator.
-*   **Integrated Debugger GUI**: A hybrid user interface using `egui` to display real-time VRAM, CRAM, and CPU state alongside the game output.
+*   **Integrated Debugging Suite**: A comprehensive, multi-window interface using `egui` for real-time visualization of VRAM, CRAM, VSRAM, Scroll Planes (Plane A/B/Window), Sprites, CPU states (M68k/Z80), Disassembly, Memory (WRAM/Z80 RAM), and Audio (YM2612/PSG parameters and waveforms).
 *   **Save States (Serde)**: Full serialization support for the system state, allowing for easy snapshotting and state recovery.
 
 ## Visual Style and UX
