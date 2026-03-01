@@ -1744,7 +1744,10 @@ mod tests {
                 "Bit {} (mod 8 = 0) did not set bit 0",
                 bit
             );
-            assert!(cpu.get_flag(flags::ZERO), "Z flag should be set (bit was 0)");
+            assert!(
+                cpu.get_flag(flags::ZERO),
+                "Z flag should be set (bit was 0)"
+            );
         }
 
         // Test bits 1, 9, 17 -> should all affect bit 1
@@ -1766,7 +1769,10 @@ mod tests {
                 "Bit {} (mod 8 = 1) did not set bit 1",
                 bit
             );
-            assert!(cpu.get_flag(flags::ZERO), "Z flag should be set (bit was 0)");
+            assert!(
+                cpu.get_flag(flags::ZERO),
+                "Z flag should be set (bit was 0)"
+            );
         }
 
         // Test edge case: bit 7, 15 -> bit 7
@@ -1788,7 +1794,10 @@ mod tests {
                 "Bit {} (mod 8 = 7) did not set bit 7",
                 bit
             );
-            assert!(cpu.get_flag(flags::ZERO), "Z flag should be set (bit was 0)");
+            assert!(
+                cpu.get_flag(flags::ZERO),
+                "Z flag should be set (bit was 0)"
+            );
         }
     }
 
@@ -1850,7 +1859,10 @@ mod tests {
                 "Bit {} (mod 8 = 2) did not toggle bit 2 (0->1)",
                 bit
             );
-            assert!(cpu.get_flag(flags::ZERO), "Z flag should be set (bit was 0)");
+            assert!(
+                cpu.get_flag(flags::ZERO),
+                "Z flag should be set (bit was 0)"
+            );
 
             // Case 2: Bit 2 is 1 -> 0
             memory.write_byte(0x3000, 0xFF);

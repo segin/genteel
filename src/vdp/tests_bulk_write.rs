@@ -12,6 +12,7 @@ fn write_data_bulk(vdp: &mut Vdp, data: &[u8]) {
 #[test]
 fn test_bulk_write_optimization() {
     let mut vdp = Vdp::new();
+    vdp.bypass_fifo = true;
 
     // Setup:
     // 1. Set Auto-increment to 2 (Reg 15 = 0x02)
@@ -21,8 +22,8 @@ fn test_bulk_write_optimization() {
     // 2. Set VRAM Write Address to 0x0000
     vdp.write_control(0x4000);
     vdp.write_control(0x0000);
-    assert_eq!(vdp.control_address, 0x0000);
-    assert_eq!(vdp.control_code & 0x0F, VRAM_WRITE);
+    assert_eq!(vdp.command.address, 0x0000);
+    assert_eq!(vdp.command.code & 0x0F, VRAM_WRITE);
 
     // 3. Prepare data
     let data = [0x11, 0x22, 0x33, 0x44];
@@ -37,7 +38,7 @@ fn test_bulk_write_optimization() {
     assert_eq!(vdp.vram[3], 0x44);
 
     // Verify Control Address update
-    assert_eq!(vdp.control_address, 0x0004);
+    assert_eq!(vdp.command.address, 0x0004);
 
     // Verify last_data_write update
     assert_eq!(vdp.last_data_write, 0x3344);
@@ -46,6 +47,7 @@ fn test_bulk_write_optimization() {
 #[test]
 fn test_bulk_write_fallback() {
     let mut vdp = Vdp::new();
+    vdp.bypass_fifo = true;
 
     // Setup:
     // 1. Set Auto-increment to 1 (Reg 15 = 0x01) - forces fallback path
@@ -59,7 +61,7 @@ fn test_bulk_write_fallback() {
     // Verify behavior with auto-inc=1
     assert_eq!(vdp.vram[0], 0xDD);
     assert_eq!(vdp.vram[1], 0xCC);
-    assert_eq!(vdp.control_address, 0x0002);
+    assert_eq!(vdp.command.address, 0x0002);
 
     // 2. Not VRAM Write (e.g. CRAM Write)
     vdp.write_control(0x8F02);
@@ -71,12 +73,13 @@ fn test_bulk_write_fallback() {
 
     assert_eq!(vdp.cram[0], 0xEE);
     assert_eq!(vdp.cram[1], 0x0E);
-    assert_eq!(vdp.control_address, 0x0002);
+    assert_eq!(vdp.command.address, 0x0002);
 }
 
 #[test]
 fn test_bulk_write_wrapping() {
     let mut vdp = Vdp::new();
+    vdp.bypass_fifo = true;
 
     // Setup: Auto-inc 2, VRAM Write
     vdp.write_control(0x8F02);
@@ -85,7 +88,7 @@ fn test_bulk_write_wrapping() {
     vdp.write_control(0x7FFE);
     vdp.write_control(0x0003);
 
-    assert_eq!(vdp.control_address, 0xFFFE);
+    assert_eq!(vdp.command.address, 0xFFFE);
 
     let data = [0x11, 0x22, 0x33, 0x44];
     write_data_bulk(&mut vdp, &data);
@@ -95,5 +98,5 @@ fn test_bulk_write_wrapping() {
     assert_eq!(vdp.vram[0xFFFF], 0x22);
     assert_eq!(vdp.vram[0x0000], 0x33);
     assert_eq!(vdp.vram[0x0001], 0x44);
-    assert_eq!(vdp.control_address, 0x0002);
+    assert_eq!(vdp.command.address, 0x0002);
 }

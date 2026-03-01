@@ -52,8 +52,8 @@ fn bench_dma_fill_write_data() {
     let start = Instant::now();
 
     for _ in 0..iterations {
-        vdp.dma_pending = true;
-        vdp.control_address = 0;
+        vdp.command.dma_pending = true;
+        vdp.command.address = 0;
         // This triggers the loop in write_data
         vdp.write_data(0xAA00);
     }

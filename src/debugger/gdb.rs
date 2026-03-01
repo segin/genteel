@@ -649,12 +649,37 @@ impl GdbServer {
         } else if cmd == "qAttached" {
             // Attached to existing process
             "1".to_string()
+        } else if cmd == "vCont?" {
+            // Report supported vCont actions
+            "vCont;c;s".to_string()
+        } else if let Some(stripped) = cmd.strip_prefix("vCont;") {
+            // Handle vCont command
+            self.handle_vcont(stripped)
         } else if let Some(stripped) = cmd.strip_prefix("qRcmd,") {
             // Monitor command
             self.handle_monitor_command(stripped)
         } else {
             // Unknown query
             "".to_string()
+        }
+    }
+
+    fn handle_vcont(&mut self, actions: &str) -> String {
+        // Simple vCont implementation: handle first action
+        // Format: action[:thread-id][;action[:thread-id]]...
+        let first_action = actions.split(';').next().unwrap_or("");
+        match first_action {
+            "c" => "CONTINUE".to_string(),
+            "s" => "STEP".to_string(),
+            _ => {
+                if first_action.starts_with('c') {
+                    "CONTINUE".to_string()
+                } else if first_action.starts_with('s') {
+                    "STEP".to_string()
+                } else {
+                    "".to_string()
+                }
+            }
         }
     }
 
@@ -693,7 +718,7 @@ impl GdbServer {
                 self.authenticated = true;
                 self.auth_failed_attempts = 0;
                 self.auth_lockout_until = None;
-                return "OK".to_string();
+                "OK".to_string()
             } else {
                 self.auth_failed_attempts += 1;
                 if self.auth_failed_attempts >= MAX_AUTH_ATTEMPTS {
@@ -703,12 +728,12 @@ impl GdbServer {
                         AUTH_LOCKOUT_DURATION.as_secs()
                     );
                 }
-                return "E01".to_string(); // Invalid password
+                "E01".to_string()// Invalid password
             }
         } else {
             // No password set, already authenticated
             self.authenticated = true;
-            return "OK".to_string();
+            "OK".to_string()
         }
     }
 

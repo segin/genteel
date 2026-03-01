@@ -104,23 +104,17 @@ pub fn exec_pea<M: MemoryInterface>(cpu: &mut Cpu, src: AddressingMode, memory: 
 
 pub fn exec_exg(cpu: &mut Cpu, rx: u8, ry: u8, mode: u8) -> u32 {
     match mode {
-        0x40 => {
-            // Data registers
-            let temp = cpu.d[rx as usize];
-            cpu.d[rx as usize] = cpu.d[ry as usize];
-            cpu.d[ry as usize] = temp;
+        0x08 => {
+            // Data registers (Mode 01000)
+            cpu.d.swap(rx as usize, ry as usize);
         }
-        0x48 => {
-            // Address registers
-            let temp = cpu.a[rx as usize];
-            cpu.a[rx as usize] = cpu.a[ry as usize];
-            cpu.a[ry as usize] = temp;
+        0x09 => {
+            // Address registers (Mode 01001)
+            cpu.a.swap(rx as usize, ry as usize);
         }
-        0x50 => {
-            // Data and Address register
-            let temp = cpu.d[rx as usize];
-            cpu.d[rx as usize] = cpu.a[ry as usize];
-            cpu.a[ry as usize] = temp;
+        0x11 => {
+            // Data and Address register (Mode 10001)
+            std::mem::swap(&mut cpu.d[rx as usize], &mut cpu.a[ry as usize]);
         }
         _ => {}
     }
@@ -155,13 +149,13 @@ pub fn exec_movep<M: MemoryInterface>(
         // Memory to register
         let mut val = 0u32;
         if size == Size::Word {
-            val |= (cpu.cpu_read_memory(addr, Size::Byte, memory) << 8);
+            val |= cpu.cpu_read_memory(addr, Size::Byte, memory) << 8;
             val |= cpu.cpu_read_memory(addr.wrapping_add(2), Size::Byte, memory);
             cpu.d[reg as usize] = (cpu.d[reg as usize] & 0xFFFF0000) | val;
         } else {
-            val |= (cpu.cpu_read_memory(addr, Size::Byte, memory) << 24);
-            val |= (cpu.cpu_read_memory(addr.wrapping_add(2), Size::Byte, memory) << 16);
-            val |= (cpu.cpu_read_memory(addr.wrapping_add(4), Size::Byte, memory) << 8);
+            val |= cpu.cpu_read_memory(addr, Size::Byte, memory) << 24;
+            val |= cpu.cpu_read_memory(addr.wrapping_add(2), Size::Byte, memory) << 16;
+            val |= cpu.cpu_read_memory(addr.wrapping_add(4), Size::Byte, memory) << 8;
             val |= cpu.cpu_read_memory(addr.wrapping_add(6), Size::Byte, memory);
             cpu.d[reg as usize] = val;
         }
@@ -190,8 +184,8 @@ pub fn exec_movem<M: MemoryInterface>(
     let base_addr = match ea {
         AddressingMode::AddressPreDecrement(reg) => cpu.a[reg as usize],
         AddressingMode::AddressPostIncrement(reg) => {
-            let addr = cpu.a[reg as usize];
-            addr
+            
+            cpu.a[reg as usize]
         }
         _ => {
             let (ea_result, ea_cycles) =

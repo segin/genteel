@@ -6,7 +6,7 @@ fn test_register_write_simple() {
     // Write 0x8144 (Reg 1 = 0x44)
     vdp.write_control(0x8144);
 
-    assert!(!vdp.control_pending);
+    assert!(!vdp.command.pending);
     assert_eq!(vdp.registers[1], 0x44);
 }
 
@@ -19,18 +19,18 @@ fn test_vram_write_command_sequence() {
     // Bits 15-14 are 01 -> VRAM Write (CD0=1)
     vdp.write_control(0x4000);
 
-    assert!(vdp.control_pending);
+    assert!(vdp.command.pending);
     // Code should have lower 2 bits set to 01
-    assert_eq!(vdp.control_code & 0x03, super::VRAM_WRITE);
+    assert_eq!(vdp.command.code & 0x03, super::VRAM_WRITE);
 
     // Step 2: Write second word 0x0000
     vdp.write_control(0x0000);
 
-    assert!(!vdp.control_pending);
+    assert!(!vdp.command.pending);
     // Address should be 0x0000
-    assert_eq!(vdp.control_address, 0x0000);
+    assert_eq!(vdp.command.address, 0x0000);
     // Code should be 0x01 (VRAM Write)
-    assert_eq!(vdp.control_code, super::VRAM_WRITE);
+    assert_eq!(vdp.command.code, super::VRAM_WRITE);
 }
 
 #[test]
@@ -41,15 +41,15 @@ fn test_cram_write_command_sequence() {
     // First word: 1100 0000 0000 0000 -> 0xC000
     vdp.write_control(0xC000);
 
-    assert!(vdp.control_pending);
-    assert_eq!(vdp.control_code & 0x03, super::CRAM_WRITE); // CD1-0 = 11
+    assert!(vdp.command.pending);
+    assert_eq!(vdp.command.code & 0x03, super::CRAM_WRITE); // CD1-0 = 11
 
     // Second word: 0x0000
     vdp.write_control(0x0000);
 
-    assert!(!vdp.control_pending);
-    assert_eq!(vdp.control_address, 0x0000);
-    assert_eq!(vdp.control_code, super::CRAM_WRITE);
+    assert!(!vdp.command.pending);
+    assert_eq!(vdp.command.address, 0x0000);
+    assert_eq!(vdp.command.code, super::CRAM_WRITE);
 }
 
 #[test]
@@ -69,7 +69,7 @@ fn test_vsram_write_command_sequence() {
     vdp.write_control(0x4000);
     vdp.write_control(0x0010); // VSRAM Write
 
-    assert_eq!(vdp.control_code, super::VSRAM_WRITE);
+    assert_eq!(vdp.command.code, super::VSRAM_WRITE);
 }
 
 #[test]
@@ -78,7 +78,7 @@ fn test_register_write_during_pending() {
 
     // Start command
     vdp.write_control(0x4000);
-    assert!(vdp.control_pending);
+    assert!(vdp.command.pending);
 
     // Try to write register 1 with 0x44 (0x8144)
     // Since pending is true, this should be interpreted as second word of command,
@@ -93,11 +93,11 @@ fn test_register_write_during_pending() {
 
     vdp.write_control(0x8144);
 
-    assert!(!vdp.control_pending);
+    assert!(!vdp.command.pending);
     // Register 1 should NOT be 0x44 (default is 0)
     assert_eq!(vdp.registers[1], 0x00);
 
-    assert_eq!(vdp.control_code, 0x11);
+    assert_eq!(vdp.command.code, 0x11);
 }
 
 #[test]
@@ -120,5 +120,5 @@ fn test_dma_pending_flag() {
     vdp.write_control(0x4000);
     vdp.write_control(0x0080); // Sets DMA bit
 
-    assert!(vdp.dma_pending);
+    assert!(vdp.command.dma_pending);
 }

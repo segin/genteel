@@ -3,6 +3,7 @@ use super::*;
 #[test]
 fn test_dma_fill_vram() {
     let mut vdp = Vdp::new();
+    vdp.bypass_fifo = true;
 
     // 1. Enable DMA (Reg 1 bit 4)
     // Mode Register 2: 0x81 (bit 7) | 0x14 (DMA=1, Display=0) -> 0x94?
@@ -58,7 +59,10 @@ fn test_dma_fill_vram() {
 
     // Check if dma_pending is set
     // It should be set because CD5 is 1
-    assert!(vdp.dma_pending, "DMA pending should be true for Fill setup");
+    assert!(
+        vdp.command.dma_pending,
+        "DMA pending should be true for Fill setup"
+    );
 
     // 6. Write Fill Data (e.g. 0xAA)
     // Writing to data port triggers the fill in hardware.
@@ -67,17 +71,15 @@ fn test_dma_fill_vram() {
     vdp.write_data(0xAA00);
 
     assert!(
-        !vdp.dma_pending,
+        !vdp.command.dma_pending,
         "DMA pending should be false after data write"
     );
 
     // 7. Verify VRAM
     // Length is 0x10 (16 bytes).
-    // Writes 16 bytes: indices 0x0000 to 0x000F.
-    // 0x0000..0x000F is 0xAA.
-    // 0x0010 is 0x00.
-
-    for i in 0..0x10 {
+    // First byte is LSB (0x00), subsequent 15 bytes are MSB (0xAA).
+    assert_eq!(vdp.vram[0], 0x00, "Index 0 should be LSB");
+    for i in 1..0x10 {
         assert_eq!(vdp.vram[i], 0xAA, "Mismatch at index 0x{:04X}", i);
     }
     assert_eq!(vdp.vram[0x10], 0x00, "Should stop at 0x10");
@@ -86,6 +88,7 @@ fn test_dma_fill_vram() {
 #[test]
 fn test_dma_copy_vram() {
     let mut vdp = Vdp::new();
+    vdp.bypass_fifo = true;
 
     // 1. Enable DMA
     vdp.write_control(0x8114);
@@ -119,12 +122,12 @@ fn test_dma_copy_vram() {
     vdp.write_control(0x4000);
     vdp.write_control(0x0080);
 
-    assert!(vdp.dma_pending);
+    assert!(vdp.command.dma_pending);
 
     // 7. Execute DMA
     let cycles = vdp.execute_dma();
 
-    assert!(!vdp.dma_pending);
+    assert!(!vdp.command.dma_pending);
     assert_eq!(cycles, 0x10);
 
     // Verify VRAM
@@ -138,6 +141,7 @@ fn test_dma_copy_vram() {
 #[test]
 fn test_dma_fill_wrap_around() {
     let mut vdp = Vdp::new();
+    vdp.bypass_fifo = true;
 
     // 1. Enable DMA (Reg 1 bit 4)
     vdp.write_control(0x8114);
@@ -156,20 +160,25 @@ fn test_dma_fill_wrap_around() {
     vdp.write_control(0x4000);
     vdp.write_control(0x0080);
 
-    assert!(vdp.dma_pending, "DMA pending should be true for Fill setup");
+    assert!(
+        vdp.command.dma_pending,
+        "DMA pending should be true for Fill setup"
+    );
 
     // 6. Write Fill Data (e.g. 0xAA)
     // This triggers the fill of 64KB (length 0 treated as 0x10000)
     vdp.write_data(0xAA00);
 
     assert!(
-        !vdp.dma_pending,
+        !vdp.command.dma_pending,
         "DMA pending should be false after data write"
     );
 
     // 7. Verify VRAM
-    // Should have filled the entire 64KB VRAM with 0xAA
-    for i in 0..0x10000 {
+    // Should have filled the entire 64KB VRAM.
+    // First byte at address 0 was LSB (0x00), all others MSB (0xAA).
+    assert_eq!(vdp.vram[0], 0x00, "Index 0 should be LSB");
+    for i in 1..0x10000 {
         assert_eq!(vdp.vram[i], 0xAA, "Mismatch at index 0x{:04X}", i);
     }
 }
@@ -177,6 +186,7 @@ fn test_dma_fill_wrap_around() {
 #[test]
 fn test_dma_copy_wrap_around() {
     let mut vdp = Vdp::new();
+    vdp.bypass_fifo = true;
 
     // 1. Enable DMA
     vdp.write_control(0x8114);
@@ -205,7 +215,7 @@ fn test_dma_copy_wrap_around() {
     vdp.write_control(0x4001);
     vdp.write_control(0x0080); // DMA Enable bit in command
 
-    assert!(vdp.dma_pending);
+    assert!(vdp.command.dma_pending);
 
     // 7. Execute DMA
     // Length 0 -> 0x10000 bytes.
@@ -213,7 +223,7 @@ fn test_dma_copy_wrap_around() {
     // This overlapping copy should propagate 0xFF through the entire VRAM.
     let count = vdp.execute_dma();
 
-    assert!(!vdp.dma_pending);
+    assert!(!vdp.command.dma_pending);
     assert_eq!(count, 0x10000);
 
     // Verify VRAM

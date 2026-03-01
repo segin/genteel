@@ -138,6 +138,7 @@ fn test_bchg_memory_modulo_behavior() {
     assert!(cpu.get_flag(flags::ZERO)); // Was clear before toggle
 }
 
+#[test]
 fn test_btst_memory_modulo_behavior() {
     let (mut cpu, mut memory) = create_cpu();
     // BTST D0, (A0)

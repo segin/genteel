@@ -107,9 +107,9 @@ fn test_write_byte_vdp() {
     assert_eq!(bus.vdp.vram[0], 0);
 
     // Control port (byte write) -> Placeholder.
-    let old_code = bus.vdp.control_code;
+    let old_code = bus.vdp.command.code;
     bus.write_byte(0xC00004, 0xAA);
-    assert_eq!(bus.vdp.control_code, old_code);
+    assert_eq!(bus.vdp.command.code, old_code);
 
     // PSG
     // 0xC00011

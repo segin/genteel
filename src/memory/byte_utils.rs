@@ -80,8 +80,8 @@ pub mod big_array {
                 // For 64KB, it's fine on most threads (default stack 2MB).
                 // Box::new could be used but we return [u8; N] by value.
                 let mut arr = [0u8; N];
-                for i in 0..N {
-                    arr[i] = seq
+                for (i, item) in arr.iter_mut().enumerate() {
+                    *item = seq
                         .next_element()?
                         .ok_or_else(|| serde::de::Error::invalid_length(i, &self))?;
                 }

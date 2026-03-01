@@ -5,6 +5,7 @@ mod tests {
     #[test]
     fn test_bus_read_vdp_status_bytes() {
         let mut bus = Bus::new();
+        bus.vdp.bypass_fifo = true;
 
         // Initial status is 0x3600 (FIFO empty, etc)
         // High byte: 0x36
@@ -20,6 +21,7 @@ mod tests {
     #[test]
     fn test_bus_read_vdp_status_clears_pending() {
         let mut bus = Bus::new();
+        bus.vdp.bypass_fifo = true;
 
         // Write first word of command to set pending
         bus.write_word(0xC00004, 0x4000);
@@ -50,6 +52,7 @@ mod tests {
     #[test]
     fn test_vdp_read_long_behavior() {
         let mut bus = Bus::new();
+        bus.vdp.bypass_fifo = true;
         bus.write_word(0xC00004, 0x8F02);
         bus.write_word(0xC00004, 0x4000);
         bus.write_word(0xC00004, 0x0000);
@@ -71,6 +74,7 @@ mod tests {
     #[test]
     fn test_vdp_write_long_behavior() {
         let mut bus = Bus::new();
+        bus.vdp.bypass_fifo = true;
         // Setup inc=2
         bus.write_word(0xC00004, 0x8F02);
 
@@ -97,6 +101,7 @@ mod tests {
     #[test]
     fn test_vdp_unaligned_read_long() {
         let mut bus = Bus::new();
+        bus.vdp.bypass_fifo = true;
         // Setup inc=2
         bus.write_word(0xC00004, 0x8F02);
 

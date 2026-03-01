@@ -1,5 +1,9 @@
+use crate::audio;
+use crate::frontend::{self, InputMapping};
+use crate::input::InputScript;
+use crate::Emulator;
 #[cfg(feature = "gui")]
-use pixels::{Pixels, SurfaceTexture, wgpu};
+use pixels::{wgpu, Pixels, SurfaceTexture};
 #[cfg(feature = "gui")]
 use winit::{
     event::{ElementState, Event, WindowEvent},
@@ -7,10 +11,6 @@ use winit::{
     keyboard::{KeyCode, PhysicalKey},
     window::WindowBuilder,
 };
-use crate::frontend::{self, InputMapping};
-use crate::audio;
-use crate::Emulator;
-use crate::input::InputScript;
 
 #[cfg(feature = "gui")]
 pub struct GuiState {
@@ -80,7 +80,11 @@ impl Framework {
             gui_state,
         }
     }
-    pub fn handle_event(&mut self, window: &winit::window::Window, event: &winit::event::WindowEvent) {
+    pub fn handle_event(
+        &mut self,
+        window: &winit::window::Window,
+        event: &winit::event::WindowEvent,
+    ) {
         let _ = self.egui_state.on_window_event(window, event);
     }
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -111,10 +115,7 @@ impl Framework {
                         self.gui_state.show_settings = true;
                         ui.close_menu();
                     }
-                    ui.checkbox(
-                        &mut self.gui_state.show_debug,
-                        "Show Performance & Debug",
-                    );
+                    ui.checkbox(&mut self.gui_state.show_debug, "Show Performance & Debug");
                 });
             });
         });
@@ -244,8 +245,7 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
     let window: &'static winit::window::Window = Box::leak(Box::new(window));
     let mut pixels = {
         let window_size = window.inner_size();
-        let surface_texture =
-            SurfaceTexture::new(window_size.width, window_size.height, window);
+        let surface_texture = SurfaceTexture::new(window_size.width, window_size.height, window);
         Pixels::new(320, 240, surface_texture).map_err(|e| e.to_string())?
     };
     // Initialize egui framework
@@ -399,29 +399,24 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                                     bg_color_index: bus.vdp.registers[7],
                                     cram0: bus.vdp.cram_cache[0],
                                 };
-                                frontend::rgb565_to_rgba8(
-                                    &bus.vdp.framebuffer,
-                                    pixels.frame_mut(),
-                                );
+                                frontend::rgb565_to_rgba8(&bus.vdp.framebuffer, pixels.frame_mut());
                                 info
                             };
 
                             // Update egui
                             framework.prepare(window, &debug_info);
-                            if let Err(e) =
-                                pixels.render_with(|encoder, render_target, context| {
-                                    // Render the board
-                                    context.scaling_renderer.render(encoder, render_target);
-                                    // Render GUI
-                                    framework.render(
-                                        encoder,
-                                        render_target,
-                                        &context.device,
-                                        &context.queue,
-                                    );
-                                    Ok(())
-                                })
-                            {
+                            if let Err(e) = pixels.render_with(|encoder, render_target, context| {
+                                // Render the board
+                                context.scaling_renderer.render(encoder, render_target);
+                                // Render GUI
+                                framework.render(
+                                    encoder,
+                                    render_target,
+                                    &context.device,
+                                    &context.queue,
+                                );
+                                Ok(())
+                            }) {
                                 eprintln!("Render error: {}", e);
                                 target.exit();
                             }

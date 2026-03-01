@@ -7,10 +7,10 @@ pub mod instructions;
 pub mod ops;
 
 pub use addressing::EffectiveAddress;
-pub use decoder::{Condition, Size, decode};
+pub use decoder::{decode, Condition, Size};
 use instructions::{
-    ArithmeticInstruction, BitSource, BitsInstruction, DataInstruction, DecodeCacheEntry, Instruction,
-    SystemInstruction,
+    ArithmeticInstruction, BitSource, BitsInstruction, DataInstruction, DecodeCacheEntry,
+    Instruction, SystemInstruction,
 };
 
 const CACHE_ROM_LIMIT: u32 = 0x400000; // 4MB ROM
@@ -90,7 +90,12 @@ impl Cpu {
         self.invalidate_cache();
     }
 
-    pub fn cpu_read_ea<M: MemoryInterface>(&mut self, ea: EffectiveAddress, size: Size, memory: &mut M) -> u32 {
+    pub fn cpu_read_ea<M: MemoryInterface>(
+        &mut self,
+        ea: EffectiveAddress,
+        size: Size,
+        memory: &mut M,
+    ) -> u32 {
         if let EffectiveAddress::Memory(addr) = ea {
             if (size == Size::Word || size == Size::Long) && addr % 2 != 0 {
                 self.process_exception(3, memory);
@@ -100,7 +105,13 @@ impl Cpu {
         addressing::read_ea(ea, size, &self.d, &self.a, memory)
     }
 
-    pub fn cpu_write_ea<M: MemoryInterface>(&mut self, ea: EffectiveAddress, size: Size, value: u32, memory: &mut M) {
+    pub fn cpu_write_ea<M: MemoryInterface>(
+        &mut self,
+        ea: EffectiveAddress,
+        size: Size,
+        value: u32,
+        memory: &mut M,
+    ) {
         if let EffectiveAddress::Memory(addr) = ea {
             if (size == Size::Word || size == Size::Long) && addr % 2 != 0 {
                 self.process_exception(3, memory);
@@ -110,16 +121,27 @@ impl Cpu {
         addressing::write_ea(ea, size, value, &mut self.d, &mut self.a, memory)
     }
 
-    pub fn cpu_read_memory<M: MemoryInterface>(&mut self, addr: u32, size: Size, memory: &mut M) -> u32 {
-        if (size == Size::Word || size == Size::Long) && addr % 2 != 0 {
+    pub fn cpu_read_memory<M: MemoryInterface>(
+        &mut self,
+        addr: u32,
+        size: Size,
+        memory: &mut M,
+    ) -> u32 {
+        if (size == Size::Word || size == Size::Long) && !addr.is_multiple_of(2) {
             self.process_exception(3, memory);
             return 0;
         }
         memory.read_size(addr, size)
     }
 
-    pub fn cpu_write_memory<M: MemoryInterface>(&mut self, addr: u32, size: Size, value: u32, memory: &mut M) {
-        if (size == Size::Word || size == Size::Long) && addr % 2 != 0 {
+    pub fn cpu_write_memory<M: MemoryInterface>(
+        &mut self,
+        addr: u32,
+        size: Size,
+        value: u32,
+        memory: &mut M,
+    ) {
+        if (size == Size::Word || size == Size::Long) && !addr.is_multiple_of(2) {
             self.process_exception(3, memory);
             return;
         }
@@ -128,12 +150,14 @@ impl Cpu {
 
     fn check_interrupts<M: MemoryInterface>(&mut self, memory: &mut M) -> u32 {
         let mask = (self.sr & flags::INTERRUPT_MASK) >> 8;
-        if self.pending_interrupt > mask as u8 {
+        // Level 7 is NMI and always triggers. Other levels must be > mask.
+        if self.pending_interrupt > mask as u8 || (self.pending_interrupt == 7) {
             let level = self.pending_interrupt;
             let vector = 24 + level as u32;
             let _cycles = self.process_exception(vector, memory);
             self.sr = (self.sr & !flags::INTERRUPT_MASK) | ((level as u16) << 8);
             self.acknowledge_interrupt(level);
+            self.halted = false;
             return 44;
         }
         0
@@ -194,7 +218,7 @@ impl Cpu {
     }
 
     pub fn read_word<M: MemoryInterface>(&mut self, addr: u32, memory: &mut M) -> u16 {
-        if addr % 2 != 0 {
+        if !addr.is_multiple_of(2) {
             self.process_exception(3, memory);
             return 0;
         }
@@ -202,7 +226,7 @@ impl Cpu {
     }
 
     pub fn read_long<M: MemoryInterface>(&mut self, addr: u32, memory: &mut M) -> u32 {
-        if addr % 2 != 0 {
+        if !addr.is_multiple_of(2) {
             self.process_exception(3, memory);
             return 0;
         }
@@ -210,7 +234,7 @@ impl Cpu {
     }
 
     pub fn write_word<M: MemoryInterface>(&mut self, addr: u32, val: u16, memory: &mut M) {
-        if addr % 2 != 0 {
+        if !addr.is_multiple_of(2) {
             self.process_exception(3, memory);
             return;
         }
@@ -218,7 +242,7 @@ impl Cpu {
     }
 
     pub fn write_long<M: MemoryInterface>(&mut self, addr: u32, val: u32, memory: &mut M) {
-        if addr % 2 != 0 {
+        if !addr.is_multiple_of(2) {
             self.process_exception(3, memory);
             return;
         }
@@ -454,7 +478,7 @@ impl Cpu {
     }
 
     fn read_instruction_word<M: MemoryInterface>(&mut self, addr: u32, memory: &mut M) -> u16 {
-        if addr % 2 != 0 {
+        if !addr.is_multiple_of(2) {
             self.process_exception(3, memory);
             return 0;
         }
@@ -731,7 +755,7 @@ impl Cpu {
             Condition::Minus => n,
             Condition::GreaterOrEqual => (n && v) || (!n && !v),
             Condition::LessThan => (n && !v) || (!n && v),
-            Condition::GreaterThan => (n && v && !z) || (!n && !v && !z),
+            Condition::GreaterThan => !z && (n == v),
             Condition::LessOrEqual => z || (n && !v) || (!n && v),
         }
     }

@@ -162,7 +162,8 @@ impl InputScript {
     /// Save script to a file
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<(), String> {
         use std::io::Write;
-        let mut file = File::create(path).map_err(|e| format!("Failed to create input script: {}", e))?;
+        let mut file =
+            File::create(path).map_err(|e| format!("Failed to create input script: {}", e))?;
 
         writeln!(file, "# frame,p1_buttons,p2_buttons").map_err(|e| e.to_string())?;
 

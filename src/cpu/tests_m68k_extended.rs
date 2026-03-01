@@ -609,7 +609,7 @@ fn test_chk_addressing_modes() {
     cpu.pc = 0x100;
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.pc, 0x6000); // Trap
-    // N clear for > bound
+                                // N clear for > bound
     assert!(!cpu.get_flag(flags::NEGATIVE));
 
     // Restore stack pointer for next test
@@ -634,7 +634,7 @@ fn test_chk_addressing_modes() {
     cpu.pc = 0x200;
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.pc, 0x6000); // Trap
-    // N clear for > bound
+                                // N clear for > bound
     assert!(!cpu.get_flag(flags::NEGATIVE));
 }
 

@@ -161,6 +161,7 @@ fn exhaustive_m68k_add() {
             cpu.d[1] = b;
             cpu.sr = 0;
             cpu.pc = 0x1000;
+            cpu.invalidate_cache();
             cpu.write_word(0x1000, opcodes[s_idx], &mut memory);
 
             cpu.step_instruction(&mut memory);
@@ -203,6 +204,7 @@ fn exhaustive_m68k_sub() {
             cpu.d[1] = b;
             cpu.sr = 0;
             cpu.pc = 0x1000;
+            cpu.invalidate_cache();
             cpu.write_word(0x1000, opcodes[s_idx], &mut memory);
 
             cpu.step_instruction(&mut memory);
@@ -251,6 +253,7 @@ fn exhaustive_m68k_logic() {
             cpu.d[1] = b;
             cpu.sr = if x_init { flags::EXTEND } else { 0 };
             cpu.pc = 0x1000;
+            cpu.invalidate_cache();
             cpu.write_word(0x1000, opcode, &mut memory);
 
             cpu.step_instruction(&mut memory);

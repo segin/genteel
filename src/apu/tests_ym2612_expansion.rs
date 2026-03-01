@@ -24,6 +24,7 @@ fn test_ym2612_all_channels_enable() {
     }
 
     // Generate samples and verify non-zero
+    ym.step(100);
     let (l, r) = ym.generate_sample();
     assert!(
         l != 0 || r != 0,

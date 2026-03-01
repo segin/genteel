@@ -16,6 +16,7 @@ proptest! {
         b in 0u8..8
     ) {
         let mut vdp = Vdp::new();
+        vdp.bypass_fifo = true;
 
         // Set CRAM color: ----BBB-GGG-RRR-
         let cram_value = ((b as u16) << 9) | ((g as u16) << 5) | ((r as u16) << 1);
@@ -42,6 +43,7 @@ proptest! {
     #[test]
     fn plane_size_always_valid(reg_value in 0u8..=0xFF) {
         let mut vdp = Vdp::new();
+        vdp.bypass_fifo = true;
         vdp.registers[16] = reg_value;
 
         let reg = vdp.registers[16];
@@ -59,6 +61,7 @@ proptest! {
         increment in 1u8..16
     ) {
         let mut vdp = Vdp::new();
+        vdp.bypass_fifo = true;
 
         // Set auto-increment
         vdp.registers[15] = increment;
@@ -72,7 +75,7 @@ proptest! {
 
         // Address should wrap at 16-bit boundary
         let expected = start_addr.wrapping_add(increment as u16);
-        prop_assert_eq!(vdp.control_address, expected);
+        prop_assert_eq!(vdp.command.address, expected);
     }
 
     /// Screen dimensions should match mode register settings
@@ -82,6 +85,7 @@ proptest! {
         h40 in proptest::bool::ANY
     ) {
         let mut vdp = Vdp::new();
+        vdp.bypass_fifo = true;
 
         // Set mode register 2 (reg 1): V30 is bit 3
         vdp.registers[1] = if v30 { 0x08 } else { 0x00 };
@@ -110,6 +114,7 @@ proptest! {
         value in 0u8..=0xFF
     ) {
         let mut vdp = Vdp::new();
+        vdp.bypass_fifo = true;
 
         // Register write format: 100RRRRR DDDDDDDD
         let cmd = 0x8000 | ((reg_idx as u16) << 8) | (value as u16);
@@ -197,6 +202,7 @@ mod unit_tests {
     #[test]
     fn test_vdp_cram_boundary() {
         let mut vdp = Vdp::new();
+        vdp.bypass_fifo = true;
 
         // Set CRAM write (CD = 0011)
         vdp.write_control(0xC07E); // Addr 0x7E (last valid pair)

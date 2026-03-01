@@ -18,17 +18,13 @@ fn test_control_state_machine() {
     );
     // CD1-0 = 01 (VRAM Write)
     assert_eq!(
-        vdp.control_code & 0x03,
+        vdp.command.code & 0x03,
         0x01,
         "Control code bits 1-0 should be 01"
     );
     // Address part 1: A13-0 are bits 13-0 of value. 0x4000 is 0100 0000 0000 0000.
     // control_address = (value & 0x3FFF) = 0.
-    assert_eq!(
-        vdp.control_address,
-        0x0000,
-        "Control address should be 0"
-    );
+    assert_eq!(vdp.command.address, 0x0000, "Control address should be 0");
 
     // 3. Second word completes command (addr 0x4000)
     vdp.reset();
@@ -39,8 +35,7 @@ fn test_control_state_machine() {
         "Control pending should be false after second word"
     );
     assert_eq!(
-        vdp.control_address,
-        0x4000,
+        vdp.command.address, 0x4000,
         "Control address should be 0x4000"
     );
 
@@ -64,8 +59,7 @@ fn test_control_state_machine() {
     // Verify address/code updated based on this 2nd word.
     // 0x8144 -> 0x11
     assert_eq!(
-        vdp.control_code,
-        0x11,
+        vdp.command.code, 0x11,
         "Control code should be 0x11 (0x01 | 0x10)"
     );
 
@@ -131,5 +125,8 @@ fn test_write_state_reconstructs_cram_cache() {
 
     // Verify CRAM cache in dest_vdp
     // Genesis 0x000E -> RGB565 0xF800 (Red)
-    assert_eq!(dest_vdp.cram_cache[1], 0xF800, "CRAM cache should be reconstructed from state");
+    assert_eq!(
+        dest_vdp.cram_cache[1], 0xF800,
+        "CRAM cache should be reconstructed from state"
+    );
 }
