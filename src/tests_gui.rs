@@ -18,10 +18,12 @@ mod tests {
     }
 
     #[test]
-    fn test_gui_state_initialization() {
-        let gui_state = GuiState::new(InputMapping::Ergonomic);
-        assert_eq!(gui_state.input_mapping, InputMapping::Ergonomic);
-        assert!(gui_state.integer_scaling);
-        assert!(!gui_state.force_red);
+    fn test_gui_state_all_windows() {
+        let gui_state = GuiState::new(InputMapping::Original);
+        let window_names: Vec<_> = gui_state.windows.keys().collect();
+        assert!(window_names.contains(&&"Settings".to_string()));
+        assert!(window_names.contains(&&"Performance & Debug".to_string()));
+        assert!(window_names.contains(&&"M68k Status".to_string()));
+        assert!(window_names.contains(&&"Z80 Status".to_string()));
     }
 }

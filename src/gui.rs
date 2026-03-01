@@ -34,6 +34,28 @@ impl GuiState {
         // Register default windows
         windows.insert("Settings".to_string(), WindowState { open: false });
         windows.insert("Performance & Debug".to_string(), WindowState { open: false });
+        
+        // CPU & Execution
+        windows.insert("M68k Status".to_string(), WindowState { open: false });
+        windows.insert("Z80 Status".to_string(), WindowState { open: false });
+        windows.insert("Disassembly".to_string(), WindowState { open: false });
+        windows.insert("Execution Control".to_string(), WindowState { open: false });
+        
+        // VDP
+        windows.insert("Palette Viewer".to_string(), WindowState { open: false });
+        windows.insert("Tile Viewer".to_string(), WindowState { open: false });
+        windows.insert("Sprite Viewer".to_string(), WindowState { open: false });
+        windows.insert("Scroll Plane Viewer".to_string(), WindowState { open: false });
+        windows.insert("VDP Memory Hex".to_string(), WindowState { open: false });
+        
+        // Audio & Memory
+        windows.insert("Memory Viewer".to_string(), WindowState { open: false });
+        windows.insert("Sound Chip Visualizer".to_string(), WindowState { open: false });
+        windows.insert("Audio Channel Waveforms".to_string(), WindowState { open: false });
+        
+        // System
+        windows.insert("Controller Viewer".to_string(), WindowState { open: false });
+        windows.insert("Expansion Status".to_string(), WindowState { open: false });
 
         Self {
             windows,
@@ -149,9 +171,16 @@ impl Framework {
                         self.gui_state.set_window_open("Settings", true);
                         ui.close_menu();
                     }
-                    let mut show_debug = self.gui_state.is_window_open("Performance & Debug");
-                    if ui.checkbox(&mut show_debug, "Show Performance & Debug").changed() {
-                        self.gui_state.set_window_open("Performance & Debug", show_debug);
+                });
+                ui.menu_button("Debug", |ui| {
+                    let mut names: Vec<String> = self.gui_state.windows.keys().cloned().collect();
+                    names.sort(); // Keep menu consistent
+                    for name in names {
+                        if name == "Settings" { continue; } // Settings is in Settings menu
+                        let mut open = self.gui_state.is_window_open(&name);
+                        if ui.checkbox(&mut open, &name).changed() {
+                            self.gui_state.set_window_open(&name, open);
+                        }
                     }
                 });
             });
