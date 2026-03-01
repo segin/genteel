@@ -839,6 +839,36 @@ impl Framework {
                 self.gui_state.set_window_open("Sound Chip Visualizer", false);
             }
         }
+
+        if self.gui_state.is_window_open("Audio Channel Waveforms") {
+            let mut open = true;
+            egui::Window::new("Audio Channel Waveforms")
+                .open(&mut open)
+                .show(&self.egui_ctx, |ui| {
+                for ch in 0..10 {
+                    let label = if ch < 6 { format!("FM {}", ch + 1) } else if ch < 9 { format!("PSG Tone {}", ch - 6) } else { "PSG Noise".to_string() };
+                    ui.label(&label);
+                    
+                    let (rect, _response) = ui.allocate_at_least(egui::vec2(256.0, 48.0), egui::Sense::hover());
+                    ui.painter().rect_filled(rect, 0.0, egui::Color32::BLACK);
+                    
+                    let mut points = Vec::new();
+                    for i in 0..128 {
+                        let val = debug_info.channel_waveforms[ch][i];
+                        let x = rect.left() + (i as f32 * 2.0);
+                        let y = rect.center().y - (val as f32 / 16384.0 * 20.0);
+                        points.push(egui::pos2(x, y));
+                    }
+                    
+                    for i in 0..127 {
+                        ui.painter().line_segment([points[i], points[i+1]], (1.0, egui::Color32::GREEN));
+                    }
+                }
+            });
+            if !open {
+                self.gui_state.set_window_open("Audio Channel Waveforms", false);
+            }
+        }
     }
     pub fn render(
         &mut self,
@@ -1142,6 +1172,7 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                                     ym2612_regs: bus.apu.fm.registers,
                                     psg_tone: bus.apu.psg.tones.clone(),
                                     psg_noise: bus.apu.psg.noise.clone(),
+                                    channel_waveforms: bus.apu.channel_buffers,
                                 };
                                 frontend::rgb565_to_rgba8(&bus.vdp.framebuffer, pixels.frame_mut());
                                 info

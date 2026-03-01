@@ -262,6 +262,20 @@ impl Psg {
         (total_output / cycles as i64) as i16
     }
 
+    /// Get instantaneous samples for each channel individually
+    pub fn get_channel_samples(&self) -> [i16; 4] {
+        let mut samples = [0i16; 4];
+        for i in 0..3 {
+            if self.tones[i].output && self.tones[i].volume < 15 {
+                samples[i] = VOLUME_TABLE[self.tones[i].volume as usize] as i16;
+            }
+        }
+        if (self.noise.lfsr & 1) != 0 && self.noise.volume < 15 {
+            samples[3] = VOLUME_TABLE[self.noise.volume as usize] as i16;
+        }
+        samples
+    }
+
     /// Generate a single instantaneous sample from current state
     fn current_sample(&self) -> i16 {
         let mut output: i32 = 0;

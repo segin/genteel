@@ -25,10 +25,14 @@ use ym2612::{Bank, Ym2612};
 pub struct Apu {
     pub psg: Psg,
     pub fm: Ym2612,
-    #[serde(skip)]
+    #[serde(skip, default = "default_channel_buffers")]
     pub channel_buffers: [[i16; 128]; 10],
     #[serde(skip)]
     pub buffer_idx: usize,
+}
+
+fn default_channel_buffers() -> [[i16; 128]; 10] {
+    [[0i16; 128]; 10]
 }
 
 impl Apu {
@@ -76,6 +80,18 @@ impl Apu {
 
         // 2. Generate samples from new state
         let (fm_l, fm_r) = self.fm.generate_sample();
+        
+        // Capture channel samples for visualization
+        let fm_samples = self.fm.generate_channel_samples();
+        let psg_samples = self.psg.get_channel_samples();
+        
+        for i in 0..6 {
+            self.channel_buffers[i][self.buffer_idx] = fm_samples[i];
+        }
+        for i in 0..4 {
+            self.channel_buffers[6 + i][self.buffer_idx] = psg_samples[i];
+        }
+        self.buffer_idx = (self.buffer_idx + 1) % 128;
 
         // Mix: convert to i32 to prevent early overflow, then clamp
         let left = (fm_l as i32 + psg_sample as i32).clamp(i16::MIN as i32, i16::MAX as i32) as i16;
