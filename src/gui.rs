@@ -29,6 +29,8 @@ pub struct GuiState {
     pub paused: bool,
     #[serde(skip)]
     pub single_step: bool,
+    #[serde(skip)]
+    pub show_about: bool,
 }
 
 #[cfg(feature = "gui")]
@@ -41,6 +43,7 @@ impl GuiState {
             force_red: false,
             paused: false,
             single_step: false,
+            show_about: false,
         };
         state.register_default_windows();
         state
@@ -250,8 +253,24 @@ impl Framework {
                         }
                     }
                 });
+                ui.menu_button("Help", |ui| {
+                    if ui.button("About").clicked() {
+                        self.gui_state.show_about = true;
+                        ui.close_menu();
+                    }
+                });
             });
         });
+
+        if self.gui_state.show_about {
+            egui::Window::new("About Genteel").open(&mut self.gui_state.show_about).show(&self.egui_ctx, |ui| {
+                ui.heading("Genteel");
+                ui.label(format!("Version: {}", genteel::VERSION));
+                ui.separator();
+                ui.label("An instrumentable Sega Mega Drive/Genesis emulator designed for automated testing by AI language models.");
+                ui.hyperlink_to("GitHub Repository", "https://github.com/segin/genteel");
+            });
+        }
 
         if self.gui_state.is_window_open("Performance & Debug") {
             let mut open = true;

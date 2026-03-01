@@ -19,3 +19,5 @@ pub use cpu::Cpu;
 pub use input::{InputManager, InputScript};
 pub use memory::Memory;
 pub use z80::Z80;
+
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
