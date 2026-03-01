@@ -110,6 +110,11 @@ impl GuiState {
 #[cfg(feature = "gui")]
 pub struct DebugInfo {
     pub m68k_pc: u32,
+    pub m68k_d: [u32; 8],
+    pub m68k_a: [u32; 8],
+    pub m68k_sr: u16,
+    pub m68k_usp: u32,
+    pub m68k_ssp: u32,
     pub z80_pc: u16,
     pub frame_count: u64,
     pub vdp_status: u16,
@@ -301,6 +306,39 @@ impl Framework {
             });
             if !open {
                 self.gui_state.set_window_open("Execution Control", false);
+            }
+        }
+
+        if self.gui_state.is_window_open("M68k Status") {
+            let mut open = true;
+            egui::Window::new("M68k Status")
+                .open(&mut open)
+                .show(&self.egui_ctx, |ui| {
+                ui.label(format!("PC: {:06X}", debug_info.m68k_pc));
+                ui.label(format!("SR: {:04X}", debug_info.m68k_sr));
+                let sr = debug_info.m68k_sr;
+                ui.horizontal(|ui| {
+                    ui.label(format!("Flags: [ {} {} {} {} {} ]",
+                        if sr & 0x10 != 0 { "X" } else { "x" },
+                        if sr & 0x08 != 0 { "N" } else { "n" },
+                        if sr & 0x04 != 0 { "Z" } else { "z" },
+                        if sr & 0x02 != 0 { "V" } else { "v" },
+                        if sr & 0x01 != 0 { "C" } else { "c" },
+                    ));
+                });
+                ui.separator();
+                ui.columns(2, |columns| {
+                    for i in 0..8 {
+                        columns[0].label(format!("D{}: {:08X}", i, debug_info.m68k_d[i]));
+                        columns[1].label(format!("A{}: {:08X}", i, debug_info.m68k_a[i]));
+                    }
+                });
+                ui.separator();
+                ui.label(format!("USP: {:08X}", debug_info.m68k_usp));
+                ui.label(format!("SSP: {:08X}", debug_info.m68k_ssp));
+            });
+            if !open {
+                self.gui_state.set_window_open("M68k Status", false);
             }
         }
     }
@@ -531,6 +569,11 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                                 }
                                 let info = DebugInfo {
                                     m68k_pc: emulator.cpu.pc,
+                                    m68k_d: emulator.cpu.d,
+                                    m68k_a: emulator.cpu.a,
+                                    m68k_sr: emulator.cpu.sr,
+                                    m68k_usp: emulator.cpu.usp,
+                                    m68k_ssp: emulator.cpu.ssp,
                                     z80_pc: emulator.z80.pc,
                                     frame_count: emulator.internal_frame_count,
                                     vdp_status: bus.vdp.read_status(),
