@@ -1,7 +1,7 @@
 # Implementation Plan: File Menu Enhancements and Automated Builds
 
 ## Phase 1: CI/CD Pipeline
-- [ ] Task: Create GitHub Actions workflow for multi-platform release builds (Linux/Windows).
+- [x] Task: Create GitHub Actions workflow for multi-platform release builds (Linux/Windows). 81041c1
 - [ ] Task: Verify that the workflow produces downloadable and runnable artifacts for both platforms.
 - [ ] Task: Conductor - User Manual Verification 'Phase 1: CI/CD Pipeline' (Protocol in workflow.md)
 
