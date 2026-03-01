@@ -10,7 +10,7 @@
 - [x] Task: Implement Execution Control UI (Pause, Resume, Single Step). aad1c70
 - [x] Task: Implement M68k Status Window (Registers, PC, SR, Flags). c36a695
 - [x] Task: Implement Z80 Status Window (Registers, Flags, MEMPTR). afc0a13
-- [ ] Task: Implement Disassembly Viewer (Instruction stream around current PC).
+- [x] Task: Implement Disassembly Viewer (Instruction stream around current PC). 221fa7f
 - [ ] Task: Conductor - User Manual Verification 'Phase 2: CPU & Execution Debugging' (Protocol in workflow.md)
 
 ## Phase 3: VDP Debugging Tools
