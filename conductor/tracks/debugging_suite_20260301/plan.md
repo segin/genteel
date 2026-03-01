@@ -7,7 +7,7 @@
 - [x] Task: Conductor - User Manual Verification 'Phase 1: Infrastructure & UI Framework' (Protocol in workflow.md) f3a29f8
 
 ## Phase 2: CPU & Execution Debugging
-- [ ] Task: Implement Execution Control UI (Pause, Resume, Single Step).
+- [x] Task: Implement Execution Control UI (Pause, Resume, Single Step). aad1c70
 - [ ] Task: Implement M68k Status Window (Registers, PC, SR, Flags).
 - [ ] Task: Implement Z80 Status Window (Registers, Flags, MEMPTR).
 - [ ] Task: Implement Disassembly Viewer (Instruction stream around current PC).
