@@ -18,12 +18,15 @@ mod tests {
     }
 
     #[test]
-    fn test_gui_state_all_windows() {
-        let gui_state = GuiState::new(InputMapping::Original);
-        let window_names: Vec<_> = gui_state.windows.keys().collect();
-        assert!(window_names.contains(&&"Settings".to_string()));
-        assert!(window_names.contains(&&"Performance & Debug".to_string()));
-        assert!(window_names.contains(&&"M68k Status".to_string()));
-        assert!(window_names.contains(&&"Z80 Status".to_string()));
+    fn test_gui_state_serialization() {
+        let mut gui_state = GuiState::new(InputMapping::Ergonomic);
+        gui_state.set_window_open("M68k Status", true);
+        
+        let json = serde_json::to_string(&gui_state).unwrap();
+        let decoded: GuiState = serde_json::from_str(&json).unwrap();
+        
+        assert_eq!(decoded.input_mapping, InputMapping::Ergonomic);
+        assert!(decoded.is_window_open("M68k Status"));
+        assert!(!decoded.is_window_open("Z80 Status"));
     }
 }

@@ -10,7 +10,7 @@ use winit::keyboard::KeyCode;
 pub const GENESIS_WIDTH: u32 = 320;
 pub const GENESIS_HEIGHT: u32 = 240;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum InputMapping {
     #[default]
     Original,

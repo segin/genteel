@@ -20,6 +20,7 @@ pub struct WindowState {
 }
 
 #[cfg(feature = "gui")]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct GuiState {
     pub windows: HashMap<String, WindowState>,
     pub input_mapping: InputMapping,
@@ -30,38 +31,54 @@ pub struct GuiState {
 #[cfg(feature = "gui")]
 impl GuiState {
     pub fn new(input_mapping: InputMapping) -> Self {
-        let mut windows = HashMap::new();
-        // Register default windows
-        windows.insert("Settings".to_string(), WindowState { open: false });
-        windows.insert("Performance & Debug".to_string(), WindowState { open: false });
-        
-        // CPU & Execution
-        windows.insert("M68k Status".to_string(), WindowState { open: false });
-        windows.insert("Z80 Status".to_string(), WindowState { open: false });
-        windows.insert("Disassembly".to_string(), WindowState { open: false });
-        windows.insert("Execution Control".to_string(), WindowState { open: false });
-        
-        // VDP
-        windows.insert("Palette Viewer".to_string(), WindowState { open: false });
-        windows.insert("Tile Viewer".to_string(), WindowState { open: false });
-        windows.insert("Sprite Viewer".to_string(), WindowState { open: false });
-        windows.insert("Scroll Plane Viewer".to_string(), WindowState { open: false });
-        windows.insert("VDP Memory Hex".to_string(), WindowState { open: false });
-        
-        // Audio & Memory
-        windows.insert("Memory Viewer".to_string(), WindowState { open: false });
-        windows.insert("Sound Chip Visualizer".to_string(), WindowState { open: false });
-        windows.insert("Audio Channel Waveforms".to_string(), WindowState { open: false });
-        
-        // System
-        windows.insert("Controller Viewer".to_string(), WindowState { open: false });
-        windows.insert("Expansion Status".to_string(), WindowState { open: false });
+        // Try to load from file
+        if let Ok(content) = std::fs::read_to_string("gui_config.json") {
+            if let Ok(mut state) = serde_json::from_str::<Self>(&content) {
+                // Ensure all default windows are present even if loading an old config
+                state.register_default_windows();
+                return state;
+            }
+        }
 
-        Self {
-            windows,
+        let mut state = Self {
+            windows: HashMap::new(),
             input_mapping,
             integer_scaling: true,
             force_red: false,
+        };
+        state.register_default_windows();
+        state
+    }
+
+    fn register_default_windows(&mut self) {
+        let defaults = [
+            "Settings",
+            "Performance & Debug",
+            "M68k Status",
+            "Z80 Status",
+            "Disassembly",
+            "Execution Control",
+            "Palette Viewer",
+            "Tile Viewer",
+            "Sprite Viewer",
+            "Scroll Plane Viewer",
+            "VDP Memory Hex",
+            "Memory Viewer",
+            "Sound Chip Visualizer",
+            "Audio Channel Waveforms",
+            "Controller Viewer",
+            "Expansion Status",
+        ];
+        for &name in &defaults {
+            if !self.windows.contains_key(name) {
+                self.windows.insert(name.to_string(), WindowState { open: false });
+            }
+        }
+    }
+
+    pub fn save(&self) {
+        if let Ok(json) = serde_json::to_string_pretty(self) {
+            let _ = std::fs::write("gui_config.json", json);
         }
     }
 
@@ -75,6 +92,7 @@ impl GuiState {
         } else {
             self.windows.insert(name.to_string(), WindowState { open });
         }
+        self.save();
     }
 
     pub fn toggle_window(&mut self, name: &str) {
@@ -211,7 +229,9 @@ impl Framework {
                 ui.label(format!("VDP Status: {:04X}", debug_info.vdp_status));
                 ui.label(format!("BG Color Index: {}", debug_info.bg_color_index));
                 ui.label(format!("CRAM[0] (RGB565): {:04X}", debug_info.cram0));
-                ui.checkbox(&mut self.gui_state.force_red, "Force Red BG (Debug)");
+                if ui.checkbox(&mut self.gui_state.force_red, "Force Red BG (Debug)").changed() {
+                    self.gui_state.save();
+                }
             });
             if !open {
                 self.gui_state.set_window_open("Performance & Debug", false);
@@ -224,20 +244,26 @@ impl Framework {
                 .open(&mut open)
                 .show(&self.egui_ctx, |ui| {
                 ui.heading("Video");
-                ui.checkbox(&mut self.gui_state.integer_scaling, "Integer Pixel Scaling");
+                if ui.checkbox(&mut self.gui_state.integer_scaling, "Integer Pixel Scaling").changed() {
+                    self.gui_state.save();
+                }
                 ui.separator();
                 ui.heading("Input");
                 ui.label("Input Mapping:");
-                ui.radio_value(
+                if ui.radio_value(
                     &mut self.gui_state.input_mapping,
                     InputMapping::Original,
                     "Original",
-                );
-                ui.radio_value(
+                ).changed() {
+                    self.gui_state.save();
+                }
+                if ui.radio_value(
                     &mut self.gui_state.input_mapping,
                     InputMapping::Ergonomic,
                     "Ergonomic",
-                );
+                ).changed() {
+                    self.gui_state.save();
+                }
             });
             if !open {
                 self.gui_state.set_window_open("Settings", false);
@@ -361,6 +387,7 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                     match event {
                         WindowEvent::CloseRequested => {
                             println!("Using CloseRequested to exit");
+                            framework.gui_state.save();
                             if let Some(path) = &record_path {
                                 let script: InputScript = emulator.input.stop_recording();
                                 if let Err(e) = script.save(path) {
@@ -384,6 +411,7 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                             if let PhysicalKey::Code(keycode) = key_event.physical_key {
                                 if keycode == KeyCode::Escape && pressed {
                                     println!("Escape pressed, exiting");
+                                    framework.gui_state.save();
                                     if let Some(path) = &record_path {
                                         let script: InputScript = emulator.input.stop_recording();
                                         if let Err(e) = script.save(path) {
