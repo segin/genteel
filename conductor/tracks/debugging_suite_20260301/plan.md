@@ -14,7 +14,7 @@
 - [x] Task: Conductor - User Manual Verification 'Phase 2: CPU & Execution Debugging' (Protocol in workflow.md) 63b4c8a
 
 ## Phase 3: VDP Debugging Tools
-- [ ] Task: Implement Palette Viewer (CRAM visualization with hex values).
+- [x] Task: Implement Palette Viewer (CRAM visualization with hex values). ba62ef8
 - [ ] Task: Implement Tile Viewer (VRAM pattern visualization).
 - [ ] Task: Implement Sprite Viewer (Sprite attribute table and visual representation).
 - [ ] Task: Implement Scroll Plane Viewer (Visualization of Plane A, Plane B, and Window).
