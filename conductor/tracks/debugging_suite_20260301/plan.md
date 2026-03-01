@@ -28,7 +28,7 @@
 - [x] Task: Conductor - User Manual Verification 'Phase 4: Audio & Memory Debugging' (Protocol in workflow.md) fbd4288
 
 ## Phase 5: System Status & Integration
-- [ ] Task: Implement Controller Viewer (Input state and 3/6-button mode status).
+- [x] Task: Implement Controller Viewer (Input state and 3/6-button mode status). 2f84a25
 - [ ] Task: Implement Dummy Expansion Status Window (Sega CD/32X placeholders).
 - [ ] Task: Verify GDB Synchronization (UI updates when GDB pauses execution).
 - [ ] Task: Conductor - User Manual Verification 'Phase 5: System Status & Integration' (Protocol in workflow.md)
