@@ -914,6 +914,28 @@ impl Framework {
                 self.gui_state.set_window_open("Controller Viewer", false);
             }
         }
+
+        if self.gui_state.is_window_open("Expansion Status") {
+            let mut open = true;
+            egui::Window::new("Expansion Status")
+                .open(&mut open)
+                .show(&self.egui_ctx, |ui| {
+                ui.group(|ui| {
+                    ui.heading("Sega CD");
+                    ui.label("Status: NOT CONNECTED");
+                    ui.add_enabled(false, egui::Button::new("Mount Disc..."));
+                });
+                ui.separator();
+                ui.group(|ui| {
+                    ui.heading("Sega 32X");
+                    ui.label("Status: NOT CONNECTED");
+                    ui.add_enabled(false, egui::Button::new("Enable 32X"));
+                });
+            });
+            if !open {
+                self.gui_state.set_window_open("Expansion Status", false);
+            }
+        }
     }
     pub fn render(
         &mut self,
