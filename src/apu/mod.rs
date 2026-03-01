@@ -25,6 +25,10 @@ use ym2612::{Bank, Ym2612};
 pub struct Apu {
     pub psg: Psg,
     pub fm: Ym2612,
+    #[serde(skip)]
+    pub channel_buffers: [[i16; 128]; 10],
+    #[serde(skip)]
+    pub buffer_idx: usize,
 }
 
 impl Apu {
@@ -32,6 +36,8 @@ impl Apu {
         Self {
             psg: Psg::new(),
             fm: Ym2612::new(),
+            channel_buffers: [[0; 128]; 10],
+            buffer_idx: 0,
         }
     }
 

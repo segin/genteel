@@ -148,6 +148,7 @@ pub struct DebugInfo {
     pub ym2612_regs: [[u8; 256]; 2],
     pub psg_tone: [crate::apu::psg::ToneChannel; 3],
     pub psg_noise: crate::apu::psg::NoiseChannel,
+    pub channel_waveforms: [[i16; 128]; 10],
 }
 
 #[cfg(feature = "gui")]
