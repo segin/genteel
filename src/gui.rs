@@ -31,15 +31,6 @@ pub struct GuiState {
 #[cfg(feature = "gui")]
 impl GuiState {
     pub fn new(input_mapping: InputMapping) -> Self {
-        // Try to load from file
-        if let Ok(content) = std::fs::read_to_string("gui_config.json") {
-            if let Ok(mut state) = serde_json::from_str::<Self>(&content) {
-                // Ensure all default windows are present even if loading an old config
-                state.register_default_windows();
-                return state;
-            }
-        }
-
         let mut state = Self {
             windows: HashMap::new(),
             input_mapping,
@@ -48,6 +39,16 @@ impl GuiState {
         };
         state.register_default_windows();
         state
+    }
+
+    pub fn load_or_default(input_mapping: InputMapping) -> Self {
+        if let Ok(content) = std::fs::read_to_string("gui_config.json") {
+            if let Ok(mut state) = serde_json::from_str::<Self>(&content) {
+                state.register_default_windows();
+                return state;
+            }
+        }
+        Self::new(input_mapping)
     }
 
     fn register_default_windows(&mut self) {
@@ -145,7 +146,7 @@ impl Framework {
         };
         let renderer =
             egui_wgpu::Renderer::new(pixels.device(), pixels.render_texture_format(), None, 1);
-        let gui_state = GuiState::new(input_mapping);
+        let gui_state = GuiState::load_or_default(input_mapping);
         Self {
             egui_ctx,
             egui_state,
