@@ -12,11 +12,11 @@
 - [x] Task: Implement "Open Recent" tracking and persistence in `gui_config.json`. ac782c3
 - [x] Task: Conductor - User Manual Verification 'Phase 2: Native File Dialogs and Basic Menu' (Protocol in workflow.md) 8ef4a7a
 
-## Phase 3: SRAM and State Management
+## Phase 3: SRAM and State Management [checkpoint: 34a7846]
 - [x] Task: Implement SRAM persistence logic (loading/saving .srm files automatically based on ROM filename). 0eaaba8
 - [x] Task: Add 10 Save/Load State slots to the File menu with automated filename generation. 1740b9d
 - [x] Task: Implement optional Auto-Save on exit and Auto-Load on start functionality. 63c2194
-- [ ] Task: Conductor - User Manual Verification 'Phase 3: SRAM and State Management' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 3: SRAM and State Management' (Protocol in workflow.md) 34a7846
 
 ## Phase 4: State Browser and UI Refinement
 - [ ] Task: Implement "State Browser" internal window to view, manage, and delete save states.
