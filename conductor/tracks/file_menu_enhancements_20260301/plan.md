@@ -8,7 +8,7 @@
 ## Phase 2: Native File Dialogs and Basic Menu
 - [x] Task: Add `rfd` dependency and implement a non-blocking wrapper for native file selection. b512382
 - [x] Task: Implement "Open ROM" action in the File menu using the native dialog. 52b597e
-- [ ] Task: Implement "Reset ROM" and "Close ROM" logic, ensuring all volatile state (VRAM, RAM, registers) is cleared.
+- [x] Task: Implement "Reset ROM" and "Close ROM" logic, ensuring all volatile state (VRAM, RAM, registers) is cleared. a2e1253
 - [ ] Task: Implement "Open Recent" tracking and persistence in `gui_config.json`.
 - [ ] Task: Conductor - User Manual Verification 'Phase 2: Native File Dialogs and Basic Menu' (Protocol in workflow.md)
 
