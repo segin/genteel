@@ -115,6 +115,7 @@ pub struct DebugInfo {
     pub m68k_sr: u16,
     pub m68k_usp: u32,
     pub m68k_ssp: u32,
+    pub m68k_disasm: Vec<(u32, String)>,
     pub z80_pc: u16,
     pub z80_a: u8,
     pub z80_f: u8,
@@ -132,6 +133,7 @@ pub struct DebugInfo {
     pub z80_memptr: u16,
     pub z80_iff1: bool,
     pub z80_im: u8,
+    pub z80_disasm: Vec<(u16, String)>,
     pub frame_count: u64,
     pub vdp_status: u16,
     pub display_enabled: bool,
@@ -400,6 +402,42 @@ impl Framework {
                 self.gui_state.set_window_open("Z80 Status", false);
             }
         }
+
+        if self.gui_state.is_window_open("Disassembly") {
+            let mut open = true;
+            egui::Window::new("Disassembly")
+                .open(&mut open)
+                .show(&self.egui_ctx, |ui| {
+                ui.heading("M68k Disassembly");
+                egui::ScrollArea::vertical().id_source("m68k_disasm").show(ui, |ui| {
+                    for (addr, text) in &debug_info.m68k_disasm {
+                        let is_current = *addr == debug_info.m68k_pc;
+                        let label = format!("{:06X}: {}", addr, text);
+                        if is_current {
+                            ui.colored_label(egui::Color32::YELLOW, format!("-> {}", label));
+                        } else {
+                            ui.label(format!("   {}", label));
+                        }
+                    }
+                });
+                ui.separator();
+                ui.heading("Z80 Disassembly");
+                egui::ScrollArea::vertical().id_source("z80_disasm").show(ui, |ui| {
+                    for (addr, text) in &debug_info.z80_disasm {
+                        let is_current = *addr == debug_info.z80_pc;
+                        let label = format!("{:04X}: {}", addr, text);
+                        if is_current {
+                            ui.colored_label(egui::Color32::YELLOW, format!("-> {}", label));
+                        } else {
+                            ui.label(format!("   {}", label));
+                        }
+                    }
+                });
+            });
+            if !open {
+                self.gui_state.set_window_open("Disassembly", false);
+            }
+        }
     }
     pub fn render(
         &mut self,
@@ -626,6 +664,30 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                                 if force_red {
                                     bus.vdp.framebuffer.fill(0xF800); // Red in RGB565
                                 }
+                                let m68k_disasm = {
+                                    let mut disasm = Vec::new();
+                                    let mut addr = emulator.cpu.pc;
+                                    for _ in 0..10 {
+                                        let opcode = bus.read_word(addr);
+                                        let instr = crate::cpu::decode(opcode);
+                                        disasm.push((addr, format!("{:?}", instr)));
+                                        // Rough estimate of instruction length
+                                        // TODO: Use actual instruction length from decoder
+                                        addr += 2; 
+                                    }
+                                    disasm
+                                };
+                                let z80_disasm = {
+                                    let mut disasm = Vec::new();
+                                    let mut addr = emulator.z80.pc;
+                                    for _ in 0..10 {
+                                        let byte = bus.read_byte(0xA00000 + addr as u32);
+                                        disasm.push((addr, format!("{:02X}", byte)));
+                                        addr += 1;
+                                    }
+                                    disasm
+                                };
+
                                 let info = DebugInfo {
                                     m68k_pc: emulator.cpu.pc,
                                     m68k_d: emulator.cpu.d,
@@ -633,6 +695,7 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                                     m68k_sr: emulator.cpu.sr,
                                     m68k_usp: emulator.cpu.usp,
                                     m68k_ssp: emulator.cpu.ssp,
+                                    m68k_disasm,
                                     z80_pc: emulator.z80.pc,
                                     z80_a: emulator.z80.a,
                                     z80_f: emulator.z80.f,
@@ -650,6 +713,7 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                                     z80_memptr: emulator.z80.memptr,
                                     z80_iff1: emulator.z80.iff1,
                                     z80_im: emulator.z80.im,
+                                    z80_disasm,
                                     frame_count: emulator.internal_frame_count,
                                     vdp_status: bus.vdp.read_status(),
                                     display_enabled: bus.vdp.display_enabled(),
