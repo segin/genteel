@@ -22,7 +22,7 @@
 - [x] Task: Conductor - User Manual Verification 'Phase 3: VDP Debugging Tools' (Protocol in workflow.md) 722b975
 
 ## Phase 4: Audio & Memory Debugging
-- [ ] Task: Implement Memory Viewer (Hex editor for WRAM, Z80 RAM, and mapped ROM).
+- [x] Task: Implement Memory Viewer (Hex editor for WRAM, Z80 RAM, and mapped ROM). d1a363b
 - [ ] Task: Implement Sound Chip Visualizer (YM2612 FM parameters and PSG channel states).
 - [ ] Task: Implement Audio Channel Waveforms (Real-time oscilloscope for each channel).
 - [ ] Task: Conductor - User Manual Verification 'Phase 4: Audio & Memory Debugging' (Protocol in workflow.md)
