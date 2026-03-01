@@ -1133,6 +1133,12 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                             emulator.single_step = framework.gui_state.single_step;
                             framework.gui_state.single_step = false; // Reset GUI state
 
+                            // Poll GDB (can override GUI state)
+                            emulator.poll_gdb();
+                            
+                            // Sync emulator state back to GUI
+                            framework.gui_state.paused = emulator.paused;
+
                             frame_count += 1;
                             fps_count += 1;
                             // Update FPS in title bar every second

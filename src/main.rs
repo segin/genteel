@@ -61,6 +61,7 @@ pub struct Emulator {
     pub debug: bool,
     pub paused: bool,
     pub single_step: bool,
+    pub gdb: Option<GdbServer>,
     pub allowed_paths: Vec<std::path::PathBuf>,
 }
 impl Default for Emulator {
@@ -95,6 +96,7 @@ impl Emulator {
             debug: false,
             paused: false,
             single_step: false,
+            gdb: None,
             allowed_paths: Vec::new(),
         };
         {
@@ -786,9 +788,56 @@ impl Emulator {
         image::save_buffer(path, &rgb_data, 320, 240, image::ExtendedColorType::Rgb8)
             .map_err(|e| e.to_string())
     }
-    /// Run with GDB debugger attached
+    /// Poll GDB for commands and update state
+    pub fn poll_gdb(&mut self) {
+        let Some(gdb) = &mut self.gdb else { return };
+
+        if !gdb.is_connected() {
+            if gdb.accept() {
+                println!("GDB client connected");
+            } else {
+                return;
+            }
+        }
+
+        while let Some(cmd) = gdb.receive_packet() {
+            let mut regs = GdbRegisters {
+                d: self.cpu.d,
+                a: self.cpu.a,
+                sr: self.cpu.sr,
+                pc: self.cpu.pc,
+            };
+            let mut mem_access = BusGdbMemory {
+                bus: self.bus.clone(),
+            };
+            let response = gdb.process_command(&cmd, &mut regs, &mut mem_access);
+            self.cpu.d = regs.d;
+            self.cpu.a = regs.a;
+            self.cpu.sr = regs.sr;
+            self.cpu.pc = regs.pc;
+
+            match response.as_str() {
+                "CONTINUE" => {
+                    self.paused = false;
+                }
+                "STEP" => {
+                    self.single_step = true;
+                    self.paused = false;
+                }
+                _ if !response.is_empty() => {
+                    gdb.send_packet(&response).ok();
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Run with GDB debugger attached (blocking loop)
     pub fn run_with_gdb(&mut self, port: u16, password: Option<String>) -> std::io::Result<()> {
-        let mut gdb = GdbServer::new(port, password.clone())?;
+
+        let gdb = GdbServer::new(port, password.clone())?;
+        self.gdb = Some(gdb);
+        let gdb = self.gdb.as_mut().unwrap();
         println!("Waiting for GDB connection on port {}...", port);
         if let Some(pwd) = password {
             println!(
@@ -1112,11 +1161,25 @@ fn main() {
     }
     // Run in appropriate mode
     if let Some(port) = gdb_port {
-        // Debug mode with GDB
-        if let Err(e) = emulator.run_with_gdb(port, config.gdb_password) {
-            eprintln!("GDB server error: {}", e);
+        if config.headless {
+            // Debug mode with GDB (CLI)
+            if let Err(e) = emulator.run_with_gdb(port, config.gdb_password) {
+                eprintln!("GDB server error: {}", e);
+            }
+            return;
+        } else {
+            // Debug mode with GDB (GUI)
+            match GdbServer::new(port, config.gdb_password) {
+                Ok(gdb) => emulator.gdb = Some(gdb),
+                Err(e) => {
+                    eprintln!("Failed to start GDB server: {}", e);
+                    return;
+                }
+            }
         }
-    } else if config.headless {
+    }
+    
+    if config.headless {
         emulator.run(
             config.headless_frames,
             config.screenshot_path,
