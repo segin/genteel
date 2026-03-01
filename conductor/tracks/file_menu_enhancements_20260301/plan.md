@@ -6,7 +6,7 @@
 - [x] Task: Conductor - User Manual Verification 'Phase 1: CI/CD Pipeline' (Protocol in workflow.md) dda3a76
 
 ## Phase 2: Native File Dialogs and Basic Menu
-- [ ] Task: Add `rfd` dependency and implement a non-blocking wrapper for native file selection.
+- [x] Task: Add `rfd` dependency and implement a non-blocking wrapper for native file selection. b512382
 - [ ] Task: Implement "Open ROM" action in the File menu using the native dialog.
 - [ ] Task: Implement "Reset ROM" and "Close ROM" logic, ensuring all volatile state (VRAM, RAM, registers) is cleared.
 - [ ] Task: Implement "Open Recent" tracking and persistence in `gui_config.json`.
