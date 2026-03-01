@@ -149,6 +149,10 @@ pub struct DebugInfo {
     pub psg_tone: [crate::apu::psg::ToneChannel; 3],
     pub psg_noise: crate::apu::psg::NoiseChannel,
     pub channel_waveforms: [[i16; 128]; 10],
+    pub port1_state: crate::io::ControllerState,
+    pub port1_type: crate::io::ControllerType,
+    pub port2_state: crate::io::ControllerState,
+    pub port2_type: crate::io::ControllerType,
 }
 
 #[cfg(feature = "gui")]
@@ -869,6 +873,47 @@ impl Framework {
                 self.gui_state.set_window_open("Audio Channel Waveforms", false);
             }
         }
+
+        if self.gui_state.is_window_open("Controller Viewer") {
+            let mut open = true;
+            egui::Window::new("Controller Viewer")
+                .open(&mut open)
+                .show(&self.egui_ctx, |ui| {
+                for (i, (state, c_type)) in [
+                    (debug_info.port1_state, debug_info.port1_type),
+                    (debug_info.port2_state, debug_info.port2_type)
+                ].iter().enumerate() {
+                    ui.group(|ui| {
+                        ui.heading(format!("Port {}", i + 1));
+                        ui.label(format!("Type: {:?}", c_type));
+                        ui.label(format!("Buttons: {}", state.to_button_string()));
+                        
+                        egui::Grid::new(format!("port_{}_grid", i)).show(ui, |ui| {
+                            ui.label(if state.up { " [U] " } else { "  U  " });
+                            ui.label(if state.down { " [D] " } else { "  D  " });
+                            ui.label(if state.left { " [L] " } else { "  L  " });
+                            ui.label(if state.right { " [R] " } else { "  R  " });
+                            ui.end_row();
+                            ui.label(if state.a { " [A] " } else { "  A  " });
+                            ui.label(if state.b { " [B] " } else { "  B  " });
+                            ui.label(if state.c { " [C] " } else { "  C  " });
+                            ui.label(if state.start { " [S] " } else { "  S  " });
+                            ui.end_row();
+                            if matches!(c_type, crate::io::ControllerType::SixButton) {
+                                ui.label(if state.x { " [X] " } else { "  X  " });
+                                ui.label(if state.y { " [Y] " } else { "  Y  " });
+                                ui.label(if state.z { " [Z] " } else { "  Z  " });
+                                ui.label(if state.mode { " [M] " } else { "  M  " });
+                                ui.end_row();
+                            }
+                        });
+                    });
+                }
+            });
+            if !open {
+                self.gui_state.set_window_open("Controller Viewer", false);
+            }
+        }
     }
     pub fn render(
         &mut self,
@@ -1173,6 +1218,10 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                                     psg_tone: bus.apu.psg.tones.clone(),
                                     psg_noise: bus.apu.psg.noise.clone(),
                                     channel_waveforms: bus.apu.channel_buffers,
+                                    port1_state: bus.io.port1.state,
+                                    port1_type: bus.io.port1.controller_type,
+                                    port2_state: bus.io.port2.state,
+                                    port2_type: bus.io.port2.controller_type,
                                 };
                                 frontend::rgb565_to_rgba8(&bus.vdp.framebuffer, pixels.frame_mut());
                                 info
