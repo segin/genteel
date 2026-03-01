@@ -4,7 +4,7 @@ use super::ym2612::{Bank, Ym2612};
 fn test_ym2612_all_channels_enable() {
     let mut ym = Ym2612::new();
 
-    // Enable all 6 channels by setting frequency and volume
+    // Enable all 6 channels by setting frequency, volume, attack rate, algorithm, and key-on
     for ch in 0..6 {
         let (bank, offset) = if ch < 3 {
             (Bank::Bank0, ch)
@@ -12,22 +12,39 @@ fn test_ym2612_all_channels_enable() {
             (Bank::Bank1, ch - 3)
         };
 
-        // Freq setting
-        ym.write_addr(bank, 0xA0 + offset as u8);
-        ym.write_data_bank(bank, 0x55);
+        // Freq setting (high byte first for latching, then low byte to apply)
         ym.write_addr(bank, 0xA4 + offset as u8);
         ym.write_data_bank(bank, 0x22);
+        ym.write_addr(bank, 0xA0 + offset as u8);
+        ym.write_data_bank(bank, 0x55);
 
-        // Volume setting (TL for Op 4)
-        ym.write_addr(bank, 0x4C + offset as u8);
-        ym.write_data_bank(bank, 0x00); // Max volume
+        // Algorithm 7 (all carriers) with no feedback
+        ym.write_addr(bank, 0xB0 + offset as u8);
+        ym.write_data_bank(bank, 0x07);
+
+        // Volume setting (TL=0 for all ops) and max attack rate
+        // Register offsets for 4 ops: 0, 4, 8, 12
+        for op_off in [0u8, 4, 8, 12] {
+            ym.write_addr(bank, 0x40 + offset as u8 + op_off);
+            ym.write_data_bank(bank, 0x00); // Max volume
+            ym.write_addr(bank, 0x50 + offset as u8 + op_off);
+            ym.write_data_bank(bank, 0x1F); // Max attack rate
+        }
+
+        // Key-on all 4 operators for this channel
+        let ch_bits = if ch < 3 { ch as u8 } else { (ch - 3) as u8 + 4 };
+        ym.write_addr(Bank::Bank0, 0x28);
+        ym.write_data_bank(Bank::Bank0, 0xF0 | ch_bits);
     }
 
     // Generate samples and verify non-zero
-    ym.step(100);
-    let (l, r) = ym.generate_sample();
+    let mut saw_nonzero = false;
+    for _ in 0..100 {
+        let (l, r) = ym.generate_sample();
+        if l != 0 || r != 0 { saw_nonzero = true; break; }
+    }
     assert!(
-        l != 0 || r != 0,
+        saw_nonzero,
         "Samples should be non-zero when channels are active"
     );
 }
