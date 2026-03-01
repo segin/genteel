@@ -140,6 +140,7 @@ pub struct DebugInfo {
     pub bg_color_index: u8,
     pub cram: [u16; 64],
     pub cram_raw: [u16; 64],
+    pub vram: [u8; 0x10000],
 }
 
 #[cfg(feature = "gui")]
@@ -149,6 +150,7 @@ pub struct Framework {
     pub screen_descriptor: egui_wgpu::ScreenDescriptor,
     pub renderer: egui_wgpu::Renderer,
     pub gui_state: GuiState,
+    pub tile_texture: Option<egui::TextureHandle>,
 }
 
 #[cfg(feature = "gui")]
@@ -182,6 +184,7 @@ impl Framework {
             screen_descriptor,
             renderer,
             gui_state,
+            tile_texture: None,
         }
     }
     pub fn handle_event(
@@ -467,6 +470,53 @@ impl Framework {
             });
             if !open {
                 self.gui_state.set_window_open("Palette Viewer", false);
+            }
+        }
+
+        if self.gui_state.is_window_open("Tile Viewer") {
+            let mut open = true;
+            egui::Window::new("Tile Viewer")
+                .open(&mut open)
+                .show(&self.egui_ctx, |ui| {
+                // Render tiles to a buffer
+                let mut pixels = vec![0u8; 128 * 1024 * 4]; // RGBA
+                for tile_idx in 0..2048 {
+                    let tile_x = (tile_idx % 16) * 8;
+                    let tile_y = (tile_idx / 16) * 8;
+                    
+                    for y in 0..8 {
+                        let row_addr = tile_idx * 32 + y * 4;
+                        for x in 0..8 {
+                            let byte = debug_info.vram[row_addr + (x / 2)];
+                            let color_idx = if x % 2 == 0 { byte >> 4 } else { byte & 0x0F };
+                            
+                            // Use first palette (0-15)
+                            let color565 = debug_info.cram[color_idx as usize];
+                            let r = (((color565 >> 11) & 0x1F) << 3) as u8;
+                            let g = (((color565 >> 5) & 0x3F) << 2) as u8;
+                            let b = ((color565 & 0x1F) << 3) as u8;
+                            
+                            let pixel_idx = ((tile_y + y) * 128 + (tile_x + x)) * 4;
+                            pixels[pixel_idx] = r;
+                            pixels[pixel_idx + 1] = g;
+                            pixels[pixel_idx + 2] = b;
+                            pixels[pixel_idx + 3] = 255;
+                        }
+                    }
+                }
+                
+                let image = egui::ColorImage::from_rgba_unmultiplied([128, 1024], &pixels);
+                let texture = self.tile_texture.get_or_insert_with(|| {
+                    ui.ctx().load_texture("tile_viewer", image.clone(), Default::default())
+                });
+                texture.set(image, Default::default());
+                
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    ui.image(&*texture);
+                });
+            });
+            if !open {
+                self.gui_state.set_window_open("Tile Viewer", false);
             }
         }
     }
@@ -759,6 +809,7 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                                     bg_color_index: bus.vdp.registers[7],
                                     cram: bus.vdp.cram_cache,
                                     cram_raw,
+                                    vram: bus.vdp.vram,
                                 };
                                 frontend::rgb565_to_rgba8(&bus.vdp.framebuffer, pixels.frame_mut());
                                 info
