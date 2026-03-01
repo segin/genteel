@@ -143,6 +143,8 @@ pub struct DebugInfo {
     pub cram_raw: [u16; 64],
     pub vram: [u8; 0x10000],
     pub vsram: [u8; 80],
+    pub wram: [u8; 0x10000],
+    pub z80_ram: [u8; 0x2000],
 }
 
 #[cfg(feature = "gui")]
@@ -713,6 +715,45 @@ impl Framework {
                 self.gui_state.set_window_open("VDP Memory Hex", false);
             }
         }
+
+        if self.gui_state.is_window_open("Memory Viewer") {
+            let mut open = true;
+            egui::Window::new("Memory Viewer")
+                .open(&mut open)
+                .show(&self.egui_ctx, |ui| {
+                ui.collapsing("Work RAM (M68k)", |ui| {
+                    egui::ScrollArea::vertical().id_source("wram_hex").show_rows(ui, ui.text_style_height(&egui::TextStyle::Monospace), 0x10000 / 16, |ui, row_range| {
+                        egui::Grid::new("wram_grid").show(ui, |ui| {
+                            for row in row_range {
+                                let addr = row * 16;
+                                ui.label(egui::RichText::new(format!("{:04X}:", addr)).monospace());
+                                for i in 0..16 {
+                                    ui.label(egui::RichText::new(format!("{:02X}", debug_info.wram[addr + i])).monospace());
+                                }
+                                ui.end_row();
+                            }
+                        });
+                    });
+                });
+                ui.collapsing("Z80 RAM", |ui| {
+                    egui::ScrollArea::vertical().id_source("z80_ram_hex").show_rows(ui, ui.text_style_height(&egui::TextStyle::Monospace), 0x2000 / 16, |ui, row_range| {
+                        egui::Grid::new("z80_ram_grid").show(ui, |ui| {
+                            for row in row_range {
+                                let addr = row * 16;
+                                ui.label(egui::RichText::new(format!("{:04X}:", addr)).monospace());
+                                for i in 0..16 {
+                                    ui.label(egui::RichText::new(format!("{:02X}", debug_info.z80_ram[addr + i])).monospace());
+                                }
+                                ui.end_row();
+                            }
+                        });
+                    });
+                });
+            });
+            if !open {
+                self.gui_state.set_window_open("Memory Viewer", false);
+            }
+        }
     }
     pub fn render(
         &mut self,
@@ -971,6 +1012,11 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                                     ]);
                                 }
 
+                                let mut wram = [0u8; 0x10000];
+                                wram.copy_from_slice(&bus.work_ram);
+                                let mut z80_ram = [0u8; 0x2000];
+                                z80_ram.copy_from_slice(&bus.z80_ram);
+
                                 let info = DebugInfo {
                                     m68k_pc: emulator.cpu.pc,
                                     m68k_d: emulator.cpu.d,
@@ -1006,6 +1052,8 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                                     cram_raw,
                                     vram: bus.vdp.vram,
                                     vsram: bus.vdp.vsram,
+                                    wram,
+                                    z80_ram,
                                 };
                                 frontend::rgb565_to_rgba8(&bus.vdp.framebuffer, pixels.frame_mut());
                                 info
