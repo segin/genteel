@@ -3,7 +3,7 @@
 ## Phase 1: Infrastructure & UI Framework
 - [x] Task: Implement the Multi-Window Framework in `gui.rs` using `egui::Window`. bd9acb7
 - [x] Task: Add a "Debug" menu to the main GUI menu bar for toggling individual windows. 62dcb4f
-- [ ] Task: Implement window state persistence (saving/loading positions and visibility).
+- [x] Task: Implement window state persistence (saving/loading positions and visibility). 0438429
 - [ ] Task: Conductor - User Manual Verification 'Phase 1: Infrastructure & UI Framework' (Protocol in workflow.md)
 
 ## Phase 2: CPU & Execution Debugging
