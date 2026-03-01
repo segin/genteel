@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use crate::audio;
 use crate::frontend::{self, InputMapping};
 use crate::input::InputScript;
@@ -13,12 +14,51 @@ use winit::{
 };
 
 #[cfg(feature = "gui")]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct WindowState {
+    pub open: bool,
+}
+
+#[cfg(feature = "gui")]
 pub struct GuiState {
-    pub show_settings: bool,
-    pub show_debug: bool,
+    pub windows: HashMap<String, WindowState>,
     pub input_mapping: InputMapping,
     pub integer_scaling: bool,
     pub force_red: bool,
+}
+
+#[cfg(feature = "gui")]
+impl GuiState {
+    pub fn new(input_mapping: InputMapping) -> Self {
+        let mut windows = HashMap::new();
+        // Register default windows
+        windows.insert("Settings".to_string(), WindowState { open: false });
+        windows.insert("Performance & Debug".to_string(), WindowState { open: false });
+
+        Self {
+            windows,
+            input_mapping,
+            integer_scaling: true,
+            force_red: false,
+        }
+    }
+
+    pub fn is_window_open(&self, name: &str) -> bool {
+        self.windows.get(name).map(|w| w.open).unwrap_or(false)
+    }
+
+    pub fn set_window_open(&mut self, name: &str, open: bool) {
+        if let Some(window) = self.windows.get_mut(name) {
+            window.open = open;
+        } else {
+            self.windows.insert(name.to_string(), WindowState { open });
+        }
+    }
+
+    pub fn toggle_window(&mut self, name: &str) {
+        let open = self.is_window_open(name);
+        self.set_window_open(name, !open);
+    }
 }
 
 #[cfg(feature = "gui")]
@@ -65,13 +105,7 @@ impl Framework {
         };
         let renderer =
             egui_wgpu::Renderer::new(pixels.device(), pixels.render_texture_format(), None, 1);
-        let gui_state = GuiState {
-            show_settings: false,
-            show_debug: false,
-            input_mapping,
-            integer_scaling: true,
-            force_red: false,
-        };
+        let gui_state = GuiState::new(input_mapping);
         Self {
             egui_ctx,
             egui_state,
@@ -108,20 +142,26 @@ impl Framework {
                 });
                 ui.menu_button("Settings", |ui| {
                     if ui.button("Video").clicked() {
-                        self.gui_state.show_settings = true;
+                        self.gui_state.set_window_open("Settings", true);
                         ui.close_menu();
                     }
                     if ui.button("Input Mapping").clicked() {
-                        self.gui_state.show_settings = true;
+                        self.gui_state.set_window_open("Settings", true);
                         ui.close_menu();
                     }
-                    ui.checkbox(&mut self.gui_state.show_debug, "Show Performance & Debug");
+                    let mut show_debug = self.gui_state.is_window_open("Performance & Debug");
+                    if ui.checkbox(&mut show_debug, "Show Performance & Debug").changed() {
+                        self.gui_state.set_window_open("Performance & Debug", show_debug);
+                    }
                 });
             });
         });
 
-        if self.gui_state.show_debug {
-            egui::Window::new("Performance & Debug").show(&self.egui_ctx, |ui| {
+        if self.gui_state.is_window_open("Performance & Debug") {
+            let mut open = true;
+            egui::Window::new("Performance & Debug")
+                .open(&mut open)
+                .show(&self.egui_ctx, |ui| {
                 let dt = self.egui_ctx.input(|i| i.stable_dt);
                 let fps = if dt > 0.0 { 1.0 / dt } else { 0.0 };
                 ui.label(format!("Frontend FPS: {:.1}", fps));
@@ -144,10 +184,16 @@ impl Framework {
                 ui.label(format!("CRAM[0] (RGB565): {:04X}", debug_info.cram0));
                 ui.checkbox(&mut self.gui_state.force_red, "Force Red BG (Debug)");
             });
+            if !open {
+                self.gui_state.set_window_open("Performance & Debug", false);
+            }
         }
 
-        if self.gui_state.show_settings {
-            egui::Window::new("Settings").show(&self.egui_ctx, |ui| {
+        if self.gui_state.is_window_open("Settings") {
+            let mut open = true;
+            egui::Window::new("Settings")
+                .open(&mut open)
+                .show(&self.egui_ctx, |ui| {
                 ui.heading("Video");
                 ui.checkbox(&mut self.gui_state.integer_scaling, "Integer Pixel Scaling");
                 ui.separator();
@@ -163,11 +209,10 @@ impl Framework {
                     InputMapping::Ergonomic,
                     "Ergonomic",
                 );
-                ui.separator();
-                if ui.button("Close").clicked() {
-                    self.gui_state.show_settings = false;
-                }
             });
+            if !open {
+                self.gui_state.set_window_open("Settings", false);
+            }
         }
     }
     pub fn render(

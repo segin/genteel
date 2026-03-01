@@ -14,6 +14,8 @@ pub mod debugger;
 pub mod frontend;
 #[cfg(feature = "gui")]
 pub mod gui;
+#[cfg(all(feature = "gui", test))]
+pub mod tests_gui;
 pub mod input;
 pub mod io;
 pub mod memory;

@@ -32,7 +32,7 @@ fn test_draw_full_tile_row_refactor() {
 
 #[test]
 fn test_draw_full_tile_row_bounds_safe() {
-    let mut vdp = Vdp::new();
+    let vdp = Vdp::new();
     // Try to draw at end of framebuffer
     let dest_idx = vdp.framebuffer.len() - 4; // Not enough space for 8 pixels
                                               // Should not panic
