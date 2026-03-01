@@ -16,7 +16,7 @@
 ## Phase 3: VDP Debugging Tools
 - [x] Task: Implement Palette Viewer (CRAM visualization with hex values). ba62ef8
 - [x] Task: Implement Tile Viewer (VRAM pattern visualization). 43fff65
-- [ ] Task: Implement Sprite Viewer (Sprite attribute table and visual representation).
+- [~] Task: Implement Sprite Viewer (Sprite attribute table and visual representation).
 - [ ] Task: Implement Scroll Plane Viewer (Visualization of Plane A, Plane B, and Window).
 - [ ] Task: Implement VDP Memory Hex View (Raw editors for VRAM, CRAM, VSRAM).
 - [ ] Task: Conductor - User Manual Verification 'Phase 3: VDP Debugging Tools' (Protocol in workflow.md)
