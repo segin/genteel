@@ -9,5 +9,5 @@ This file tracks all major tracks for the project. Each track has its own detail
 
 ---
 
-- [ ] **Track: File Menu Enhancements and Automated Builds**
+- [~] **Track: File Menu Enhancements and Automated Builds**
 *Link: [./tracks/file_menu_enhancements_20260301/](./tracks/file_menu_enhancements_20260301/)*
