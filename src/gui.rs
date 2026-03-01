@@ -136,6 +136,7 @@ pub struct DebugInfo {
     pub z80_disasm: Vec<(u16, String)>,
     pub frame_count: u64,
     pub vdp_status: u16,
+    pub vdp_registers: [u8; 24],
     pub display_enabled: bool,
     pub bg_color_index: u8,
     pub cram: [u16; 64],
@@ -519,6 +520,54 @@ impl Framework {
                 self.gui_state.set_window_open("Tile Viewer", false);
             }
         }
+
+        if self.gui_state.is_window_open("Sprite Viewer") {
+            let mut open = true;
+            egui::Window::new("Sprite Viewer")
+                .open(&mut open)
+                .show(&self.egui_ctx, |ui| {
+                let sat_base = ((debug_info.vdp_registers[5] as usize) & 0x7F) << 9;
+                let h40 = (debug_info.vdp_registers[12] & 0x81) == 0x81;
+                let max_sprites = if h40 { 80 } else { 64 };
+                
+                let iter = crate::vdp::SpriteIterator {
+                    vram: &debug_info.vram,
+                    next_idx: 0,
+                    count: 0,
+                    max_sprites,
+                    sat_base,
+                };
+                
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    egui::Grid::new("sprite_grid").striped(true).show(ui, |ui| {
+                        ui.label("Idx");
+                        ui.label("Pos");
+                        ui.label("Size");
+                        ui.label("Tile");
+                        ui.label("Pal");
+                        ui.label("Pri");
+                        ui.label("Flip");
+                        ui.label("Link");
+                        ui.end_row();
+                        
+                        for attr in iter {
+                            ui.label(format!("{}", attr.index));
+                            ui.label(format!("{},{}", attr.h_pos, attr.v_pos));
+                            ui.label(format!("{}x{}", attr.h_size, attr.v_size));
+                            ui.label(format!("{:03X}", attr.base_tile));
+                            ui.label(format!("{}", attr.palette));
+                            ui.label(if attr.priority { "H" } else { "L" });
+                            ui.label(format!("{}{}", if attr.h_flip { "H" } else { "-" }, if attr.v_flip { "V" } else { "-" }));
+                            ui.label(format!("{}", attr.link));
+                            ui.end_row();
+                        }
+                    });
+                });
+            });
+            if !open {
+                self.gui_state.set_window_open("Sprite Viewer", false);
+            }
+        }
     }
     pub fn render(
         &mut self,
@@ -805,6 +854,7 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                                     z80_disasm,
                                     frame_count: emulator.internal_frame_count,
                                     vdp_status: bus.vdp.read_status(),
+                                    vdp_registers: bus.vdp.registers,
                                     display_enabled: bus.vdp.display_enabled(),
                                     bg_color_index: bus.vdp.registers[7],
                                     cram: bus.vdp.cram_cache,

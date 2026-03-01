@@ -9,7 +9,7 @@ pub mod dma;
 pub use dma::DmaOps;
 
 pub mod render;
-pub use render::RenderOps;
+pub use render::{RenderOps, SpriteAttributes, SpriteIterator};
 
 pub mod big_array_vram {
     use serde::de::{self, SeqAccess, Visitor};
