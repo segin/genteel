@@ -1,0 +1,24 @@
+# Implementation Plan: File Menu Enhancements and Automated Builds
+
+## Phase 1: CI/CD Pipeline
+- [ ] Task: Create GitHub Actions workflow for multi-platform release builds (Linux/Windows).
+- [ ] Task: Verify that the workflow produces downloadable and runnable artifacts for both platforms.
+- [ ] Task: Conductor - User Manual Verification 'Phase 1: CI/CD Pipeline' (Protocol in workflow.md)
+
+## Phase 2: Native File Dialogs and Basic Menu
+- [ ] Task: Add `rfd` dependency and implement a non-blocking wrapper for native file selection.
+- [ ] Task: Implement "Open ROM" action in the File menu using the native dialog.
+- [ ] Task: Implement "Reset ROM" and "Close ROM" logic, ensuring all volatile state (VRAM, RAM, registers) is cleared.
+- [ ] Task: Implement "Open Recent" tracking and persistence in `gui_config.json`.
+- [ ] Task: Conductor - User Manual Verification 'Phase 2: Native File Dialogs and Basic Menu' (Protocol in workflow.md)
+
+## Phase 3: SRAM and State Management
+- [ ] Task: Implement SRAM persistence logic (loading/saving .srm files automatically based on ROM filename).
+- [ ] Task: Add 10 Save/Load State slots to the File menu with automated filename generation.
+- [ ] Task: Implement optional Auto-Save on exit and Auto-Load on start functionality.
+- [ ] Task: Conductor - User Manual Verification 'Phase 3: SRAM and State Management' (Protocol in workflow.md)
+
+## Phase 4: State Browser and UI Refinement
+- [ ] Task: Implement "State Browser" internal window to view, manage, and delete save states.
+- [ ] Task: Finalize File menu organization, add dividers, and implement standard keyboard shortcuts (e.g., Ctrl+O, Ctrl+R).
+- [ ] Task: Conductor - User Manual Verification 'Phase 4: State Browser and UI Refinement' (Protocol in workflow.md)
