@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::path::PathBuf;
 use crate::audio;
 use crate::frontend::{self, InputMapping};
 use crate::input::InputScript;
@@ -168,6 +170,7 @@ pub struct Framework {
     pub tile_texture: Option<egui::TextureHandle>,
     pub plane_a_texture: Option<egui::TextureHandle>,
     pub plane_b_texture: Option<egui::TextureHandle>,
+    pub pending_rom_path: Arc<Mutex<Option<PathBuf>>>,
 }
 
 #[cfg(feature = "gui")]
@@ -204,6 +207,7 @@ impl Framework {
             tile_texture: None,
             plane_a_texture: None,
             plane_b_texture: None,
+            pending_rom_path: Arc::new(Mutex::new(None)),
         }
     }
     pub fn handle_event(
@@ -221,6 +225,21 @@ impl Framework {
     pub fn scale_factor(&mut self, scale_factor: f32) {
         self.screen_descriptor.pixels_per_point = scale_factor;
     }
+
+    pub fn pick_rom(&mut self) {
+        let pending = self.pending_rom_path.clone();
+        std::thread::spawn(move || {
+            let file = rfd::FileDialog::new()
+                .add_filter("Genesis ROMs", &["bin", "md", "gen", "zip"])
+                .add_filter("All Files", &["*"])
+                .pick_file();
+            if let Some(path) = file {
+                let mut lock = pending.lock().unwrap();
+                *lock = Some(path);
+            }
+        });
+    }
+
     pub fn prepare(&mut self, window: &winit::window::Window, debug_info: &DebugInfo) {
         let raw_input = self.egui_state.take_egui_input(window);
         self.egui_ctx.begin_frame(raw_input);

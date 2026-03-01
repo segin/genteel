@@ -7,7 +7,7 @@ edition = "2021"
 
 [features]
 default = ["gui"]
-gui = ["dep:cpal", "dep:winit", "dep:pixels", "dep:egui", "dep:egui-winit", "dep:egui-wgpu", "dep:rodio"]
+gui = ["dep:cpal", "dep:winit", "dep:pixels", "dep:egui", "dep:egui-winit", "dep:egui-wgpu", "dep:rodio", "dep:rfd"]
 test_headless = ["dep:winit"]
 
 [dependencies]
@@ -28,6 +28,7 @@ rand = "0.10.0"
 egui = { version = "0.26", optional = true }
 egui-winit = { version = "0.26", optional = true, default-features = false, features = ["links"] }
 egui-wgpu = { version = "0.26", optional = true }
+rfd = { version = "0.14", optional = true }
 image = "0.25.9"
 
 [dev-dependencies]
