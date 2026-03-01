@@ -1,9 +1,9 @@
 # Implementation Plan: File Menu Enhancements and Automated Builds
 
-## Phase 1: CI/CD Pipeline
+## Phase 1: CI/CD Pipeline [checkpoint: dda3a76]
 - [x] Task: Create GitHub Actions workflow for multi-platform release builds (Linux/Windows). 81041c1
 - [x] Task: Verify that the workflow produces downloadable and runnable artifacts for both platforms. 56227a0
-- [ ] Task: Conductor - User Manual Verification 'Phase 1: CI/CD Pipeline' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 1: CI/CD Pipeline' (Protocol in workflow.md) dda3a76
 
 ## Phase 2: Native File Dialogs and Basic Menu
 - [ ] Task: Add `rfd` dependency and implement a non-blocking wrapper for native file selection.
