@@ -1,0 +1,64 @@
+name: Release Builds
+
+on:
+  push:
+    branches: [ "main" ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build for ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: genteel-linux
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: genteel-windows
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install dependencies (Linux)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libasound2-dev libudev-dev pkg-config
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ matrix.target }}
+
+    - name: Build
+      run: cargo build --release --target ${{ matrix.target }} --features gui
+
+    - name: Prepare Artifacts (Linux)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        mkdir -p release
+        cp target/${{ matrix.target }}/release/genteel release/
+        cd release && zip -r ../genteel-linux.zip .
+
+    - name: Prepare Artifacts (Windows)
+      if: matrix.os == 'windows-latest'
+      run: |
+        mkdir release
+        copy target\${{ matrix.target }}\release\genteel.exe release\
+        Compress-Archive -Path release\* -DestinationPath genteel-windows.zip
+
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.artifact_name }}
+        path: ${{ matrix.artifact_name }}.zip
