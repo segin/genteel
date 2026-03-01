@@ -254,7 +254,7 @@ fn render_sprite_scanline(
 
 impl RenderOps for Vdp {
     fn render_line(&mut self, line: u16) {
-        if line >= 240 {
+        if line >= self.screen_height() {
             return;
         }
 
@@ -457,7 +457,7 @@ impl RenderOps for Vdp {
         };
 
         // Vertical position in plane
-        let scrolled_v = fetch_line.wrapping_sub(v_scroll);
+        let scrolled_v = fetch_line.wrapping_add(v_scroll);
         let tile_v = ((scrolled_v / 8) as usize) % plane_h;
         let pixel_v = scrolled_v % 8;
 

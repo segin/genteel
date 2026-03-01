@@ -983,7 +983,7 @@ fn test_address_error_write_word() {
 }
 
 #[test]
-fn test_rtr() {
+fn test_rtr_sr_preservation() {
     let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0x4E77]);
 
