@@ -14,7 +14,7 @@
 
 ## Phase 3: SRAM and State Management
 - [x] Task: Implement SRAM persistence logic (loading/saving .srm files automatically based on ROM filename). 0eaaba8
-- [ ] Task: Add 10 Save/Load State slots to the File menu with automated filename generation.
+- [x] Task: Add 10 Save/Load State slots to the File menu with automated filename generation. 1740b9d
 - [ ] Task: Implement optional Auto-Save on exit and Auto-Load on start functionality.
 - [ ] Task: Conductor - User Manual Verification 'Phase 3: SRAM and State Management' (Protocol in workflow.md)
 
