@@ -62,6 +62,7 @@ pub struct Emulator {
     pub paused: bool,
     pub single_step: bool,
     pub gdb: Option<GdbServer>,
+    pub current_rom_path: Option<std::path::PathBuf>,
     pub allowed_paths: Vec<std::path::PathBuf>,
 }
 impl Default for Emulator {
@@ -97,6 +98,7 @@ impl Emulator {
             paused: false,
             single_step: false,
             gdb: None,
+            current_rom_path: None,
             allowed_paths: Vec::new(),
         };
         {
@@ -132,6 +134,8 @@ impl Emulator {
 
     /// Close current ROM and return to default state
     pub fn close_rom(&mut self) {
+        self.save_sram();
+        
         let allowed_paths = self.allowed_paths.clone();
         let mapping = self.input_mapping;
         
@@ -139,6 +143,34 @@ impl Emulator {
         
         self.allowed_paths = allowed_paths;
         self.input_mapping = mapping;
+    }
+
+    pub fn load_sram(&mut self) {
+        let Some(path) = &self.current_rom_path else { return };
+        let sram_path = path.with_extension("srm");
+        if let Ok(data) = std::fs::read(&sram_path) {
+            println!("Loading SRAM from {:?}", sram_path);
+            let mut bus = self.bus.borrow_mut();
+            if data.len() == bus.sram.len() {
+                bus.sram.copy_from_slice(&data);
+            } else {
+                let len = data.len().min(bus.sram.len());
+                bus.sram[..len].copy_from_slice(&data[..len]);
+            }
+        }
+    }
+
+    pub fn save_sram(&self) {
+        let Some(path) = &self.current_rom_path else { return };
+        let bus = self.bus.borrow();
+        if !bus.sram.is_empty() {
+            let sram_path = path.with_extension("srm");
+            if let Err(e) = std::fs::write(&sram_path, &*bus.sram) {
+                eprintln!("Failed to save SRAM to {:?}: {}", sram_path, e);
+            } else {
+                println!("Saved SRAM to {:?}", sram_path);
+            }
+        }
     }
 
     /// Add a path to the whitelist of allowed ROM directories.
@@ -185,7 +217,13 @@ impl Emulator {
         };
         let mut bus = self.bus.borrow_mut();
         bus.load_rom(&data);
+        drop(bus);
+        
+        self.current_rom_path = Some(canonical_path);
+        self.load_sram();
+        
         // Reset again to load initial PC/SP from ROM vectors
+        let mut bus = self.bus.borrow_mut();
         self.cpu.reset(&mut *bus);
         self.z80.reset();
         Ok(())

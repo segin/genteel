@@ -44,6 +44,12 @@ pub struct Bus {
     /// Z80 RAM (8KB at 0xA00000-0xA01FFF)
     pub z80_ram: Box<[u8]>,
 
+    /// SRAM (Battery-backed RAM)
+    pub sram: Box<[u8]>,
+    pub sram_enabled: bool,
+    pub sram_start: u32,
+    pub sram_end: u32,
+
     /// VDP Port access
     pub vdp: Vdp,
 
@@ -88,6 +94,10 @@ impl Bus {
             rom: Vec::new(),
             work_ram: vec![0; 0x10000].into_boxed_slice(),
             z80_ram: vec![0; 0x2000].into_boxed_slice(),
+            sram: vec![0; 0x10000].into_boxed_slice(),
+            sram_enabled: false,
+            sram_start: 0x200000,
+            sram_end: 0x20FFFF,
             vdp: Vdp::new(),
             io: Io::new(),
             apu: Apu::new(),
@@ -110,6 +120,38 @@ impl Bus {
         if self.rom.len() < 512 {
             self.rom.resize(512, 0);
         }
+
+        // Parse SRAM info from header (0x1B0)
+        // [0x1B0..0x1B1] = 'RA' if SRAM present
+        if self.rom.len() >= 0x1C0 && &self.rom[0x1B0..0x1B2] == b"RA" {
+            self.sram_start = u32::from_be_bytes([
+                self.rom[0x1B4],
+                self.rom[0x1B5],
+                self.rom[0x1B6],
+                self.rom[0x1B7],
+            ]) & 0xFFFFFE; // Must be even
+            self.sram_end = u32::from_be_bytes([
+                self.rom[0x1B8],
+                self.rom[0x1B9],
+                self.rom[0x1BA],
+                self.rom[0x1BB],
+            ]);
+            
+            let size = if self.sram_end > self.sram_start {
+                (self.sram_end - self.sram_start + 1) as usize
+            } else {
+                0
+            };
+            if size > 0 {
+                self.sram = vec![0; size].into_boxed_slice();
+                self.sram_enabled = true;
+            }
+        } else {
+            // Default SRAM if not specified but needed by some games
+            self.sram_start = 0x200000;
+            self.sram_end = 0x20FFFF;
+            self.sram_enabled = false; // Will be enabled by software via $A130F1
+        }
     }
 
     /// Clear the ROM
@@ -127,7 +169,13 @@ impl Bus {
         let addr = address & 0xFFFFFF; // 24-bit address bus
 
         match addr {
-            0x000000..=0x3FFFFF => self.read_rom(addr),
+            0x000000..=0x3FFFFF => {
+                if self.sram_enabled && addr >= self.sram_start && addr <= self.sram_end {
+                    self.read_sram(addr)
+                } else {
+                    self.read_rom(addr)
+                }
+            }
             0xA00000..=0xA0FFFF => self.read_z80_area(addr),
             0xA10000..=0xA1FFFF => self.read_io_area(addr),
             0xC00000..=0xC0FFFF => self.read_vdp_area(addr),
@@ -141,9 +189,19 @@ impl Bus {
         let addr = address & 0xFFFFFF;
 
         match addr {
-            0x000000..=0x3FFFFF => {} // ROM is read-only
+            0x000000..=0x3FFFFF => {
+                if self.sram_enabled && addr >= self.sram_start && addr <= self.sram_end {
+                    self.write_sram(addr, value);
+                }
+            }
             0xA00000..=0xA0FFFF => self.write_z80_area(addr, value),
-            0xA10000..=0xA1FFFF => self.write_io_area(addr, value),
+            0xA10000..=0xA1FFFF => {
+                if addr == 0xA130F1 {
+                    self.sram_enabled = (value & 0x01) != 0;
+                } else {
+                    self.write_io_area(addr, value);
+                }
+            }
             0xC00000..=0xC0FFFF => self.write_vdp_area(addr, value),
             0xE00000..=0xFFFFFF => self.write_ram(addr, value),
             _ => {}
@@ -157,6 +215,29 @@ impl Bus {
             unsafe { *self.rom.get_unchecked(rom_addr) }
         } else {
             0xFF // Unmapped ROM area
+        }
+    }
+
+    fn read_sram(&self, addr: u32) -> u8 {
+        if addr % 2 == 0 {
+            // SRAM is usually on even bytes only
+            let sram_addr = ((addr - self.sram_start) / 2) as usize;
+            if sram_addr < self.sram.len() {
+                self.sram[sram_addr]
+            } else {
+                0xFF
+            }
+        } else {
+            0xFF
+        }
+    }
+
+    fn write_sram(&mut self, addr: u32, value: u8) {
+        if addr % 2 == 0 {
+            let sram_addr = ((addr - self.sram_start) / 2) as usize;
+            if sram_addr < self.sram.len() {
+                self.sram[sram_addr] = value;
+            }
         }
     }
 
