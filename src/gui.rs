@@ -26,6 +26,9 @@ pub struct GuiState {
     pub input_mapping: InputMapping,
     pub integer_scaling: bool,
     pub force_red: bool,
+    pub paused: bool,
+    #[serde(skip)]
+    pub single_step: bool,
 }
 
 #[cfg(feature = "gui")]
@@ -36,6 +39,8 @@ impl GuiState {
             input_mapping,
             integer_scaling: true,
             force_red: false,
+            paused: false,
+            single_step: false,
         };
         state.register_default_windows();
         state
@@ -270,6 +275,34 @@ impl Framework {
                 self.gui_state.set_window_open("Settings", false);
             }
         }
+
+        if self.gui_state.is_window_open("Execution Control") {
+            let mut open = true;
+            egui::Window::new("Execution Control")
+                .open(&mut open)
+                .show(&self.egui_ctx, |ui| {
+                ui.horizontal(|ui| {
+                    if self.gui_state.paused {
+                        if ui.button("▶ Resume").clicked() {
+                            self.gui_state.paused = false;
+                            self.gui_state.save();
+                        }
+                    } else {
+                        if ui.button("⏸ Pause").clicked() {
+                            self.gui_state.paused = true;
+                            self.gui_state.save();
+                        }
+                    }
+                    if ui.button("⏭ Single Step").clicked() {
+                        self.gui_state.single_step = true;
+                        self.gui_state.paused = true;
+                    }
+                });
+            });
+            if !open {
+                self.gui_state.set_window_open("Execution Control", false);
+            }
+        }
     }
     pub fn render(
         &mut self,
@@ -463,6 +496,9 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                             // Sync settings from GUI
                             emulator.input_mapping = framework.gui_state.input_mapping;
                             let force_red = framework.gui_state.force_red;
+                            emulator.paused = framework.gui_state.paused;
+                            emulator.single_step = framework.gui_state.single_step;
+                            framework.gui_state.single_step = false; // Reset GUI state
 
                             frame_count += 1;
                             fps_count += 1;

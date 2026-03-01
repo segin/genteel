@@ -59,6 +59,8 @@ pub struct Emulator {
     pub z80_trace_count: u32,
     pub input_mapping: InputMapping,
     pub debug: bool,
+    pub paused: bool,
+    pub single_step: bool,
     pub allowed_paths: Vec<std::path::PathBuf>,
 }
 impl Default for Emulator {
@@ -91,6 +93,8 @@ impl Emulator {
             z80_trace_count: 0,
             input_mapping: InputMapping::default(),
             debug: false,
+            paused: false,
+            single_step: false,
             allowed_paths: Vec::new(),
         };
         {
@@ -211,6 +215,12 @@ impl Emulator {
     }
     /// Step one frame with current input state
     pub fn step_frame(&mut self, input: Option<&input::FrameInput>) {
+        if self.paused && !self.single_step {
+            return;
+        }
+        // Reset single_step if it was set
+        self.single_step = false;
+
         // Apply inputs from script or live input
         let (p1, p2, command) = {
             let frame_input = match input {
@@ -1386,5 +1396,27 @@ mod tests {
                 sanitized_path
             );
         }
+    }
+
+    #[test]
+    fn test_emulator_pause() {
+        let mut emulator = Emulator::new();
+        let initial_frames = emulator.internal_frame_count;
+        
+        emulator.paused = true;
+        emulator.step_frame(None);
+        assert_eq!(emulator.internal_frame_count, initial_frames, "Should not advance when paused");
+        
+        emulator.single_step = true;
+        emulator.step_frame(None);
+        assert_eq!(emulator.internal_frame_count, initial_frames + 1, "Should advance one frame when single_stepping");
+        assert!(!emulator.single_step, "single_step should be reset after use");
+        
+        emulator.step_frame(None);
+        assert_eq!(emulator.internal_frame_count, initial_frames + 1, "Should still be paused");
+        
+        emulator.paused = false;
+        emulator.step_frame(None);
+        assert_eq!(emulator.internal_frame_count, initial_frames + 2, "Should advance when resumed");
     }
 }
