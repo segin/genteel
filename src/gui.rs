@@ -247,6 +247,11 @@ impl Framework {
         egui::TopBottomPanel::top("menubar_container").show(&self.egui_ctx, |ui| {
             egui::menu::bar(ui, |ui| {
                 ui.menu_button("File", |ui| {
+                    if ui.button("Open...").clicked() {
+                        self.pick_rom();
+                        ui.close_menu();
+                    }
+                    ui.separator();
                     if ui.button("Quit").clicked() {
                         std::process::exit(0);
                     }
@@ -1164,6 +1169,24 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                             framework.scale_factor(scale_factor as f32);
                         }
                         WindowEvent::RedrawRequested => {
+                            // Check for pending ROM load
+                            let pending = {
+                                let mut lock = framework.pending_rom_path.lock().unwrap();
+                                lock.take()
+                            };
+                            if let Some(path) = pending {
+                                println!("Loading ROM: {:?}", path);
+                                // Security: Whitelist the directory containing the ROM
+                                if let Ok(canonical) = path.canonicalize() {
+                                    if let Some(parent) = canonical.parent() {
+                                        let _ = emulator.add_allowed_path(parent);
+                                    }
+                                }
+                                if let Err(e) = emulator.load_rom(path.to_str().unwrap_or("")) {
+                                    eprintln!("Failed to load ROM: {}", e);
+                                }
+                            }
+
                             // Sync settings from GUI
                             emulator.input_mapping = framework.gui_state.input_mapping;
                             let force_red = framework.gui_state.force_red;
