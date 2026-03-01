@@ -27,8 +27,8 @@
 - [x] Task: Implement Audio Channel Waveforms (Real-time oscilloscope for each channel). aed997b
 - [x] Task: Conductor - User Manual Verification 'Phase 4: Audio & Memory Debugging' (Protocol in workflow.md) fbd4288
 
-## Phase 5: System Status & Integration
+## Phase 5: System Status & Integration [checkpoint: a4efdca]
 - [x] Task: Implement Controller Viewer (Input state and 3/6-button mode status). 2f84a25
 - [x] Task: Implement Dummy Expansion Status Window (Sega CD/32X placeholders). f58ec7a
 - [x] Task: Verify GDB Synchronization (UI updates when GDB pauses execution). a939305
-- [ ] Task: Conductor - User Manual Verification 'Phase 5: System Status & Integration' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 5: System Status & Integration' (Protocol in workflow.md) a4efdca
