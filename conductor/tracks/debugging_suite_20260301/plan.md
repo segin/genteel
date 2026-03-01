@@ -8,7 +8,7 @@
 
 ## Phase 2: CPU & Execution Debugging
 - [x] Task: Implement Execution Control UI (Pause, Resume, Single Step). aad1c70
-- [ ] Task: Implement M68k Status Window (Registers, PC, SR, Flags).
+- [x] Task: Implement M68k Status Window (Registers, PC, SR, Flags). c36a695
 - [ ] Task: Implement Z80 Status Window (Registers, Flags, MEMPTR).
 - [ ] Task: Implement Disassembly Viewer (Instruction stream around current PC).
 - [ ] Task: Conductor - User Manual Verification 'Phase 2: CPU & Execution Debugging' (Protocol in workflow.md)
