@@ -30,6 +30,7 @@ use frontend::InputMapping;
 use input::{InputManager, InputScript};
 use memory::bus::Bus;
 use memory::{SharedBus, Z80Bus};
+use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::rc::Rc;
 use z80::Z80;
@@ -45,13 +46,40 @@ struct CpuBatchResult {
     cycles: u32,
     z80_change: Option<Z80Change>,
 }
+
+mod shared_bus_serde {
+    use super::*;
+    use serde::{Deserializer, Serializer};
+
+    pub fn serialize<S>(bus: &Rc<RefCell<Bus>>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use crate::memory::SharedBus;
+        SharedBus::new(bus.clone()).serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Rc<RefCell<Bus>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        use crate::memory::SharedBus;
+        let shared = SharedBus::deserialize(deserializer)?;
+        Ok(shared.bus)
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+
 pub struct Emulator {
     pub cpu: Cpu,
     pub z80: Z80<Z80Bus, Z80Bus>,
     pub apu: Apu,
+    #[serde(with = "shared_bus_serde")]
     pub bus: Rc<RefCell<Bus>>,
     pub input: InputManager,
     pub audio_buffer: Vec<i16>,
+    #[serde(skip)]
     pub wav_writer: Option<wav_writer::FileWavWriter>,
     pub internal_frame_count: u64,
     pub z80_last_bus_req: bool,
@@ -61,6 +89,7 @@ pub struct Emulator {
     pub debug: bool,
     pub paused: bool,
     pub single_step: bool,
+    #[serde(skip)]
     pub gdb: Option<GdbServer>,
     pub current_rom_path: Option<std::path::PathBuf>,
     pub allowed_paths: Vec<std::path::PathBuf>,
@@ -198,7 +227,7 @@ impl Emulator {
     pub fn load_state_from_path(&mut self, state_path: std::path::PathBuf) {
         if let Ok(json) = std::fs::read_to_string(&state_path) {
             match serde_json::from_str::<Self>(&json) {
-                Ok(mut new_emulator) => {
+                Ok(new_emulator) => {
                     // 1. Preserve critical session state
                     let gdb = self.gdb.take();
                     let allowed_paths = self.allowed_paths.clone();

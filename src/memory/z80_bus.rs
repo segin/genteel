@@ -9,9 +9,10 @@
 
 use super::bus::Bus;
 use super::{byte_utils, IoInterface, MemoryInterface, SharedBus};
+use serde::{Deserialize, Serialize};
 
 /// Z80 Bus adapter that routes memory accesses to Genesis components
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Z80Bus {
     /// Reference to the main Genesis bus.
     bus: SharedBus,
@@ -22,8 +23,17 @@ impl Z80Bus {
     pub fn new(bus: SharedBus) -> Self {
         Self { bus }
     }
+}
 
-    /// Set the bank register (called on write to $6000)
+impl Default for Z80Bus {
+    fn default() -> Self {
+        Self {
+            bus: SharedBus::default(),
+        }
+    }
+}
+
+impl Z80Bus {
     /// The value written becomes the upper bits of the 68k address
     pub fn set_bank(&mut self, value: u8) {
         self.bus.bus.borrow_mut().write_byte(0xA06000, value);

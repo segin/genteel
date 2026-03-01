@@ -18,6 +18,7 @@
 use crate::io::ControllerState;
 use std::borrow::Cow;
 use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
@@ -26,7 +27,7 @@ use std::path::Path;
 const MAX_SCRIPT_SIZE: u64 = 50 * 1024 * 1024;
 
 /// A single frame's input for both players
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FrameInput {
     pub p1: ControllerState,
     pub p2: ControllerState,
@@ -184,9 +185,10 @@ impl InputScript {
 }
 
 /// Input manager handling script playback and live input
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct InputManager {
     /// Currently loaded script
+    #[serde(skip)]
     script: Option<InputScript>,
     /// Current frame number
     current_frame: u64,
@@ -195,6 +197,7 @@ pub struct InputManager {
     /// Recording mode
     recording: bool,
     /// Recorded inputs
+    #[serde(skip)]
     recorded: Vec<(u64, FrameInput)>,
 }
 

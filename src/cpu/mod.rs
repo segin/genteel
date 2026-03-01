@@ -16,6 +16,7 @@ use instructions::{
 const CACHE_ROM_LIMIT: u32 = 0x400000; // 4MB ROM
 const CACHE_MASK: u32 = 0x1FFFFF; // 2M entries
 
+#[derive(Serialize, Deserialize)]
 pub struct Cpu {
     pub d: [u32; 8],
     pub a: [u32; 8],
@@ -28,6 +29,7 @@ pub struct Cpu {
     pub interrupt_pending_mask: u8,
     pub pending_exception: bool,
     pub cycles: u64,
+    #[serde(skip)]
     pub decode_cache: Box<[DecodeCacheEntry]>,
 }
 

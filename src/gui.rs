@@ -40,6 +40,8 @@ pub struct GuiState {
     #[serde(skip)]
     pub close_requested: bool,
     #[serde(skip)]
+    pub pick_rom_requested: bool,
+    #[serde(skip)]
     pub save_requested: Option<u8>,
     #[serde(skip)]
     pub load_requested: Option<u8>,
@@ -60,6 +62,7 @@ impl GuiState {
             show_about: false,
             reset_requested: false,
             close_requested: false,
+            pick_rom_requested: false,
             save_requested: None,
             load_requested: None,
         };
@@ -265,7 +268,7 @@ impl Framework {
             egui::menu::bar(ui, |ui| {
                 ui.menu_button("File", |ui| {
                     if ui.button("Open...").clicked() {
-                        self.pick_rom();
+                        self.gui_state.pick_rom_requested = true;
                         ui.close_menu();
                     }
                     ui.menu_button("Open Recent", |ui| {
@@ -1085,6 +1088,23 @@ impl Framework {
             self.renderer.free_texture(&id);
         }
     }
+
+    pub fn handle_exit(&mut self, emulator: &mut Emulator, record_path: &Option<String>) {
+        if self.gui_state.auto_save_load {
+            if let Some(path) = &emulator.current_rom_path {
+                emulator.save_state_to_path(path.with_extension("auto"));
+            }
+        }
+        self.gui_state.save();
+        if let Some(path) = record_path {
+            let script: InputScript = emulator.input.stop_recording();
+            if let Err(e) = script.save(path) {
+                eprintln!("Failed to save recorded script: {}", e);
+            } else {
+                println!("Recorded script saved to: {}", path);
+            }
+        }
+    }
 }
 
 #[cfg(feature = "gui")]
@@ -1159,20 +1179,7 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                     match event {
                         WindowEvent::CloseRequested => {
                             println!("Using CloseRequested to exit");
-                            if framework.gui_state.auto_save_load {
-                                if let Some(path) = &emulator.current_rom_path {
-                                    emulator.save_state_to_path(path.with_extension("auto"));
-                                }
-                            }
-                            framework.gui_state.save();
-                            if let Some(path) = &record_path {
-                                let script: InputScript = emulator.input.stop_recording();
-                                if let Err(e) = script.save(path) {
-                                    eprintln!("Failed to save recorded script: {}", e);
-                                } else {
-                                    println!("Recorded script saved to: {}", path);
-                                }
-                            }
+                            framework.handle_exit(&mut emulator, &record_path);
                             target.exit();
                         }
                         WindowEvent::KeyboardInput {
@@ -1188,20 +1195,7 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                             if let PhysicalKey::Code(keycode) = key_event.physical_key {
                                 if keycode == KeyCode::Escape && pressed {
                                     println!("Escape pressed, exiting");
-                                    if framework.gui_state.auto_save_load {
-                                        if let Some(path) = &emulator.current_rom_path {
-                                            emulator.save_state_to_path(path.with_extension("auto"));
-                                        }
-                                    }
-                                    framework.gui_state.save();
-                                    if let Some(path) = &record_path {
-                                        let script: InputScript = emulator.input.stop_recording();
-                                        if let Err(e) = script.save(path) {
-                                            eprintln!("Failed to save recorded script: {}", e);
-                                        } else {
-                                            println!("Recorded script saved to: {}", path);
-                                        }
-                                    }
+                                    framework.handle_exit(&mut emulator, &record_path);
                                     target.exit();
                                     return;
                                 }
@@ -1241,6 +1235,12 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                             framework.scale_factor(scale_factor as f32);
                         }
                         WindowEvent::RedrawRequested => {
+                            // Check for pick ROM request
+                            if framework.gui_state.pick_rom_requested {
+                                framework.pick_rom();
+                                framework.gui_state.pick_rom_requested = false;
+                            }
+
                             // Check for pending ROM load
                             let pending = {
                                 let mut lock = framework.pending_rom_path.lock().unwrap();
@@ -1281,7 +1281,13 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                             }
                             if framework.gui_state.close_requested {
                                 println!("Closing ROM");
+                                if framework.gui_state.auto_save_load {
+                                    if let Some(path) = &emulator.current_rom_path {
+                                        emulator.save_state_to_path(path.with_extension("auto"));
+                                    }
+                                }
                                 emulator.close_rom();
+                                framework.gui_state.save();
                                 framework.gui_state.close_requested = false;
                             }
                             if let Some(slot) = framework.gui_state.save_requested {

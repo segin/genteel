@@ -4,6 +4,7 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use serde::{Deserialize, Serialize};
 pub mod bus;
 pub mod byte_utils;
 pub mod tests_performance;
@@ -127,6 +128,35 @@ impl<T: IoInterface> IoInterface for Box<T> {
 #[derive(Clone, Debug)]
 pub struct SharedBus {
     pub bus: Rc<RefCell<Bus>>,
+}
+
+impl Serialize for SharedBus {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.bus.borrow().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for SharedBus {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let bus = Bus::deserialize(deserializer)?;
+        Ok(SharedBus {
+            bus: Rc::new(RefCell::new(bus)),
+        })
+    }
+}
+
+impl Default for SharedBus {
+    fn default() -> Self {
+        Self {
+            bus: Rc::new(RefCell::new(Bus::default())),
+        }
+    }
 }
 
 impl SharedBus {

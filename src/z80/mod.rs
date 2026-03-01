@@ -4,6 +4,7 @@
 //! It has access to 8KB of dedicated sound RAM and controls the YM2612 and SN76489.
 
 use crate::memory::{IoInterface, MemoryInterface};
+use serde::{Deserialize, Serialize};
 
 // #[cfg(test)]
 // pub mod test_utils;
@@ -23,7 +24,6 @@ pub mod flags {
 }
 
 use crate::debugger::Debuggable;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[macro_use]
@@ -98,6 +98,122 @@ pub struct Z80<M: MemoryInterface, I: IoInterface> {
 
     // Debug flag
     pub debug: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct Z80SaveState {
+    pub a: u8,
+    pub f: u8,
+    pub b: u8,
+    pub c: u8,
+    pub d: u8,
+    pub e: u8,
+    pub h: u8,
+    pub l: u8,
+    pub a_prime: u8,
+    pub f_prime: u8,
+    pub b_prime: u8,
+    pub c_prime: u8,
+    pub d_prime: u8,
+    pub e_prime: u8,
+    pub h_prime: u8,
+    pub l_prime: u8,
+    pub ix: u16,
+    pub iy: u16,
+    pub sp: u16,
+    pub pc: u16,
+    pub i: u8,
+    pub r: u8,
+    pub iff1: bool,
+    pub iff2: bool,
+    pub im: u8,
+    pub memptr: u16,
+    pub halted: bool,
+    pub pending_ei: bool,
+    pub cycles: u64,
+}
+
+impl<M: MemoryInterface, I: IoInterface> Serialize for Z80<M, I> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let state = Z80SaveState {
+            a: self.a,
+            f: self.f,
+            b: self.b,
+            c: self.c,
+            d: self.d,
+            e: self.e,
+            h: self.h,
+            l: self.l,
+            a_prime: self.a_prime,
+            f_prime: self.f_prime,
+            b_prime: self.b_prime,
+            c_prime: self.c_prime,
+            d_prime: self.d_prime,
+            e_prime: self.e_prime,
+            h_prime: self.h_prime,
+            l_prime: self.l_prime,
+            ix: self.ix,
+            iy: self.iy,
+            sp: self.sp,
+            pc: self.pc,
+            i: self.i,
+            r: self.r,
+            iff1: self.iff1,
+            iff2: self.iff2,
+            im: self.im,
+            memptr: self.memptr,
+            halted: self.halted,
+            pending_ei: self.pending_ei,
+            cycles: self.cycles,
+        };
+        state.serialize(serializer)
+    }
+}
+
+impl<'de, M: MemoryInterface + Default, I: IoInterface + Default> Deserialize<'de> for Z80<M, I> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let state = Z80SaveState::deserialize(deserializer)?;
+        Ok(Z80 {
+            a: state.a,
+            f: state.f,
+            b: state.b,
+            c: state.c,
+            d: state.d,
+            e: state.e,
+            h: state.h,
+            l: state.l,
+            a_prime: state.a_prime,
+            f_prime: state.f_prime,
+            b_prime: state.b_prime,
+            c_prime: state.c_prime,
+            d_prime: state.d_prime,
+            e_prime: state.e_prime,
+            h_prime: state.h_prime,
+            l_prime: state.l_prime,
+            ix: state.ix,
+            iy: state.iy,
+            sp: state.sp,
+            pc: state.pc,
+            i: state.i,
+            r: state.r,
+            iff1: state.iff1,
+            iff2: state.iff2,
+            im: state.im,
+            memptr: state.memptr,
+            halted: state.halted,
+            pending_ei: state.pending_ei,
+            cycles: state.cycles,
+            memory: M::default(),
+            io: I::default(),
+            debug: false,
+        })
+    }
 }
 
 impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
