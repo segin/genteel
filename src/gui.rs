@@ -145,6 +145,9 @@ pub struct DebugInfo {
     pub vsram: [u8; 80],
     pub wram: [u8; 0x10000],
     pub z80_ram: [u8; 0x2000],
+    pub ym2612_regs: [[u8; 256]; 2],
+    pub psg_tone: [crate::apu::psg::ToneChannel; 3],
+    pub psg_noise: crate::apu::psg::NoiseChannel,
 }
 
 #[cfg(feature = "gui")]
@@ -754,6 +757,87 @@ impl Framework {
                 self.gui_state.set_window_open("Memory Viewer", false);
             }
         }
+
+        if self.gui_state.is_window_open("Sound Chip Visualizer") {
+            let mut open = true;
+            egui::Window::new("Sound Chip Visualizer")
+                .open(&mut open)
+                .show(&self.egui_ctx, |ui| {
+                ui.collapsing("SN76489 PSG", |ui| {
+                    for i in 0..3 {
+                        ui.horizontal(|ui| {
+                            ui.label(format!("Tone {}:", i));
+                            ui.label(format!("Freq: {:03X}", debug_info.psg_tone[i].frequency));
+                            ui.label(format!("Vol: {:01X}", debug_info.psg_tone[i].volume));
+                            let vol_norm = 1.0 - (debug_info.psg_tone[i].volume as f32 / 15.0);
+                            ui.add(egui::ProgressBar::new(vol_norm).show_percentage());
+                        });
+                    }
+                    ui.horizontal(|ui| {
+                        ui.label("Noise:");
+                        ui.label(if debug_info.psg_noise.white_noise { "White" } else { "Periodic" });
+                        ui.label(format!("Rate: {}", debug_info.psg_noise.shift_rate));
+                        ui.label(format!("Vol: {:01X}", debug_info.psg_noise.volume));
+                        let vol_norm = 1.0 - (debug_info.psg_noise.volume as f32 / 15.0);
+                        ui.add(egui::ProgressBar::new(vol_norm).show_percentage());
+                    });
+                });
+                
+                ui.collapsing("YM2612 FM", |ui| {
+                    for ch in 0..6 {
+                        let bank = if ch < 3 { 0 } else { 1 };
+                        let ch_offset = ch % 3;
+                        
+                        ui.collapsing(format!("Channel {}", ch + 1), |ui| {
+                            let fb_algo = debug_info.ym2612_regs[bank][0xB0 + ch_offset];
+                            let feedback = (fb_algo >> 3) & 0x07;
+                            let algo = fb_algo & 0x07;
+                            ui.horizontal(|ui| {
+                                ui.label(format!("Algo: {}", algo));
+                                ui.label(format!("FB: {}", feedback));
+                                let pan = debug_info.ym2612_regs[bank][0xB4 + ch_offset];
+                                ui.label(format!("Pan: {}{}", if pan & 0x80 != 0 { "L" } else { "-" }, if pan & 0x40 != 0 { "R" } else { "-" }));
+                            });
+                            
+                            egui::Grid::new(format!("ch_{}_ops", ch)).show(ui, |ui| {
+                                ui.label("Op");
+                                ui.label("MULT");
+                                ui.label("TL");
+                                ui.label("AR");
+                                ui.label("DR");
+                                ui.label("SR");
+                                ui.label("RR");
+                                ui.label("SL");
+                                ui.end_row();
+                                
+                                for op in 0..4 {
+                                    let op_offset = ch_offset + (op * 4);
+                                    let det_mul = debug_info.ym2612_regs[bank][0x30 + op_offset];
+                                    let tl = debug_info.ym2612_regs[bank][0x40 + op_offset] & 0x7F;
+                                    let rs_ar = debug_info.ym2612_regs[bank][0x50 + op_offset];
+                                    let am_dr = debug_info.ym2612_regs[bank][0x60 + op_offset];
+                                    let sr = debug_info.ym2612_regs[bank][0x70 + op_offset] & 0x1F;
+                                    let sl_rr = debug_info.ym2612_regs[bank][0x80 + op_offset];
+                                    
+                                    ui.label(format!("{}", op + 1));
+                                    ui.label(format!("{}", det_mul & 0x0F));
+                                    ui.label(format!("{:02X}", tl));
+                                    ui.label(format!("{:02X}", rs_ar & 0x1F));
+                                    ui.label(format!("{:02X}", am_dr & 0x1F));
+                                    ui.label(format!("{:02X}", sr));
+                                    ui.label(format!("{:02X}", sl_rr & 0x0F));
+                                    ui.label(format!("{:02X}", sl_rr >> 4));
+                                    ui.end_row();
+                                }
+                            });
+                        });
+                    }
+                });
+            });
+            if !open {
+                self.gui_state.set_window_open("Sound Chip Visualizer", false);
+            }
+        }
     }
     pub fn render(
         &mut self,
@@ -1054,6 +1138,9 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                                     vsram: bus.vdp.vsram,
                                     wram,
                                     z80_ram,
+                                    ym2612_regs: bus.apu.fm.registers,
+                                    psg_tone: bus.apu.psg.tones.clone(),
+                                    psg_noise: bus.apu.psg.noise.clone(),
                                 };
                                 frontend::rgb565_to_rgba8(&bus.vdp.framebuffer, pixels.frame_mut());
                                 info
