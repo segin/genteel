@@ -138,7 +138,8 @@ pub struct DebugInfo {
     pub vdp_status: u16,
     pub display_enabled: bool,
     pub bg_color_index: u8,
-    pub cram0: u16,
+    pub cram: [u16; 64],
+    pub cram_raw: [u16; 64],
 }
 
 #[cfg(feature = "gui")]
@@ -257,7 +258,7 @@ impl Framework {
                 ));
                 ui.label(format!("VDP Status: {:04X}", debug_info.vdp_status));
                 ui.label(format!("BG Color Index: {}", debug_info.bg_color_index));
-                ui.label(format!("CRAM[0] (RGB565): {:04X}", debug_info.cram0));
+                ui.label(format!("CRAM[0] (RGB565): {:04X}", debug_info.cram[0]));
                 if ui.checkbox(&mut self.gui_state.force_red, "Force Red BG (Debug)").changed() {
                     self.gui_state.save();
                 }
@@ -436,6 +437,36 @@ impl Framework {
             });
             if !open {
                 self.gui_state.set_window_open("Disassembly", false);
+            }
+        }
+
+        if self.gui_state.is_window_open("Palette Viewer") {
+            let mut open = true;
+            egui::Window::new("Palette Viewer")
+                .open(&mut open)
+                .show(&self.egui_ctx, |ui| {
+                for palette in 0..4 {
+                    ui.horizontal(|ui| {
+                        ui.label(format!("Pal {}:", palette));
+                        for i in 0..16 {
+                            let idx = palette * 16 + i;
+                            let color565 = debug_info.cram[idx];
+                            let r = (((color565 >> 11) & 0x1F) << 3) as u8;
+                            let g = (((color565 >> 5) & 0x3F) << 2) as u8;
+                            let b = ((color565 & 0x1F) << 3) as u8;
+                            let color = egui::Color32::from_rgb(r, g, b);
+                            
+                            let (rect, _response) = ui.allocate_at_least(egui::vec2(16.0, 16.0), egui::Sense::hover());
+                            ui.painter().rect_filled(rect, 0.0, color);
+                            if _response.hovered() {
+                                _response.on_hover_text(format!("Index: {}\nRaw: {:04X}\nRGB565: {:04X}", idx, debug_info.cram_raw[idx], color565));
+                            }
+                        }
+                    });
+                }
+            });
+            if !open {
+                self.gui_state.set_window_open("Palette Viewer", false);
             }
         }
     }
@@ -688,6 +719,14 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                                     disasm
                                 };
 
+                                let mut cram_raw = [0u16; 64];
+                                for i in 0..64 {
+                                    cram_raw[i] = u16::from_be_bytes([
+                                        bus.vdp.cram[i * 2],
+                                        bus.vdp.cram[i * 2 + 1]
+                                    ]);
+                                }
+
                                 let info = DebugInfo {
                                     m68k_pc: emulator.cpu.pc,
                                     m68k_d: emulator.cpu.d,
@@ -718,7 +757,8 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                                     vdp_status: bus.vdp.read_status(),
                                     display_enabled: bus.vdp.display_enabled(),
                                     bg_color_index: bus.vdp.registers[7],
-                                    cram0: bus.vdp.cram_cache[0],
+                                    cram: bus.vdp.cram_cache,
+                                    cram_raw,
                                 };
                                 frontend::rgb565_to_rgba8(&bus.vdp.framebuffer, pixels.frame_mut());
                                 info
