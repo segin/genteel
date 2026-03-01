@@ -655,6 +655,64 @@ impl Framework {
                 self.gui_state.set_window_open("Scroll Plane Viewer", false);
             }
         }
+
+        if self.gui_state.is_window_open("VDP Memory Hex") {
+            let mut open = true;
+            egui::Window::new("VDP Memory Hex")
+                .open(&mut open)
+                .show(&self.egui_ctx, |ui| {
+                ui.collapsing("VRAM", |ui| {
+                    egui::ScrollArea::vertical().id_source("vram_hex").show_rows(ui, ui.text_style_height(&egui::TextStyle::Monospace), 0x10000 / 16, |ui, row_range| {
+                        egui::Grid::new("vram_grid").show(ui, |ui| {
+                            for row in row_range {
+                                let addr = row * 16;
+                                ui.label(egui::RichText::new(format!("{:04X}:", addr)).monospace());
+                                for i in 0..16 {
+                                    ui.label(egui::RichText::new(format!("{:02X}", debug_info.vram[addr + i])).monospace());
+                                }
+                                ui.end_row();
+                            }
+                        });
+                    });
+                });
+                ui.collapsing("CRAM", |ui| {
+                    egui::Grid::new("cram_grid").show(ui, |ui| {
+                        for row in 0..4 {
+                            let addr = row * 16;
+                            ui.label(egui::RichText::new(format!("{:02X}:", addr)).monospace());
+                            for i in 0..16 {
+                                let val = if (addr + i) % 2 == 0 {
+                                    debug_info.cram_raw[(addr + i) / 2] >> 8
+                                } else {
+                                    debug_info.cram_raw[(addr + i) / 2] & 0xFF
+                                } as u8;
+                                ui.label(egui::RichText::new(format!("{:02X}", val)).monospace());
+                            }
+                            ui.end_row();
+                        }
+                    });
+                });
+                ui.collapsing("VSRAM", |ui| {
+                    egui::Grid::new("vsram_grid").show(ui, |ui| {
+                        for row in 0..5 {
+                            let addr = row * 16;
+                            ui.label(egui::RichText::new(format!("{:02X}:", addr)).monospace());
+                            for i in 0..16 {
+                                if addr + i < 80 {
+                                    ui.label(egui::RichText::new(format!("{:02X}", debug_info.vsram[addr + i])).monospace());
+                                } else {
+                                    ui.label("  ");
+                                }
+                            }
+                            ui.end_row();
+                        }
+                    });
+                });
+            });
+            if !open {
+                self.gui_state.set_window_open("VDP Memory Hex", false);
+            }
+        }
     }
     pub fn render(
         &mut self,
