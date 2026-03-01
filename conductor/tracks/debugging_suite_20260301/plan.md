@@ -13,13 +13,13 @@
 - [x] Task: Implement Disassembly Viewer (Instruction stream around current PC). 221fa7f
 - [x] Task: Conductor - User Manual Verification 'Phase 2: CPU & Execution Debugging' (Protocol in workflow.md) 63b4c8a
 
-## Phase 3: VDP Debugging Tools
+## Phase 3: VDP Debugging Tools [checkpoint: 722b975]
 - [x] Task: Implement Palette Viewer (CRAM visualization with hex values). ba62ef8
 - [x] Task: Implement Tile Viewer (VRAM pattern visualization). 43fff65
 - [x] Task: Implement Sprite Viewer (Sprite attribute table and visual representation). 4b940f5
 - [x] Task: Implement Scroll Plane Viewer (Visualization of Plane A, Plane B, and Window). 4b55486
 - [x] Task: Implement VDP Memory Hex View (Raw editors for VRAM, CRAM, VSRAM). 41c4d6a
-- [ ] Task: Conductor - User Manual Verification 'Phase 3: VDP Debugging Tools' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 3: VDP Debugging Tools' (Protocol in workflow.md) 722b975
 
 ## Phase 4: Audio & Memory Debugging
 - [ ] Task: Implement Memory Viewer (Hex editor for WRAM, Z80 RAM, and mapped ROM).
