@@ -18,7 +18,7 @@
 - [x] Task: Implement Tile Viewer (VRAM pattern visualization). 43fff65
 - [x] Task: Implement Sprite Viewer (Sprite attribute table and visual representation). 4b940f5
 - [x] Task: Implement Scroll Plane Viewer (Visualization of Plane A, Plane B, and Window). 4b55486
-- [ ] Task: Implement VDP Memory Hex View (Raw editors for VRAM, CRAM, VSRAM).
+- [x] Task: Implement VDP Memory Hex View (Raw editors for VRAM, CRAM, VSRAM). 41c4d6a
 - [ ] Task: Conductor - User Manual Verification 'Phase 3: VDP Debugging Tools' (Protocol in workflow.md)
 
 ## Phase 4: Audio & Memory Debugging
