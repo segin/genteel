@@ -20,5 +20,5 @@
 
 ## Phase 4: State Browser and UI Refinement
 - [x] Task: Implement "State Browser" internal window to view, manage, and delete save states. ee25ea5
-- [ ] Task: Finalize File menu organization, add dividers, and implement standard keyboard shortcuts (e.g., Ctrl+O, Ctrl+R).
+- [x] Task: Finalize File menu organization, add dividers, and implement standard keyboard shortcuts (e.g., Ctrl+O, Ctrl+R). 8dd0cdb
 - [ ] Task: Conductor - User Manual Verification 'Phase 4: State Browser and UI Refinement' (Protocol in workflow.md)
