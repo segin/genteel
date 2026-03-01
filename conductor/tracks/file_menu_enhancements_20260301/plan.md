@@ -2,7 +2,7 @@
 
 ## Phase 1: CI/CD Pipeline
 - [x] Task: Create GitHub Actions workflow for multi-platform release builds (Linux/Windows). 81041c1
-- [ ] Task: Verify that the workflow produces downloadable and runnable artifacts for both platforms.
+- [x] Task: Verify that the workflow produces downloadable and runnable artifacts for both platforms. 56227a0
 - [ ] Task: Conductor - User Manual Verification 'Phase 1: CI/CD Pipeline' (Protocol in workflow.md)
 
 ## Phase 2: Native File Dialogs and Basic Menu
