@@ -30,6 +30,7 @@ pub struct GuiState {
     pub force_red: bool,
     pub paused: bool,
     pub recent_roms: Vec<PathBuf>,
+    pub auto_save_load: bool,
     #[serde(skip)]
     pub single_step: bool,
     #[serde(skip)]
@@ -54,6 +55,7 @@ impl GuiState {
             force_red: false,
             paused: false,
             recent_roms: Vec::new(),
+            auto_save_load: false,
             single_step: false,
             show_about: false,
             reset_requested: false,
@@ -409,6 +411,11 @@ impl Framework {
                     InputMapping::Ergonomic,
                     "Ergonomic",
                 ).changed() {
+                    self.gui_state.save();
+                }
+                ui.separator();
+                ui.heading("System");
+                if ui.checkbox(&mut self.gui_state.auto_save_load, "Auto-Save/Load State").changed() {
                     self.gui_state.save();
                 }
             });
@@ -1152,6 +1159,11 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                     match event {
                         WindowEvent::CloseRequested => {
                             println!("Using CloseRequested to exit");
+                            if framework.gui_state.auto_save_load {
+                                if let Some(path) = &emulator.current_rom_path {
+                                    emulator.save_state_to_path(path.with_extension("auto"));
+                                }
+                            }
                             framework.gui_state.save();
                             if let Some(path) = &record_path {
                                 let script: InputScript = emulator.input.stop_recording();
@@ -1176,6 +1188,11 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                             if let PhysicalKey::Code(keycode) = key_event.physical_key {
                                 if keycode == KeyCode::Escape && pressed {
                                     println!("Escape pressed, exiting");
+                                    if framework.gui_state.auto_save_load {
+                                        if let Some(path) = &emulator.current_rom_path {
+                                            emulator.save_state_to_path(path.with_extension("auto"));
+                                        }
+                                    }
                                     framework.gui_state.save();
                                     if let Some(path) = &record_path {
                                         let script: InputScript = emulator.input.stop_recording();
@@ -1247,6 +1264,14 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                                     recent.truncate(10);
                                     framework.gui_state.recent_roms = recent;
                                     framework.gui_state.save();
+
+                                    // Auto-Load if enabled
+                                    if framework.gui_state.auto_save_load {
+                                        let auto_path = path.with_extension("auto");
+                                        if auto_path.exists() {
+                                            emulator.load_state_from_path(auto_path);
+                                        }
+                                    }
                                 }
                             }
                             if framework.gui_state.reset_requested {
