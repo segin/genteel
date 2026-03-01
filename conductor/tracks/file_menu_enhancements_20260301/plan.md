@@ -5,12 +5,12 @@
 - [x] Task: Verify that the workflow produces downloadable and runnable artifacts for both platforms. 56227a0
 - [x] Task: Conductor - User Manual Verification 'Phase 1: CI/CD Pipeline' (Protocol in workflow.md) dda3a76
 
-## Phase 2: Native File Dialogs and Basic Menu
+## Phase 2: Native File Dialogs and Basic Menu [checkpoint: 8ef4a7a]
 - [x] Task: Add `rfd` dependency and implement a non-blocking wrapper for native file selection. b512382
 - [x] Task: Implement "Open ROM" action in the File menu using the native dialog. 52b597e
 - [x] Task: Implement "Reset ROM" and "Close ROM" logic, ensuring all volatile state (VRAM, RAM, registers) is cleared. a2e1253
 - [x] Task: Implement "Open Recent" tracking and persistence in `gui_config.json`. ac782c3
-- [ ] Task: Conductor - User Manual Verification 'Phase 2: Native File Dialogs and Basic Menu' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 2: Native File Dialogs and Basic Menu' (Protocol in workflow.md) 8ef4a7a
 
 ## Phase 3: SRAM and State Management
 - [ ] Task: Implement SRAM persistence logic (loading/saving .srm files automatically based on ROM filename).
