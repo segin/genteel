@@ -23,7 +23,7 @@
 
 ## Phase 4: Audio & Memory Debugging
 - [x] Task: Implement Memory Viewer (Hex editor for WRAM, Z80 RAM, and mapped ROM). d1a363b
-- [ ] Task: Implement Sound Chip Visualizer (YM2612 FM parameters and PSG channel states).
+- [x] Task: Implement Sound Chip Visualizer (YM2612 FM parameters and PSG channel states). b47e713
 - [ ] Task: Implement Audio Channel Waveforms (Real-time oscilloscope for each channel).
 - [ ] Task: Conductor - User Manual Verification 'Phase 4: Audio & Memory Debugging' (Protocol in workflow.md)
 
