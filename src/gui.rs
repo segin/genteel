@@ -38,6 +38,10 @@ pub struct GuiState {
     pub reset_requested: bool,
     #[serde(skip)]
     pub close_requested: bool,
+    #[serde(skip)]
+    pub save_requested: Option<u8>,
+    #[serde(skip)]
+    pub load_requested: Option<u8>,
 }
 
 #[cfg(feature = "gui")]
@@ -54,6 +58,8 @@ impl GuiState {
             show_about: false,
             reset_requested: false,
             close_requested: false,
+            save_requested: None,
+            load_requested: None,
         };
         state.register_default_windows();
         state
@@ -283,6 +289,23 @@ impl Framework {
                         self.gui_state.close_requested = true;
                         ui.close_menu();
                     }
+                    ui.separator();
+                    ui.menu_button("Save State", |ui| {
+                        for slot in 0..10 {
+                            if ui.add_enabled(debug_info.has_rom, egui::Button::new(format!("Slot {}", slot))).clicked() {
+                                self.gui_state.save_requested = Some(slot);
+                                ui.close_menu();
+                            }
+                        }
+                    });
+                    ui.menu_button("Load State", |ui| {
+                        for slot in 0..10 {
+                            if ui.add_enabled(debug_info.has_rom, egui::Button::new(format!("Slot {}", slot))).clicked() {
+                                self.gui_state.load_requested = Some(slot);
+                                ui.close_menu();
+                            }
+                        }
+                    });
                     ui.separator();
                     if ui.button("Quit").clicked() {
                         std::process::exit(0);
@@ -1235,6 +1258,14 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                                 println!("Closing ROM");
                                 emulator.close_rom();
                                 framework.gui_state.close_requested = false;
+                            }
+                            if let Some(slot) = framework.gui_state.save_requested {
+                                emulator.save_state(slot);
+                                framework.gui_state.save_requested = None;
+                            }
+                            if let Some(slot) = framework.gui_state.load_requested {
+                                emulator.load_state(slot);
+                                framework.gui_state.load_requested = None;
                             }
 
                             // Sync settings from GUI

@@ -173,6 +173,53 @@ impl Emulator {
         }
     }
 
+    pub fn save_state(&self, slot: u8) {
+        let Some(path) = &self.current_rom_path else { return };
+        let state_path = path.with_extension(format!("s{}", slot));
+        if let Ok(json) = serde_json::to_string_pretty(self) {
+            if let Err(e) = std::fs::write(&state_path, json) {
+                eprintln!("Failed to save state to {:?}: {}", state_path, e);
+            } else {
+                println!("Saved state to {:?}", state_path);
+            }
+        }
+    }
+
+    pub fn load_state(&mut self, slot: u8) {
+        let Some(path) = &self.current_rom_path else { return };
+        let state_path = path.with_extension(format!("s{}", slot));
+        if let Ok(json) = std::fs::read_to_string(&state_path) {
+            match serde_json::from_str::<Self>(&json) {
+                Ok(mut new_emulator) => {
+                    // 1. Preserve critical session state
+                    let gdb = self.gdb.take();
+                    let allowed_paths = self.allowed_paths.clone();
+                    let current_rom_path = self.current_rom_path.clone();
+                    
+                    // 2. Load ROM data into the new emulator's bus
+                    // The ROM is not serialized, so we must reload it from disk
+                    if let Some(ref rom_path) = current_rom_path {
+                        if let Ok(data) = std::fs::read(rom_path) {
+                            let mut bus = new_emulator.bus.borrow_mut();
+                            bus.load_rom(&data);
+                        }
+                    }
+                    
+                    // 3. Apply the new state
+                    *self = new_emulator;
+                    
+                    // 4. Restore critical session state
+                    self.gdb = gdb;
+                    self.allowed_paths = allowed_paths;
+                    self.current_rom_path = current_rom_path;
+                    
+                    println!("Loaded state from {:?}", state_path);
+                }
+                Err(e) => eprintln!("Failed to parse save state: {}", e),
+            }
+        }
+    }
+
     /// Add a path to the whitelist of allowed ROM directories.
     /// If no paths are added, `load_rom` will fail (secure by default).
     /// The path is canonicalized before addition.
