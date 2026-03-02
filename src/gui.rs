@@ -524,6 +524,15 @@ impl Framework {
                 if ui.checkbox(&mut self.gui_state.force_red, "Force Red BG (Debug)").changed() {
                     self.gui_state.save();
                 }
+                
+                #[cfg(feature = "gilrs")]
+                {
+                    ui.separator();
+                    ui.heading("Connected Gamepads");
+                    for (id, gamepad) in self.gilrs.gamepads() {
+                        ui.label(format!("{}: {}", id, gamepad.name()));
+                    }
+                }
             });
             if !open {
                 self.gui_state.set_window_open("Performance & Debug", false);
