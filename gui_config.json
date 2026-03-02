@@ -1,18 +1,33 @@
 {
   "windows": {
-    "Memory Viewer": {
+    "Audio Channel Waveforms": {
       "open": false
     },
-    "Performance & Debug": {
+    "Tile Viewer": {
+      "open": false
+    },
+    "Expansion Status": {
+      "open": false
+    },
+    "M68k Status": {
+      "open": false
+    },
+    "Scroll Plane Viewer": {
+      "open": false
+    },
+    "State Browser": {
       "open": false
     },
     "Palette Viewer": {
       "open": false
     },
-    "Sound Chip Visualizer": {
+    "Settings": {
       "open": false
     },
-    "Z80 Status": {
+    "Execution Control": {
+      "open": false
+    },
+    "Memory Viewer": {
       "open": false
     },
     "Disassembly": {
@@ -21,36 +36,26 @@
     "Sprite Viewer": {
       "open": false
     },
-    "VDP Memory Hex": {
-      "open": false
-    },
-    "Scroll Plane Viewer": {
-      "open": false
-    },
-    "Settings": {
-      "open": false
-    },
-    "Tile Viewer": {
+    "Sound Chip Visualizer": {
       "open": false
     },
     "Controller Viewer": {
       "open": false
     },
-    "M68k Status": {
+    "Performance & Debug": {
       "open": false
     },
-    "Expansion Status": {
+    "VDP Memory Hex": {
       "open": false
     },
-    "Audio Channel Waveforms": {
-      "open": false
-    },
-    "Execution Control": {
+    "Z80 Status": {
       "open": false
     }
   },
   "input_mapping": "Original",
   "integer_scaling": true,
   "force_red": false,
-  "paused": false
+  "paused": false,
+  "recent_roms": [],
+  "auto_save_load": false
 }
