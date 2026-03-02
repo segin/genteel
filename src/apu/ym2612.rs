@@ -200,11 +200,11 @@ impl FmOperator {
 
         /* Apply key scaling */
         let ks_shift = match key_scale {
-            0 => 4, // effectively disables
-            1 => 2,
-            2 => 1,
-            3 => 0,
-            _ => 4,
+            0 => 3, // KC/8
+            1 => 2, // KC/4
+            2 => 1, // KC/2
+            3 => 0, // KC/1
+            _ => 3,
         };
         let rks = key_code >> ks_shift;
         /* Rate = 2R + Rks, clamped to 63 */
@@ -400,66 +400,74 @@ impl FmChannel {
         let out1 = self.operators[0].compute_output(fb_mod, tl[0]);
 
         /* Now evaluate based on algorithm */
-        let channel_out = match self.algorithm {
+        let (out2, out3, out4) = match self.algorithm {
             0 => {
                 /* M1→M2→M3→C4 */
                 let out3 = self.operators[2].compute_output(prev[1] >> 1, tl[2]); // delayed: op2→op3
-                let _out2 = self.operators[1].compute_output(out1 >> 1, tl[1]);
+                let out2 = self.operators[1].compute_output(out1 >> 1, tl[1]);
                 let out4 = self.operators[3].compute_output(out3 >> 1, tl[3]);
-                out4
+                (out2, out3, out4)
             }
             1 => {
                 /* (M1+M2)→M3→C4 */
                 let out3 = self.operators[2].compute_output(
                     (prev[0] as i32 + prev[1] as i32) as i16 >> 1, tl[2]); // delayed: both
-                let _out2 = self.operators[1].compute_output(0, tl[1]);
+                let out2 = self.operators[1].compute_output(0, tl[1]);
                 let out4 = self.operators[3].compute_output(out3 >> 1, tl[3]);
-                out4
+                (out2, out3, out4)
             }
             2 => {
                 /* M1+(M2→M3)→C4 */
                 let out3 = self.operators[2].compute_output(prev[1] >> 1, tl[2]); // delayed
-                let _out2 = self.operators[1].compute_output(0, tl[1]);
+                let out2 = self.operators[1].compute_output(0, tl[1]);
                 let out4 = self.operators[3].compute_output(
                     (out1 as i32 + out3 as i32) as i16 >> 1, tl[3]);
-                out4
+                (out2, out3, out4)
             }
             3 => {
                 /* (M1→M2)+M3→C4 */
                 let out3 = self.operators[2].compute_output(0, tl[2]);
-                let _out2 = self.operators[1].compute_output(out1 >> 1, tl[1]);
+                let out2 = self.operators[1].compute_output(out1 >> 1, tl[1]);
                 let out4 = self.operators[3].compute_output(
                     (prev[1] as i32 + out3 as i32) as i16 >> 1, tl[3]); // delayed: op2→op4
-                out4
+                (out2, out3, out4)
             }
             4 => {
                 /* (M1→C2)+(M3→C4) */
                 let out3 = self.operators[2].compute_output(0, tl[2]);
                 let out2 = self.operators[1].compute_output(out1 >> 1, tl[1]);
                 let out4 = self.operators[3].compute_output(out3 >> 1, tl[3]);
-                clamp_14bit(out2 as i32 + out4 as i32)
+                (out2, out3, out4)
             }
             5 => {
                 /* M1→(C2+C3+C4) */
                 let out3 = self.operators[2].compute_output(prev[0] >> 1, tl[2]); // delayed
                 let out2 = self.operators[1].compute_output(out1 >> 1, tl[1]);
                 let out4 = self.operators[3].compute_output(out1 >> 1, tl[3]);
-                clamp_14bit(out2 as i32 + out3 as i32 + out4 as i32)
+                (out2, out3, out4)
             }
             6 => {
                 /* M1→C2+C3+C4 */
                 let out3 = self.operators[2].compute_output(0, tl[2]);
                 let out2 = self.operators[1].compute_output(out1 >> 1, tl[1]);
                 let out4 = self.operators[3].compute_output(0, tl[3]);
-                clamp_14bit(out2 as i32 + out3 as i32 + out4 as i32)
+                (out2, out3, out4)
             }
             7 => {
                 /* C1+C2+C3+C4 */
                 let out3 = self.operators[2].compute_output(0, tl[2]);
                 let out2 = self.operators[1].compute_output(0, tl[1]);
                 let out4 = self.operators[3].compute_output(0, tl[3]);
-                clamp_14bit(out1 as i32 + out2 as i32 + out3 as i32 + out4 as i32)
+                (out2, out3, out4)
             }
+            _ => (0, 0, 0),
+        };
+
+        let channel_out = match self.algorithm {
+            0 | 1 | 2 | 3 => out4,
+            4 => clamp_14bit(out2 as i32 + out4 as i32),
+            5 | 6 => clamp_14bit(out2 as i32 + out3 as i32 + out4 as i32),
+            7 => clamp_14bit(out1 as i32 + out2 as i32 + out3 as i32 + out4 as i32),
             _ => 0,
         };
 
@@ -467,16 +475,9 @@ impl FmChannel {
         self.operators[0].last_output2 = self.operators[0].last_output;
         self.operators[0].last_output = out1;
         /* Store all operator outputs for delayed modulation next sample */
-        /* We already grabbed prev at the top; now update last_output for ops 1-3 */
-        /* (op0 was done above) */
-        /* For delayed edges we need these for next cycle */
-        self.operators[1].last_output = self.operators[1].compute_output(
-            /* recompute is wasteful; instead just store the outputs from algorithm eval */
-            0, 0); // placeholder — we handle this by storing in algorithm eval
-
-        /* Actually, let's simplify: just update prev outputs based on what we computed */
-        /* The algorithm block above already ran compute_output which doesn't mutate last_output */
-        /* So we need to manually store the outputs */
+        self.operators[1].last_output = out2;
+        self.operators[2].last_output = out3;
+        self.operators[3].last_output = out4;
 
         channel_out
     }
