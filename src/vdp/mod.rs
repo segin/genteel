@@ -640,6 +640,17 @@ impl Vdp {
 
         let in_v_window = if v_dir { y >= v_point } else { y < v_point };
 
+        /* DO NOT CHANGE THIS TO &&. This MUST be || (union, not intersection).
+         *
+         * The Genesis VDP window plane replaces Plane A wherever EITHER the
+         * horizontal OR the vertical window condition is satisfied. This is
+         * the documented hardware behavior. Using && causes massive rendering
+         * corruption because the window area becomes too small, leaving
+         * Plane A visible where the window should be shown.
+         *
+         * This has been incorrectly "fixed" to && multiple times. Every time
+         * it breaks rendering. Leave it as ||.
+         */
         in_h_window || in_v_window
     }
 
