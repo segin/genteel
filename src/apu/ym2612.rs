@@ -284,16 +284,19 @@ impl FmOperator {
         /* Result is 5.8 fixed-point (13-bit) */
         let combined_atten = log_sine as u32 + ((total_atten as u32) << 2);
 
-        /* If combined attenuation >= 13.0 in 5.8 fixed (0x1A00), output is 0 */
-        if combined_atten >= (1 << 13) { return 0; }
+        /* If combined attenuation >= 14.0 in 5.8 fixed (0x1E00), output is 0 */
+        if combined_atten >= 0x1E00 { return 0; }
 
-        /* Base-2 exponentiation: (table[fract] << 2) >> int_part */
+        /* Base-2 exponentiation: (table[fract] << 3) >> int_part */
         let exp_idx = (combined_atten & 0xFF) as usize;
         let exp_shift = (combined_atten >> 8) as u32;
-        if exp_shift >= 13 { return 0; }
-        let linear = (EXP_TABLE[exp_idx] << 2) >> exp_shift;
+        if exp_shift >= 14 { return 0; }
+        
+        /* The table stores (2^(1-x) * 1024) | 0x400, which is an 11-bit value [1024, 2047] */
+        /* Shift << 3 to get 14-bit precision [8192, 16383] */
+        let linear = ((EXP_TABLE[exp_idx] as u32) << 3) >> exp_shift;
 
-        /* Apply sign → signed 14-bit output */
+        /* Apply sign → signed 15-bit output (-16384 to 16383) */
         if sign != 0 {
             -(linear as i16)
         } else {
@@ -1183,45 +1186,36 @@ mod tests {
         assert_eq!(op.env_level, 0, "Attenuation 1 should reach 0 via arithmetic right shift");
     }
 
-    /// Bug 3: Exp table output must use (table[fract] << 2) >> int_part for 14-bit output
+    /// Bug 3: Exp table output must use (table[fract] << 3) >> int_part for 14-bit output
     #[test]
-    fn test_bug3_exp_table_shift2_output() {
+    fn test_bug3_exp_table_shift3_output() {
         let mut op = FmOperator::new();
         op.env_level = 0; // no envelope attenuation
         op.env_phase = AdsrPhase::Attack;
         op.key_on = true;
         op.phase_counter = 256 << 10; // phase = 256 (quarter cycle, peak of sine)
-        /* At zero attenuation, output should be close to max 14-bit value (~8191) */
+        /* At zero attenuation, output should be close to max 14-bit precision value (~16383) */
         let output = op.compute_output(0, 0);
-        /* With << 2 the max is ~4*1024 = 4096; without << 2 max is ~1024 */
-        assert!(output.abs() > 2000, "Output should be > 2000 with << 2 scaling, got {}", output);
+        /* With << 3 the max is ~8*2048 = 16384; without << 3 max is ~2048 */
+        assert!(output.abs() > 8000, "Output should be > 8000 with << 3 scaling, got {}", output);
     }
 
-    /// Bug 4: Mute threshold: combined attenuation >= 8192 (13-bit, 5.8 fixed) should mute
+    /// Bug 4: Mute threshold: combined attenuation >= 14.0 (5.8 fixed) should mute
     #[test]
-    fn test_bug4_mute_threshold_13bit() {
+    fn test_bug4_mute_threshold_14bit() {
         let mut op = FmOperator::new();
-        op.env_level = 0x3FF; // max envelope (will be shifted << 2 = 0xFFC in 4.8)
-        op.env_phase = AdsrPhase::Release;
-        op.key_on = false;
         op.phase_counter = 256 << 10;
-        /* With TL=0 and env=0x3FF, combined = 0 + (0x3FF << 2) = 0xFFC (< 0x2000) */
-        /* This should NOT be muted with the 13-bit threshold but WOULD be with 12-bit */
-        let _output = op.compute_output(0, 0);
-        /* At maximum envelope but 0 TL, the combined attenuation is below 13-bit threshold */
-        /* so we should still get a tiny non-zero output */
-        /* Actually env=0x3FF gives combined_atten = 0xFFC which is 0x1FFC... still < 8192 */
-        /* but it's heavily attenuated so output may be 0 naturally */
-        /* Better test: with TL=127 (max), total_atten = (0 + 127*8) = 1016 = 0x3F8 */
+        /* total_atten = 0x3F8 -> combined = 0x3F8 << 2 = 0xFE0 + log_sine */
+        /* combined >= 0xFE0 (which is > 14.0 in 5.8 fixed point) */
+        
         op.env_level = 0;
         let output_loud = op.compute_output(0, 0);
         assert!(output_loud.abs() > 0, "Zero attenuation should produce output");
 
-        /* TL=127: total_atten = (0 + 127<<3) = 1016, combined = 1016*4 = 4064 < 8192 */
+        /* TL=127: total_atten = (0 + 127<<3) = 1016 = 0x3F8 */
+        /* combined_atten = 0x3F8 << 2 = 0xFE0. Integer part = 0xFE0 >> 8 = 15. 15 >= 14 -> Mute. */
         let output_quiet = op.compute_output(0, 127);
-        /* Should still produce some output since 4064 < 8192 */
-        /* The old 12-bit threshold (4096) would wrongly mute this */
-        assert!(output_quiet.abs() >= 0, "TL=127 should not crash"); // mainly a bounds check
+        assert_eq!(output_quiet, 0, "High attenuation should mute with 14-bit threshold, got {}", output_quiet);
     }
 
     /// Bug 5: Rate 0 (R=0) must skip envelope updates entirely, regardless of table contents

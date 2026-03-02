@@ -140,22 +140,9 @@ impl Emulator {
 
     /// Hard reset of the emulator (clears RAM, VRAM, resets CPUs, keeps ROM)
     pub fn hard_reset(&mut self) {
-        let (rom, sample_rate) = {
-            let bus = self.bus.borrow();
-            (bus.rom.clone(), bus.sample_rate)
-        };
-        
-        let mut new_bus = Bus::new();
-        new_bus.load_rom(&rom);
-        new_bus.sample_rate = sample_rate;
-        
-        {
-            let mut bus_lock = self.bus.borrow_mut();
-            *bus_lock = new_bus;
-        }
-        
         {
             let mut bus = self.bus.borrow_mut();
+            bus.reset();
             self.cpu.reset(&mut *bus);
         }
         self.z80.reset();

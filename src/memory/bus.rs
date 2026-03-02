@@ -165,6 +165,32 @@ impl Bus {
         self.rom.len()
     }
 
+    /// Reset volatile state while keeping ROM and sample_rate
+    pub fn reset(&mut self) {
+        self.work_ram.fill(0);
+        self.z80_ram.fill(0);
+        self.sram.fill(0);
+        self.sram_enabled = false;
+        
+        self.vdp.reset();
+        self.vdp.vram.fill(0);
+        self.vdp.cram.fill(0);
+        self.vdp.vsram.fill(0);
+        self.vdp.reconstruct_cram_cache();
+        
+        self.io.reset();
+        self.apu.reset();
+        
+        self.z80_bus_request = false;
+        self.z80_reset = true;
+        self.z80_bank_addr = 0;
+        self.z80_bank_bit = 0;
+        self.tmss_unlocked = false;
+        self.tmss_register = [0; 4];
+        self.audio_accumulator = 0.0;
+        self.audio_buffer.clear();
+    }
+
     /// Read a byte from the memory map
     pub fn read_byte(&mut self, address: u32) -> u8 {
         let addr = address & 0xFFFFFF; // 24-bit address bus
