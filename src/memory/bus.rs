@@ -23,6 +23,7 @@
 use super::byte_utils;
 use super::MemoryInterface;
 use crate::apu::Apu;
+use crate::audio;
 use crate::debugger::Debuggable;
 use crate::io::Io;
 use crate::vdp::{DmaOps, Vdp};
@@ -109,7 +110,7 @@ impl Bus {
             tmss_register: [0; 4],
             audio_accumulator: 0.0,
             audio_buffer: Vec::with_capacity(2048),
-            sample_rate: 44100,
+            sample_rate: audio::SAMPLE_RATE,
         }
     }
 

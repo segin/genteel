@@ -116,7 +116,7 @@ impl Emulator {
             apu: Apu::new(),
             bus,
             input: InputManager::new(),
-            audio_buffer: Vec::with_capacity(735 * 2), // Pre-allocate approx 1 frame
+            audio_buffer: Vec::with_capacity(crate::audio::samples_per_frame() * 2),
             wav_writer: None,
             internal_frame_count: 0,
             z80_last_bus_req: false,
@@ -140,13 +140,14 @@ impl Emulator {
 
     /// Hard reset of the emulator (clears RAM, VRAM, resets CPUs, keeps ROM)
     pub fn hard_reset(&mut self) {
-        let rom = {
+        let (rom, sample_rate) = {
             let bus = self.bus.borrow();
-            bus.rom.clone()
+            (bus.rom.clone(), bus.sample_rate)
         };
         
         let mut new_bus = Bus::new();
         new_bus.load_rom(&rom);
+        new_bus.sample_rate = sample_rate;
         
         {
             let mut bus_lock = self.bus.borrow_mut();
@@ -167,11 +168,13 @@ impl Emulator {
         
         let allowed_paths = self.allowed_paths.clone();
         let mapping = self.input_mapping;
+        let sample_rate = self.bus.borrow().sample_rate;
         
         *self = Self::new();
         
         self.allowed_paths = allowed_paths;
         self.input_mapping = mapping;
+        self.bus.borrow_mut().sample_rate = sample_rate;
     }
 
     pub fn load_sram(&mut self) {
@@ -244,6 +247,7 @@ impl Emulator {
                     let gdb = self.gdb.take();
                     let allowed_paths = self.allowed_paths.clone();
                     let current_rom_path = self.current_rom_path.clone();
+                    let sample_rate = self.bus.borrow().sample_rate;
                     
                     // 2. Load ROM data into the new emulator's bus
                     if let Some(ref rom_path) = current_rom_path {
@@ -260,6 +264,7 @@ impl Emulator {
                     self.gdb = gdb;
                     self.allowed_paths = allowed_paths;
                     self.current_rom_path = current_rom_path;
+                    self.bus.borrow_mut().sample_rate = sample_rate;
                     
                     println!("Loaded state from {:?}", state_path);
                 }
