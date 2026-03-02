@@ -384,11 +384,36 @@ impl Framework {
 
         if self.gui_state.show_about {
             egui::Window::new("About Genteel").open(&mut self.gui_state.show_about).show(&self.egui_ctx, |ui| {
-                ui.heading("Genteel");
-                ui.label(format!("Version: {}", genteel::VERSION));
+                ui.vertical_centered(|ui| {
+                    ui.heading("Genteel");
+                    ui.label(format!("Version: {}", genteel::VERSION));
+                });
                 ui.separator();
-                ui.label("An instrumentable Sega Mega Drive/Genesis emulator designed for automated testing by AI language models.");
-                ui.hyperlink_to("GitHub Repository", "https://github.com/segin/genteel");
+                
+                ui.label("An instrumentable Sega Mega Drive/Genesis emulator architected for the intersection of human and machine intelligence.");
+                ui.add_space(8.0);
+
+                ui.group(|ui| {
+                    ui.label(egui::RichText::new("🛠 Comprehensive Debugging").strong());
+                    ui.label("Integrated multi-window suite for real-time VDP, CPU, Memory, and Audio analysis with GDB support.");
+                });
+
+                ui.group(|ui| {
+                    ui.label(egui::RichText::new("🧪 CI/CD Instrumentation").strong());
+                    ui.label("Headless validation, deterministic execution, and massive automated test coverage for ROM verification.");
+                });
+
+                ui.group(|ui| {
+                    ui.label(egui::RichText::new("🤖 AI-Driven Development").strong());
+                    ui.label("Serialization-first design and instrumentable APIs tailored for AI agents and machine observation.");
+                });
+
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    ui.hyperlink_to("GitHub Repository", "https://github.com/segin/genteel");
+                    ui.label("•");
+                    ui.label("MIT License");
+                });
             });
         }
 
