@@ -5,6 +5,8 @@ use crate::audio;
 use crate::frontend::{self, InputMapping};
 use crate::input::InputScript;
 use crate::Emulator;
+#[cfg(feature = "gilrs")]
+use gilrs::{Gilrs, Button, Axis, EventType};
 #[cfg(feature = "gui")]
 use pixels::{wgpu, Pixels, SurfaceTexture};
 #[cfg(feature = "gui")]
@@ -196,6 +198,8 @@ pub struct Framework {
     pub plane_a_texture: Option<egui::TextureHandle>,
     pub plane_b_texture: Option<egui::TextureHandle>,
     pub pending_rom_path: Arc<Mutex<Option<PathBuf>>>,
+    #[cfg(feature = "gilrs")]
+    pub gilrs: Gilrs,
 }
 
 #[cfg(feature = "gui")]
@@ -233,6 +237,8 @@ impl Framework {
             plane_a_texture: None,
             plane_b_texture: None,
             pending_rom_path: Arc::new(Mutex::new(None)),
+            #[cfg(feature = "gilrs")]
+            gilrs: Gilrs::new().expect("Failed to initialize gilrs"),
         }
     }
     pub fn handle_event(
@@ -263,6 +269,79 @@ impl Framework {
                 *lock = Some(path);
             }
         });
+    }
+
+    #[cfg(feature = "gilrs")]
+    pub fn poll_gamepads(&mut self, state: &mut crate::io::ControllerState) {
+        while let Some(gilrs::Event { event, .. }) = self.gilrs.next_event() {
+            match event {
+                EventType::ButtonPressed(button, _) => {
+                    match button {
+                        Button::DPadUp => state.up = true,
+                        Button::DPadDown => state.down = true,
+                        Button::DPadLeft => state.left = true,
+                        Button::DPadRight => state.right = true,
+                        Button::South => state.b = true,
+                        Button::East => state.c = true,
+                        Button::West => state.a = true,
+                        Button::North => state.x = true,
+                        Button::LeftTrigger => state.y = true,
+                        Button::RightTrigger => state.z = true,
+                        Button::Select => state.mode = true,
+                        Button::Start => state.start = true,
+                        _ => {}
+                    }
+                }
+                EventType::ButtonReleased(button, _) => {
+                    match button {
+                        Button::DPadUp => state.up = false,
+                        Button::DPadDown => state.down = false,
+                        Button::DPadLeft => state.left = false,
+                        Button::DPadRight => state.right = false,
+                        Button::South => state.b = false,
+                        Button::East => state.c = false,
+                        Button::West => state.a = false,
+                        Button::North => state.x = false,
+                        Button::LeftTrigger => state.y = false,
+                        Button::RightTrigger => state.z = false,
+                        Button::Select => state.mode = false,
+                        Button::Start => state.start = false,
+                        _ => {}
+                    }
+                }
+                EventType::AxisChanged(axis, value, _) => {
+                    let threshold = 0.5;
+                    match axis {
+                        Axis::LeftStickX => {
+                            if value > threshold {
+                                state.right = true;
+                                state.left = false;
+                            } else if value < -threshold {
+                                state.left = true;
+                                state.right = false;
+                            } else {
+                                state.left = false;
+                                state.right = false;
+                            }
+                        }
+                        Axis::LeftStickY => {
+                            if value > threshold {
+                                state.up = true;
+                                state.down = false;
+                            } else if value < -threshold {
+                                state.down = true;
+                                state.up = false;
+                            } else {
+                                state.up = false;
+                                state.down = false;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 
     pub fn prepare(&mut self, window: &winit::window::Window, debug_info: &DebugInfo) {
@@ -1349,6 +1428,10 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                             framework.scale_factor(scale_factor as f32);
                         }
                         WindowEvent::RedrawRequested => {
+                            // Poll gamepads
+                            #[cfg(feature = "gilrs")]
+                            framework.poll_gamepads(&mut input.p1);
+
                             // Check for pick ROM request
                             if framework.gui_state.pick_rom_requested {
                                 framework.pick_rom();
