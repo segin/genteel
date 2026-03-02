@@ -86,13 +86,13 @@ fn test_ym2612_dac_panning() {
 fn test_ym2612_timer_ab_simultaneous() {
     let mut ym = Ym2612::new();
 
-    // Timer A: period 144
+    // Timer A: period 504 (min)
     ym.write_addr(Bank::Bank0, 0x24);
     ym.write_data_bank(Bank::Bank0, 0xFF);
     ym.write_addr(Bank::Bank0, 0x25);
     ym.write_data_bank(Bank::Bank0, 0x03);
 
-    // Timer B: period 2304
+    // Timer B: period 8064 (min)
     ym.write_addr(Bank::Bank0, 0x26);
     ym.write_data_bank(Bank::Bank0, 0xFF);
 
@@ -100,8 +100,8 @@ fn test_ym2612_timer_ab_simultaneous() {
     ym.write_addr(Bank::Bank0, 0x27);
     ym.write_data_bank(Bank::Bank0, 0x0F);
 
-    // Step enough for Timer B (330 68k cycles)
-    ym.step(330);
+    // Step enough for Timer B (8064 / 7 = 1152 68k cycles)
+    ym.step(1153);
 
     assert_eq!(ym.status & 0x03, 0x03, "Both timers should have fired");
 }

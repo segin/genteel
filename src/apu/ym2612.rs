@@ -607,14 +607,14 @@ impl Ym2612 {
 
         let ctrl = self.registers[0][0x27];
 
-        /* Timer A: ticks once per sample (~53kHz), period = (1024 - N) * 144 master cycles */
+        /* Timer A: ticks once per 72 FM clocks (Master/7), period = (1024 - N) * 72 * 7 master cycles */
         if (ctrl & 0x01) != 0 {
             self.timer_a_count -= cycles_master;
             if self.timer_a_count <= 0 {
                 let n = ((self.registers[0][0x24] as u32) << 2)
                     | (self.registers[0][0x25] as u32 & 0x03);
-                let period = (1024 - n as i32) * 144;
-                let period = if period < 144 { 144 } else { period };
+                let period = (1024 - n as i32) * 504;
+                let period = if period < 504 { 504 } else { period };
                 while self.timer_a_count <= 0 {
                     self.timer_a_count += period;
                     if (ctrl & 0x04) != 0 {
@@ -624,13 +624,13 @@ impl Ym2612 {
             }
         }
 
-        /* Timer B: ticks once per 16 samples, period = (256 - N) * 2304 master cycles */
+        /* Timer B: ticks once per 1152 FM clocks (Master/7), period = (256 - N) * 1152 * 7 master cycles */
         if (ctrl & 0x02) != 0 {
             self.timer_b_count -= cycles_master;
             if self.timer_b_count <= 0 {
                 let n = self.registers[0][0x26] as u32;
-                let period = (256 - n as i32) * 2304;
-                let period = if period < 2304 { 2304 } else { period };
+                let period = (256 - n as i32) * 8064;
+                let period = if period < 8064 { 8064 } else { period };
                 while self.timer_b_count <= 0 {
                     self.timer_b_count += period;
                     if (ctrl & 0x08) != 0 {
@@ -732,15 +732,15 @@ impl Ym2612 {
         if (val & 0x01) != 0 && (old_val & 0x01) == 0 {
             let n = ((self.registers[0][0x24] as u32) << 2)
                 | (self.registers[0][0x25] as u32 & 0x03);
-            let period = (1024 - n as i32) * 144;
-            self.timer_a_count = if period < 144 { 144 } else { period };
+            let period = (1024 - n as i32) * 504;
+            self.timer_a_count = if period < 504 { 504 } else { period };
         }
 
         /* Load B transition 0→1 */
         if (val & 0x02) != 0 && (old_val & 0x02) == 0 {
             let n = self.registers[0][0x26] as u32;
-            let period = (256 - n as i32) * 2304;
-            self.timer_b_count = if period < 2304 { 2304 } else { period };
+            let period = (256 - n as i32) * 8064;
+            self.timer_b_count = if period < 8064 { 8064 } else { period };
         }
 
         self.registers[0][0x27] = val;
@@ -946,9 +946,9 @@ mod tests {
 
         ym.write_addr(Bank::Bank0, 0x27);
         ym.write_data_bank(Bank::Bank0, 0x05);
-        assert_eq!(ym.timer_a_count, 3456);
+        assert_eq!(ym.timer_a_count, 12096); // (1024 - 1000) * 504 = 24 * 504 = 12096
 
-        ym.step(493);
+        ym.step(1727);
         assert_eq!(ym.status & 0x01, 0, "Timer A should not have fired yet");
 
         ym.step(1);
@@ -958,7 +958,7 @@ mod tests {
         ym.write_data_bank(Bank::Bank0, 0x15);
         assert_eq!(ym.status & 0x01, 0, "Timer A flag should be cleared");
 
-        ym.step(494);
+        ym.step(1728);
         assert_eq!(ym.status & 0x01, 0x01, "Timer A should fire again");
     }
 
@@ -971,9 +971,9 @@ mod tests {
 
         ym.write_addr(Bank::Bank0, 0x27);
         ym.write_data_bank(Bank::Bank0, 0x0A);
-        assert_eq!(ym.timer_b_count, 129024);
+        assert_eq!(ym.timer_b_count, 451584); // (256 - 200) * 8064 = 56 * 8064 = 451584
 
-        ym.step(18431);
+        ym.step(64511);
         assert_eq!(ym.status & 0x02, 0, "Timer B should not have fired yet");
 
         ym.step(2);
@@ -1011,7 +1011,7 @@ mod tests {
         ym.write_addr(Bank::Bank0, 0x27);
         ym.write_data_bank(Bank::Bank0, 0x05);
 
-        ym.step(15);
+        ym.step(50);
 
         ym.write_addr(Bank::Bank0, 0x27);
         ym.write_data_bank(Bank::Bank0, 0x04);
@@ -1019,10 +1019,10 @@ mod tests {
         ym.write_addr(Bank::Bank0, 0x27);
         ym.write_data_bank(Bank::Bank0, 0x05);
 
-        ym.step(15);
+        ym.step(50);
         assert_eq!(ym.status & 0x01, 0, "Should have reloaded and not fired");
 
-        ym.step(10);
+        ym.step(30);
         assert_eq!(ym.status & 0x01, 0x01);
     }
 
