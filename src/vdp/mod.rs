@@ -640,7 +640,7 @@ impl Vdp {
 
         let in_v_window = if v_dir { y >= v_point } else { y < v_point };
 
-        in_h_window || in_v_window
+        in_h_window && in_v_window
     }
 
     pub fn set_region(&mut self, is_pal: bool) {
