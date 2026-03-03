@@ -33,25 +33,33 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
     let a_bytes = a.as_bytes();
     let b_bytes = b.as_bytes();
 
+    // Still early return for extremely large inputs, but this doesn't leak much
+    // as it's way above any reasonable password length.
     if a_bytes.len() > MAX_PASSWORD_CHECK_LEN || b_bytes.len() > MAX_PASSWORD_CHECK_LEN {
         return false;
     }
 
-    let mut result = 0;
+    let mut result: u32 = 0;
 
-    // Accumulate length difference
-    // We use XOR so that if lengths differ, result will be non-zero (mostly).
-    // But to be precise, we can just track if length is different.
-    let len_diff = (a_bytes.len() as isize) - (b_bytes.len() as isize);
-
+    // Compare all bytes up to MAX_PASSWORD_CHECK_LEN to ensure constant time.
+    // We avoid branching on `i < a_bytes.len()` by using the safe `.get()` method.
+    // However, `.get()` internally contains a bounds check.
+    // To be truly constant-time in the presence of a secret-length `b`,
+    // we must ensure that the execution path is identical for all `i`.
+    // In Rust, for loops over a range are generally not guaranteed to be
+    // constant-time if the loop body contains branches (including those in `get`).
     for i in 0..MAX_PASSWORD_CHECK_LEN {
-        // Read bytes safely without branching on secret data
         let a_byte = *a_bytes.get(i).unwrap_or(&0);
         let b_byte = *b_bytes.get(i).unwrap_or(&0);
-        result |= a_byte ^ b_byte;
+        result |= (a_byte ^ b_byte) as u32;
     }
 
-    result == 0 && len_diff == 0
+    // Also include length check in a constant-time way.
+    // XORing the lengths ensures that if they differ, the result will be non-zero.
+    // Use u32 to avoid type mismatch and ensure enough bits to represent the difference.
+    let len_diff = (a_bytes.len() ^ b_bytes.len()) as u32;
+
+    (result | len_diff) == 0
 }
 
 /// GDB stop reasons
@@ -1403,5 +1411,32 @@ mod tests {
 
         let max_pass_c = "b".repeat(MAX_PASSWORD_CHECK_LEN);
         assert!(!constant_time_eq(&max_pass_a, &max_pass_c));
+    }
+
+    #[test]
+    fn test_constant_time_eq_logic() {
+        // Test basic equality
+        assert!(constant_time_eq("identical", "identical"));
+        assert!(!constant_time_eq("identical", "different"));
+
+        // Test length differences
+        assert!(!constant_time_eq("short", "longer_password"));
+        assert!(!constant_time_eq("longer_password", "short"));
+
+        // Test empty strings
+        assert!(constant_time_eq("", ""));
+        assert!(!constant_time_eq("", "non-empty"));
+        assert!(!constant_time_eq("non-empty", ""));
+
+        // Test common prefixes
+        assert!(!constant_time_eq("prefix_only", "prefix_plus_more"));
+        assert!(!constant_time_eq("prefix_plus_more", "prefix_only"));
+
+        // Test same bytes, different order
+        assert!(!constant_time_eq("abc", "bca"));
+
+        // Test null bytes
+        assert!(constant_time_eq("with\0null", "with\0null"));
+        assert!(!constant_time_eq("with\0null", "with\0other"));
     }
 }
