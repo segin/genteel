@@ -265,8 +265,11 @@ impl Framework {
                 .add_filter("All Files", &["*"])
                 .pick_file();
             if let Some(path) = file {
-                let mut lock = pending.lock().unwrap();
-                *lock = Some(path);
+                if let Ok(mut lock) = pending.lock() {
+                    *lock = Some(path);
+                } else {
+                    eprintln!("Failed to acquire pending_rom_path lock");
+                }
             }
         });
     }
@@ -1449,8 +1452,13 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
 
                             // Check for pending ROM load
                             let pending = {
-                                let mut lock = framework.pending_rom_path.lock().unwrap();
-                                lock.take()
+                                match framework.pending_rom_path.lock() {
+                                    Ok(mut lock) => lock.take(),
+                                    Err(_) => {
+                                        eprintln!("Failed to acquire pending_rom_path lock");
+                                        None
+                                    }
+                                }
                             };
                             if let Some(path) = pending {
                                 println!("Loading ROM: {:?}", path);
