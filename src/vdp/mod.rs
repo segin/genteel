@@ -273,10 +273,6 @@ impl Vdp {
         self.reconstruct_cram_cache();
     }
 
-    pub fn set_pal(&mut self, is_pal: bool) {
-        self.is_pal = is_pal;
-    }
-
     pub fn write_data(&mut self, value: u16) {
         self.command.pending = false;
         self.last_data_write = value;
