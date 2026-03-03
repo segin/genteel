@@ -402,8 +402,7 @@ impl Bus {
         if addr <= 0x3FFFFF {
             let idx = addr as usize;
             if idx + 1 < self.rom.len() {
-                let bytes = &self.rom[idx..idx + 2];
-                return u16::from_be_bytes(bytes.try_into().unwrap());
+                return ((self.rom[idx] as u16) << 8) | (self.rom[idx + 1] as u16);
             } else if idx < self.rom.len() {
                 // Partial read at end of ROM
                 let high = self.rom[idx];
@@ -433,7 +432,7 @@ impl Bus {
         if addr >= 0xE00000 {
             let r_addr = (addr & 0xFFFF) as usize;
             if r_addr < 0xFFFF {
-                return byte_utils::join_u16(self.work_ram[r_addr], self.work_ram[r_addr + 1]);
+                return ((self.work_ram[r_addr] as u16) << 8) | (self.work_ram[r_addr + 1] as u16);
             }
         }
 
@@ -481,8 +480,10 @@ impl Bus {
         if addr <= 0x3FFFFF {
             let idx = addr as usize;
             if idx + 3 < self.rom.len() {
-                let bytes = &self.rom[idx..idx + 4];
-                return u32::from_be_bytes(bytes.try_into().unwrap());
+                return ((self.rom[idx] as u32) << 24)
+                    | ((self.rom[idx + 1] as u32) << 16)
+                    | ((self.rom[idx + 2] as u32) << 8)
+                    | (self.rom[idx + 3] as u32);
             }
         }
 
@@ -503,12 +504,10 @@ impl Bus {
         if addr >= 0xE00000 {
             let r_addr = (addr & 0xFFFF) as usize;
             if r_addr <= 0xFFFC {
-                return byte_utils::join_u32(
-                    self.work_ram[r_addr],
-                    self.work_ram[r_addr + 1],
-                    self.work_ram[r_addr + 2],
-                    self.work_ram[r_addr + 3],
-                );
+                return ((self.work_ram[r_addr] as u32) << 24)
+                    | ((self.work_ram[r_addr + 1] as u32) << 16)
+                    | ((self.work_ram[r_addr + 2] as u32) << 8)
+                    | (self.work_ram[r_addr + 3] as u32);
             }
         }
 
@@ -588,17 +587,16 @@ impl Bus {
             if addr <= 0x3FFFFF {
                 let idx = addr as usize;
                 if idx + 1 < rom.len() {
-                    let bytes = &rom[idx..idx + 2];
-                    u16::from_be_bytes(bytes.try_into().unwrap())
+                    ((rom[idx] as u16) << 8) | (rom[idx + 1] as u16)
                 } else if idx < rom.len() {
-                    byte_utils::join_u16(rom[idx], 0xFF)
+                    ((rom[idx] as u16) << 8) | 0xFF
                 } else {
                     0xFFFF
                 }
             } else if addr >= 0xE00000 {
                 let r_addr = (addr & 0xFFFF) as usize;
                 if r_addr < 0xFFFF {
-                    byte_utils::join_u16(work_ram[r_addr], work_ram[r_addr + 1])
+                    ((work_ram[r_addr] as u16) << 8) | (work_ram[r_addr + 1] as u16)
                 } else {
                     0xFFFF
                 }
