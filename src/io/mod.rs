@@ -732,4 +732,40 @@ mod tests {
         // Should be reset
         assert_eq!(io.port1.th_counter, 0);
     }
+
+    #[test]
+    fn test_controller_clear() {
+        let mut state = ControllerState::new();
+
+        // Set all buttons to true
+        state.up = true;
+        state.down = true;
+        state.left = true;
+        state.right = true;
+        state.a = true;
+        state.b = true;
+        state.c = true;
+        state.start = true;
+        state.x = true;
+        state.y = true;
+        state.z = true;
+        state.mode = true;
+
+        // Call clear
+        state.clear();
+
+        // Verify all are false
+        assert!(!state.up);
+        assert!(!state.down);
+        assert!(!state.left);
+        assert!(!state.right);
+        assert!(!state.a);
+        assert!(!state.b);
+        assert!(!state.c);
+        assert!(!state.start);
+        assert!(!state.x);
+        assert!(!state.y);
+        assert!(!state.z);
+        assert!(!state.mode);
+    }
 }
