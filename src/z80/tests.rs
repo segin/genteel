@@ -547,3 +547,25 @@ fn test_debug_state() {
     assert_eq!(z80.halted, true);
     assert_eq!(z80.cycles, 300);
 }
+
+#[test]
+fn test_debug_state_fallback() {
+    use crate::debugger::Debuggable;
+    use serde_json::json;
+    let (mut z80, _bus) = create_z80(&[]);
+
+    // Set some initial state
+    z80.a = 0xAA;
+    z80.pc = 0x1234;
+    z80.cycles = 100;
+
+    // Write an invalid state payload
+    let invalid_state = json!("invalid_state");
+    z80.write_state(&invalid_state);
+
+    // The fallback logic should trigger (using an empty "{}" object),
+    // which results in all Option fields being None, so no state should change.
+    assert_eq!(z80.a, 0xAA);
+    assert_eq!(z80.pc, 0x1234);
+    assert_eq!(z80.cycles, 100);
+}
