@@ -1,6 +1,14 @@
 --- src/main.rs
 +++ src/main.rs
-@@ -1550,6 +1550,16 @@
+@@ -1080,6 +1080,7 @@
+         }
+         Ok(())
+     }
++    #[allow(dead_code)]
+     pub(crate) fn log_debug(&self, frame_count: u64) {
+         let bus = self.bus.borrow();
+         let disp_en = if bus.vdp.display_enabled() {
+@@ -1550,6 +1551,16 @@
          }
      }
 

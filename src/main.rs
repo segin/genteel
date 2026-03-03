@@ -1081,7 +1081,7 @@ impl Emulator {
         Ok(())
     }
     #[allow(dead_code)]
-    pub(crate) fn log_debug(pub(crate) fn log_debug(&self, frame_count: u64) {self, frame_count: u64) {
+    pub(crate) fn log_debug(&self, frame_count: u64) {
         let bus = self.bus.borrow();
         let disp_en = if bus.vdp.display_enabled() {
             "ON "
@@ -1642,5 +1642,21 @@ mod tests {
         emulator.paused = false;
         emulator.step_frame(None);
         assert_eq!(emulator.internal_frame_count, initial_frames + 2, "Should advance when resumed");
+    }
+}
+
+#[cfg(test)]
+mod additional_tests {
+    use super::*;
+
+    #[test]
+    fn test_save_state_to_path_error() {
+        let emulator = Emulator::new();
+        // We construct a path to a directory instead of a file.
+        // std::fs::write should fail, but the method should handle it gracefully without panicking.
+        let temp_dir = std::env::temp_dir();
+
+        // This should not panic.
+        emulator.save_state_to_path(temp_dir);
     }
 }
