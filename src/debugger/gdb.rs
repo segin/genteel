@@ -728,7 +728,7 @@ impl GdbServer {
                         AUTH_LOCKOUT_DURATION.as_secs()
                     );
                 }
-                "E01".to_string()// Invalid password
+                "E01".to_string() // Invalid password
             }
         } else {
             // No password set, already authenticated
