@@ -152,13 +152,13 @@ impl Emulator {
     /// Close current ROM and return to default state
     pub fn close_rom(&mut self) {
         self.save_sram();
-        
+
         let allowed_paths = self.allowed_paths.clone();
         let mapping = self.input_mapping;
         let sample_rate = self.bus.borrow().sample_rate;
-        
+
         *self = Self::new();
-        
+
         self.allowed_paths = allowed_paths;
         self.input_mapping = mapping;
         self.bus.borrow_mut().sample_rate = sample_rate;
@@ -235,7 +235,7 @@ impl Emulator {
                     let allowed_paths = self.allowed_paths.clone();
                     let current_rom_path = self.current_rom_path.clone();
                     let sample_rate = self.bus.borrow().sample_rate;
-                    
+
                     // 2. Load ROM data into the new emulator's bus
                     if let Some(ref rom_path) = current_rom_path {
                         if let Ok(data) = std::fs::read(rom_path) {
@@ -243,16 +243,16 @@ impl Emulator {
                             bus.load_rom(&data);
                         }
                     }
-                    
+
                     // 3. Apply the new state
                     *self = new_emulator;
-                    
+
                     // 4. Restore critical session state
                     self.gdb = gdb;
                     self.allowed_paths = allowed_paths;
                     self.current_rom_path = current_rom_path;
                     self.bus.borrow_mut().sample_rate = sample_rate;
-                    
+
                     println!("Loaded state from {:?}", state_path);
                 }
                 Err(e) => eprintln!("Failed to parse save state: {}", e),
@@ -305,10 +305,10 @@ impl Emulator {
         let mut bus = self.bus.borrow_mut();
         bus.load_rom(&data);
         drop(bus);
-        
+
         self.current_rom_path = Some(canonical_path);
         self.load_sram();
-        
+
         // Reset again to load initial PC/SP from ROM vectors
         let mut bus = self.bus.borrow_mut();
         self.cpu.reset(&mut *bus);
@@ -967,7 +967,9 @@ impl Emulator {
                 sr: self.cpu.sr,
                 pc: self.cpu.pc,
             };
-            let mut mem_access = BusGdbMemory { bus: &self.bus };
+            let mut mem_access = BusGdbMemory {
+                bus: self.bus.clone(),
+            };
             let response = gdb.process_command(&cmd, &mut regs, &mut mem_access);
             self.cpu.d = regs.d;
             self.cpu.a = regs.a;
@@ -1024,7 +1026,9 @@ impl Emulator {
                     pc: self.cpu.pc,
                 };
                 // Create memory accessor
-                let mut mem_access = BusGdbMemory { bus: &self.bus };
+                let mut mem_access = BusGdbMemory {
+                    bus: self.bus.clone(),
+                };
                 let response = gdb.process_command(&cmd, &mut regs, &mut mem_access);
                 // Apply register changes back to CPU
                 self.cpu.d = regs.d;
@@ -1076,7 +1080,7 @@ impl Emulator {
         }
         Ok(())
     }
-    #[allow(dead_code)] pub(crate) fn log_debug(&self, frame_count: u64) {
+    pub(crate) fn log_debug(&self, frame_count: u64) {
         let bus = self.bus.borrow();
         let disp_en = if bus.vdp.display_enabled() {
             "ON "
@@ -1334,7 +1338,7 @@ fn main() {
             }
         }
     }
-    
+
     if config.headless {
         emulator.run(
             config.headless_frames,
@@ -1621,19 +1625,19 @@ mod tests {
     fn test_emulator_pause() {
         let mut emulator = Emulator::new();
         let initial_frames = emulator.internal_frame_count;
-        
+
         emulator.paused = true;
         emulator.step_frame(None);
         assert_eq!(emulator.internal_frame_count, initial_frames, "Should not advance when paused");
-        
+
         emulator.single_step = true;
         emulator.step_frame(None);
         assert_eq!(emulator.internal_frame_count, initial_frames + 1, "Should advance one frame when single_stepping");
         assert!(!emulator.single_step, "single_step should be reset after use");
-        
+
         emulator.step_frame(None);
         assert_eq!(emulator.internal_frame_count, initial_frames + 1, "Should still be paused");
-        
+
         emulator.paused = false;
         emulator.step_frame(None);
         assert_eq!(emulator.internal_frame_count, initial_frames + 2, "Should advance when resumed");

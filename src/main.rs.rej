@@ -1,0 +1,15 @@
+--- main.rs
++++ main.rs
+@@ -1144,10 +1140,10 @@
+ }
+ /// GDB memory accessor for Bus
+-struct BusGdbMemory {
+-    bus: Rc<RefCell<Bus>>,
++struct BusGdbMemory<'a> {
++    bus: &'a Rc<RefCell<Bus>>,
+ }
+-impl GdbMemory for BusGdbMemory {
++impl<'a> GdbMemory for BusGdbMemory<'a> {
+     fn read_byte(&mut self, addr: u32) -> u8 {
+         self.bus.borrow_mut().read_byte(addr)
+     }
