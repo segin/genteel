@@ -397,27 +397,29 @@ impl Framework {
                     }
                     ui.separator();
                     ui.menu_button("Save State", |ui| {
+                        const SLOT_LABELS: [&str; 10] = ["Slot 0", "Slot 1", "Slot 2", "Slot 3", "Slot 4", "Slot 5", "Slot 6", "Slot 7", "Slot 8", "Slot 9"];
                         for slot in 0..10 {
                             let btn = if slot == 0 {
-                                egui::Button::new(format!("Slot {}", slot)).shortcut_text("F5")
+                                egui::Button::new(SLOT_LABELS[slot]).shortcut_text("F5")
                             } else {
-                                egui::Button::new(format!("Slot {}", slot))
+                                egui::Button::new(SLOT_LABELS[slot])
                             };
                             if ui.add_enabled(debug_info.has_rom, btn).clicked() {
-                                self.gui_state.save_requested = Some(slot);
+                                self.gui_state.save_requested = Some(slot as u8);
                                 ui.close_menu();
                             }
                         }
                     });
                     ui.menu_button("Load State", |ui| {
+                        const SLOT_LABELS: [&str; 10] = ["Slot 0", "Slot 1", "Slot 2", "Slot 3", "Slot 4", "Slot 5", "Slot 6", "Slot 7", "Slot 8", "Slot 9"];
                         for slot in 0..10 {
                             let btn = if slot == 0 {
-                                egui::Button::new(format!("Slot {}", slot)).shortcut_text("F8")
+                                egui::Button::new(SLOT_LABELS[slot]).shortcut_text("F8")
                             } else {
-                                egui::Button::new(format!("Slot {}", slot))
+                                egui::Button::new(SLOT_LABELS[slot])
                             };
                             if ui.add_enabled(debug_info.has_rom, btn).clicked() {
-                                self.gui_state.load_requested = Some(slot);
+                                self.gui_state.load_requested = Some(slot as u8);
                                 ui.close_menu();
                             }
                         }
