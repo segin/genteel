@@ -315,4 +315,52 @@ mod tests {
         rgb565_to_rgba8(&input, &mut output);
         assert_eq!(output, [255, 255, 255, 255]);
     }
+
+    #[test]
+    fn test_rgb565_to_rgba8_pure_colors() {
+        let mut output = [0u8; 4];
+
+        // Pure Red
+        rgb565_to_rgba8(&[0xF800u16], &mut output);
+        assert_eq!(output, [255, 0, 0, 255]);
+
+        // Pure Green
+        rgb565_to_rgba8(&[0x07E0u16], &mut output);
+        assert_eq!(output, [0, 255, 0, 255]);
+
+        // Pure Blue
+        rgb565_to_rgba8(&[0x001Fu16], &mut output);
+        assert_eq!(output, [0, 0, 255, 255]);
+    }
+
+    #[test]
+    fn test_rgb565_to_rgba8_multiple_pixels() {
+        let input = [
+            0xF800u16, // Red
+            0x07E0u16, // Green
+            0x001Fu16, // Blue
+            0xFFFFu16, // White
+            0x0000u16, // Black
+        ];
+        let mut output = [0u8; 20];
+        rgb565_to_rgba8(&input, &mut output);
+        assert_eq!(&output[0..4], &[255, 0, 0, 255]);
+        assert_eq!(&output[4..8], &[0, 255, 0, 255]);
+        assert_eq!(&output[8..12], &[0, 0, 255, 255]);
+        assert_eq!(&output[12..16], &[255, 255, 255, 255]);
+        assert_eq!(&output[16..20], &[0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn test_rgb565_to_rgba8_mixed_colors() {
+        let mut output = [0u8; 4];
+
+        // Half values: r5 = 16, g6 = 32, b5 = 16
+        // pixel = (16 << 11) | (32 << 5) | 16 = 32768 | 1024 | 16 = 33808 = 0x8410
+        // Expected R: (16 << 3) | (16 >> 2) = 128 | 4 = 132
+        // Expected G: (32 << 2) | (32 >> 4) = 128 | 2 = 130
+        // Expected B: (16 << 3) | (16 >> 2) = 128 | 4 = 132
+        rgb565_to_rgba8(&[0x8410u16], &mut output);
+        assert_eq!(output, [132, 130, 132, 255]);
+    }
 }
