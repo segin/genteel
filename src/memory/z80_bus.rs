@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 /// Z80 Bus adapter that routes memory accesses to Genesis components
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct Z80Bus {
     /// Reference to the main Genesis bus.
     bus: SharedBus,
@@ -25,13 +26,6 @@ impl Z80Bus {
     }
 }
 
-impl Default for Z80Bus {
-    fn default() -> Self {
-        Self {
-            bus: SharedBus::default(),
-        }
-    }
-}
 
 impl Z80Bus {
     /// The value written becomes the upper bits of the 68k address
@@ -158,22 +152,6 @@ impl MemoryInterface for Z80Bus {
         let (high, low) = byte_utils::split_u32_to_words(value);
         self.write_word(address, high);
         self.write_word(address.wrapping_add(2), low);
-    }
-
-    fn read_size(&mut self, address: u32, size: crate::cpu::decoder::Size) -> u32 {
-        match size {
-            crate::cpu::decoder::Size::Byte => self.read_byte(address) as u32,
-            crate::cpu::decoder::Size::Word => self.read_word(address) as u32,
-            crate::cpu::decoder::Size::Long => self.read_long(address),
-        }
-    }
-
-    fn write_size(&mut self, address: u32, value: u32, size: crate::cpu::decoder::Size) {
-        match size {
-            crate::cpu::decoder::Size::Byte => self.write_byte(address, value as u8),
-            crate::cpu::decoder::Size::Word => self.write_word(address, value as u16),
-            crate::cpu::decoder::Size::Long => self.write_long(address, value),
-        }
     }
 }
 
