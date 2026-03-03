@@ -265,7 +265,10 @@ impl Framework {
                 .add_filter("All Files", &["*"])
                 .pick_file();
             if let Some(path) = file {
-                let mut lock = pending.lock().unwrap();
+                let mut lock = match pending.lock() {
+                    Ok(guard) => guard,
+                    Err(poisoned) => poisoned.into_inner(),
+                };
                 *lock = Some(path);
             }
         });
