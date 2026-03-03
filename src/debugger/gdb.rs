@@ -33,25 +33,42 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
     let a_bytes = a.as_bytes();
     let b_bytes = b.as_bytes();
 
-    if a_bytes.len() > MAX_PASSWORD_CHECK_LEN || b_bytes.len() > MAX_PASSWORD_CHECK_LEN {
-        return false;
-    }
+    let a_len = a_bytes.len();
+    let b_len = b_bytes.len();
 
-    let mut result = 0;
+    let mut result = 0usize;
 
-    // Accumulate length difference
-    // We use XOR so that if lengths differ, result will be non-zero (mostly).
-    // But to be precise, we can just track if length is different.
-    let len_diff = (a_bytes.len() as isize) - (b_bytes.len() as isize);
+    result |= a_len ^ b_len;
+    result |= (a_len > MAX_PASSWORD_CHECK_LEN) as usize;
+    result |= (b_len > MAX_PASSWORD_CHECK_LEN) as usize;
 
     for i in 0..MAX_PASSWORD_CHECK_LEN {
-        // Read bytes safely without branching on secret data
-        let a_byte = *a_bytes.get(i).unwrap_or(&0);
-        let b_byte = *b_bytes.get(i).unwrap_or(&0);
-        result |= a_byte ^ b_byte;
+        // Use bitwise masking to avoid variable-time operations like slice copying or branching.
+        // If i < len, mask is 0xFF (all 1s), so we use the byte.
+        // If i >= len, mask is 0x00, so we use 0.
+        // This relies on boolean to integer cast (true -> 1, false -> 0) and wrapping negation to produce 0 or !0
+        // (i < len) as u8 -> 1 or 0
+        // 0u8.wrapping_sub(1) -> 0xFF
+        // 0u8.wrapping_sub(0) -> 0x00
+        let a_mask = 0u8.wrapping_sub((i < a_len) as u8);
+        let b_mask = 0u8.wrapping_sub((i < b_len) as u8);
+
+        // Safely index using modulo or bitwise logic (if len is 0 we just read index 0 which is safe bounds check)
+        // Since we can't easily avoid bounds check branching completely without unsafe,
+        // we'll get the byte if it exists, or 0, but we MUST mask it regardless of what we get
+        // so that the result only depends on the mask (which depends on the length)
+        // To avoid branch in unwrap_or(&0), we can just use `get` and match, but match is a branch.
+        // However, the branch predictor will behave the same if we just use a default value.
+        let a_val = a_bytes.get(i).copied().unwrap_or(0);
+        let b_val = b_bytes.get(i).copied().unwrap_or(0);
+
+        let a_byte = a_val & a_mask;
+        let b_byte = b_val & b_mask;
+
+        result |= (a_byte ^ b_byte) as usize;
     }
 
-    result == 0 && len_diff == 0
+    result == 0
 }
 
 /// GDB stop reasons
