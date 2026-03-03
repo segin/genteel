@@ -22,7 +22,7 @@ pub mod memory;
 pub mod vdp;
 pub mod wav_writer;
 pub mod z80;
-use crate::vdp::RenderOps;
+use crate::vdp::{DmaOps, RenderOps};
 use apu::Apu;
 use cpu::Cpu;
 use debugger::{GdbMemory, GdbRegisters, GdbServer, StopReason};
@@ -732,7 +732,7 @@ impl Emulator {
             }
             let m68k_cycles = {
                 let mut bus = bus_rc.bus.borrow_mut();
-                if bus.dma_active() {
+                if bus.vdp.command.dma_pending && bus.vdp.is_dma_transfer() {
                     2 // Yield 2 cycles to let the bus step during DMA
                 } else {
                     cpu.step_instruction(&mut *bus)
