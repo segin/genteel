@@ -29,4 +29,17 @@ mod tests {
         assert!(decoded.is_window_open("M68k Status"));
         assert!(!decoded.is_window_open("Z80 Status"));
     }
+
+    #[test]
+    fn test_gui_state_scroll_plane_tab() {
+        let mut gui_state = GuiState::new(InputMapping::Original);
+        assert_eq!(gui_state.scroll_plane_tab, 0);
+
+        gui_state.scroll_plane_tab = 1;
+
+        let json = serde_json::to_string(&gui_state).unwrap();
+        let decoded: GuiState = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(decoded.scroll_plane_tab, 1);
+    }
 }

@@ -31,6 +31,8 @@ pub struct GuiState {
     pub paused: bool,
     pub recent_roms: Vec<PathBuf>,
     pub auto_save_load: bool,
+    #[serde(default)]
+    pub scroll_plane_tab: usize,
     #[serde(skip)]
     pub single_step: bool,
     #[serde(skip)]
@@ -60,6 +62,7 @@ impl GuiState {
             paused: false,
             recent_roms: Vec::new(),
             auto_save_load: false,
+            scroll_plane_tab: 0,
             single_step: false,
             show_about: false,
             reset_requested: false,
@@ -750,14 +753,18 @@ impl Framework {
                 ui.label(format!("Plane Size: {}x{}", plane_w, plane_h));
                 
                 ui.horizontal(|ui| {
-                    if ui.button("Plane A").clicked() { /* TODO: switch tab if needed */ }
-                    if ui.button("Plane B").clicked() { }
+                    if ui.selectable_value(&mut self.gui_state.scroll_plane_tab, 0, "Plane A").changed() {
+                        self.gui_state.save();
+                    }
+                    if ui.selectable_value(&mut self.gui_state.scroll_plane_tab, 1, "Plane B").changed() {
+                        self.gui_state.save();
+                    }
                 });
                 
                 let plane_a_base = ((debug_info.vdp_registers[2] as usize) & 0x38) << 10;
                 let plane_b_base = ((debug_info.vdp_registers[4] as usize) & 0x07) << 13;
                 
-                let render_plane = |ui: &mut egui::Ui, base: usize, texture_opt: &mut Option<egui::TextureHandle>, id: &str| {
+                let mut render_plane = |ui: &mut egui::Ui, base: usize, texture_opt: &mut Option<egui::TextureHandle>, id: &str| {
                     let mut pixels = vec![0u8; plane_w * 8 * plane_h * 8 * 4];
                     for ty in 0..plane_h {
                         for tx in 0..plane_w {
@@ -798,12 +805,11 @@ impl Framework {
                     });
                 };
                 
-                ui.collapsing("Plane A", |ui| {
+                if self.gui_state.scroll_plane_tab == 0 {
                     render_plane(ui, plane_a_base, &mut self.plane_a_texture, "plane_a");
-                });
-                ui.collapsing("Plane B", |ui| {
+                } else {
                     render_plane(ui, plane_b_base, &mut self.plane_b_texture, "plane_b");
-                });
+                }
             });
             if !open {
                 self.gui_state.set_window_open("Scroll Plane Viewer", false);
