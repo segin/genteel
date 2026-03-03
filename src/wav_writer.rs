@@ -64,9 +64,19 @@ impl<W: Write + Seek> WavWriter<W> {
                 "Sample count not aligned with channel count",
             ));
         }
-        for &sample in samples {
-            self.writer.write_all(&sample.to_le_bytes())?;
+
+        let mut buffer = [0u8; 2048];
+        for chunk in samples.chunks(1024) {
+            let mut offset = 0;
+            for &sample in chunk {
+                let bytes = sample.to_le_bytes();
+                buffer[offset] = bytes[0];
+                buffer[offset + 1] = bytes[1];
+                offset += 2;
+            }
+            self.writer.write_all(&buffer[..offset])?;
         }
+
         self.data_size += (samples.len() * 2) as u32;
         Ok(())
     }
