@@ -211,8 +211,7 @@ impl Bus {
     fn read_rom(&self, addr: u32) -> u8 {
         let rom_addr = addr as usize;
         if rom_addr < self.rom.len() {
-            // SAFETY: rom_addr is checked against self.rom.len() above
-            unsafe { *self.rom.get_unchecked(rom_addr) }
+            self.rom[rom_addr]
         } else {
             0xFF // Unmapped ROM area
         }
