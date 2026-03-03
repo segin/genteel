@@ -1113,7 +1113,7 @@ impl Framework {
                     let (rect, _response) = ui.allocate_at_least(egui::vec2(256.0, 48.0), egui::Sense::hover());
                     ui.painter().rect_filled(rect, 0.0, egui::Color32::BLACK);
                     
-                    let mut points = Vec::new();
+                    let mut points = Vec::with_capacity(128);
                     for i in 0..128 {
                         let val = debug_info.channel_waveforms[ch][i];
                         let x = rect.left() + (i as f32 * 2.0);
