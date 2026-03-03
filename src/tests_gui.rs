@@ -29,4 +29,17 @@ mod tests {
         assert!(decoded.is_window_open("M68k Status"));
         assert!(!decoded.is_window_open("Z80 Status"));
     }
+
+    #[cfg(feature = "gilrs")]
+    #[test]
+    fn test_init_gilrs_error_path() {
+        use crate::gui::init_gilrs_with_builder;
+
+        let builder = || -> Result<gilrs::Gilrs, &'static str> {
+            Err("simulated OS failure")
+        };
+
+        let result = init_gilrs_with_builder(builder);
+        assert!(result.is_none());
+    }
 }
