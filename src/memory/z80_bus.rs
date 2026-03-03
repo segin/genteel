@@ -159,22 +159,6 @@ impl MemoryInterface for Z80Bus {
         self.write_word(address, high);
         self.write_word(address.wrapping_add(2), low);
     }
-
-    fn read_size(&mut self, address: u32, size: crate::cpu::decoder::Size) -> u32 {
-        match size {
-            crate::cpu::decoder::Size::Byte => self.read_byte(address) as u32,
-            crate::cpu::decoder::Size::Word => self.read_word(address) as u32,
-            crate::cpu::decoder::Size::Long => self.read_long(address),
-        }
-    }
-
-    fn write_size(&mut self, address: u32, value: u32, size: crate::cpu::decoder::Size) {
-        match size {
-            crate::cpu::decoder::Size::Byte => self.write_byte(address, value as u8),
-            crate::cpu::decoder::Size::Word => self.write_word(address, value as u16),
-            crate::cpu::decoder::Size::Long => self.write_long(address, value),
-        }
-    }
 }
 
 impl IoInterface for Z80Bus {
