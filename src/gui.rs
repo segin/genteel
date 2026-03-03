@@ -17,6 +17,16 @@ use winit::{
     window::WindowBuilder,
 };
 
+pub const SLOT_NAMES: [&str; 10] = [
+    "Slot 0", "Slot 1", "Slot 2", "Slot 3", "Slot 4",
+    "Slot 5", "Slot 6", "Slot 7", "Slot 8", "Slot 9",
+];
+
+pub const SLOT_EXTS: [&str; 10] = [
+    "s0", "s1", "s2", "s3", "s4",
+    "s5", "s6", "s7", "s8", "s9",
+];
+
 #[cfg(feature = "gui")]
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct WindowState {
@@ -399,9 +409,9 @@ impl Framework {
                     ui.menu_button("Save State", |ui| {
                         for slot in 0..10 {
                             let btn = if slot == 0 {
-                                egui::Button::new(format!("Slot {}", slot)).shortcut_text("F5")
+                                egui::Button::new(SLOT_NAMES[slot as usize]).shortcut_text("F5")
                             } else {
-                                egui::Button::new(format!("Slot {}", slot))
+                                egui::Button::new(SLOT_NAMES[slot as usize])
                             };
                             if ui.add_enabled(debug_info.has_rom, btn).clicked() {
                                 self.gui_state.save_requested = Some(slot);
@@ -412,9 +422,9 @@ impl Framework {
                     ui.menu_button("Load State", |ui| {
                         for slot in 0..10 {
                             let btn = if slot == 0 {
-                                egui::Button::new(format!("Slot {}", slot)).shortcut_text("F8")
+                                egui::Button::new(SLOT_NAMES[slot as usize]).shortcut_text("F8")
                             } else {
-                                egui::Button::new(format!("Slot {}", slot))
+                                egui::Button::new(SLOT_NAMES[slot as usize])
                             };
                             if ui.add_enabled(debug_info.has_rom, btn).clicked() {
                                 self.gui_state.load_requested = Some(slot);
@@ -1207,8 +1217,8 @@ impl Framework {
                         ui.end_row();
                         
                         for slot in 0..10 {
-                            ui.label(format!("Slot {}", slot));
-                            let state_path = path.with_extension(format!("s{}", slot));
+                            ui.label(SLOT_NAMES[slot as usize]);
+                            let state_path = path.with_extension(SLOT_EXTS[slot as usize]);
                             if state_path.exists() {
                                 let meta = state_path.metadata().ok();
                                 let time = meta.and_then(|m| m.modified().ok())
