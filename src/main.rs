@@ -1080,7 +1080,8 @@ impl Emulator {
         }
         Ok(())
     }
-    pub(crate) fn log_debug(&self, frame_count: u64) {
+    #[allow(dead_code)]
+    pub(crate) fn log_debug(pub(crate) fn log_debug(&self, frame_count: u64) {self, frame_count: u64) {
         let bus = self.bus.borrow();
         let disp_en = if bus.vdp.display_enabled() {
             "ON "
