@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::path::PathBuf;
+use std::fmt::Write;
 use crate::audio;
 use crate::frontend::{self, InputMapping};
 use crate::input::InputScript;
@@ -685,15 +686,18 @@ impl Framework {
             egui::Window::new("Disassembly")
                 .open(&mut open)
                 .show(&self.egui_ctx, |ui| {
+                let mut buffer = String::with_capacity(128);
                 ui.heading("M68k Disassembly");
                 egui::ScrollArea::vertical().id_source("m68k_disasm").show(ui, |ui| {
                     for (addr, text) in &debug_info.m68k_disasm {
+                        buffer.clear();
                         let is_current = *addr == debug_info.m68k_pc;
-                        let label = format!("{:06X}: {}", addr, text);
                         if is_current {
-                            ui.colored_label(egui::Color32::YELLOW, format!("-> {}", label));
+                            let _ = write!(&mut buffer, "-> {:06X}: {}", addr, text);
+                            ui.colored_label(egui::Color32::YELLOW, buffer.as_str());
                         } else {
-                            ui.label(format!("   {}", label));
+                            let _ = write!(&mut buffer, "   {:06X}: {}", addr, text);
+                            ui.label(buffer.as_str());
                         }
                     }
                 });
@@ -701,12 +705,14 @@ impl Framework {
                 ui.heading("Z80 Disassembly");
                 egui::ScrollArea::vertical().id_source("z80_disasm").show(ui, |ui| {
                     for (addr, text) in &debug_info.z80_disasm {
+                        buffer.clear();
                         let is_current = *addr == debug_info.z80_pc;
-                        let label = format!("{:04X}: {}", addr, text);
                         if is_current {
-                            ui.colored_label(egui::Color32::YELLOW, format!("-> {}", label));
+                            let _ = write!(&mut buffer, "-> {:04X}: {}", addr, text);
+                            ui.colored_label(egui::Color32::YELLOW, buffer.as_str());
                         } else {
-                            ui.label(format!("   {}", label));
+                            let _ = write!(&mut buffer, "   {:04X}: {}", addr, text);
+                            ui.label(buffer.as_str());
                         }
                     }
                 });
