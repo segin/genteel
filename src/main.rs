@@ -1015,6 +1015,7 @@ impl Emulator {
         }
         let mut stepping = false;
         let mut running = false;
+        let mut packet_buf = String::with_capacity(4);
         loop {
             // Check for GDB commands
             if let Some(cmd) = gdb.receive_packet() {
@@ -1059,12 +1060,18 @@ impl Emulator {
                 // Check for breakpoint
                 if gdb.is_breakpoint(self.cpu.pc) {
                     gdb.stop_reason = StopReason::Breakpoint;
-                    gdb.send_packet(&format!("S{:02x}", StopReason::Breakpoint.signal()))
+                    packet_buf.clear();
+                    use std::fmt::Write;
+                    write!(&mut packet_buf, "S{:02x}", StopReason::Breakpoint.signal()).ok();
+                    gdb.send_packet(&packet_buf)
                         .ok();
                     running = false;
                 } else if stepping {
                     gdb.stop_reason = StopReason::Step;
-                    gdb.send_packet(&format!("S{:02x}", StopReason::Step.signal()))
+                    packet_buf.clear();
+                    use std::fmt::Write;
+                    write!(&mut packet_buf, "S{:02x}", StopReason::Step.signal()).ok();
+                    gdb.send_packet(&packet_buf)
                         .ok();
                     running = false;
                 }
