@@ -894,6 +894,20 @@ mod tests {
     }
 
     #[test]
+    fn test_gdb_server_new_bind_error() {
+        // Bind a listener to a random port to keep it occupied
+        let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind listener");
+        let port = listener.local_addr().expect("Failed to get local addr").port();
+
+        // Attempt to create a GdbServer on the same port, which should fail
+        let result = GdbServer::new(port, None);
+        assert!(result.is_err(), "Expected GdbServer::new to fail when port is already in use");
+
+        let err = result.err().unwrap();
+        assert_eq!(err.kind(), std::io::ErrorKind::AddrInUse);
+    }
+
+    #[test]
     fn test_security_loopback_accepted() {
         // Bind to random port
         let mut server = GdbServer::new(0, None).expect("Failed to create GDB server");
