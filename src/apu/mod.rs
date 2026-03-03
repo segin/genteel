@@ -185,4 +185,26 @@ mod tests {
         // Full State Equality Check (via JSON representation)
         assert_eq!(apu.read_state(), new_apu.read_state());
     }
+
+    #[test]
+    fn test_deserialize_error_path() {
+        let mut apu = Apu::new();
+
+        // 1. Modify State to ensure it is not the default
+        apu.write_psg(0x90); // Vol 0
+        let expected_volume = apu.psg.tones[0].volume;
+
+        // 2. Create invalid JSON state
+        let invalid_state = serde_json::json!({
+            "invalid": "data",
+            "psg": "not an object"
+        });
+
+        // 3. Attempt to restore from invalid state
+        apu.write_state(&invalid_state);
+
+        // 4. Verify state remains unchanged (was not reset or clobbered)
+        assert_eq!(apu.psg.tones[0].volume, expected_volume);
+        assert_eq!(expected_volume, 0); // Self-check that our modification actually applied
+    }
 }
