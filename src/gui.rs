@@ -623,9 +623,16 @@ impl Framework {
                 });
                 ui.separator();
                 ui.columns(2, |columns| {
+                    use std::fmt::Write;
+                    let mut d_buf = String::with_capacity(16);
+                    let mut a_buf = String::with_capacity(16);
                     for i in 0..8 {
-                        columns[0].label(format!("D{}: {:08X}", i, debug_info.m68k_d[i]));
-                        columns[1].label(format!("A{}: {:08X}", i, debug_info.m68k_a[i]));
+                        d_buf.clear();
+                        a_buf.clear();
+                        let _ = write!(&mut d_buf, "D{}: {:08X}", i, debug_info.m68k_d[i]);
+                        let _ = write!(&mut a_buf, "A{}: {:08X}", i, debug_info.m68k_a[i]);
+                        columns[0].label(&d_buf);
+                        columns[1].label(&a_buf);
                     }
                 });
                 ui.separator();
