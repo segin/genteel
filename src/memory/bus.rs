@@ -160,11 +160,6 @@ impl Bus {
         self.rom.clear();
     }
 
-    /// Get ROM size
-    pub fn rom_size(&self) -> usize {
-        self.rom.len()
-    }
-
     /// Reset volatile state while keeping ROM and sample_rate
     pub fn reset(&mut self) {
         self.work_ram.fill(0);
