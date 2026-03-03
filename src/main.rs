@@ -960,15 +960,13 @@ impl Emulator {
             }
         }
 
+        let mut mem_access = BusGdbMemory { bus: &self.bus };
         while let Some(cmd) = gdb.receive_packet() {
             let mut regs = GdbRegisters {
                 d: self.cpu.d,
                 a: self.cpu.a,
                 sr: self.cpu.sr,
                 pc: self.cpu.pc,
-            };
-            let mut mem_access = BusGdbMemory {
-                bus: self.bus.clone(),
             };
             let response = gdb.process_command(&cmd, &mut regs, &mut mem_access);
             self.cpu.d = regs.d;
@@ -1015,6 +1013,7 @@ impl Emulator {
         }
         let mut stepping = false;
         let mut running = false;
+        let mut mem_access = BusGdbMemory { bus: &self.bus };
         loop {
             // Check for GDB commands
             if let Some(cmd) = gdb.receive_packet() {
@@ -1024,10 +1023,6 @@ impl Emulator {
                     a: self.cpu.a,
                     sr: self.cpu.sr,
                     pc: self.cpu.pc,
-                };
-                // Create memory accessor
-                let mut mem_access = BusGdbMemory {
-                    bus: self.bus.clone(),
                 };
                 let response = gdb.process_command(&cmd, &mut regs, &mut mem_access);
                 // Apply register changes back to CPU
@@ -1080,6 +1075,7 @@ impl Emulator {
         }
         Ok(())
     }
+    #[allow(dead_code)]
     pub(crate) fn log_debug(&self, frame_count: u64) {
         let bus = self.bus.borrow();
         let disp_en = if bus.vdp.display_enabled() {
@@ -1148,10 +1144,10 @@ fn print_usage() {
     println!("  Escape           Quit");
 }
 /// GDB memory accessor for Bus
-struct BusGdbMemory {
-    bus: Rc<RefCell<Bus>>,
+struct BusGdbMemory<'a> {
+    bus: &'a std::cell::RefCell<Bus>,
 }
-impl GdbMemory for BusGdbMemory {
+impl<'a> GdbMemory for BusGdbMemory<'a> {
     fn read_byte(&mut self, addr: u32) -> u8 {
         self.bus.borrow_mut().read_byte(addr)
     }
