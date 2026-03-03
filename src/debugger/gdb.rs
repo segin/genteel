@@ -79,10 +79,46 @@ impl StopReason {
     }
 }
 
+/// Wrapper around TcpListener to allow mocking in tests
+pub enum GdbListener {
+    Real(TcpListener),
+    #[cfg(test)]
+    MockError,
+}
+
+impl GdbListener {
+    pub fn accept(&self) -> std::io::Result<(TcpStream, std::net::SocketAddr)> {
+        match self {
+            Self::Real(l) => l.accept(),
+            #[cfg(test)]
+            Self::MockError => Err(std::io::Error::new(std::io::ErrorKind::Other, "mock error")),
+        }
+    }
+
+    pub fn set_nonblocking(&self, nonblocking: bool) -> std::io::Result<()> {
+        match self {
+            Self::Real(l) => l.set_nonblocking(nonblocking),
+            #[cfg(test)]
+            Self::MockError => Ok(()),
+        }
+    }
+
+    pub fn local_addr(&self) -> std::io::Result<std::net::SocketAddr> {
+        match self {
+            Self::Real(l) => l.local_addr(),
+            #[cfg(test)]
+            Self::MockError => Err(std::io::Error::new(
+                std::io::ErrorKind::AddrNotAvailable,
+                "Mock local_addr error",
+            )),
+        }
+    }
+}
+
 /// GDB Server state
 pub struct GdbServer {
     /// TCP listener
-    listener: TcpListener,
+    listener: GdbListener,
     /// Connected client stream
     client: Option<TcpStream>,
     /// Breakpoints (set of addresses)
@@ -104,7 +140,7 @@ pub struct GdbServer {
 impl GdbServer {
     /// Create a new GDB server
     pub fn new(port: u16, password: Option<String>) -> std::io::Result<Self> {
-        let listener = TcpListener::bind(format!("127.0.0.1:{}", port))?;
+        let listener = GdbListener::Real(TcpListener::bind(format!("127.0.0.1:{}", port))?);
         listener.set_nonblocking(true)?;
 
         let final_password = if let Some(pwd) = password {
@@ -775,6 +811,14 @@ impl GdbServer {
     pub fn is_breakpoint(&self, addr: u32) -> bool {
         self.breakpoints.contains(&addr)
     }
+
+    /// Get the local port the server is bound to
+    pub fn port(&self) -> u16 {
+        self.listener
+            .local_addr()
+            .expect("Failed to get local addr")
+            .port()
+    }
 }
 
 /// M68k register state for GDB
@@ -820,7 +864,7 @@ mod tests {
 
     fn create_test_server() -> GdbServer {
         GdbServer {
-            listener: TcpListener::bind("127.0.0.1:0").unwrap(),
+            listener: GdbListener::Real(TcpListener::bind("127.0.0.1:0").unwrap()),
             client: None,
             breakpoints: HashSet::new(),
             stop_reason: StopReason::Halted,
@@ -897,11 +941,7 @@ mod tests {
     fn test_security_loopback_accepted() {
         // Bind to random port
         let mut server = GdbServer::new(0, None).expect("Failed to create GDB server");
-        let port = server
-            .listener
-            .local_addr()
-            .expect("Failed to get local addr")
-            .port();
+        let port = server.port();
 
         // Connect via loopback
         let _stream = TcpStream::connect(format!("127.0.0.1:{}", port)).expect("Failed to connect");
@@ -1048,11 +1088,7 @@ mod tests {
     #[test]
     fn test_oversized_packet_prevention() {
         let mut server = GdbServer::new(0, None).expect("Failed to create GDB server");
-        let port = server
-            .listener
-            .local_addr()
-            .expect("Failed to get local addr")
-            .port();
+        let port = server.port();
 
         // Connect via loopback
         let mut client_stream =
@@ -1403,5 +1439,16 @@ mod tests {
 
         let max_pass_c = "b".repeat(MAX_PASSWORD_CHECK_LEN);
         assert!(!constant_time_eq(&max_pass_a, &max_pass_c));
+    }
+
+    #[test]
+    #[should_panic(expected = "Failed to get local addr")]
+    fn test_local_addr_failure() {
+        let mut server = create_test_server();
+        // Replace listener with mock to simulate local_addr failure
+        server.listener = GdbListener::MockError;
+
+        // Triggering the failure on local_addr() after a successful bind
+        let _port = server.port();
     }
 }
