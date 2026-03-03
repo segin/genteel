@@ -2,6 +2,7 @@
 mod tests {
     use crate::gui::GuiState;
     use crate::frontend::InputMapping;
+    use gilrs::GilrsBuilder;
 
     #[test]
     fn test_gui_state_window_management() {

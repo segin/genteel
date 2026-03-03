@@ -34,4 +34,5 @@ rfd = { version = "0.14", optional = true }
 image = "0.25.9"
 
 [dev-dependencies]
+gilrs = "0.10"
 proptest = "1.0"
