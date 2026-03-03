@@ -183,10 +183,7 @@ pub fn exec_movem<M: MemoryInterface>(
 
     let base_addr = match ea {
         AddressingMode::AddressPreDecrement(reg) => cpu.a[reg as usize],
-        AddressingMode::AddressPostIncrement(reg) => {
-            
-            cpu.a[reg as usize]
-        }
+        AddressingMode::AddressPostIncrement(reg) => cpu.a[reg as usize],
         _ => {
             let (ea_result, ea_cycles) =
                 calculate_ea(ea, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
