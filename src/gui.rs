@@ -24,6 +24,20 @@ pub struct WindowState {
 }
 
 #[cfg(feature = "gui")]
+#[derive(Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum PlaneTab {
+    PlaneA,
+    PlaneB,
+}
+
+#[cfg(feature = "gui")]
+impl Default for PlaneTab {
+    fn default() -> Self {
+        Self::PlaneA
+    }
+}
+
+#[cfg(feature = "gui")]
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct GuiState {
     pub windows: HashMap<String, WindowState>,
@@ -33,6 +47,8 @@ pub struct GuiState {
     pub paused: bool,
     pub recent_roms: Vec<PathBuf>,
     pub auto_save_load: bool,
+    #[serde(default)]
+    pub scroll_plane_tab: PlaneTab,
     #[serde(skip)]
     pub single_step: bool,
     #[serde(skip)]
@@ -62,6 +78,7 @@ impl GuiState {
             paused: false,
             recent_roms: Vec::new(),
             auto_save_load: false,
+            scroll_plane_tab: PlaneTab::default(),
             single_step: false,
             show_about: false,
             reset_requested: false,
@@ -863,8 +880,12 @@ impl Framework {
                 ui.label(format!("Plane Size: {}x{}", plane_w, plane_h));
                 
                 ui.horizontal(|ui| {
-                    if ui.button("Plane A").clicked() { /* TODO: switch tab if needed */ }
-                    if ui.button("Plane B").clicked() { }
+                    if ui.selectable_value(&mut self.gui_state.scroll_plane_tab, PlaneTab::PlaneA, "Plane A").changed() {
+                        self.gui_state.save();
+                    }
+                    if ui.selectable_value(&mut self.gui_state.scroll_plane_tab, PlaneTab::PlaneB, "Plane B").changed() {
+                        self.gui_state.save();
+                    }
                 });
                 
                 let plane_a_base = ((debug_info.vdp_registers[2] as usize) & 0x38) << 10;
@@ -911,12 +932,14 @@ impl Framework {
                     });
                 };
                 
-                ui.collapsing("Plane A", |ui| {
-                    render_plane(ui, plane_a_base, &mut self.plane_a_texture, "plane_a");
-                });
-                ui.collapsing("Plane B", |ui| {
-                    render_plane(ui, plane_b_base, &mut self.plane_b_texture, "plane_b");
-                });
+                match self.gui_state.scroll_plane_tab {
+                    PlaneTab::PlaneA => {
+                        render_plane(ui, plane_a_base, &mut self.plane_a_texture, "plane_a");
+                    }
+                    PlaneTab::PlaneB => {
+                        render_plane(ui, plane_b_base, &mut self.plane_b_texture, "plane_b");
+                    }
+                }
             });
             if !open {
                 self.gui_state.set_window_open("Scroll Plane Viewer", false);
