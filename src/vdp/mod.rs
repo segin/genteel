@@ -603,8 +603,8 @@ impl Vdp {
         self.h_counter = h;
     }
 
-    pub(crate) fn plane_size(&self) -> (usize, usize) {
-        let val = self.registers[REG_PLANE_SIZE];
+    /// Decode the plane size from the VDP register value (Reg 16)
+    pub fn decode_plane_size(val: u8) -> (usize, usize) {
         // Bits 0-1 (HSZ1-0): horizontal size (width in tiles)
         let w = match val & 0x03 {
             0x00 => 32,
@@ -620,6 +620,10 @@ impl Vdp {
             _ => 32,
         };
         (w, h)
+    }
+
+    pub(crate) fn plane_size(&self) -> (usize, usize) {
+        Self::decode_plane_size(self.registers[REG_PLANE_SIZE])
     }
 
     pub(crate) fn window_address(&self) -> usize {

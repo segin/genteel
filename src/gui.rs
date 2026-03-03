@@ -758,19 +758,8 @@ impl Framework {
             egui::Window::new("Scroll Plane Viewer")
                 .open(&mut open)
                 .show(&self.egui_ctx, |ui| {
-                let size_bits = debug_info.vdp_registers[16];
-                let plane_w = match size_bits & 0x03 {
-                    0x00 => 32,
-                    0x01 => 64,
-                    0x03 => 128,
-                    _ => 32,
-                };
-                let plane_h = match (size_bits >> 4) & 0x03 {
-                    0x00 => 32,
-                    0x01 => 64,
-                    0x03 => 128,
-                    _ => 32,
-                };
+                let size_bits = debug_info.vdp_registers[crate::vdp::REG_PLANE_SIZE];
+                let (plane_w, plane_h) = crate::vdp::Vdp::decode_plane_size(size_bits);
                 
                 ui.label(format!("Plane Size: {}x{}", plane_w, plane_h));
                 
