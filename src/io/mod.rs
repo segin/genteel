@@ -712,6 +712,39 @@ mod tests {
     }
 
     #[test]
+    fn test_to_button_string_all_unpressed() {
+        let state = ControllerState::new();
+        assert_eq!(state.to_button_string(), "............");
+    }
+
+    #[test]
+    fn test_to_button_string_all_pressed() {
+        let mut state = ControllerState::new();
+        state.up = true;
+        state.down = true;
+        state.left = true;
+        state.right = true;
+        state.a = true;
+        state.b = true;
+        state.c = true;
+        state.start = true;
+        state.x = true;
+        state.y = true;
+        state.z = true;
+        state.mode = true;
+        assert_eq!(state.to_button_string(), "UDLRABCSXYZM");
+    }
+
+    #[test]
+    fn test_to_button_string_mixed() {
+        let mut state = ControllerState::new();
+        state.up = true;
+        state.a = true;
+        state.start = true;
+        assert_eq!(state.to_button_string(), "U...A..S....");
+    }
+
+    #[test]
     fn test_io_update() {
         let mut io = Io::new();
         io.set_controller_type(1, ControllerType::SixButton);
