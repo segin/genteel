@@ -41,7 +41,10 @@ fn test_ym2612_all_channels_enable() {
     let mut saw_nonzero = false;
     for _ in 0..100 {
         let (l, r) = ym.generate_sample();
-        if l != 0 || r != 0 { saw_nonzero = true; break; }
+        if l != 0 || r != 0 {
+            saw_nonzero = true;
+            break;
+        }
     }
     assert!(
         saw_nonzero,
