@@ -176,6 +176,28 @@ mod tests {
     }
 
     #[test]
+    fn test_wav_new_success() {
+        let temp_dir = std::env::temp_dir();
+        let file_path = temp_dir.join(format!("test_wav_{}.wav", std::process::id()));
+
+        {
+            let wav = WavWriter::new(file_path.to_str().unwrap(), 44100, 2).unwrap();
+            assert_eq!(wav.channels(), 2);
+        } // Drop to close and finalize the file
+
+        assert!(file_path.exists());
+        let _ = std::fs::remove_file(file_path);
+    }
+
+    #[test]
+    fn test_wav_new_invalid_path() {
+        // Use a directory that definitely doesn't exist
+        let invalid_path = "/this_directory_should_not_exist_12345/test.wav";
+        let result = WavWriter::new(invalid_path, 44100, 2);
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_wav_finalize() {
         let mut buffer = Vec::new();
         let writer = Cursor::new(&mut buffer);
