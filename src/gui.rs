@@ -18,7 +18,6 @@ use winit::{
     window::WindowBuilder,
 };
 
-
 #[cfg(feature = "gilrs")]
 pub fn init_gilrs_with_builder<F, R, E>(builder: F) -> Option<R>
 where
@@ -44,6 +43,13 @@ pub const SLOT_EXTS: [&str; 10] = [
 ];
 
 #[cfg(feature = "gui")]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub enum PlaneTab {
+    PlaneA,
+    PlaneB,
+}
+
+#[cfg(feature = "gui")]
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct WindowState {
     pub open: bool,
@@ -59,6 +65,7 @@ pub struct GuiState {
     pub paused: bool,
     pub recent_roms: Vec<PathBuf>,
     pub auto_save_load: bool,
+    pub scroll_plane_tab: PlaneTab,
     #[serde(skip)]
     pub single_step: bool,
     #[serde(skip)]
@@ -88,6 +95,7 @@ impl GuiState {
             paused: false,
             recent_roms: Vec::new(),
             auto_save_load: false,
+            scroll_plane_tab: PlaneTab::PlaneA,
             single_step: false,
             show_about: false,
             reset_requested: false,
@@ -214,7 +222,6 @@ pub struct DebugInfo {
     pub current_rom_path: Option<PathBuf>,
 }
 
-
 #[cfg(feature = "gui")]
 pub struct Framework {
     pub egui_ctx: egui::Context,
@@ -229,7 +236,6 @@ pub struct Framework {
     #[cfg(feature = "gilrs")]
     pub gilrs: Option<Gilrs>,
 }
-
 
 #[cfg(feature = "gui")]
 impl Framework {
@@ -267,7 +273,7 @@ impl Framework {
             plane_b_texture: None,
             pending_rom_path: Arc::new(Mutex::new(None)),
             #[cfg(feature = "gilrs")]
-            gilrs: init_gilrs_with_builder(|| gilrs::Gilrs::new()),
+            gilrs: init_gilrs_with_builder(Gilrs::new),
         }
     }
     pub fn handle_event(
@@ -305,70 +311,71 @@ impl Framework {
 
     #[cfg(feature = "gilrs")]
     pub fn poll_gamepads(&mut self, state: &mut crate::io::ControllerState) {
-        let Some(gilrs) = &mut self.gilrs else { return; };
-        while let Some(gilrs::Event { event, .. }) = gilrs.next_event() {
-            match event {
-                EventType::ButtonPressed(button, _) => match button {
-                    Button::DPadUp => state.up = true,
-                    Button::DPadDown => state.down = true,
-                    Button::DPadLeft => state.left = true,
-                    Button::DPadRight => state.right = true,
-                    Button::South => state.b = true,
-                    Button::East => state.c = true,
-                    Button::West => state.a = true,
-                    Button::North => state.x = true,
-                    Button::LeftTrigger => state.y = true,
-                    Button::RightTrigger => state.z = true,
-                    Button::Select => state.mode = true,
-                    Button::Start => state.start = true,
-                    _ => {}
-                },
-                EventType::ButtonReleased(button, _) => match button {
-                    Button::DPadUp => state.up = false,
-                    Button::DPadDown => state.down = false,
-                    Button::DPadLeft => state.left = false,
-                    Button::DPadRight => state.right = false,
-                    Button::South => state.b = false,
-                    Button::East => state.c = false,
-                    Button::West => state.a = false,
-                    Button::North => state.x = false,
-                    Button::LeftTrigger => state.y = false,
-                    Button::RightTrigger => state.z = false,
-                    Button::Select => state.mode = false,
-                    Button::Start => state.start = false,
-                    _ => {}
-                },
-                EventType::AxisChanged(axis, value, _) => {
-                    let threshold = 0.5;
-                    match axis {
-                        Axis::LeftStickX => {
-                            if value > threshold {
-                                state.right = true;
-                                state.left = false;
-                            } else if value < -threshold {
-                                state.left = true;
-                                state.right = false;
-                            } else {
-                                state.left = false;
-                                state.right = false;
-                            }
-                        }
-                        Axis::LeftStickY => {
-                            if value > threshold {
-                                state.up = true;
-                                state.down = false;
-                            } else if value < -threshold {
-                                state.down = true;
-                                state.up = false;
-                            } else {
-                                state.up = false;
-                                state.down = false;
-                            }
-                        }
+        if let Some(gilrs) = &mut self.gilrs {
+            while let Some(gilrs::Event { event, .. }) = gilrs.next_event() {
+                match event {
+                    EventType::ButtonPressed(button, _) => match button {
+                        Button::DPadUp => state.up = true,
+                        Button::DPadDown => state.down = true,
+                        Button::DPadLeft => state.left = true,
+                        Button::DPadRight => state.right = true,
+                        Button::South => state.b = true,
+                        Button::East => state.c = true,
+                        Button::West => state.a = true,
+                        Button::North => state.x = true,
+                        Button::LeftTrigger => state.y = true,
+                        Button::RightTrigger => state.z = true,
+                        Button::Select => state.mode = true,
+                        Button::Start => state.start = true,
                         _ => {}
+                    },
+                    EventType::ButtonReleased(button, _) => match button {
+                        Button::DPadUp => state.up = false,
+                        Button::DPadDown => state.down = false,
+                        Button::DPadLeft => state.left = false,
+                        Button::DPadRight => state.right = false,
+                        Button::South => state.b = false,
+                        Button::East => state.c = false,
+                        Button::West => state.a = false,
+                        Button::North => state.x = false,
+                        Button::LeftTrigger => state.y = false,
+                        Button::RightTrigger => state.z = false,
+                        Button::Select => state.mode = false,
+                        Button::Start => state.start = false,
+                        _ => {}
+                    },
+                    EventType::AxisChanged(axis, value, _) => {
+                        let threshold = 0.5;
+                        match axis {
+                            Axis::LeftStickX => {
+                                if value > threshold {
+                                    state.right = true;
+                                    state.left = false;
+                                } else if value < -threshold {
+                                    state.left = true;
+                                    state.right = false;
+                                } else {
+                                    state.left = false;
+                                    state.right = false;
+                                }
+                            }
+                            Axis::LeftStickY => {
+                                if value > threshold {
+                                    state.up = true;
+                                    state.down = false;
+                                } else if value < -threshold {
+                                    state.down = true;
+                                    state.up = false;
+                                } else {
+                                    state.up = false;
+                                    state.down = false;
+                                }
+                            }
+                            _ => {}
+                        }
                     }
+                    _ => {}
                 }
-                _ => {}
             }
         }
     }
@@ -697,9 +704,15 @@ impl Framework {
                     });
                     ui.separator();
                     ui.columns(2, |columns| {
+                        let mut d_buf = String::with_capacity(16);
+                        let mut a_buf = String::with_capacity(16);
                         for i in 0..8 {
-                            columns[0].label(format!("D{}: {:08X}", i, debug_info.m68k_d[i]));
-                            columns[1].label(format!("A{}: {:08X}", i, debug_info.m68k_a[i]));
+                            d_buf.clear();
+                            a_buf.clear();
+                            let _ = write!(&mut d_buf, "D{}: {:08X}", i, debug_info.m68k_d[i]);
+                            let _ = write!(&mut a_buf, "A{}: {:08X}", i, debug_info.m68k_a[i]);
+                            columns[0].label(&d_buf);
+                            columns[1].label(&a_buf);
                         }
                     });
                     ui.separator();
@@ -952,9 +965,958 @@ impl Framework {
                 .open(&mut open)
                 .show(&self.egui_ctx, |ui| {
                     let size_bits = debug_info.vdp_registers[crate::vdp::REG_PLANE_SIZE];
-                    let plane_w = match size_bits & 0x03 {
-                        0x00 => 32,
-                        0x01 => 64,
-                        0x03 => 128,
-                        _ => 32,
+                    let (plane_w, plane_h) = crate::vdp::Vdp::decode_plane_size(size_bits);
+
+                    ui.label(format!("Plane Size: {}x{}", plane_w, plane_h));
+
+                    ui.horizontal(|ui| {
+                        if ui
+                            .selectable_value(
+                                &mut self.gui_state.scroll_plane_tab,
+                                PlaneTab::PlaneA,
+                                "Plane A",
+                            )
+                            .changed()
+                        {
+                            self.gui_state.save();
+                        }
+                        if ui
+                            .selectable_value(
+                                &mut self.gui_state.scroll_plane_tab,
+                                PlaneTab::PlaneB,
+                                "Plane B",
+                            )
+                            .changed()
+                        {
+                            self.gui_state.save();
+                        }
+                    });
+
+                    let plane_a_base = ((debug_info.vdp_registers[2] as usize) & 0x38) << 10;
+                    let plane_b_base = ((debug_info.vdp_registers[4] as usize) & 0x07) << 13;
+
+                    let render_plane = |ui: &mut egui::Ui,
+                                        base: usize,
+                                        texture_opt: &mut Option<egui::TextureHandle>,
+                                        id: &str| {
+                        let mut pixels = vec![0u8; plane_w * 8 * plane_h * 8 * 4];
+                        for ty in 0..plane_h {
+                            for tx in 0..plane_w {
+                                let entry_addr = base + (ty * plane_w + tx) * 2;
+                                let entry = u16::from_be_bytes([
+                                    debug_info.vram[entry_addr],
+                                    debug_info.vram[entry_addr + 1],
+                                ]);
+                                let tile_idx = entry & 0x07FF;
+                                let palette = ((entry >> 13) & 0x03) as usize;
+                                let v_flip = (entry & 0x1000) != 0;
+                                let h_flip = (entry & 0x0800) != 0;
+
+                                for py in 0..8 {
+                                    let row_addr = tile_idx as usize * 32
+                                        + (if v_flip { 7 - py } else { py }) * 4;
+                                    for px in 0..8 {
+                                        let byte = debug_info.vram
+                                            [row_addr + (if h_flip { 7 - px } else { px }) / 2];
+                                        let color_idx =
+                                            if (if h_flip { 7 - px } else { px }) % 2 == 0 {
+                                                byte >> 4
+                                            } else {
+                                                byte & 0x0F
+                                            };
+
+                                        let color565 =
+                                            debug_info.cram[palette * 16 + color_idx as usize];
+                                        let r = (((color565 >> 11) & 0x1F) << 3) as u8;
+                                        let g = (((color565 >> 5) & 0x3F) << 2) as u8;
+                                        let b = ((color565 & 0x1F) << 3) as u8;
+
+                                        let pixel_idx =
+                                            ((ty * 8 + py) * plane_w * 8 + (tx * 8 + px)) * 4;
+                                        pixels[pixel_idx] = r;
+                                        pixels[pixel_idx + 1] = g;
+                                        pixels[pixel_idx + 2] = b;
+                                        pixels[pixel_idx + 3] = 255;
+                                    }
+                                }
+                            }
+                        }
+                        let image = egui::ColorImage::from_rgba_unmultiplied(
+                            [plane_w * 8, plane_h * 8],
+                            &pixels,
+                        );
+                        let texture = texture_opt.get_or_insert_with(|| {
+                            ui.ctx().load_texture(id, image.clone(), Default::default())
+                        });
+                        texture.set(image, Default::default());
+                        egui::ScrollArea::both().id_source(id).show(ui, |ui| {
+                            ui.image(&*texture);
+                        });
                     };
+
+                    match self.gui_state.scroll_plane_tab {
+                        PlaneTab::PlaneA => {
+                            render_plane(ui, plane_a_base, &mut self.plane_a_texture, "plane_a");
+                        }
+                        PlaneTab::PlaneB => {
+                            render_plane(ui, plane_b_base, &mut self.plane_b_texture, "plane_b");
+                        }
+                    }
+                });
+            if !open {
+                self.gui_state.set_window_open("Scroll Plane Viewer", false);
+            }
+        }
+
+        if self.gui_state.is_window_open("VDP Memory Hex") {
+            let mut open = true;
+            egui::Window::new("VDP Memory Hex")
+                .open(&mut open)
+                .show(&self.egui_ctx, |ui| {
+                    ui.collapsing("VRAM", |ui| {
+                        egui::ScrollArea::vertical()
+                            .id_source("vram_hex")
+                            .show_rows(
+                                ui,
+                                ui.text_style_height(&egui::TextStyle::Monospace),
+                                0x10000 / 16,
+                                |ui, row_range| {
+                                    egui::Grid::new("vram_grid").show(ui, |ui| {
+                                        for row in row_range {
+                                            let addr = row * 16;
+                                            ui.label(
+                                                egui::RichText::new(format!("{:04X}:", addr))
+                                                    .monospace(),
+                                            );
+                                            for i in 0..16 {
+                                                ui.label(
+                                                    egui::RichText::new(format!(
+                                                        "{:02X}",
+                                                        debug_info.vram[addr + i]
+                                                    ))
+                                                    .monospace(),
+                                                );
+                                            }
+                                            ui.end_row();
+                                        }
+                                    });
+                                },
+                            );
+                    });
+                    ui.collapsing("CRAM", |ui| {
+                        egui::Grid::new("cram_grid").show(ui, |ui| {
+                            for row in 0..4 {
+                                let addr = row * 16;
+                                ui.label(egui::RichText::new(format!("{:02X}:", addr)).monospace());
+                                for i in 0..16 {
+                                    let val = if (addr + i) % 2 == 0 {
+                                        debug_info.cram_raw[(addr + i) / 2] >> 8
+                                    } else {
+                                        debug_info.cram_raw[(addr + i) / 2] & 0xFF
+                                    } as u8;
+                                    ui.label(
+                                        egui::RichText::new(format!("{:02X}", val)).monospace(),
+                                    );
+                                }
+                                ui.end_row();
+                            }
+                        });
+                    });
+                    ui.collapsing("VSRAM", |ui| {
+                        egui::Grid::new("vsram_grid").show(ui, |ui| {
+                            for row in 0..5 {
+                                let addr = row * 16;
+                                ui.label(egui::RichText::new(format!("{:02X}:", addr)).monospace());
+                                for i in 0..16 {
+                                    if addr + i < 80 {
+                                        ui.label(
+                                            egui::RichText::new(format!(
+                                                "{:02X}",
+                                                debug_info.vsram[addr + i]
+                                            ))
+                                            .monospace(),
+                                        );
+                                    } else {
+                                        ui.label("  ");
+                                    }
+                                }
+                                ui.end_row();
+                            }
+                        });
+                    });
+                });
+            if !open {
+                self.gui_state.set_window_open("VDP Memory Hex", false);
+            }
+        }
+
+        if self.gui_state.is_window_open("Memory Viewer") {
+            let mut open = true;
+            egui::Window::new("Memory Viewer")
+                .open(&mut open)
+                .show(&self.egui_ctx, |ui| {
+                    ui.collapsing("Work RAM (M68k)", |ui| {
+                        egui::ScrollArea::vertical()
+                            .id_source("wram_hex")
+                            .show_rows(
+                                ui,
+                                ui.text_style_height(&egui::TextStyle::Monospace),
+                                0x10000 / 16,
+                                |ui, row_range| {
+                                    egui::Grid::new("wram_grid").show(ui, |ui| {
+                                        let mut label_buffer = String::with_capacity(16);
+                                        let mut hex_buffer = String::with_capacity(4);
+                                        for row in row_range {
+                                            let addr = row * 16;
+                                            label_buffer.clear();
+                                            let _ = write!(&mut label_buffer, "{:04X}:", addr);
+                                            ui.label(
+                                                egui::RichText::new(&label_buffer).monospace(),
+                                            );
+                                            for i in 0..16 {
+                                                hex_buffer.clear();
+                                                let _ = write!(
+                                                    &mut hex_buffer,
+                                                    "{:02X}",
+                                                    debug_info.wram[addr + i]
+                                                );
+                                                ui.label(
+                                                    egui::RichText::new(&hex_buffer).monospace(),
+                                                );
+                                            }
+                                            ui.end_row();
+                                        }
+                                    });
+                                },
+                            );
+                    });
+                    ui.collapsing("Z80 RAM", |ui| {
+                        egui::ScrollArea::vertical()
+                            .id_source("z80_ram_hex")
+                            .show_rows(
+                                ui,
+                                ui.text_style_height(&egui::TextStyle::Monospace),
+                                0x2000 / 16,
+                                |ui, row_range| {
+                                    egui::Grid::new("z80_ram_grid").show(ui, |ui| {
+                                        let mut label_buffer = String::with_capacity(16);
+                                        let mut hex_buffer = String::with_capacity(4);
+                                        for row in row_range {
+                                            let addr = row * 16;
+                                            label_buffer.clear();
+                                            let _ = write!(&mut label_buffer, "{:04X}:", addr);
+                                            ui.label(
+                                                egui::RichText::new(&label_buffer).monospace(),
+                                            );
+                                            for i in 0..16 {
+                                                hex_buffer.clear();
+                                                let _ = write!(
+                                                    &mut hex_buffer,
+                                                    "{:02X}",
+                                                    debug_info.z80_ram[addr + i]
+                                                );
+                                                ui.label(
+                                                    egui::RichText::new(&hex_buffer).monospace(),
+                                                );
+                                            }
+                                            ui.end_row();
+                                        }
+                                    });
+                                },
+                            );
+                    });
+                });
+            if !open {
+                self.gui_state.set_window_open("Memory Viewer", false);
+            }
+        }
+
+        if self.gui_state.is_window_open("Sound Chip Visualizer") {
+            let mut open = true;
+            egui::Window::new("Sound Chip Visualizer")
+                .open(&mut open)
+                .show(&self.egui_ctx, |ui| {
+                    ui.collapsing("SN76489 PSG", |ui| {
+                        for i in 0..3 {
+                            ui.horizontal(|ui| {
+                                ui.label(format!("Tone {}:", i));
+                                ui.label(format!("Freq: {:03X}", debug_info.psg_tone[i].frequency));
+                                ui.label(format!("Vol: {:01X}", debug_info.psg_tone[i].volume));
+                                let vol_norm = 1.0 - (debug_info.psg_tone[i].volume as f32 / 15.0);
+                                ui.add(egui::ProgressBar::new(vol_norm).show_percentage());
+                            });
+                        }
+                        ui.horizontal(|ui| {
+                            ui.label("Noise:");
+                            ui.label(if debug_info.psg_noise.white_noise {
+                                "White"
+                            } else {
+                                "Periodic"
+                            });
+                            ui.label(format!("Rate: {}", debug_info.psg_noise.shift_rate));
+                            ui.label(format!("Vol: {:01X}", debug_info.psg_noise.volume));
+                            let vol_norm = 1.0 - (debug_info.psg_noise.volume as f32 / 15.0);
+                            ui.add(egui::ProgressBar::new(vol_norm).show_percentage());
+                        });
+                    });
+
+                    ui.collapsing("YM2612 FM", |ui| {
+                        for ch in 0..6 {
+                            let bank = if ch < 3 { 0 } else { 1 };
+                            let ch_offset = ch % 3;
+
+                            ui.collapsing(format!("Channel {}", ch + 1), |ui| {
+                                let fb_algo = debug_info.ym2612_regs[bank][0xB0 + ch_offset];
+                                let feedback = (fb_algo >> 3) & 0x07;
+                                let algo = fb_algo & 0x07;
+                                ui.horizontal(|ui| {
+                                    ui.label(format!("Algo: {}", algo));
+                                    ui.label(format!("FB: {}", feedback));
+                                    let pan = debug_info.ym2612_regs[bank][0xB4 + ch_offset];
+                                    ui.label(format!(
+                                        "Pan: {}{}",
+                                        if pan & 0x80 != 0 { "L" } else { "-" },
+                                        if pan & 0x40 != 0 { "R" } else { "-" }
+                                    ));
+                                });
+
+                                egui::Grid::new(format!("ch_{}_ops", ch)).show(ui, |ui| {
+                                    ui.label("Op");
+                                    ui.label("MULT");
+                                    ui.label("TL");
+                                    ui.label("AR");
+                                    ui.label("DR");
+                                    ui.label("SR");
+                                    ui.label("RR");
+                                    ui.label("SL");
+                                    ui.end_row();
+
+                                    for op in 0..4 {
+                                        let op_offset = ch_offset + (op * 4);
+                                        let det_mul =
+                                            debug_info.ym2612_regs[bank][0x30 + op_offset];
+                                        let tl =
+                                            debug_info.ym2612_regs[bank][0x40 + op_offset] & 0x7F;
+                                        let rs_ar = debug_info.ym2612_regs[bank][0x50 + op_offset];
+                                        let am_dr = debug_info.ym2612_regs[bank][0x60 + op_offset];
+                                        let sr =
+                                            debug_info.ym2612_regs[bank][0x70 + op_offset] & 0x1F;
+                                        let sl_rr = debug_info.ym2612_regs[bank][0x80 + op_offset];
+
+                                        ui.label(format!("{}", op + 1));
+                                        ui.label(format!("{}", det_mul & 0x0F));
+                                        ui.label(format!("{:02X}", tl));
+                                        ui.label(format!("{:02X}", rs_ar & 0x1F));
+                                        ui.label(format!("{:02X}", am_dr & 0x1F));
+                                        ui.label(format!("{:02X}", sr));
+                                        ui.label(format!("{:02X}", sl_rr & 0x0F));
+                                        ui.label(format!("{:02X}", sl_rr >> 4));
+                                        ui.end_row();
+                                    }
+                                });
+                            });
+                        }
+                    });
+                });
+            if !open {
+                self.gui_state
+                    .set_window_open("Sound Chip Visualizer", false);
+            }
+        }
+
+        if self.gui_state.is_window_open("Audio Channel Waveforms") {
+            let mut open = true;
+            egui::Window::new("Audio Channel Waveforms")
+                .open(&mut open)
+                .show(&self.egui_ctx, |ui| {
+                    for ch in 0..10 {
+                        let label = if ch < 6 {
+                            format!("FM {}", ch + 1)
+                        } else if ch < 9 {
+                            format!("PSG Tone {}", ch - 6)
+                        } else {
+                            "PSG Noise".to_string()
+                        };
+                        ui.label(&label);
+
+                        let (rect, _response) =
+                            ui.allocate_at_least(egui::vec2(256.0, 48.0), egui::Sense::hover());
+                        ui.painter().rect_filled(rect, 0.0, egui::Color32::BLACK);
+
+                        let mut points = Vec::with_capacity(128);
+                        for i in 0..128 {
+                            let val = debug_info.channel_waveforms[ch][i];
+                            let x = rect.left() + (i as f32 * 2.0);
+                            let y = rect.center().y - (val as f32 / 16384.0 * 20.0);
+                            points.push(egui::pos2(x, y));
+                        }
+
+                        for i in 0..127 {
+                            ui.painter().line_segment(
+                                [points[i], points[i + 1]],
+                                (1.0, egui::Color32::GREEN),
+                            );
+                        }
+                    }
+                });
+            if !open {
+                self.gui_state
+                    .set_window_open("Audio Channel Waveforms", false);
+            }
+        }
+
+        if self.gui_state.is_window_open("Controller Viewer") {
+            let mut open = true;
+            egui::Window::new("Controller Viewer")
+                .open(&mut open)
+                .show(&self.egui_ctx, |ui| {
+                    for (i, (state, c_type)) in [
+                        (debug_info.port1_state, debug_info.port1_type),
+                        (debug_info.port2_state, debug_info.port2_type),
+                    ]
+                    .iter()
+                    .enumerate()
+                    {
+                        ui.group(|ui| {
+                            ui.heading(format!("Port {}", i + 1));
+                            ui.label(format!("Type: {:?}", c_type));
+                            ui.label(format!("Buttons: {}", state.to_button_string()));
+
+                            egui::Grid::new(format!("port_{}_grid", i)).show(ui, |ui| {
+                                ui.label(if state.up { " [U] " } else { "  U  " });
+                                ui.label(if state.down { " [D] " } else { "  D  " });
+                                ui.label(if state.left { " [L] " } else { "  L  " });
+                                ui.label(if state.right { " [R] " } else { "  R  " });
+                                ui.end_row();
+                                ui.label(if state.a { " [A] " } else { "  A  " });
+                                ui.label(if state.b { " [B] " } else { "  B  " });
+                                ui.label(if state.c { " [C] " } else { "  C  " });
+                                ui.label(if state.start { " [S] " } else { "  S  " });
+                                ui.end_row();
+                                if matches!(c_type, crate::io::ControllerType::SixButton) {
+                                    ui.label(if state.x { " [X] " } else { "  X  " });
+                                    ui.label(if state.y { " [Y] " } else { "  Y  " });
+                                    ui.label(if state.z { " [Z] " } else { "  Z  " });
+                                    ui.label(if state.mode { " [M] " } else { "  M  " });
+                                    ui.end_row();
+                                }
+                            });
+                        });
+                    }
+                });
+            if !open {
+                self.gui_state.set_window_open("Controller Viewer", false);
+            }
+        }
+
+        if self.gui_state.is_window_open("Expansion Status") {
+            let mut open = true;
+            egui::Window::new("Expansion Status")
+                .open(&mut open)
+                .show(&self.egui_ctx, |ui| {
+                    ui.group(|ui| {
+                        ui.heading("Sega CD");
+                        ui.label("Status: NOT CONNECTED");
+                        ui.add_enabled(false, egui::Button::new("Mount Disc..."));
+                    });
+                    ui.separator();
+                    ui.group(|ui| {
+                        ui.heading("Sega 32X");
+                        ui.label("Status: NOT CONNECTED");
+                        ui.add_enabled(false, egui::Button::new("Enable 32X"));
+                    });
+                });
+            if !open {
+                self.gui_state.set_window_open("Expansion Status", false);
+            }
+        }
+
+        if self.gui_state.is_window_open("State Browser") {
+            let mut open = true;
+            egui::Window::new("State Browser")
+                .open(&mut open)
+                .show(&self.egui_ctx, |ui| {
+                    if let Some(path) = &debug_info.current_rom_path {
+                        egui::Grid::new("state_browser_grid")
+                            .striped(true)
+                            .show(ui, |ui| {
+                                ui.label("Slot");
+                                ui.label("Status");
+                                ui.label("Actions");
+                                ui.end_row();
+
+                                for slot in 0..10 {
+                                    ui.label(SLOT_NAMES[slot as usize]);
+                                    let state_path = path.with_extension(SLOT_EXTS[slot as usize]);
+                                    if state_path.exists() {
+                                        let meta = state_path.metadata().ok();
+                                        let time = meta
+                                            .and_then(|m| m.modified().ok())
+                                            .map(|t| {
+                                                let duration = std::time::SystemTime::now()
+                                                    .duration_since(t)
+                                                    .unwrap_or_default();
+                                                format!("{:.1}m ago", duration.as_secs_f32() / 60.0)
+                                            })
+                                            .unwrap_or_else(|| "Exists".to_string());
+                                        ui.label(time);
+                                        ui.horizontal(|ui| {
+                                            if ui.button("Load").clicked() {
+                                                self.gui_state.load_requested = Some(slot);
+                                            }
+                                            if ui.button("Overwrite").clicked() {
+                                                self.gui_state.save_requested = Some(slot);
+                                            }
+                                            if ui.button("🗑").on_hover_text("Delete").clicked() {
+                                                self.gui_state.delete_state_requested = Some(slot);
+                                            }
+                                        });
+                                    } else {
+                                        ui.label("Empty");
+                                        if ui.button("Save").clicked() {
+                                            self.gui_state.save_requested = Some(slot);
+                                        }
+                                    }
+                                    ui.end_row();
+                                }
+                            });
+                    } else {
+                        ui.label("No ROM loaded");
+                    }
+                });
+            if !open {
+                self.gui_state.set_window_open("State Browser", false);
+            }
+        }
+    }
+    pub fn render(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        render_target: &wgpu::TextureView,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) {
+        let full_output = self.egui_ctx.end_frame();
+        let paint_jobs = self
+            .egui_ctx
+            .tessellate(full_output.shapes, full_output.pixels_per_point);
+        // Update textures
+        for (id, image_delta) in full_output.textures_delta.set {
+            self.renderer
+                .update_texture(device, queue, id, &image_delta);
+        }
+        // Prepare renderer
+        self.renderer
+            .update_buffers(device, queue, encoder, &paint_jobs, &self.screen_descriptor);
+        // Render GUI
+        {
+            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("egui"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: render_target,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+            self.renderer
+                .render(&mut rpass, &paint_jobs, &self.screen_descriptor);
+        }
+        // Clean up textures
+        for id in full_output.textures_delta.free {
+            self.renderer.free_texture(&id);
+        }
+    }
+
+    pub fn handle_exit(&mut self, emulator: &mut Emulator, record_path: &Option<String>) {
+        if self.gui_state.auto_save_load {
+            if let Some(path) = &emulator.current_rom_path {
+                emulator.save_state_to_path(path.with_extension("auto"));
+            }
+        }
+        self.gui_state.save();
+        if let Some(path) = record_path {
+            let script: InputScript = emulator.input.stop_recording();
+            if let Err(e) = script.save(path) {
+                eprintln!("Failed to save recorded script: {}", e);
+            } else {
+                println!("Recorded script saved to: {}", path);
+            }
+        }
+    }
+}
+
+#[cfg(feature = "gui")]
+pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), String> {
+    if emulator.input_mapping == InputMapping::Original {
+        println!("Controls: Arrow keys=D-pad, Z=A, X=B, C=C, Enter=Start");
+    } else {
+        println!("Controls: WASD/Arrows=D-pad, J/Z=A, K/X=B, L/C=C, U=X, I=Y, O=Z, Enter=Start, Space=Mode");
+    }
+    println!("Press Escape to quit.");
+    if let Some(path) = &record_path {
+        println!("Recording inputs to: {}", path);
+        emulator.input.start_recording();
+    }
+    let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
+    let size = winit::dpi::LogicalSize::new(
+        frontend::GENESIS_WIDTH as f64 * 3.0,
+        frontend::GENESIS_HEIGHT as f64 * 3.0,
+    );
+    let window = WindowBuilder::new()
+        .with_title("Genteel - Sega Genesis Emulator")
+        .with_inner_size(size)
+        .with_min_inner_size(winit::dpi::LogicalSize::new(
+            frontend::GENESIS_WIDTH as f64,
+            frontend::GENESIS_HEIGHT as f64,
+        ))
+        .build(&event_loop)
+        .map_err(|e| e.to_string())?;
+    // Leak the window to get a &'static Window, simplifying lifetime management
+    let window: &'static winit::window::Window = Box::leak(Box::new(window));
+    let mut pixels = {
+        let window_size = window.inner_size();
+        let surface_texture = SurfaceTexture::new(window_size.width, window_size.height, window);
+        Pixels::new(320, 240, surface_texture).map_err(|e| e.to_string())?
+    };
+    // Initialize egui framework
+    let mut framework = Framework::new(
+        &event_loop,
+        window.inner_size().width,
+        window.inner_size().height,
+        window.scale_factor() as f32,
+        &pixels,
+        emulator.input_mapping,
+    );
+    // Audio setup
+    let audio_buffer = audio::create_audio_buffer();
+    let audio_output = match audio::AudioOutput::new(audio_buffer.clone()) {
+        Ok(output) => {
+            emulator.bus.borrow_mut().sample_rate = output.sample_rate;
+            Some(output)
+        }
+        Err(e) => {
+            eprintln!("Warning: Failed to initialize audio: {}", e);
+            None
+        }
+    };
+    let _audio_output = audio_output;
+    // Input and Timing state
+    let mut input = crate::input::FrameInput::default();
+    let mut frame_count: u64 = 0;
+    let mut last_frame_inst = std::time::Instant::now();
+    let mut fps_timer = std::time::Instant::now();
+    let mut fps_count = 0;
+    let frame_duration = std::time::Duration::from_nanos(16_666_667); // 60.0 fps
+    println!("Starting event loop...");
+    event_loop
+        .run(move |event, target| {
+            match event {
+                Event::WindowEvent { event, .. } => {
+                    // Handle GUI events
+                    framework.handle_event(window, &event);
+                    match event {
+                        WindowEvent::CloseRequested => {
+                            println!("Using CloseRequested to exit");
+                            framework.handle_exit(&mut emulator, &record_path);
+                            target.exit();
+                        }
+                        WindowEvent::KeyboardInput {
+                            event: key_event, ..
+                        } => {
+                            // If egui wants focus, don't process game input
+                            if framework.egui_ctx.wants_keyboard_input() {
+                                return;
+                            }
+                            let pressed = key_event.state == ElementState::Pressed;
+                            // 1. Try physical key first
+                            let mut handled = false;
+                            if let PhysicalKey::Code(keycode) = key_event.physical_key {
+                                if keycode == KeyCode::Escape && pressed {
+                                    println!("Escape pressed, exiting");
+                                    framework.handle_exit(&mut emulator, &record_path);
+                                    target.exit();
+                                    return;
+                                }
+                                if let Some((button, _)) =
+                                    frontend::keycode_to_button(keycode, emulator.input_mapping)
+                                {
+                                    input.p1.set_button(button, pressed);
+                                    handled = true;
+                                }
+                            }
+                            // 2. Fallback to logical key
+                            if !handled {
+                                use winit::keyboard::Key;
+                                if let Key::Named(named) = key_event.logical_key {
+                                    let button = match named {
+                                        winit::keyboard::NamedKey::ArrowUp => Some("up"),
+                                        winit::keyboard::NamedKey::ArrowDown => Some("down"),
+                                        winit::keyboard::NamedKey::ArrowLeft => Some("left"),
+                                        winit::keyboard::NamedKey::ArrowRight => Some("right"),
+                                        winit::keyboard::NamedKey::Enter => Some("start"),
+                                        winit::keyboard::NamedKey::Space => Some("mode"),
+                                        _ => None,
+                                    };
+                                    if let Some(btn) = button {
+                                        input.p1.set_button(btn, pressed);
+                                    }
+                                }
+                            }
+                        }
+                        WindowEvent::Resized(size) => {
+                            if size.width > 0 && size.height > 0 {
+                                pixels.resize_surface(size.width, size.height).ok();
+                                framework.resize(size.width, size.height);
+                            }
+                        }
+                        WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                            framework.scale_factor(scale_factor as f32);
+                        }
+                        WindowEvent::RedrawRequested => {
+                            // Poll gamepads
+                            #[cfg(feature = "gilrs")]
+                            framework.poll_gamepads(&mut input.p1);
+
+                            // Check for pick ROM request
+                            if framework.gui_state.pick_rom_requested {
+                                framework.pick_rom();
+                                framework.gui_state.pick_rom_requested = false;
+                            }
+
+                            // Check for pending ROM load
+                            let pending = {
+                                match framework.pending_rom_path.lock() {
+                                    Ok(mut lock) => lock.take(),
+                                    Err(_) => {
+                                        eprintln!("Failed to acquire pending_rom_path lock");
+                                        None
+                                    }
+                                }
+                            };
+                            if let Some(path) = pending {
+                                println!("Loading ROM: {:?}", path);
+                                // Security: Whitelist the directory containing the ROM
+                                if let Ok(canonical) = path.canonicalize() {
+                                    if let Some(parent) = canonical.parent() {
+                                        let _ = emulator.add_allowed_path(parent);
+                                    }
+                                }
+                                if let Err(e) = emulator.load_rom(path.to_str().unwrap_or("")) {
+                                    eprintln!("Failed to load ROM: {}", e);
+                                } else {
+                                    // Update recent ROMs
+                                    let mut recent = framework.gui_state.recent_roms.clone();
+                                    recent.retain(|p| p != &path);
+                                    recent.insert(0, path.clone());
+                                    recent.truncate(10);
+                                    framework.gui_state.recent_roms = recent;
+                                    framework.gui_state.save();
+
+                                    // Auto-Load if enabled
+                                    if framework.gui_state.auto_save_load {
+                                        let auto_path = path.with_extension("auto");
+                                        if auto_path.exists() {
+                                            emulator.load_state_from_path(auto_path);
+                                        }
+                                    }
+                                }
+                            }
+                            if framework.gui_state.reset_requested {
+                                println!("Hard resetting emulator");
+                                emulator.hard_reset();
+                                framework.gui_state.reset_requested = false;
+                            }
+                            if framework.gui_state.close_requested {
+                                println!("Closing ROM");
+                                if framework.gui_state.auto_save_load {
+                                    if let Some(path) = &emulator.current_rom_path {
+                                        emulator.save_state_to_path(path.with_extension("auto"));
+                                    }
+                                }
+                                emulator.close_rom();
+                                framework.gui_state.save();
+                                framework.gui_state.close_requested = false;
+                            }
+                            if let Some(slot) = framework.gui_state.save_requested {
+                                emulator.save_state(slot);
+                                framework.gui_state.save_requested = None;
+                            }
+                            if let Some(slot) = framework.gui_state.load_requested {
+                                emulator.load_state(slot);
+                                framework.gui_state.load_requested = None;
+                            }
+                            if let Some(slot) = framework.gui_state.delete_state_requested {
+                                emulator.delete_state(slot);
+                                framework.gui_state.delete_state_requested = None;
+                            }
+
+                            // Sync settings from GUI
+                            emulator.input_mapping = framework.gui_state.input_mapping;
+                            let force_red = framework.gui_state.force_red;
+                            emulator.paused = framework.gui_state.paused;
+                            emulator.single_step = framework.gui_state.single_step;
+                            framework.gui_state.single_step = false; // Reset GUI state
+
+                            // Poll GDB (can override GUI state)
+                            emulator.poll_gdb();
+
+                            // Sync emulator state back to GUI
+                            framework.gui_state.paused = emulator.paused;
+
+                            frame_count += 1;
+                            fps_count += 1;
+                            // Update FPS in title bar every second
+                            if fps_timer.elapsed() >= std::time::Duration::from_secs(1) {
+                                window.set_title(&format!(
+                                    "Genteel - Sega Genesis Emulator | FPS: {}",
+                                    fps_count
+                                ));
+                                fps_count = 0;
+                                fps_timer = std::time::Instant::now();
+                            }
+                            // Debug: Print every 60 frames
+                            if emulator.debug && frame_count % 60 == 1 {
+                                emulator.log_debug(frame_count);
+                            }
+                            // Run one frame of emulation
+                            emulator.step_frame(Some(&input));
+                            // Process audio
+                            if let Ok(mut buf) = audio_buffer.lock() {
+                                buf.push(&emulator.audio_buffer);
+                            }
+                            emulator.audio_buffer.clear();
+
+                            // Collect debug info and render
+                            let debug_info = {
+                                let mut bus = emulator.bus.borrow_mut();
+                                if force_red {
+                                    bus.vdp.framebuffer.fill(0xF800); // Red in RGB565
+                                }
+                                let m68k_disasm = {
+                                    let mut disasm = Vec::new();
+                                    let mut addr = emulator.cpu.pc;
+                                    for _ in 0..10 {
+                                        let opcode = bus.read_word(addr);
+                                        let instr = crate::cpu::decode(opcode);
+                                        disasm.push((addr, format!("{:?}", instr)));
+                                        addr += instr.length_words() * 2;
+                                    }
+                                    disasm
+                                };
+                                let z80_disasm = {
+                                    let mut disasm = Vec::new();
+                                    let mut addr = emulator.z80.pc;
+                                    for _ in 0..10 {
+                                        let byte = bus.read_byte(0xA00000 + addr as u32);
+                                        disasm.push((addr, format!("{:02X}", byte)));
+                                        addr += 1;
+                                    }
+                                    disasm
+                                };
+
+                                let mut cram_raw = [0u16; 64];
+                                for i in 0..64 {
+                                    cram_raw[i] = u16::from_be_bytes([
+                                        bus.vdp.cram[i * 2],
+                                        bus.vdp.cram[i * 2 + 1],
+                                    ]);
+                                }
+
+                                let mut wram = [0u8; 0x10000];
+                                wram.copy_from_slice(&bus.work_ram);
+                                let mut z80_ram = [0u8; 0x2000];
+                                z80_ram.copy_from_slice(&bus.z80_ram);
+
+                                let info = DebugInfo {
+                                    m68k_pc: emulator.cpu.pc,
+                                    m68k_d: emulator.cpu.d,
+                                    m68k_a: emulator.cpu.a,
+                                    m68k_sr: emulator.cpu.sr,
+                                    m68k_usp: emulator.cpu.usp,
+                                    m68k_ssp: emulator.cpu.ssp,
+                                    m68k_disasm,
+                                    z80_pc: emulator.z80.pc,
+                                    z80_a: emulator.z80.a,
+                                    z80_f: emulator.z80.f,
+                                    z80_b: emulator.z80.b,
+                                    z80_c: emulator.z80.c,
+                                    z80_d: emulator.z80.d,
+                                    z80_e: emulator.z80.e,
+                                    z80_h: emulator.z80.h,
+                                    z80_l: emulator.z80.l,
+                                    z80_ix: emulator.z80.ix,
+                                    z80_iy: emulator.z80.iy,
+                                    z80_sp: emulator.z80.sp,
+                                    z80_i: emulator.z80.i,
+                                    z80_r: emulator.z80.r,
+                                    z80_memptr: emulator.z80.memptr,
+                                    z80_iff1: emulator.z80.iff1,
+                                    z80_im: emulator.z80.im,
+                                    z80_disasm,
+                                    frame_count: emulator.internal_frame_count,
+                                    vdp_status: bus.vdp.read_status(),
+                                    vdp_registers: bus.vdp.registers,
+                                    display_enabled: bus.vdp.display_enabled(),
+                                    bg_color_index: bus.vdp.registers[7],
+                                    cram: bus.vdp.cram_cache,
+                                    cram_raw,
+                                    vram: bus.vdp.vram,
+                                    vsram: bus.vdp.vsram,
+                                    wram,
+                                    z80_ram,
+                                    ym2612_regs: bus.apu.fm.registers,
+                                    psg_tone: bus.apu.psg.tones.clone(),
+                                    psg_noise: bus.apu.psg.noise.clone(),
+                                    channel_waveforms: bus.apu.channel_buffers,
+                                    port1_state: bus.io.port1.state,
+                                    port1_type: bus.io.port1.controller_type,
+                                    port2_state: bus.io.port2.state,
+                                    port2_type: bus.io.port2.controller_type,
+                                    has_rom: !bus.rom.is_empty(),
+                                    current_rom_path: emulator.current_rom_path.clone(),
+                                };
+                                frontend::rgb565_to_rgba8(&bus.vdp.framebuffer, pixels.frame_mut());
+                                info
+                            };
+
+                            // Update egui
+                            framework.prepare(window, &debug_info);
+                            if let Err(e) = pixels.render_with(|encoder, render_target, context| {
+                                // Render the board
+                                context.scaling_renderer.render(encoder, render_target);
+                                // Render GUI
+                                framework.render(
+                                    encoder,
+                                    render_target,
+                                    &context.device,
+                                    &context.queue,
+                                );
+                                Ok(())
+                            }) {
+                                eprintln!("Render error: {}", e);
+                                target.exit();
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                Event::AboutToWait => {
+                    let now = std::time::Instant::now();
+                    let next_frame = last_frame_inst + frame_duration;
+                    if now >= next_frame {
+                        last_frame_inst = now;
+                        window.request_redraw();
+                    }
+                    target.set_control_flow(winit::event_loop::ControlFlow::Poll);
+                }
+                _ => {}
+            }
+        })
+        .map_err(|e| e.to_string())
+}

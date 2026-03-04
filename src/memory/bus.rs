@@ -165,6 +165,12 @@ impl Bus {
         self.rom.len()
     }
 
+    /// Check if DMA is currently active
+    pub fn dma_active(&self) -> bool {
+        use crate::vdp::DmaOps;
+        self.vdp.command.dma_pending && self.vdp.is_dma_transfer()
+    }
+
     /// Reset volatile state while keeping ROM and sample_rate
     pub fn reset(&mut self) {
         self.work_ram.fill(0);
