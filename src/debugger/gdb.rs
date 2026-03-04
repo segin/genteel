@@ -915,6 +915,22 @@ mod tests {
     }
 
     #[test]
+    fn test_gdb_server_new_bind_error() {
+        // Create a server on a random port
+        let server1 = GdbServer::new(0, None).expect("Failed to create first GDB server");
+        let port = server1.listener.local_addr().expect("Failed to get local addr").port();
+
+        // Attempt to create a second server on the same port
+        let server2 = GdbServer::new(port, None);
+
+        // Assert it fails with AddrInUse
+        assert!(server2.is_err());
+        if let Err(e) = server2 {
+            assert_eq!(e.kind(), std::io::ErrorKind::AddrInUse);
+        }
+    }
+
+    #[test]
     fn test_process_command_basic() {
         let mut server = create_test_server();
         let mut regs = GdbRegisters::default();
