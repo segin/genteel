@@ -90,12 +90,7 @@ impl<'a> Iterator for SpriteIterator<'a> {
 
 pub trait RenderOps {
     fn render_line(&mut self, line: u16);
-    fn render_plane(
-        &self,
-        is_plane_a: bool,
-        fetch_line: u16,
-        line_buf: &mut [u8; 320],
-    );
+    fn render_plane(&self, is_plane_a: bool, fetch_line: u16, line_buf: &mut [u8; 320]);
     #[allow(clippy::too_many_arguments)]
     fn render_tile(
         &self,
@@ -136,7 +131,13 @@ pub trait RenderOps {
         dest_idx: usize,
         line_buf: &mut [u8; 320],
     );
-    fn draw_full_tile_row(&self, entry: u16, pixel_v: u16, dest_idx: usize, line_buf: &mut [u8; 320]);
+    fn draw_full_tile_row(
+        &self,
+        entry: u16,
+        pixel_v: u16,
+        dest_idx: usize,
+        line_buf: &mut [u8; 320],
+    );
     fn bg_color(&self) -> (u8, u8);
     fn get_cram_color(&self, palette: u8, index: u8) -> u16;
 }
@@ -342,18 +343,32 @@ impl RenderOps for Vdp {
                 if top_layer == 3 {
                     if s_col == 0x3E {
                         top_col = bg_color_idx;
-                        if a_pri && !a_trans { top_col = a_col; }
-                        else if b_pri && !b_trans { top_col = b_col; }
-                        else if !a_trans { top_col = a_col; }
-                        else if !b_trans { top_col = b_col; }
-                        if state < 2 { state += 1; }
+                        if a_pri && !a_trans {
+                            top_col = a_col;
+                        } else if b_pri && !b_trans {
+                            top_col = b_col;
+                        } else if !a_trans {
+                            top_col = a_col;
+                        } else if !b_trans {
+                            top_col = b_col;
+                        }
+                        if state < 2 {
+                            state += 1;
+                        }
                     } else if s_col == 0x3F {
                         top_col = bg_color_idx;
-                        if a_pri && !a_trans { top_col = a_col; }
-                        else if b_pri && !b_trans { top_col = b_col; }
-                        else if !a_trans { top_col = a_col; }
-                        else if !b_trans { top_col = b_col; }
-                        if state > 0 { state -= 1; }
+                        if a_pri && !a_trans {
+                            top_col = a_col;
+                        } else if b_pri && !b_trans {
+                            top_col = b_col;
+                        } else if !a_trans {
+                            top_col = a_col;
+                        } else if !b_trans {
+                            top_col = b_col;
+                        }
+                        if state > 0 {
+                            state -= 1;
+                        }
                     } else if (s_col & 0x0F) == 0x0E {
                         state = 1;
                     }
@@ -373,9 +388,12 @@ impl RenderOps for Vdp {
                         let r = (color >> 11) & 0x1E;
                         let g = (color >> 6) & 0x1E;
                         let b = (color >> 1) & 0x1E;
-                        let r2 = r + 0x10; let r_final = if r2 > 0x1E { 0x1E } else { r2 };
-                        let g2 = g + 0x10; let g_final = if g2 > 0x1E { 0x1E } else { g2 };
-                        let b2 = b + 0x10; let b_final = if b2 > 0x1E { 0x1E } else { b2 };
+                        let r2 = r + 0x10;
+                        let r_final = if r2 > 0x1E { 0x1E } else { r2 };
+                        let g2 = g + 0x10;
+                        let g_final = if g2 > 0x1E { 0x1E } else { g2 };
+                        let b2 = b + 0x10;
+                        let b_final = if b2 > 0x1E { 0x1E } else { b2 };
                         (r_final << 11) | (g_final << 6) | (b_final << 1)
                     }
                     _ => color,
@@ -385,12 +403,7 @@ impl RenderOps for Vdp {
         }
     }
 
-    fn render_plane(
-        &self,
-        is_plane_a: bool,
-        fetch_line: u16,
-        line_buf: &mut [u8; 320],
-    ) {
+    fn render_plane(&self, is_plane_a: bool, fetch_line: u16, line_buf: &mut [u8; 320]) {
         let (plane_w, plane_h) = self.plane_size();
         let name_table_base = if is_plane_a {
             self.plane_a_address()
@@ -501,7 +514,7 @@ impl RenderOps for Vdp {
 
         for attr in iter {
             let sprite_v_px = (attr.v_size as u16) * 8;
-            
+
             // X=0 suppression mode
             if attr.h_pos == 0 {
                 // Technically hardware suppresses rendering but continues processing,
@@ -514,14 +527,14 @@ impl RenderOps for Vdp {
                 if count < sprites.len() {
                     sprites[count] = attr;
                     count += 1;
-                    
+
                     pixels += (attr.h_size as usize) * 8;
                 }
-                
+
                 if count >= line_limit {
                     break;
                 }
-                
+
                 if pixels >= pixel_limit {
                     break;
                 }
@@ -537,17 +550,11 @@ impl RenderOps for Vdp {
         line_buf: &mut [u8; 320],
     ) {
         let screen_width = self.screen_width();
-        
+
         // Render in reverse order so that sprites with lower indices (higher priority)
         // are drawn last and appear on top.
         for attr in sprites.iter().rev() {
-            render_sprite_scanline(
-                &self.vram,
-                line_buf,
-                fetch_line,
-                attr,
-                screen_width,
-            );
+            render_sprite_scanline(&self.vram, line_buf, fetch_line, attr, screen_width);
         }
     }
     /// Fetch Vertical scroll value for the given column.
@@ -691,7 +698,13 @@ impl RenderOps for Vdp {
     }
 
     #[inline(always)]
-    fn draw_full_tile_row(&self, entry: u16, pixel_v: u16, dest_idx: usize, line_buf: &mut [u8; 320]) {
+    fn draw_full_tile_row(
+        &self,
+        entry: u16,
+        pixel_v: u16,
+        dest_idx: usize,
+        line_buf: &mut [u8; 320],
+    ) {
         let priority = (entry & 0x8000) != 0;
         let palette = ((entry >> 13) & 0x03) as u8;
         let v_flip = (entry & 0x1000) != 0;
