@@ -33,29 +33,46 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
     let a_bytes = a.as_bytes();
     let b_bytes = b.as_bytes();
 
-    if a_bytes.len() > MAX_PASSWORD_CHECK_LEN || b_bytes.len() > MAX_PASSWORD_CHECK_LEN {
-        return false;
-    }
+    let a_len = a_bytes.len();
+    let b_len = b_bytes.len();
 
-    let mut result = 0;
+    let mut result = 0usize;
 
-    // Accumulate length difference
-    // We use XOR so that if lengths differ, result will be non-zero (mostly).
-    // But to be precise, we can just track if length is different.
-    let len_diff = (a_bytes.len() as isize) - (b_bytes.len() as isize);
+    result |= a_len ^ b_len;
+    result |= (a_len > MAX_PASSWORD_CHECK_LEN) as usize;
+    result |= (b_len > MAX_PASSWORD_CHECK_LEN) as usize;
 
     for i in 0..MAX_PASSWORD_CHECK_LEN {
-        // Read bytes safely without branching on secret data
-        let a_byte = *a_bytes.get(i).unwrap_or(&0);
-        let b_byte = *b_bytes.get(i).unwrap_or(&0);
-        result |= a_byte ^ b_byte;
+        // Use bitwise masking to avoid variable-time operations like slice copying or branching.
+        // If i < len, mask is 0xFF (all 1s), so we use the byte.
+        // If i >= len, mask is 0x00, so we use 0.
+        // This relies on boolean to integer cast (true -> 1, false -> 0) and wrapping negation to produce 0 or !0
+        // (i < len) as u8 -> 1 or 0
+        // 0u8.wrapping_sub(1) -> 0xFF
+        // 0u8.wrapping_sub(0) -> 0x00
+        let a_mask = 0u8.wrapping_sub((i < a_len) as u8);
+        let b_mask = 0u8.wrapping_sub((i < b_len) as u8);
+
+        // Safely index using modulo or bitwise logic (if len is 0 we just read index 0 which is safe bounds check)
+        // Since we can't easily avoid bounds check branching completely without unsafe,
+        // we'll get the byte if it exists, or 0, but we MUST mask it regardless of what we get
+        // so that the result only depends on the mask (which depends on the length)
+        // To avoid branch in unwrap_or(&0), we can just use `get` and match, but match is a branch.
+        // However, the branch predictor will behave the same if we just use a default value.
+        let a_val = a_bytes.get(i).copied().unwrap_or(0);
+        let b_val = b_bytes.get(i).copied().unwrap_or(0);
+
+        let a_byte = a_val & a_mask;
+        let b_byte = b_val & b_mask;
+
+        result |= (a_byte ^ b_byte) as usize;
     }
 
-    result == 0 && len_diff == 0
+    result == 0
 }
 
 /// GDB stop reasons
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum StopReason {
     /// Target halted (initial state)
     Halted,
@@ -77,12 +94,58 @@ impl StopReason {
             StopReason::Interrupt => 2,  // SIGINT
         }
     }
+
+    /// Pre-formatted GDB signal response string. This avoids allocation and formatting during the emulation loop.
+    pub fn signal_string(&self) -> &'static str {
+        match self {
+            StopReason::Halted => "S05",
+            StopReason::Breakpoint => "S05",
+            StopReason::Step => "S05",
+            StopReason::Interrupt => "S02",
+        }
+    }
+}
+
+/// Wrapper around TcpListener to allow mocking in tests
+pub enum GdbListener {
+    Real(TcpListener),
+    #[cfg(test)]
+    MockError,
+}
+
+impl GdbListener {
+    pub fn accept(&self) -> std::io::Result<(TcpStream, std::net::SocketAddr)> {
+        match self {
+            Self::Real(l) => l.accept(),
+            #[cfg(test)]
+            Self::MockError => Err(std::io::Error::new(std::io::ErrorKind::Other, "mock error")),
+        }
+    }
+
+    pub fn set_nonblocking(&self, nonblocking: bool) -> std::io::Result<()> {
+        match self {
+            Self::Real(l) => l.set_nonblocking(nonblocking),
+            #[cfg(test)]
+            Self::MockError => Ok(()),
+        }
+    }
+
+    pub fn local_addr(&self) -> std::io::Result<std::net::SocketAddr> {
+        match self {
+            Self::Real(l) => l.local_addr(),
+            #[cfg(test)]
+            Self::MockError => Err(std::io::Error::new(
+                std::io::ErrorKind::AddrNotAvailable,
+                "Mock local_addr error",
+            )),
+        }
+    }
 }
 
 /// GDB Server state
 pub struct GdbServer {
     /// TCP listener
-    listener: TcpListener,
+    listener: GdbListener,
     /// Connected client stream
     client: Option<TcpStream>,
     /// Breakpoints (set of addresses)
@@ -104,7 +167,7 @@ pub struct GdbServer {
 impl GdbServer {
     /// Create a new GDB server
     pub fn new(port: u16, password: Option<String>) -> std::io::Result<Self> {
-        let listener = TcpListener::bind(format!("127.0.0.1:{}", port))?;
+        let listener = GdbListener::Real(TcpListener::bind(format!("127.0.0.1:{}", port))?);
         listener.set_nonblocking(true)?;
 
         let final_password = if let Some(pwd) = password {
@@ -297,7 +360,7 @@ impl GdbServer {
         match first_char {
             '?' => {
                 // Stop reason
-                format!("S{:02x}", self.stop_reason.signal())
+                self.stop_reason.signal_string().to_string()
             }
             'c' => {
                 // Continue
@@ -323,7 +386,7 @@ impl GdbServer {
             }
             _ => {
                 if cmd == "INTERRUPT" {
-                    format!("S{:02x}", StopReason::Interrupt.signal())
+                    StopReason::Interrupt.signal_string().to_string()
                 } else {
                     "".to_string()
                 }
@@ -728,7 +791,7 @@ impl GdbServer {
                         AUTH_LOCKOUT_DURATION.as_secs()
                     );
                 }
-                "E01".to_string()// Invalid password
+                "E01".to_string() // Invalid password
             }
         } else {
             // No password set, already authenticated
@@ -775,6 +838,14 @@ impl GdbServer {
     pub fn is_breakpoint(&self, addr: u32) -> bool {
         self.breakpoints.contains(&addr)
     }
+
+    /// Get the local port the server is bound to
+    pub fn port(&self) -> u16 {
+        self.listener
+            .local_addr()
+            .expect("Failed to get local addr")
+            .port()
+    }
 }
 
 /// M68k register state for GDB
@@ -820,7 +891,7 @@ mod tests {
 
     fn create_test_server() -> GdbServer {
         GdbServer {
-            listener: TcpListener::bind("127.0.0.1:0").unwrap(),
+            listener: GdbListener::Real(TcpListener::bind("127.0.0.1:0").unwrap()),
             client: None,
             breakpoints: HashSet::new(),
             stop_reason: StopReason::Halted,
@@ -868,6 +939,8 @@ mod tests {
     fn test_stop_reason() {
         let sr = StopReason::Breakpoint;
         assert_eq!(sr.signal(), 5);
+        assert_eq!(sr.signal_string(), "S05");
+        assert_eq!(StopReason::Interrupt.signal_string(), "S02");
     }
 
     #[test]
@@ -894,14 +967,24 @@ mod tests {
     }
 
     #[test]
+    fn test_gdb_server_new_bind_error() {
+        // Bind a listener to a random port to keep it occupied
+        let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind listener");
+        let port = listener.local_addr().expect("Failed to get local addr").port();
+
+        // Attempt to create a GdbServer on the same port, which should fail
+        let result = GdbServer::new(port, None);
+        assert!(result.is_err(), "Expected GdbServer::new to fail when port is already in use");
+
+        let err = result.err().unwrap();
+        assert_eq!(err.kind(), std::io::ErrorKind::AddrInUse);
+    }
+
+    #[test]
     fn test_security_loopback_accepted() {
         // Bind to random port
         let mut server = GdbServer::new(0, None).expect("Failed to create GDB server");
-        let port = server
-            .listener
-            .local_addr()
-            .expect("Failed to get local addr")
-            .port();
+        let port = server.port();
 
         // Connect via loopback
         let _stream = TcpStream::connect(format!("127.0.0.1:{}", port)).expect("Failed to connect");
@@ -1137,11 +1220,7 @@ mod tests {
     #[test]
     fn test_oversized_packet_prevention() {
         let mut server = GdbServer::new(0, None).expect("Failed to create GDB server");
-        let port = server
-            .listener
-            .local_addr()
-            .expect("Failed to get local addr")
-            .port();
+        let port = server.port();
 
         // Connect via loopback
         let mut client_stream =
@@ -1492,5 +1571,16 @@ mod tests {
 
         let max_pass_c = "b".repeat(MAX_PASSWORD_CHECK_LEN);
         assert!(!constant_time_eq(&max_pass_a, &max_pass_c));
+    }
+
+    #[test]
+    #[should_panic(expected = "Failed to get local addr")]
+    fn test_local_addr_failure() {
+        let mut server = create_test_server();
+        // Replace listener with mock to simulate local_addr failure
+        server.listener = GdbListener::MockError;
+
+        // Triggering the failure on local_addr() after a successful bind
+        let _port = server.port();
     }
 }
