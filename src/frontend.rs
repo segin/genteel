@@ -341,4 +341,78 @@ mod tests {
         rgb565_to_rgba8(&input, &mut output);
         assert_eq!(output, [255, 255, 255, 255]);
     }
+
+    #[test]
+    fn test_rgb565_to_rgba8_colors() {
+        // Red: 0xF800 (11111 000000 00000)
+        let mut output = [0u8; 4];
+        rgb565_to_rgba8(&[0xF800], &mut output);
+        assert_eq!(output, [255, 0, 0, 255]);
+
+        // Green: 0x07E0 (00000 111111 00000)
+        rgb565_to_rgba8(&[0x07E0], &mut output);
+        assert_eq!(output, [0, 255, 0, 255]);
+
+        // Blue: 0x001F (00000 000000 11111)
+        rgb565_to_rgba8(&[0x001F], &mut output);
+        assert_eq!(output, [0, 0, 255, 255]);
+
+        // A mid gray
+        rgb565_to_rgba8(&[0x8410], &mut output); // 10000 100000 10000
+        // r: (16 << 3) | (16 >> 2) = 128 | 4 = 132
+        // g: (32 << 2) | (32 >> 4) = 128 | 2 = 130
+        // b: (16 << 3) | (16 >> 2) = 128 | 4 = 132
+        assert_eq!(output, [132, 130, 132, 255]);
+    }
+
+    #[cfg(any(feature = "gui", feature = "test_headless"))]
+    #[test]
+    fn test_keycode_to_button_exhaustive_table() {
+        let test_cases = [
+            // Original Mapping
+            (InputMapping::Original, KeyCode::ArrowUp, Some(("up", true))),
+            (InputMapping::Original, KeyCode::ArrowDown, Some(("down", true))),
+            (InputMapping::Original, KeyCode::ArrowLeft, Some(("left", true))),
+            (InputMapping::Original, KeyCode::ArrowRight, Some(("right", true))),
+            (InputMapping::Original, KeyCode::KeyZ, Some(("a", true))),
+            (InputMapping::Original, KeyCode::KeyX, Some(("b", true))),
+            (InputMapping::Original, KeyCode::KeyC, Some(("c", true))),
+            (InputMapping::Original, KeyCode::Enter, Some(("start", true))),
+            (InputMapping::Original, KeyCode::KeyA, Some(("x", true))),
+            (InputMapping::Original, KeyCode::KeyS, Some(("y", true))),
+            (InputMapping::Original, KeyCode::KeyD, Some(("z", true))),
+            (InputMapping::Original, KeyCode::KeyQ, Some(("mode", true))),
+            (InputMapping::Original, KeyCode::KeyB, None),
+
+            // Ergonomic Mapping
+            (InputMapping::Ergonomic, KeyCode::KeyW, Some(("up", true))),
+            (InputMapping::Ergonomic, KeyCode::KeyS, Some(("down", true))),
+            (InputMapping::Ergonomic, KeyCode::KeyA, Some(("left", true))),
+            (InputMapping::Ergonomic, KeyCode::KeyD, Some(("right", true))),
+            (InputMapping::Ergonomic, KeyCode::ArrowUp, Some(("up", true))),
+            (InputMapping::Ergonomic, KeyCode::KeyJ, Some(("a", true))),
+            (InputMapping::Ergonomic, KeyCode::KeyK, Some(("b", true))),
+            (InputMapping::Ergonomic, KeyCode::KeyL, Some(("c", true))),
+            (InputMapping::Ergonomic, KeyCode::KeyU, Some(("x", true))),
+            (InputMapping::Ergonomic, KeyCode::KeyI, Some(("y", true))),
+            (InputMapping::Ergonomic, KeyCode::KeyO, Some(("z", true))),
+            (InputMapping::Ergonomic, KeyCode::Enter, Some(("start", true))),
+            (InputMapping::Ergonomic, KeyCode::Space, Some(("mode", true))),
+            (InputMapping::Ergonomic, KeyCode::KeyZ, Some(("a", true))),
+            (InputMapping::Ergonomic, KeyCode::KeyX, Some(("b", true))),
+            (InputMapping::Ergonomic, KeyCode::KeyC, Some(("c", true))),
+            (InputMapping::Ergonomic, KeyCode::KeyE, None),
+        ];
+
+        for (mapping, keycode, expected) in test_cases {
+            let result = keycode_to_button(keycode, mapping);
+            assert_eq!(
+                result,
+                expected,
+                "Failed for mapping {:?} and keycode {:?}",
+                mapping,
+                keycode
+            );
+        }
+    }
 }
