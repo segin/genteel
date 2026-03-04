@@ -1012,3 +1012,56 @@ fn test_rtr_sr_preservation() {
     // Verify SP
     assert_eq!(cpu.a[7], initial_sp + 6);
 }
+
+// ============================================================================
+// MOVE USP Tests
+// ============================================================================
+
+#[test]
+fn test_move_usp() {
+    let (mut cpu, mut memory) = create_cpu();
+
+    // Test 1: Write to USP (MOVE A1, USP)
+    // Base opcode for MOVE An, USP is 0x4E60
+    // +1 for A1 -> 0x4E61
+    write_op(&mut memory, &[0x4E61]);
+    cpu.a[1] = 0xDEADBEEF;
+    cpu.usp = 0; // Clear USP
+
+    cpu.step_instruction(&mut memory);
+
+    assert_eq!(cpu.usp, 0xDEADBEEF, "MOVE A1, USP should copy A1 to USP");
+    assert_eq!(cpu.pc, 0x1002);
+
+    // Test 2: Read from USP (MOVE USP, A2)
+    // Base opcode for MOVE USP, An is 0x4E68
+    // +2 for A2 -> 0x4E6A
+    cpu.pc = 0x1000;
+    cpu.invalidate_cache();
+    write_op(&mut memory, &[0x4E6A]);
+    cpu.a[2] = 0; // Clear A2
+    cpu.usp = 0xCAFEBABE;
+
+    cpu.step_instruction(&mut memory);
+
+    assert_eq!(cpu.a[2], 0xCAFEBABE, "MOVE USP, A2 should copy USP to A2");
+    assert_eq!(cpu.pc, 0x1002);
+
+    // Test 3: Privilege violation
+    cpu.pc = 0x1000;
+    cpu.invalidate_cache();
+    write_op(&mut memory, &[0x4E61]); // MOVE A1, USP
+
+    // Clear supervisor bit to enter User mode
+    cpu.sr &= !flags::SUPERVISOR;
+
+    // Setup exception vector 8 (Privilege Violation)
+    // Make sure we write to the correct location and SSP is valid so push doesn't fail
+    cpu.ssp = 0x8000; // Give SSP a valid value since it's used during exception
+    memory.write_long(32, 0x4000); // 8 * 4 = 32
+
+    cpu.step_instruction(&mut memory);
+
+    assert_eq!(cpu.pc, 0x4000, "MOVE USP in user mode should trap to vector 8");
+    assert!(cpu.sr & flags::SUPERVISOR != 0, "Exception should set supervisor bit");
+}
