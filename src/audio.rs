@@ -7,8 +7,8 @@
 use rodio::Source;
 use std::sync::{Arc, Mutex};
 
-/// Sample rate for audio output
-pub const SAMPLE_RATE: u32 = 44100;
+/// Sample rate for audio output (Native Genesis FM rate: 53693175 / 7 / 144 = ~53267)
+pub const SAMPLE_RATE: u32 = 53267;
 
 /// Audio buffer size (in stereo sample pairs)
 pub const BUFFER_SIZE: usize = 2048;
@@ -265,7 +265,7 @@ mod tests {
     #[test]
     fn test_samples_per_frame() {
         let spf = samples_per_frame();
-        assert_eq!(spf, 735); // 44100 / 60 = 735
+        assert_eq!(spf, 887); // 53267 / 60 = 887.78 -> 887
     }
 
     #[test]

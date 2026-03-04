@@ -14,14 +14,19 @@ pub mod debugger;
 pub mod frontend;
 #[cfg(feature = "gui")]
 pub mod gui;
-#[cfg(all(feature = "gui", test))]
-pub mod tests_gui;
 pub mod input;
 pub mod io;
 pub mod memory;
+#[cfg(all(feature = "gui", test))]
+pub mod tests_gui;
 pub mod vdp;
 pub mod wav_writer;
 pub mod z80;
+
+pub const SLOT_EXTS: [&str; 10] = [
+    "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9",
+];
+
 use crate::vdp::RenderOps;
 use apu::Apu;
 use cpu::Cpu;
@@ -70,7 +75,6 @@ mod shared_bus_serde {
 }
 
 #[derive(Serialize, Deserialize)]
-
 pub struct Emulator {
     pub cpu: Cpu,
     pub z80: Z80<Z80Bus, Z80Bus>,
@@ -116,7 +120,7 @@ impl Emulator {
             apu: Apu::new(),
             bus,
             input: InputManager::new(),
-            audio_buffer: Vec::with_capacity(735 * 2), // Pre-allocate approx 1 frame
+            audio_buffer: Vec::with_capacity(crate::audio::samples_per_frame() * 2),
             wav_writer: None,
             internal_frame_count: 0,
             z80_last_bus_req: false,
@@ -140,21 +144,9 @@ impl Emulator {
 
     /// Hard reset of the emulator (clears RAM, VRAM, resets CPUs, keeps ROM)
     pub fn hard_reset(&mut self) {
-        let rom = {
-            let bus = self.bus.borrow();
-            bus.rom.clone()
-        };
-        
-        let mut new_bus = Bus::new();
-        new_bus.load_rom(&rom);
-        
-        {
-            let mut bus_lock = self.bus.borrow_mut();
-            *bus_lock = new_bus;
-        }
-        
         {
             let mut bus = self.bus.borrow_mut();
+            bus.reset();
             self.cpu.reset(&mut *bus);
         }
         self.z80.reset();
@@ -164,18 +156,22 @@ impl Emulator {
     /// Close current ROM and return to default state
     pub fn close_rom(&mut self) {
         self.save_sram();
-        
+
         let allowed_paths = self.allowed_paths.clone();
         let mapping = self.input_mapping;
-        
+        let sample_rate = self.bus.borrow().sample_rate;
+
         *self = Self::new();
-        
+
         self.allowed_paths = allowed_paths;
         self.input_mapping = mapping;
+        self.bus.borrow_mut().sample_rate = sample_rate;
     }
 
     pub fn load_sram(&mut self) {
-        let Some(path) = &self.current_rom_path else { return };
+        let Some(path) = &self.current_rom_path else {
+            return;
+        };
         let sram_path = path.with_extension("srm");
         if let Ok(data) = std::fs::read(&sram_path) {
             println!("Loading SRAM from {:?}", sram_path);
@@ -190,7 +186,9 @@ impl Emulator {
     }
 
     pub fn save_sram(&self) {
-        let Some(path) = &self.current_rom_path else { return };
+        let Some(path) = &self.current_rom_path else {
+            return;
+        };
         let bus = self.bus.borrow();
         if !bus.sram.is_empty() {
             let sram_path = path.with_extension("srm");
@@ -203,8 +201,11 @@ impl Emulator {
     }
 
     pub fn save_state(&self, slot: u8) {
-        let Some(path) = &self.current_rom_path else { return };
-        let state_path = path.with_extension(format!("s{}", slot));
+        let Some(path) = &self.current_rom_path else {
+            return;
+        };
+        let state_path = path.with_extension(SLOT_EXTS[slot as usize]);
+
         self.save_state_to_path(state_path);
     }
 
@@ -219,14 +220,20 @@ impl Emulator {
     }
 
     pub fn load_state(&mut self, slot: u8) {
-        let Some(path) = &self.current_rom_path else { return };
-        let state_path = path.with_extension(format!("s{}", slot));
+        let Some(path) = &self.current_rom_path else {
+            return;
+        };
+        let state_path = path.with_extension(SLOT_EXTS[slot as usize]);
+
         self.load_state_from_path(state_path);
     }
 
     pub fn delete_state(&self, slot: u8) {
-        let Some(path) = &self.current_rom_path else { return };
-        let state_path = path.with_extension(format!("s{}", slot));
+        let Some(path) = &self.current_rom_path else {
+            return;
+        };
+        let state_path = path.with_extension(SLOT_EXTS[slot as usize]);
+
         if state_path.exists() {
             if let Err(e) = std::fs::remove_file(&state_path) {
                 eprintln!("Failed to delete state {:?}: {}", state_path, e);
@@ -244,7 +251,8 @@ impl Emulator {
                     let gdb = self.gdb.take();
                     let allowed_paths = self.allowed_paths.clone();
                     let current_rom_path = self.current_rom_path.clone();
-                    
+                    let sample_rate = self.bus.borrow().sample_rate;
+
                     // 2. Load ROM data into the new emulator's bus
                     if let Some(ref rom_path) = current_rom_path {
                         if let Ok(data) = std::fs::read(rom_path) {
@@ -252,15 +260,16 @@ impl Emulator {
                             bus.load_rom(&data);
                         }
                     }
-                    
+
                     // 3. Apply the new state
                     *self = new_emulator;
-                    
+
                     // 4. Restore critical session state
                     self.gdb = gdb;
                     self.allowed_paths = allowed_paths;
                     self.current_rom_path = current_rom_path;
-                    
+                    self.bus.borrow_mut().sample_rate = sample_rate;
+
                     println!("Loaded state from {:?}", state_path);
                 }
                 Err(e) => eprintln!("Failed to parse save state: {}", e),
@@ -313,10 +322,10 @@ impl Emulator {
         let mut bus = self.bus.borrow_mut();
         bus.load_rom(&data);
         drop(bus);
-        
+
         self.current_rom_path = Some(canonical_path);
         self.load_sram();
-        
+
         // Reset again to load initial PC/SP from ROM vectors
         let mut bus = self.bus.borrow_mut();
         self.cpu.reset(&mut *bus);
@@ -364,13 +373,19 @@ impl Emulator {
             let mut entry = archive
                 .by_index(i)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-            let name = entry.name().to_lowercase();
-            if rom_extensions.iter().any(|ext| name.ends_with(ext)) {
+
+            let name = entry.name();
+            // Case-insensitive check without allocating strings
+            let is_rom = rom_extensions.iter().any(|&ext| {
+                name.len() >= ext.len() && name[name.len() - ext.len()..].eq_ignore_ascii_case(ext)
+            });
+
+            if is_rom {
                 let size = entry.size();
                 if size > 32 * 1024 * 1024 {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
-                        format!("ROM size {} exceeds limit of 32MB", size),
+                        "ROM size exceeds limit of 32MB",
                     ));
                 }
                 let data = Self::read_rom_with_limit(&mut entry, size)?;
@@ -687,7 +702,7 @@ impl Emulator {
 
         // 3. Catch up Z80
         if z80_can_run {
-            const Z80_CYCLES_PER_M68K_CYCLE: f32 = 3.58 / 7.67;
+            const Z80_CYCLES_PER_M68K_CYCLE: f32 = 3579545.0 / 7670453.0;
             *z80_cycle_debt += m68k_cycles as f32 * Z80_CYCLES_PER_M68K_CYCLE;
             while *z80_cycle_debt >= 1.0 {
                 let cycles = z80.step();
@@ -968,15 +983,13 @@ impl Emulator {
             }
         }
 
+        let mut mem_access = BusGdbMemory { bus: &self.bus };
         while let Some(cmd) = gdb.receive_packet() {
             let mut regs = GdbRegisters {
                 d: self.cpu.d,
                 a: self.cpu.a,
                 sr: self.cpu.sr,
                 pc: self.cpu.pc,
-            };
-            let mut mem_access = BusGdbMemory {
-                bus: self.bus.clone(),
             };
             let response = gdb.process_command(&cmd, &mut regs, &mut mem_access);
             self.cpu.d = regs.d;
@@ -1002,7 +1015,6 @@ impl Emulator {
 
     /// Run with GDB debugger attached (blocking loop)
     pub fn run_with_gdb(&mut self, port: u16, password: Option<String>) -> std::io::Result<()> {
-
         let gdb = GdbServer::new(port, password.clone())?;
         self.gdb = Some(gdb);
         let gdb = self.gdb.as_mut().unwrap();
@@ -1023,6 +1035,7 @@ impl Emulator {
         }
         let mut stepping = false;
         let mut running = false;
+        let mut mem_access = BusGdbMemory { bus: &self.bus };
         loop {
             // Check for GDB commands
             if let Some(cmd) = gdb.receive_packet() {
@@ -1032,10 +1045,6 @@ impl Emulator {
                     a: self.cpu.a,
                     sr: self.cpu.sr,
                     pc: self.cpu.pc,
-                };
-                // Create memory accessor
-                let mut mem_access = BusGdbMemory {
-                    bus: self.bus.clone(),
                 };
                 let response = gdb.process_command(&cmd, &mut regs, &mut mem_access);
                 // Apply register changes back to CPU
@@ -1067,13 +1076,11 @@ impl Emulator {
                 // Check for breakpoint
                 if gdb.is_breakpoint(self.cpu.pc) {
                     gdb.stop_reason = StopReason::Breakpoint;
-                    gdb.send_packet(&format!("S{:02x}", StopReason::Breakpoint.signal()))
-                        .ok();
+                    gdb.send_packet(StopReason::Breakpoint.signal_string()).ok();
                     running = false;
                 } else if stepping {
                     gdb.stop_reason = StopReason::Step;
-                    gdb.send_packet(&format!("S{:02x}", StopReason::Step.signal()))
-                        .ok();
+                    gdb.send_packet(StopReason::Step.signal_string()).ok();
                     running = false;
                 }
             } else {
@@ -1088,7 +1095,7 @@ impl Emulator {
         }
         Ok(())
     }
-    pub(crate) fn log_debug(&self, frame_count: u64) {
+    #[allow(dead_code)] pub(crate) fn log_debug(&self, frame_count: u64) {
         let bus = self.bus.borrow();
         let disp_en = if bus.vdp.display_enabled() {
             "ON "
@@ -1156,10 +1163,10 @@ fn print_usage() {
     println!("  Escape           Quit");
 }
 /// GDB memory accessor for Bus
-struct BusGdbMemory {
-    bus: Rc<RefCell<Bus>>,
+struct BusGdbMemory<'a> {
+    bus: &'a std::cell::RefCell<Bus>,
 }
-impl GdbMemory for BusGdbMemory {
+impl<'a> GdbMemory for BusGdbMemory<'a> {
     fn read_byte(&mut self, addr: u32) -> u8 {
         self.bus.borrow_mut().read_byte(addr)
     }
@@ -1346,7 +1353,7 @@ fn main() {
             }
         }
     }
-    
+
     if config.headless {
         emulator.run(
             config.headless_frames,
@@ -1633,21 +1640,39 @@ mod tests {
     fn test_emulator_pause() {
         let mut emulator = Emulator::new();
         let initial_frames = emulator.internal_frame_count;
-        
+
         emulator.paused = true;
         emulator.step_frame(None);
-        assert_eq!(emulator.internal_frame_count, initial_frames, "Should not advance when paused");
-        
+        assert_eq!(
+            emulator.internal_frame_count, initial_frames,
+            "Should not advance when paused"
+        );
+
         emulator.single_step = true;
         emulator.step_frame(None);
-        assert_eq!(emulator.internal_frame_count, initial_frames + 1, "Should advance one frame when single_stepping");
-        assert!(!emulator.single_step, "single_step should be reset after use");
-        
+        assert_eq!(
+            emulator.internal_frame_count,
+            initial_frames + 1,
+            "Should advance one frame when single_stepping"
+        );
+        assert!(
+            !emulator.single_step,
+            "single_step should be reset after use"
+        );
+
         emulator.step_frame(None);
-        assert_eq!(emulator.internal_frame_count, initial_frames + 1, "Should still be paused");
-        
+        assert_eq!(
+            emulator.internal_frame_count,
+            initial_frames + 1,
+            "Should still be paused"
+        );
+
         emulator.paused = false;
         emulator.step_frame(None);
-        assert_eq!(emulator.internal_frame_count, initial_frames + 2, "Should advance when resumed");
+        assert_eq!(
+            emulator.internal_frame_count,
+            initial_frames + 2,
+            "Should advance when resumed"
+        );
     }
 }
