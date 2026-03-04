@@ -22,6 +22,12 @@ pub mod memory;
 pub mod vdp;
 pub mod wav_writer;
 pub mod z80;
+
+pub const SLOT_EXTS: [&str; 10] = [
+    "s0", "s1", "s2", "s3", "s4",
+    "s5", "s6", "s7", "s8", "s9",
+];
+
 use crate::vdp::RenderOps;
 use apu::Apu;
 use cpu::Cpu;
@@ -194,7 +200,7 @@ impl Emulator {
 
     pub fn save_state(&self, slot: u8) {
         let Some(path) = &self.current_rom_path else { return };
-        let state_path = path.with_extension(format!("s{}", slot));
+        let state_path = path.with_extension(SLOT_EXTS[slot as usize]);
         self.save_state_to_path(state_path);
     }
 
@@ -210,13 +216,13 @@ impl Emulator {
 
     pub fn load_state(&mut self, slot: u8) {
         let Some(path) = &self.current_rom_path else { return };
-        let state_path = path.with_extension(format!("s{}", slot));
+        let state_path = path.with_extension(SLOT_EXTS[slot as usize]);
         self.load_state_from_path(state_path);
     }
 
     pub fn delete_state(&self, slot: u8) {
         let Some(path) = &self.current_rom_path else { return };
-        let state_path = path.with_extension(format!("s{}", slot));
+        let state_path = path.with_extension(SLOT_EXTS[slot as usize]);
         if state_path.exists() {
             if let Err(e) = std::fs::remove_file(&state_path) {
                 eprintln!("Failed to delete state {:?}: {}", state_path, e);
