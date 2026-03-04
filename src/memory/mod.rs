@@ -2,9 +2,9 @@
 //!
 //! Provides both simple memory (for testing) and full memory bus with Genesis memory map.
 
+use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::rc::Rc;
-use serde::{Deserialize, Serialize};
 pub mod bus;
 pub mod byte_utils;
 pub mod tests_performance;

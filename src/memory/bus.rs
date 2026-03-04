@@ -26,7 +26,7 @@ use crate::apu::Apu;
 use crate::audio;
 use crate::debugger::Debuggable;
 use crate::io::Io;
-use crate::vdp::{DmaOps, Vdp};
+use crate::vdp::Vdp;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -137,7 +137,7 @@ impl Bus {
                 self.rom[0x1BA],
                 self.rom[0x1BB],
             ]);
-            
+
             let size = if self.sram_end > self.sram_start {
                 (self.sram_end - self.sram_start + 1) as usize
             } else {
@@ -171,16 +171,16 @@ impl Bus {
         self.z80_ram.fill(0);
         self.sram.fill(0);
         self.sram_enabled = false;
-        
+
         self.vdp.reset();
         self.vdp.vram.fill(0);
         self.vdp.cram.fill(0);
         self.vdp.vsram.fill(0);
         self.vdp.reconstruct_cram_cache();
-        
+
         self.io.reset();
         self.apu.reset();
-        
+
         self.z80_bus_request = false;
         self.z80_reset = true;
         self.z80_bank_addr = 0;
@@ -238,8 +238,7 @@ impl Bus {
     fn read_rom(&self, addr: u32) -> u8 {
         let rom_addr = addr as usize;
         if rom_addr < self.rom.len() {
-            // SAFETY: rom_addr is checked against self.rom.len() above
-            unsafe { *self.rom.get_unchecked(rom_addr) }
+            self.rom[rom_addr]
         } else {
             0xFF // Unmapped ROM area
         }
@@ -600,10 +599,6 @@ impl Bus {
         self.write_byte(address.wrapping_add(1), b1);
         self.write_byte(address.wrapping_add(2), b2);
         self.write_byte(address.wrapping_add(3), b3);
-    }
-
-    pub fn dma_active(&self) -> bool {
-        self.vdp.command.dma_pending && self.vdp.is_dma_transfer()
     }
 
     /// Advance system state by N MCLK cycles.
