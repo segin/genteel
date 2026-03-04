@@ -22,6 +22,11 @@ pub mod tests_gui;
 pub mod vdp;
 pub mod wav_writer;
 pub mod z80;
+
+pub const SLOT_EXTS: [&str; 10] = [
+    "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9",
+];
+
 use crate::vdp::RenderOps;
 use apu::Apu;
 use cpu::Cpu;
@@ -70,7 +75,6 @@ mod shared_bus_serde {
 }
 
 #[derive(Serialize, Deserialize)]
-
 pub struct Emulator {
     pub cpu: Cpu,
     pub z80: Z80<Z80Bus, Z80Bus>,
@@ -200,7 +204,7 @@ impl Emulator {
         let Some(path) = &self.current_rom_path else {
             return;
         };
-        let state_path = path.with_extension(format!("s{}", slot));
+        let state_path = path.with_extension(SLOT_EXTS[slot as usize]);
         self.save_state_to_path(state_path);
     }
 
@@ -218,7 +222,7 @@ impl Emulator {
         let Some(path) = &self.current_rom_path else {
             return;
         };
-        let state_path = path.with_extension(format!("s{}", slot));
+        let state_path = path.with_extension(SLOT_EXTS[slot as usize]);
         self.load_state_from_path(state_path);
     }
 
@@ -226,7 +230,7 @@ impl Emulator {
         let Some(path) = &self.current_rom_path else {
             return;
         };
-        let state_path = path.with_extension(format!("s{}", slot));
+        let state_path = path.with_extension(SLOT_EXTS[slot as usize]);
         if state_path.exists() {
             if let Err(e) = std::fs::remove_file(&state_path) {
                 eprintln!("Failed to delete state {:?}: {}", state_path, e);
@@ -689,7 +693,7 @@ impl Emulator {
 
         // 3. Catch up Z80
         if z80_can_run {
-            const Z80_CYCLES_PER_M68K_CYCLE: f32 = 3.58 / 7.67;
+            const Z80_CYCLES_PER_M68K_CYCLE: f32 = 3579545.0 / 7670453.0;
             *z80_cycle_debt += m68k_cycles as f32 * Z80_CYCLES_PER_M68K_CYCLE;
             while *z80_cycle_debt >= 1.0 {
                 let cycles = z80.step();
