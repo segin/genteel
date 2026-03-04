@@ -205,6 +205,7 @@ impl Emulator {
             return;
         };
         let state_path = path.with_extension(SLOT_EXTS[slot as usize]);
+
         self.save_state_to_path(state_path);
     }
 
@@ -223,6 +224,7 @@ impl Emulator {
             return;
         };
         let state_path = path.with_extension(SLOT_EXTS[slot as usize]);
+
         self.load_state_from_path(state_path);
     }
 
@@ -231,6 +233,7 @@ impl Emulator {
             return;
         };
         let state_path = path.with_extension(SLOT_EXTS[slot as usize]);
+
         if state_path.exists() {
             if let Err(e) = std::fs::remove_file(&state_path) {
                 eprintln!("Failed to delete state {:?}: {}", state_path, e);
@@ -370,13 +373,19 @@ impl Emulator {
             let mut entry = archive
                 .by_index(i)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-            let name = entry.name().to_lowercase();
-            if rom_extensions.iter().any(|ext| name.ends_with(ext)) {
+
+            let name = entry.name();
+            // Case-insensitive check without allocating strings
+            let is_rom = rom_extensions.iter().any(|&ext| {
+                name.len() >= ext.len() && name[name.len() - ext.len()..].eq_ignore_ascii_case(ext)
+            });
+
+            if is_rom {
                 let size = entry.size();
                 if size > 32 * 1024 * 1024 {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
-                        format!("ROM size {} exceeds limit of 32MB", size),
+                        "ROM size exceeds limit of 32MB",
                     ));
                 }
                 let data = Self::read_rom_with_limit(&mut entry, size)?;
