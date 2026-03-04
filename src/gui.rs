@@ -584,8 +584,11 @@ impl Framework {
                         ui.separator();
                         ui.heading("Connected Gamepads");
                         if let Some(gilrs) = &self.gilrs {
+                            let mut gamepad_str = String::with_capacity(64);
                             for (id, gamepad) in gilrs.gamepads() {
-                                ui.label(format!("{}: {}", id, gamepad.name()));
+                                gamepad_str.clear();
+                                let _ = write!(&mut gamepad_str, "{}: {}", id, gamepad.name());
+                                ui.label(&gamepad_str);
                             }
                         } else {
                             ui.label("Gamepad support unavailable");
