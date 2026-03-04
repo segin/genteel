@@ -597,4 +597,46 @@ mod tests {
         // Verify SP restored
         assert_eq!(cpu.a[7], initial_sp, "SP should be restored");
     }
+
+    #[test]
+    fn test_exec_stop_privilege_violation() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        // Setup state to non-supervisor (user mode)
+        cpu.sr = 0x0000;
+        let initial_sp = cpu.a[7];
+        cpu.pc = 0x1000;
+
+        let cycles = exec_stop(&mut cpu, &mut memory);
+
+        // Privilege violation takes 34 cycles
+        assert_eq!(cycles, 34);
+
+        // Supervisor bit should be set
+        assert_eq!(cpu.sr & flags::SUPERVISOR, flags::SUPERVISOR);
+
+        // It pushed PC and SR onto the supervisor stack
+        // Ssp should be initial_ssp - 6 (since privilege violation pushes pc + sr)
+        assert_eq!(cpu.a[7], initial_sp - 6);
+    }
+
+    #[test]
+    fn test_exec_stop_supervisor() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        // Set supervisor
+        cpu.sr = flags::SUPERVISOR;
+        cpu.pc = 0x1000;
+
+        // Next word in memory is the new SR
+        memory.write_word(0x1000, 0x2700); // Set supervisor and interrupt mask 7
+
+        let cycles = exec_stop(&mut cpu, &mut memory);
+
+        assert_eq!(cycles, 4);
+        assert!(cpu.halted);
+        assert_eq!(cpu.pc, 0x1002);
+        assert_eq!(cpu.sr & flags::SUPERVISOR, flags::SUPERVISOR);
+        assert_eq!(cpu.sr & flags::INTERRUPT_MASK, flags::INTERRUPT_MASK);
+    }
 }

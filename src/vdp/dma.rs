@@ -155,22 +155,22 @@ impl DmaOps for Vdp {
                 } else {
                     (self.last_data_write >> 8) as u8
                 };
-                
+
                 if (self.command.code & 0x0F) == VRAM_WRITE {
                     self.vram[addr as usize] = val;
                 }
-                
+
                 self.command.address = addr.wrapping_add(inc);
             }
             DMA_MODE_COPY => {
                 let source = (self.dma_source() & 0xFFFF) as u16;
                 let addr = self.command.address;
-                
+
                 if (self.command.code & 0x0F) == VRAM_WRITE {
                     let val = self.vram[source as usize];
                     self.vram[addr as usize] = val;
                 }
-                
+
                 let next_source = source.wrapping_add(1);
                 self.registers[REG_DMA_SRC_LO] = (next_source & 0xFF) as u8;
                 self.registers[REG_DMA_SRC_MID] = (next_source >> 8) as u8;
@@ -180,7 +180,7 @@ impl DmaOps for Vdp {
                 // Memory-to-VDP
                 let source = self.dma_source_transfer();
                 let val = read_bus_word(source);
-                
+
                 let addr = self.command.address;
                 let code = self.command.code;
                 match code & 0x0F {
@@ -206,13 +206,14 @@ impl DmaOps for Vdp {
                     }
                     _ => {}
                 }
-                
+
                 self.command.address = addr.wrapping_add(inc);
-                
+
                 let next_source = source.wrapping_add(2);
                 self.registers[REG_DMA_SRC_LO] = ((next_source >> 1) & 0xFF) as u8;
                 self.registers[REG_DMA_SRC_MID] = ((next_source >> 9) & 0xFF) as u8;
-                self.registers[REG_DMA_SRC_HI] = (self.registers[REG_DMA_SRC_HI] & 0x80) | (((next_source >> 17) & 0x7F) as u8);
+                self.registers[REG_DMA_SRC_HI] =
+                    (self.registers[REG_DMA_SRC_HI] & 0x80) | (((next_source >> 17) & 0x7F) as u8);
             }
         }
 

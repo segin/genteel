@@ -60,11 +60,10 @@ impl IoInterface for CombinedBus {
     }
 }
 
-pub fn create_z80(program: &[u8]) -> (Z80<Memory, TestIo>, CombinedBus) {
+pub fn create_z80(program: &[u8]) -> Z80<Memory, TestIo> {
     let mut m = Memory::new(0x10000);
     for (i, &b) in program.iter().enumerate() {
         m.data[i] = b;
     }
-    let combined = CombinedBus::new(m.clone(), TestIo::default());
-    (Z80::new(m, TestIo::default()), combined)
+    Z80::new(m, TestIo::default())
 }
