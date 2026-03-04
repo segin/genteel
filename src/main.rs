@@ -1622,6 +1622,15 @@ mod tests {
     }
 
     #[test]
+    fn test_save_state_to_path_error() {
+        let emulator = Emulator::new();
+        // A directory path cannot be written to as a file, which will cause std::fs::write to fail
+        let invalid_path = std::env::temp_dir();
+        // This should not panic, but gracefully print an error message via eprintln!
+        emulator.save_state_to_path(invalid_path);
+    }
+
+    #[test]
     fn test_emulator_pause() {
         let mut emulator = Emulator::new();
         let initial_frames = emulator.internal_frame_count;
