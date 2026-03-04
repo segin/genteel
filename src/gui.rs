@@ -18,6 +18,22 @@ use winit::{
     window::WindowBuilder,
 };
 
+
+#[cfg(feature = "gilrs")]
+pub fn init_gilrs_with_builder<F, R, E>(builder: F) -> Option<R>
+where
+    F: FnOnce() -> Result<R, E>,
+    E: std::fmt::Display,
+{
+    match builder() {
+        Ok(g) => Some(g),
+        Err(e) => {
+            eprintln!("Warning: Failed to initialize gilrs: {}", e);
+            None
+        }
+    }
+}
+
 pub const SLOT_NAMES: [&str; 10] = [
     "Slot 0", "Slot 1", "Slot 2", "Slot 3", "Slot 4", "Slot 5", "Slot 6", "Slot 7", "Slot 8",
     "Slot 9",
@@ -198,6 +214,7 @@ pub struct DebugInfo {
     pub current_rom_path: Option<PathBuf>,
 }
 
+
 #[cfg(feature = "gui")]
 pub struct Framework {
     pub egui_ctx: egui::Context,
@@ -210,8 +227,9 @@ pub struct Framework {
     pub plane_b_texture: Option<egui::TextureHandle>,
     pub pending_rom_path: Arc<Mutex<Option<PathBuf>>>,
     #[cfg(feature = "gilrs")]
-    pub gilrs: Gilrs,
+    pub gilrs: Option<Gilrs>,
 }
+
 
 #[cfg(feature = "gui")]
 impl Framework {
@@ -249,7 +267,7 @@ impl Framework {
             plane_b_texture: None,
             pending_rom_path: Arc::new(Mutex::new(None)),
             #[cfg(feature = "gilrs")]
-            gilrs: Gilrs::new().expect("Failed to initialize gilrs"),
+            gilrs: init_gilrs_with_builder(|| gilrs::Gilrs::new()),
         }
     }
     pub fn handle_event(
@@ -284,7 +302,8 @@ impl Framework {
 
     #[cfg(feature = "gilrs")]
     pub fn poll_gamepads(&mut self, state: &mut crate::io::ControllerState) {
-        while let Some(gilrs::Event { event, .. }) = self.gilrs.next_event() {
+        let Some(gilrs) = &mut self.gilrs else { return; };
+        while let Some(gilrs::Event { event, .. }) = gilrs.next_event() {
             match event {
                 EventType::ButtonPressed(button, _) => match button {
                     Button::DPadUp => state.up = true,
@@ -561,8 +580,12 @@ impl Framework {
                     {
                         ui.separator();
                         ui.heading("Connected Gamepads");
-                        for (id, gamepad) in self.gilrs.gamepads() {
-                            ui.label(format!("{}: {}", id, gamepad.name()));
+                        if let Some(gilrs) = &self.gilrs {
+                            for (id, gamepad) in gilrs.gamepads() {
+                                ui.label(format!("{}: {}", id, gamepad.name()));
+                            }
+                        } else {
+                            ui.label("Gamepad support unavailable");
                         }
                     }
                 });
