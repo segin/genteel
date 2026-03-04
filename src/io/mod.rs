@@ -732,4 +732,48 @@ mod tests {
         // Should be reset
         assert_eq!(io.port1.th_counter, 0);
     }
+
+    #[test]
+    fn test_controller_state_to_button_string_default() {
+        let state = ControllerState::default();
+        assert_eq!(state.to_button_string(), "............");
+    }
+
+    #[test]
+    fn test_controller_state_to_button_string_all_pressed() {
+        let state = ControllerState {
+            up: true,
+            down: true,
+            left: true,
+            right: true,
+            a: true,
+            b: true,
+            c: true,
+            start: true,
+            x: true,
+            y: true,
+            z: true,
+            mode: true,
+        };
+        assert_eq!(state.to_button_string(), "UDLRABCSXYZM");
+    }
+
+    #[test]
+    fn test_controller_state_to_button_string_mixed() {
+        let state = ControllerState {
+            up: true,
+            down: false,
+            left: true,
+            right: false,
+            a: true,
+            b: false,
+            c: true,
+            start: false,
+            x: true,
+            y: false,
+            z: true,
+            mode: false,
+        };
+        assert_eq!(state.to_button_string(), "U.L.A.C.X.Z.");
+    }
 }
