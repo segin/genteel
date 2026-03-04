@@ -26,7 +26,7 @@ use crate::apu::Apu;
 use crate::audio;
 use crate::debugger::Debuggable;
 use crate::io::Io;
-use crate::vdp::{DmaOps, Vdp};
+use crate::vdp::Vdp;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -600,10 +600,6 @@ impl Bus {
         self.write_byte(address.wrapping_add(1), b1);
         self.write_byte(address.wrapping_add(2), b2);
         self.write_byte(address.wrapping_add(3), b3);
-    }
-
-    pub fn dma_active(&self) -> bool {
-        self.vdp.command.dma_pending && self.vdp.is_dma_transfer()
     }
 
     /// Advance system state by N MCLK cycles.
