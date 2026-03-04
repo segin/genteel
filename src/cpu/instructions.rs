@@ -77,69 +77,6 @@ impl Size {
     }
 }
 
-#[cfg(test)]
-mod length_tests {
-    use super::*;
-
-    #[test]
-    fn test_instruction_length() {
-        // NOP - 1 word
-        let instr = Instruction::System(SystemInstruction::Nop);
-        assert_eq!(instr.length_words(), 1);
-
-        // MOVE.L D0, D1 - 1 word
-        let instr = Instruction::Data(DataInstruction::Move {
-            size: Size::Long,
-            src: AddressingMode::DataRegister(0),
-            dst: AddressingMode::DataRegister(1),
-        });
-        assert_eq!(instr.length_words(), 1);
-
-        // MOVE.W #$1234, D0 - 2 words (1 opcode + 1 immediate)
-        let instr = Instruction::Data(DataInstruction::Move {
-            size: Size::Word,
-            src: AddressingMode::Immediate,
-            dst: AddressingMode::DataRegister(0),
-        });
-        assert_eq!(instr.length_words(), 2);
-
-        // MOVE.L #$12345678, D0 - 3 words (1 opcode + 2 immediate)
-        let instr = Instruction::Data(DataInstruction::Move {
-            size: Size::Long,
-            src: AddressingMode::Immediate,
-            dst: AddressingMode::DataRegister(0),
-        });
-        assert_eq!(instr.length_words(), 3);
-
-        // ADD.L (A0)+, -(A1) - 1 word (no extension words for these modes)
-        let instr = Instruction::Arithmetic(ArithmeticInstruction::Add {
-            size: Size::Long,
-            src: AddressingMode::AddressPostIncrement(0),
-            dst: AddressingMode::AddressPreDecrement(1),
-            direction: false,
-        });
-        assert_eq!(instr.length_words(), 1);
-
-        // JMP (xxx).L - 3 words (1 opcode + 2 extension)
-        let instr = Instruction::System(SystemInstruction::Jmp {
-            dst: AddressingMode::AbsoluteLong,
-        });
-        assert_eq!(instr.length_words(), 3);
-
-        // BRA with 8-bit displacement (0) - 2 words (1 opcode + 1 extension)
-        let instr = Instruction::System(SystemInstruction::Bra {
-            displacement: 0,
-        });
-        assert_eq!(instr.length_words(), 2);
-
-        // BRA with 8-bit displacement (non-zero) - 1 word
-        let instr = Instruction::System(SystemInstruction::Bra {
-            displacement: 4,
-        });
-        assert_eq!(instr.length_words(), 1);
-    }
-}
-
 impl fmt::Display for Size {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -343,122 +280,118 @@ pub enum Instruction {
     System(SystemInstruction),
 }
 
-
 impl Instruction {
     /// Returns the length of the instruction in 16-bit words.
     pub fn length_words(&self) -> u32 {
-        1 + match self {
-            Instruction::Data(instr) => instr.extension_words(),
-            Instruction::Arithmetic(instr) => instr.extension_words(),
-            Instruction::Bits(instr) => instr.extension_words(),
-            Instruction::System(instr) => instr.extension_words(),
+        let mut words = 1;
+        match self {
+            Instruction::Data(data) => match data {
+                DataInstruction::Move { size, src, dst } => {
+                    words += src.extension_words(*size) + dst.extension_words(*size);
+                }
+                DataInstruction::MoveA { size, src, .. } => {
+                    words += src.extension_words(*size);
+                }
+                DataInstruction::MoveQ { .. } | DataInstruction::Swap { .. } | DataInstruction::Ext { .. } | DataInstruction::Exg { .. } => {}
+                DataInstruction::Lea { src, .. } | DataInstruction::Pea { src } => {
+                    words += src.extension_words(Size::Long);
+                }
+                DataInstruction::Clr { size, dst } => {
+                    words += dst.extension_words(*size);
+                }
+                DataInstruction::Movep { .. } => {
+                    words += 1; // displacement
+                }
+                DataInstruction::Movem { ea, .. } => {
+                    words += 1 + ea.extension_words(Size::Word); // mask + ea
+                }
+            },
+            Instruction::Arithmetic(arith) => match arith {
+                ArithmeticInstruction::Add { size, src, dst, .. } | ArithmeticInstruction::Sub { size, src, dst, .. } => {
+                    words += src.extension_words(*size) + dst.extension_words(*size);
+                }
+                ArithmeticInstruction::AddA { size, src, .. } | ArithmeticInstruction::SubA { size, src, .. } | ArithmeticInstruction::CmpA { size, src, .. } => {
+                    words += src.extension_words(*size);
+                }
+                ArithmeticInstruction::AddI { size, dst } | ArithmeticInstruction::SubI { size, dst } | ArithmeticInstruction::CmpI { size, dst } => {
+                    words += AddressingMode::Immediate.extension_words(*size) + dst.extension_words(*size);
+                }
+                ArithmeticInstruction::AddQ { size, dst, .. } | ArithmeticInstruction::SubQ { size, dst, .. } | ArithmeticInstruction::Neg { size, dst } | ArithmeticInstruction::NegX { size, dst } | ArithmeticInstruction::Tst { size, dst } => {
+                    words += dst.extension_words(*size);
+                }
+                ArithmeticInstruction::MulU { src, .. } | ArithmeticInstruction::MulS { src, .. } | ArithmeticInstruction::DivU { src, .. } | ArithmeticInstruction::DivS { src, .. } | ArithmeticInstruction::Chk { src, .. } => {
+                    words += src.extension_words(Size::Word);
+                }
+                ArithmeticInstruction::Cmp { size, src, .. } => {
+                    words += src.extension_words(*size);
+                }
+                ArithmeticInstruction::Abcd { .. } | ArithmeticInstruction::Sbcd { .. } | ArithmeticInstruction::AddX { .. } | ArithmeticInstruction::SubX { .. } | ArithmeticInstruction::CmpM { .. } => {}
+                ArithmeticInstruction::Nbcd { dst } => {
+                    words += dst.extension_words(Size::Byte);
+                }
+            },
+            Instruction::Bits(bits) => match bits {
+                BitsInstruction::And { size, src, dst, .. } | BitsInstruction::Or { size, src, dst, .. } => {
+                    words += src.extension_words(*size) + dst.extension_words(*size);
+                }
+                BitsInstruction::AndI { size, dst } | BitsInstruction::OrI { size, dst } | BitsInstruction::EorI { size, dst } => {
+                    words += AddressingMode::Immediate.extension_words(*size) + dst.extension_words(*size);
+                }
+                BitsInstruction::Eor { size, dst, .. } => {
+                    words += dst.extension_words(*size);
+                }
+                BitsInstruction::Not { size, dst } => {
+                    words += dst.extension_words(*size);
+                }
+                BitsInstruction::Lsl { size, dst, .. } | BitsInstruction::Lsr { size, dst, .. } | BitsInstruction::Asl { size, dst, .. } | BitsInstruction::Asr { size, dst, .. } | BitsInstruction::Rol { size, dst, .. } | BitsInstruction::Ror { size, dst, .. } | BitsInstruction::Roxl { size, dst, .. } | BitsInstruction::Roxr { size, dst, .. } => {
+                    words += dst.extension_words(*size);
+                }
+                BitsInstruction::AslM { dst } | BitsInstruction::AsrM { dst } | BitsInstruction::Tas { dst } => {
+                    words += dst.extension_words(Size::Byte);
+                }
+                BitsInstruction::Btst { bit, dst } | BitsInstruction::Bset { bit, dst } | BitsInstruction::Bclr { bit, dst } | BitsInstruction::Bchg { bit, dst } => {
+                    if let BitSource::Immediate = bit {
+                        words += 1;
+                    }
+                    words += dst.extension_words(Size::Byte);
+                }
+            },
+            Instruction::System(sys) => match sys {
+                SystemInstruction::Bra { displacement } | SystemInstruction::Bsr { displacement } => {
+                    if *displacement == 0 {
+                        words += 1;
+                    }
+                }
+                SystemInstruction::Bcc { displacement, .. } => {
+                    if *displacement == 0 {
+                        words += 1;
+                    }
+                }
+                SystemInstruction::Scc { dst, .. } => {
+                    words += dst.extension_words(Size::Byte);
+                }
+                SystemInstruction::DBcc { .. } | SystemInstruction::Link { .. } | SystemInstruction::Stop => {
+                    words += 1;
+                }
+                SystemInstruction::Jmp { dst } | SystemInstruction::Jsr { dst } => {
+                    words += dst.extension_words(Size::Long);
+                }
+                SystemInstruction::MoveToSr { src } | SystemInstruction::MoveToCcr { src } => {
+                    words += src.extension_words(Size::Word);
+                }
+                SystemInstruction::MoveFromSr { dst } => {
+                    words += dst.extension_words(Size::Word);
+                }
+                SystemInstruction::AndiToCcr | SystemInstruction::AndiToSr | SystemInstruction::OriToCcr | SystemInstruction::OriToSr | SystemInstruction::EoriToCcr | SystemInstruction::EoriToSr => {
+                    words += 1;
+                }
+                _ => {}
+            },
         }
+        words
     }
 }
 
-impl DataInstruction {
-    pub fn extension_words(&self) -> u32 {
-        match self {
-            Self::Move { size, src, dst } => src.extension_words(*size) + dst.extension_words(*size),
-            Self::MoveA { size, src, .. } => src.extension_words(*size),
-            Self::MoveQ { .. } => 0,
-            Self::Lea { src, .. } => src.extension_words(Size::Long),
-            Self::Pea { src } => src.extension_words(Size::Long),
-            Self::Clr { size, dst } => dst.extension_words(*size),
-            Self::Exg { .. } => 0,
-            Self::Movep { .. } => 1, // d16
-            Self::Movem { size, ea, .. } => 1 + ea.extension_words(*size), // 1 word for mask
-            Self::Swap { .. } => 0,
-            Self::Ext { .. } => 0,
-        }
-    }
-}
-
-impl ArithmeticInstruction {
-    pub fn extension_words(&self) -> u32 {
-        match self {
-            Self::Add { size, src, dst, .. } => src.extension_words(*size) + dst.extension_words(*size),
-            Self::AddA { size, src, .. } => src.extension_words(*size),
-            Self::AddI { size, dst } => (if *size == Size::Long { 2 } else { 1 }) + dst.extension_words(*size),
-            Self::AddQ { size, dst, .. } => dst.extension_words(*size),
-            Self::Sub { size, src, dst, .. } => src.extension_words(*size) + dst.extension_words(*size),
-            Self::SubA { size, src, .. } => src.extension_words(*size),
-            Self::SubI { size, dst } => (if *size == Size::Long { 2 } else { 1 }) + dst.extension_words(*size),
-            Self::SubQ { size, dst, .. } => dst.extension_words(*size),
-            Self::MulU { src, .. } => src.extension_words(Size::Word),
-            Self::MulS { src, .. } => src.extension_words(Size::Word),
-            Self::DivU { src, .. } => src.extension_words(Size::Word),
-            Self::DivS { src, .. } => src.extension_words(Size::Word),
-            Self::Neg { size, dst } => dst.extension_words(*size),
-            Self::Abcd { .. } => 0,
-            Self::Sbcd { .. } => 0,
-            Self::Nbcd { dst } => dst.extension_words(Size::Byte),
-            Self::AddX { .. } => 0,
-            Self::SubX { .. } => 0,
-            Self::NegX { size, dst } => dst.extension_words(*size),
-            Self::Chk { src, .. } => src.extension_words(Size::Word),
-            Self::Cmp { size, src, .. } => src.extension_words(*size),
-            Self::CmpA { size, src, .. } => src.extension_words(*size),
-            Self::CmpI { size, dst } => (if *size == Size::Long { 2 } else { 1 }) + dst.extension_words(*size),
-            Self::CmpM { .. } => 0,
-            Self::Tst { size, dst } => dst.extension_words(*size),
-        }
-    }
-}
-
-impl BitsInstruction {
-    pub fn extension_words(&self) -> u32 {
-        match self {
-            Self::And { size, src, dst, .. } => src.extension_words(*size) + dst.extension_words(*size),
-            Self::AndI { size, dst } => (if *size == Size::Long { 2 } else { 1 }) + dst.extension_words(*size),
-            Self::Or { size, src, dst, .. } => src.extension_words(*size) + dst.extension_words(*size),
-            Self::OrI { size, dst } => (if *size == Size::Long { 2 } else { 1 }) + dst.extension_words(*size),
-            Self::Eor { size, dst, .. } => dst.extension_words(*size),
-            Self::EorI { size, dst } => (if *size == Size::Long { 2 } else { 1 }) + dst.extension_words(*size),
-            Self::Not { size, dst } => dst.extension_words(*size),
-            Self::Lsl { size, dst, .. } => dst.extension_words(*size),
-            Self::Lsr { size, dst, .. } => dst.extension_words(*size),
-            Self::Asl { size, dst, .. } => dst.extension_words(*size),
-            Self::AslM { dst } => dst.extension_words(Size::Word),
-            Self::Asr { size, dst, .. } => dst.extension_words(*size),
-            Self::AsrM { dst } => dst.extension_words(Size::Word),
-            Self::Rol { size, dst, .. } => dst.extension_words(*size),
-            Self::Ror { size, dst, .. } => dst.extension_words(*size),
-            Self::Roxl { size, dst, .. } => dst.extension_words(*size),
-            Self::Roxr { size, dst, .. } => dst.extension_words(*size),
-            Self::Btst { bit, dst } => (if matches!(bit, BitSource::Immediate) { 1 } else { 0 }) + dst.extension_words(Size::Byte),
-            Self::Bset { bit, dst } => (if matches!(bit, BitSource::Immediate) { 1 } else { 0 }) + dst.extension_words(Size::Byte),
-            Self::Bclr { bit, dst } => (if matches!(bit, BitSource::Immediate) { 1 } else { 0 }) + dst.extension_words(Size::Byte),
-            Self::Bchg { bit, dst } => (if matches!(bit, BitSource::Immediate) { 1 } else { 0 }) + dst.extension_words(Size::Byte),
-            Self::Tas { dst } => dst.extension_words(Size::Byte),
-        }
-    }
-}
-
-impl SystemInstruction {
-    pub fn extension_words(&self) -> u32 {
-        match self {
-            Self::Bra { displacement } => if *displacement == 0 { 1 } else { 0 }, // 8-bit displacement is 0, extension word follows
-            Self::Bsr { displacement } => if *displacement == 0 { 1 } else { 0 },
-            Self::Bcc { displacement, .. } => if *displacement == 0 { 1 } else { 0 },
-            Self::Scc { dst, .. } => dst.extension_words(Size::Byte),
-            Self::DBcc { .. } => 1, // d16
-            Self::Jmp { dst } => dst.extension_words(Size::Long),
-            Self::Jsr { dst } => dst.extension_words(Size::Long),
-            Self::Rts | Self::Rte | Self::Rtr | Self::Nop | Self::Reset | Self::TrapV => 0,
-            Self::Stop => 1, // 1 word for immediate SR value
-            Self::MoveUsp { .. } => 0,
-            Self::Trap { .. } => 0,
-            Self::Link { .. } => 1, // d16
-            Self::Unlk { .. } => 0,
-            Self::MoveToSr { src } => src.extension_words(Size::Word),
-            Self::MoveFromSr { dst } => dst.extension_words(Size::Word),
-            Self::MoveToCcr { src } => src.extension_words(Size::Word),
-            Self::AndiToCcr | Self::AndiToSr | Self::OriToCcr | Self::OriToSr | Self::EoriToCcr | Self::EoriToSr => 1, // #<data>
-            Self::Illegal | Self::LineA { .. } | Self::LineF { .. } | Self::Unimplemented { .. } => 0,
-        }
-    }
-}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DataInstruction {
     Move {

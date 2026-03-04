@@ -6,8 +6,8 @@
 use crate::memory::{IoInterface, MemoryInterface};
 use serde::{Deserialize, Serialize};
 
-// #[cfg(test)]
-// pub mod test_utils;
+#[cfg(test)]
+pub mod test_utils;
 
 pub mod op_cb;
 
@@ -933,8 +933,8 @@ impl<M: MemoryInterface, I: IoInterface> Debuggable for Z80<M, I> {
     }
 }
 
-// #[cfg(test)]
-// mod tests;
+#[cfg(test)]
+mod tests;
 
 // #[cfg(test)]
 // mod tests_alu;
