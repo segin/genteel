@@ -1080,6 +1080,7 @@ impl Emulator {
         }
         Ok(())
     }
+    #[allow(dead_code)]
     pub(crate) fn log_debug(&self, frame_count: u64) {
         let bus = self.bus.borrow();
         let disp_en = if bus.vdp.display_enabled() {
@@ -1362,6 +1363,27 @@ fn main() {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn test_add_allowed_path() {
+        let mut emulator = Emulator::new();
+
+        // 1. Valid path addition
+        let temp_dir = std::env::temp_dir();
+        assert!(emulator.add_allowed_path(&temp_dir).is_ok());
+
+        let canonical_temp = temp_dir.canonicalize().unwrap();
+        assert_eq!(emulator.allowed_paths.len(), 1);
+        assert_eq!(emulator.allowed_paths[0], canonical_temp);
+
+        // 2. Invalid path addition
+        let invalid_path = temp_dir.join("nonexistent_path_for_testing_12345");
+        assert!(emulator.add_allowed_path(&invalid_path).is_err());
+
+        // Ensure invalid path was not added
+        assert_eq!(emulator.allowed_paths.len(), 1);
+    }
+
     #[test]
     fn test_zip_bomb_prevention() {
         let path = "test_bomb.zip";
