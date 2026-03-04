@@ -56,5 +56,36 @@ pub const STATUS_FIFO_EMPTY: u16 = 0x0200;
 
 pub const NUM_REGISTERS: usize = 24;
 
-pub const H40_EXTERNAL_SLOTS: [bool; 210] = [false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false];
-pub const H32_EXTERNAL_SLOTS: [bool; 171] = [false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, true, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, true];
+pub const H40_EXTERNAL_SLOTS: [bool; 210] = [
+    false, false, false, false, false, false, false, false, false, false, false, false, false,
+    false, true, false, false, false, false, false, false, false, true, false, false, false, false,
+    false, false, false, true, false, false, false, false, false, false, false, false, false,
+    false, false, false, false, false, false, true, false, false, false, false, false, false,
+    false, true, false, false, false, false, false, false, false, true, false, false, false, false,
+    false, false, false, false, false, false, false, false, false, false, false, true, false,
+    false, false, false, false, false, false, true, false, false, false, false, false, false,
+    false, true, false, false, false, false, false, false, false, false, false, false, false,
+    false, false, false, false, true, false, false, false, false, false, false, false, true, false,
+    false, false, false, false, false, false, true, false, false, false, false, false, false,
+    false, false, false, false, false, false, false, false, false, true, false, false, false,
+    false, false, false, false, true, false, false, false, false, false, false, false, true, false,
+    false, false, false, false, false, false, false, false, false, false, false, false, false,
+    true, true, false, false, false, false, false, false, false, false, false, false, false, false,
+    false, false, false, false, false, false, false, false, false, false, false, true, false,
+    false, false, false, false, false, false, false, false, false, false,
+];
+pub const H32_EXTERNAL_SLOTS: [bool; 171] = [
+    false, false, false, false, false, false, false, false, false, false, false, false, false,
+    false, true, false, false, false, false, false, false, false, true, false, false, false, false,
+    false, false, false, true, false, false, false, false, false, false, false, false, false,
+    false, false, false, false, false, false, true, false, false, false, false, false, false,
+    false, true, false, false, false, false, false, false, false, true, false, false, false, false,
+    false, false, false, false, false, false, false, false, false, false, false, true, false,
+    false, false, false, false, false, false, true, false, false, false, false, false, false,
+    false, true, false, false, false, false, false, false, false, false, false, false, false,
+    false, false, false, false, true, false, false, false, false, false, false, false, true, false,
+    false, false, false, false, false, false, true, false, false, false, false, false, false,
+    false, false, false, false, false, false, false, false, true, true, false, false, false, false,
+    false, false, false, false, false, false, false, false, false, true, false, false, false,
+    false, false, false, false, false, false, false, false, false, false, true,
+];
