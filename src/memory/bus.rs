@@ -23,9 +23,10 @@
 use super::byte_utils;
 use super::MemoryInterface;
 use crate::apu::Apu;
+use crate::audio;
 use crate::debugger::Debuggable;
 use crate::io::Io;
-use crate::vdp::{DmaOps, Vdp};
+use crate::vdp::Vdp;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -109,7 +110,7 @@ impl Bus {
             tmss_register: [0; 4],
             audio_accumulator: 0.0,
             audio_buffer: Vec::with_capacity(2048),
-            sample_rate: 44100,
+            sample_rate: audio::SAMPLE_RATE,
         }
     }
 
@@ -136,7 +137,7 @@ impl Bus {
                 self.rom[0x1BA],
                 self.rom[0x1BB],
             ]);
-            
+
             let size = if self.sram_end > self.sram_start {
                 (self.sram_end - self.sram_start + 1) as usize
             } else {
@@ -162,6 +163,32 @@ impl Bus {
     /// Get ROM size
     pub fn rom_size(&self) -> usize {
         self.rom.len()
+    }
+
+    /// Reset volatile state while keeping ROM and sample_rate
+    pub fn reset(&mut self) {
+        self.work_ram.fill(0);
+        self.z80_ram.fill(0);
+        self.sram.fill(0);
+        self.sram_enabled = false;
+
+        self.vdp.reset();
+        self.vdp.vram.fill(0);
+        self.vdp.cram.fill(0);
+        self.vdp.vsram.fill(0);
+        self.vdp.reconstruct_cram_cache();
+
+        self.io.reset();
+        self.apu.reset();
+
+        self.z80_bus_request = false;
+        self.z80_reset = true;
+        self.z80_bank_addr = 0;
+        self.z80_bank_bit = 0;
+        self.tmss_unlocked = false;
+        self.tmss_register = [0; 4];
+        self.audio_accumulator = 0.0;
+        self.audio_buffer.clear();
     }
 
     /// Read a byte from the memory map
@@ -573,10 +600,6 @@ impl Bus {
         self.write_byte(address.wrapping_add(1), b1);
         self.write_byte(address.wrapping_add(2), b2);
         self.write_byte(address.wrapping_add(3), b3);
-    }
-
-    pub fn dma_active(&self) -> bool {
-        self.vdp.command.dma_pending && self.vdp.is_dma_transfer()
     }
 
     /// Advance system state by N MCLK cycles.

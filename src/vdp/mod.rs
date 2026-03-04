@@ -372,12 +372,12 @@ impl Vdp {
 
     pub fn read_data(&mut self) -> u16 {
         self.command.pending = false;
-        
+
         let val = self.command.read_buffer;
         self.command.cd4_flag = false;
-        
+
         self.try_prefetch();
-        
+
         val
     }
 
@@ -431,7 +431,10 @@ impl Vdp {
             }
         }
 
-        self.command.address = self.command.address.wrapping_add(self.auto_increment() as u16);
+        self.command.address = self
+            .command
+            .address
+            .wrapping_add(self.auto_increment() as u16);
     }
 
     pub fn write_control(&mut self, value: u16) {
@@ -697,7 +700,7 @@ impl Vdp {
         } else {
             self.mclk_line_clocks / 20
         };
-        
+
         let process_limit = std::cmp::min(curr_slot, total_slots as u32);
 
         for slot_idx in prev_slot..process_limit {
@@ -718,7 +721,7 @@ impl Vdp {
             } else if self.v_counter == 0 {
                 self.status &= !STATUS_VBLANK;
             }
-            
+
             let next_line_curr_slot = if is_h40 {
                 (self.mclk_line_clocks * 210) / 3420
             } else {
@@ -743,9 +746,17 @@ impl Vdp {
         F: FnMut(u32) -> u16,
     {
         let is_external = if is_h40 {
-            if slot_idx < 210 { H40_EXTERNAL_SLOTS[slot_idx] } else { false }
+            if slot_idx < 210 {
+                H40_EXTERNAL_SLOTS[slot_idx]
+            } else {
+                false
+            }
         } else {
-            if slot_idx < 171 { H32_EXTERNAL_SLOTS[slot_idx] } else { false }
+            if slot_idx < 171 {
+                H32_EXTERNAL_SLOTS[slot_idx]
+            } else {
+                false
+            }
         };
 
         // If in VBlank, nearly all slots are external opportunities
@@ -764,7 +775,7 @@ impl Vdp {
             self.status &= !STATUS_FIFO_FULL;
             if self.fifo.is_empty() {
                 self.status |= STATUS_FIFO_EMPTY;
-                
+
                 // Trigger deferred prefetch if waiting
                 if !self.command.cd4_flag && (self.command.code & 0x01) == 0 {
                     self.try_prefetch();
