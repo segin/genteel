@@ -2,39 +2,58 @@ use std::time::Instant;
 use std::fmt::Write;
 
 fn main() {
-    let iters = 1_000_000;
+    let m68k_disasm = vec![
+        (0x000200, "MOVE.W D0, D1".to_string()),
+        (0x000202, "ADD.L D2, D3".to_string()),
+        (0x000204, "SUB.B #$10, D4".to_string()),
+        (0x000206, "NOP".to_string()),
+        (0x000208, "RTE".to_string()),
+        (0x00020A, "BRA.S $000210".to_string()),
+        (0x00020C, "MOVEA.L A0, A1".to_string()),
+        (0x00020E, "JMP (A2)".to_string()),
+        (0x000210, "BSR.W $000300".to_string()),
+        (0x000214, "RTS".to_string()),
+    ];
 
-    // Setup dummy data
-    let d = [0x12345678u32; 8];
-    let a = [0x87654321u32; 8];
+    let m68k_pc = 0x000208;
+    let iterations = 1_000_000;
 
-    // Baseline format!
-    let start = Instant::now();
-    for _ in 0..iters {
-        for i in 0..8 {
-            let _s1 = format!("D{}: {:08X}", i, d[i]);
-            let _s2 = format!("A{}: {:08X}", i, a[i]);
-            std::hint::black_box((_s1, _s2));
+    let start_baseline = Instant::now();
+    for _ in 0..iterations {
+        for (addr, text) in &m68k_disasm {
+            let is_current = *addr == m68k_pc;
+            let label = format!("{:06X}: {}", addr, text);
+            if is_current {
+                let _final_label = format!("-> {}", label);
+                // fake usage
+                std::hint::black_box(_final_label);
+            } else {
+                let _final_label = format!("   {}", label);
+                // fake usage
+                std::hint::black_box(_final_label);
+            }
         }
     }
-    let baseline_time = start.elapsed();
-    println!("Baseline format! time: {:?}", baseline_time);
+    let baseline_duration = start_baseline.elapsed();
 
-    // Optimized with write!
-    let start = Instant::now();
-    let mut buf_d = String::with_capacity(16);
-    let mut buf_a = String::with_capacity(16);
-    for _ in 0..iters {
-        for i in 0..8 {
-            buf_d.clear();
-            buf_a.clear();
-            let _ = write!(&mut buf_d, "D{}: {:08X}", i, d[i]);
-            let _ = write!(&mut buf_a, "A{}: {:08X}", i, a[i]);
-            std::hint::black_box((buf_d.as_str(), buf_a.as_str()));
+    let start_optimized = Instant::now();
+    let mut buffer = String::with_capacity(64);
+    for _ in 0..iterations {
+        for (addr, text) in &m68k_disasm {
+            let is_current = *addr == m68k_pc;
+            buffer.clear();
+            if is_current {
+                let _ = write!(&mut buffer, "-> {:06X}: {}", addr, text);
+                std::hint::black_box(buffer.as_str());
+            } else {
+                let _ = write!(&mut buffer, "   {:06X}: {}", addr, text);
+                std::hint::black_box(buffer.as_str());
+            }
         }
     }
-    let optimized_time = start.elapsed();
-    println!("Optimized write! time: {:?}", optimized_time);
+    let optimized_duration = start_optimized.elapsed();
 
-    println!("Improvement: {:.2}x", baseline_time.as_secs_f64() / optimized_time.as_secs_f64());
+    println!("Baseline duration: {:?}", baseline_duration);
+    println!("Optimized duration: {:?}", optimized_duration);
+    println!("Improvement: {:.2}x", baseline_duration.as_secs_f64() / optimized_duration.as_secs_f64());
 }

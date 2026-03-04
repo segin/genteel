@@ -1523,4 +1523,36 @@ mod tests {
         assert_eq!(cpu.d[0] & 0xFF, 0x00);
         assert!(!cpu.get_flag(flags::ZERO));
     }
+
+    #[test]
+    fn test_exec_nbcd_non_bcd() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // D0 = 0x1F (non-BCD value)
+        cpu.d[0] = 0x1F;
+        cpu.set_flag(flags::EXTEND, false);
+        cpu.set_flag(flags::ZERO, true); // Set Z to verify it gets cleared on non-zero result
+
+        // NBCD D0
+        exec_nbcd(&mut cpu, AddressingMode::DataRegister(0), &mut memory);
+
+        // Expected result based on BCD subtraction rules for 0x1F
+        assert_eq!(cpu.d[0] & 0xFF, 0x8B);
+        assert!(cpu.get_flag(flags::CARRY));
+        assert!(cpu.get_flag(flags::EXTEND));
+        assert!(!cpu.get_flag(flags::ZERO)); // Z should be cleared
+
+        // Another non-BCD value, 0xFA
+        cpu.d[0] = 0xFA;
+        cpu.set_flag(flags::EXTEND, false);
+        cpu.set_flag(flags::ZERO, true);
+
+        exec_nbcd(&mut cpu, AddressingMode::DataRegister(0), &mut memory);
+
+        // Expected result for 0xFA
+        assert_eq!(cpu.d[0] & 0xFF, 0xA0);
+        assert!(cpu.get_flag(flags::CARRY));
+        assert!(cpu.get_flag(flags::EXTEND));
+        assert!(!cpu.get_flag(flags::ZERO)); // Z should be cleared
+    }
 }
