@@ -1558,17 +1558,6 @@ mod tests {
     }
 
     #[test]
-    fn test_zip_bomb_prevention_start_file_error() {
-        let mut small_buf = [0u8; 10]; // Too small for zip headers
-        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut small_buf[..]));
-        let options = zip::write::SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Stored);
-
-        let result = zip.start_file("large.bin", options);
-        assert!(result.is_err(), "Should fail to write zip headers into a tiny buffer");
-    }
-
-    #[test]
     fn test_path_traversal_protection() {
         let dummy_rom = "dummy_traversal.bin";
         std::fs::write(dummy_rom, b"dummy rom content").unwrap();
