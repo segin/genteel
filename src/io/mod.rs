@@ -429,6 +429,38 @@ mod tests {
     }
 
     #[test]
+    fn test_controller_clear() {
+        let mut state = ControllerState::new();
+        state.up = true;
+        state.down = true;
+        state.left = true;
+        state.right = true;
+        state.a = true;
+        state.b = true;
+        state.c = true;
+        state.start = true;
+        state.x = true;
+        state.y = true;
+        state.z = true;
+        state.mode = true;
+
+        state.clear();
+
+        assert!(!state.up);
+        assert!(!state.down);
+        assert!(!state.left);
+        assert!(!state.right);
+        assert!(!state.a);
+        assert!(!state.b);
+        assert!(!state.c);
+        assert!(!state.start);
+        assert!(!state.x);
+        assert!(!state.y);
+        assert!(!state.z);
+        assert!(!state.mode);
+    }
+
+    #[test]
     fn test_controller_set_button() {
         let mut state = ControllerState::new();
         state.set_button("a", true);
