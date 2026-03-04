@@ -1555,4 +1555,27 @@ mod tests {
         assert!(cpu.get_flag(flags::EXTEND));
         assert!(!cpu.get_flag(flags::ZERO)); // Z should be cleared
     }
+
+    #[test]
+    fn test_exec_nbcd_edge_cases() {
+        let (mut cpu, mut memory) = create_test_setup();
+
+        // D0 = 0xFF (extreme non-BCD value), X = 1
+        cpu.d[0] = 0xFF;
+        cpu.set_flag(flags::EXTEND, true);
+        exec_nbcd(&mut cpu, AddressingMode::DataRegister(0), &mut memory);
+
+        assert_eq!(cpu.d[0] & 0xFF, 0xAA);
+        assert!(cpu.get_flag(flags::CARRY));
+        assert!(cpu.get_flag(flags::EXTEND));
+
+        // D0 = 0x8F (another non-BCD value), X = 0
+        cpu.d[0] = 0x8F;
+        cpu.set_flag(flags::EXTEND, false);
+        exec_nbcd(&mut cpu, AddressingMode::DataRegister(0), &mut memory);
+
+        assert_eq!(cpu.d[0] & 0xFF, 0x1B);
+        assert!(cpu.get_flag(flags::CARRY));
+        assert!(cpu.get_flag(flags::EXTEND));
+    }
 }
