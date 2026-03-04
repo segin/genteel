@@ -7,6 +7,7 @@ use gilrs::{Axis, Button, EventType, Gilrs};
 #[cfg(feature = "gui")]
 use pixels::{wgpu, Pixels, SurfaceTexture};
 use std::collections::HashMap;
+use std::fmt::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 #[cfg(feature = "gui")]
@@ -16,6 +17,15 @@ use winit::{
     keyboard::{KeyCode, PhysicalKey},
     window::WindowBuilder,
 };
+
+pub const SLOT_NAMES: [&str; 10] = [
+    "Slot 0", "Slot 1", "Slot 2", "Slot 3", "Slot 4", "Slot 5", "Slot 6", "Slot 7", "Slot 8",
+    "Slot 9",
+];
+
+pub const SLOT_EXTS: [&str; 10] = [
+    "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9",
+];
 
 #[cfg(feature = "gui")]
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -411,9 +421,9 @@ impl Framework {
                     ui.menu_button("Save State", |ui| {
                         for slot in 0..10 {
                             let btn = if slot == 0 {
-                                egui::Button::new(format!("Slot {}", slot)).shortcut_text("F5")
+                                egui::Button::new(SLOT_NAMES[slot as usize]).shortcut_text("F5")
                             } else {
-                                egui::Button::new(format!("Slot {}", slot))
+                                egui::Button::new(SLOT_NAMES[slot as usize])
                             };
                             if ui.add_enabled(debug_info.has_rom, btn).clicked() {
                                 self.gui_state.save_requested = Some(slot);
@@ -424,9 +434,9 @@ impl Framework {
                     ui.menu_button("Load State", |ui| {
                         for slot in 0..10 {
                             let btn = if slot == 0 {
-                                egui::Button::new(format!("Slot {}", slot)).shortcut_text("F8")
+                                egui::Button::new(SLOT_NAMES[slot as usize]).shortcut_text("F8")
                             } else {
-                                egui::Button::new(format!("Slot {}", slot))
+                                egui::Button::new(SLOT_NAMES[slot as usize])
                             };
                             if ui.add_enabled(debug_info.has_rom, btn).clicked() {
                                 self.gui_state.load_requested = Some(slot);
@@ -479,38 +489,40 @@ impl Framework {
         });
 
         if self.gui_state.show_about {
-            egui::Window::new("About Genteel").open(&mut self.gui_state.show_about).show(&self.egui_ctx, |ui| {
-                ui.vertical_centered(|ui| {
-                    ui.heading("Genteel");
-                    ui.label(format!("Version: {}", genteel::VERSION));
-                });
-                ui.separator();
-                
-                ui.label("An instrumentable Sega Mega Drive/Genesis emulator architected for the intersection of human and machine intelligence.");
-                ui.add_space(8.0);
+            egui::Window::new("About Genteel")
+                .open(&mut self.gui_state.show_about)
+                .show(&self.egui_ctx, |ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.heading("Genteel");
+                        ui.label(format!("Version: {}", genteel::VERSION));
+                    });
+                    ui.separator();
 
-                ui.group(|ui| {
-                    ui.label(egui::RichText::new("🛠 Comprehensive Debugging").strong());
-                    ui.label("Integrated multi-window suite for real-time VDP, CPU, Memory, and Audio analysis with GDB support.");
-                });
+                    ui.label("An instrumentable Sega Mega Drive/Genesis emulator architected for the intersection of human and machine intelligence.");
+                    ui.add_space(8.0);
 
-                ui.group(|ui| {
-                    ui.label(egui::RichText::new("🧪 CI/CD Instrumentation").strong());
-                    ui.label("Headless validation, deterministic execution, and massive automated test coverage for ROM verification.");
-                });
+                    ui.group(|ui| {
+                        ui.label(egui::RichText::new("🛠 Comprehensive Debugging").strong());
+                        ui.label("Integrated multi-window suite for real-time VDP, CPU, Memory, and Audio analysis with GDB support.");
+                    });
 
-                ui.group(|ui| {
-                    ui.label(egui::RichText::new("🤖 AI-Driven Development").strong());
-                    ui.label("Serialization-first design and instrumentable APIs tailored for AI agents and machine observation.");
-                });
+                    ui.group(|ui| {
+                        ui.label(egui::RichText::new("🧪 CI/CD Instrumentation").strong());
+                        ui.label("Headless validation, deterministic execution, and massive automated test coverage for ROM verification.");
+                    });
 
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    ui.hyperlink_to("GitHub Repository", "https://github.com/segin/genteel");
-                    ui.label("•");
-                    ui.label("MIT License");
+                    ui.group(|ui| {
+                        ui.label(egui::RichText::new("🤖 AI-Driven Development").strong());
+                        ui.label("Serialization-first design and instrumentable APIs tailored for AI agents and machine observation.");
+                    });
+
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        ui.hyperlink_to("GitHub Repository", "https://github.com/segin/genteel");
+                        ui.label("•");
+                        ui.label("MIT License");
+                    });
                 });
-            });
         }
 
         if self.gui_state.is_window_open("Performance & Debug") {
@@ -732,16 +744,16 @@ impl Framework {
                     egui::ScrollArea::vertical()
                         .id_source("m68k_disasm")
                         .show(ui, |ui| {
+                            let mut label_buffer = String::with_capacity(64);
                             for (addr, text) in &debug_info.m68k_disasm {
+                                label_buffer.clear();
                                 let is_current = *addr == debug_info.m68k_pc;
-                                let label = format!("{:06X}: {}", addr, text);
                                 if is_current {
-                                    ui.colored_label(
-                                        egui::Color32::YELLOW,
-                                        format!("-> {}", label),
-                                    );
+                                    let _ = write!(&mut label_buffer, "-> {:06X}: {}", addr, text);
+                                    ui.colored_label(egui::Color32::YELLOW, label_buffer.as_str());
                                 } else {
-                                    ui.label(format!("   {}", label));
+                                    let _ = write!(&mut label_buffer, "   {:06X}: {}", addr, text);
+                                    ui.label(label_buffer.as_str());
                                 }
                             }
                         });
@@ -750,16 +762,16 @@ impl Framework {
                     egui::ScrollArea::vertical()
                         .id_source("z80_disasm")
                         .show(ui, |ui| {
+                            let mut label_buffer = String::with_capacity(64);
                             for (addr, text) in &debug_info.z80_disasm {
+                                label_buffer.clear();
                                 let is_current = *addr == debug_info.z80_pc;
-                                let label = format!("{:04X}: {}", addr, text);
                                 if is_current {
-                                    ui.colored_label(
-                                        egui::Color32::YELLOW,
-                                        format!("-> {}", label),
-                                    );
+                                    let _ = write!(&mut label_buffer, "-> {:04X}: {}", addr, text);
+                                    ui.colored_label(egui::Color32::YELLOW, label_buffer.as_str());
                                 } else {
-                                    ui.label(format!("   {}", label));
+                                    let _ = write!(&mut label_buffer, "   {:04X}: {}", addr, text);
+                                    ui.label(label_buffer.as_str());
                                 }
                             }
                         });
@@ -1373,8 +1385,8 @@ impl Framework {
                                 ui.end_row();
 
                                 for slot in 0..10 {
-                                    ui.label(format!("Slot {}", slot));
-                                    let state_path = path.with_extension(format!("s{}", slot));
+                                    ui.label(SLOT_NAMES[slot as usize]);
+                                    let state_path = path.with_extension(SLOT_EXTS[slot as usize]);
                                     if state_path.exists() {
                                         let meta = state_path.metadata().ok();
                                         let time = meta
@@ -1727,9 +1739,7 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                                         let opcode = bus.read_word(addr);
                                         let instr = crate::cpu::decode(opcode);
                                         disasm.push((addr, format!("{:?}", instr)));
-                                        // Rough estimate of instruction length
-                                        // TODO: Use actual instruction length from decoder
-                                        addr += 2;
+                                        addr += instr.length_words() * 2;
                                     }
                                     disasm
                                 };

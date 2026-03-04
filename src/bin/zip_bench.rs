@@ -1,7 +1,7 @@
 use std::fs::File;
 use std::io::Write;
 use std::time::Instant;
-use zip::write::FileOptions;
+use zip::write::SimpleFileOptions;
 
 fn main() {
     let zip_path = "test_large.zip";
@@ -10,7 +10,7 @@ fn main() {
     if !std::path::Path::new(zip_path).exists() {
         let file = File::create(zip_path).unwrap();
         let mut zip = zip::ZipWriter::new(file);
-        let options = FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
 
         for i in 0..10000 {
             zip.start_file(format!("dummy_{}.txt", i), options.clone())
@@ -29,7 +29,7 @@ fn main() {
 
     let mut found = false;
     for i in 0..archive.len() {
-        let mut entry = archive.by_index(i).unwrap();
+        let entry = archive.by_index(i).unwrap();
         let name = entry.name().to_lowercase();
         if rom_extensions.iter().any(|ext| name.ends_with(ext)) {
             let size = entry.size();
