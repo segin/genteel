@@ -1739,9 +1739,7 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                                         let opcode = bus.read_word(addr);
                                         let instr = crate::cpu::decode(opcode);
                                         disasm.push((addr, format!("{:?}", instr)));
-                                        // Rough estimate of instruction length
-                                        // TODO: Use actual instruction length from decoder
-                                        addr += 2;
+                                        addr += instr.length_words() * 2;
                                     }
                                     disasm
                                 };
