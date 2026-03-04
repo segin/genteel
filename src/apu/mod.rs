@@ -80,11 +80,11 @@ impl Apu {
 
         // 2. Generate samples from new state
         let (fm_l, fm_r) = self.fm.generate_sample();
-        
+
         // Capture channel samples for visualization
         let fm_samples = self.fm.generate_channel_samples();
         let psg_samples = self.psg.get_channel_samples();
-        
+
         for i in 0..6 {
             self.channel_buffers[i][self.buffer_idx] = fm_samples[i];
         }
