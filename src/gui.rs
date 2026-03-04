@@ -50,20 +50,6 @@ pub struct WindowState {
 }
 
 #[cfg(feature = "gui")]
-#[derive(Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub enum PlaneTab {
-    PlaneA,
-    PlaneB,
-}
-
-#[cfg(feature = "gui")]
-impl Default for PlaneTab {
-    fn default() -> Self {
-        Self::PlaneA
-    }
-}
-
-#[cfg(feature = "gui")]
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct GuiState {
     pub windows: HashMap<String, WindowState>,
@@ -73,8 +59,6 @@ pub struct GuiState {
     pub paused: bool,
     pub recent_roms: Vec<PathBuf>,
     pub auto_save_load: bool,
-    #[serde(default)]
-    pub scroll_plane_tab: PlaneTab,
     #[serde(skip)]
     pub single_step: bool,
     #[serde(skip)]
@@ -104,7 +88,6 @@ impl GuiState {
             paused: false,
             recent_roms: Vec::new(),
             auto_save_load: false,
-            scroll_plane_tab: PlaneTab::default(),
             single_step: false,
             show_about: false,
             reset_requested: false,
@@ -968,63 +951,6 @@ impl Framework {
             egui::Window::new("Scroll Plane Viewer")
                 .open(&mut open)
                 .show(&self.egui_ctx, |ui| {
-<<<<<<< HEAD
-                let size_bits = debug_info.vdp_registers[16];
-                let plane_w = match size_bits & 0x03 {
-                    0x00 => 32,
-                    0x01 => 64,
-                    0x03 => 128,
-                    _ => 32,
-                };
-                let plane_h = match (size_bits >> 4) & 0x03 {
-                    0x00 => 32,
-                    0x01 => 64,
-                    0x03 => 128,
-                    _ => 32,
-                };
-                
-                ui.label(format!("Plane Size: {}x{}", plane_w, plane_h));
-                
-                ui.horizontal(|ui| {
-                    if ui.selectable_value(&mut self.gui_state.scroll_plane_tab, PlaneTab::PlaneA, "Plane A").changed() {
-                        self.gui_state.save();
-                    }
-                    if ui.selectable_value(&mut self.gui_state.scroll_plane_tab, PlaneTab::PlaneB, "Plane B").changed() {
-                        self.gui_state.save();
-                    }
-                });
-                
-                let plane_a_base = ((debug_info.vdp_registers[2] as usize) & 0x38) << 10;
-                let plane_b_base = ((debug_info.vdp_registers[4] as usize) & 0x07) << 13;
-                
-                let render_plane = |ui: &mut egui::Ui, base: usize, texture_opt: &mut Option<egui::TextureHandle>, id: &str| {
-                    let mut pixels = vec![0u8; plane_w * 8 * plane_h * 8 * 4];
-                    for ty in 0..plane_h {
-                        for tx in 0..plane_w {
-                            let entry_addr = base + (ty * plane_w + tx) * 2;
-                            let entry = u16::from_be_bytes([debug_info.vram[entry_addr], debug_info.vram[entry_addr + 1]]);
-                            let tile_idx = entry & 0x07FF;
-                            let palette = ((entry >> 13) & 0x03) as usize;
-                            let v_flip = (entry & 0x1000) != 0;
-                            let h_flip = (entry & 0x0800) != 0;
-                            
-                            for py in 0..8 {
-                                let row_addr = tile_idx as usize * 32 + (if v_flip { 7 - py } else { py }) * 4;
-                                for px in 0..8 {
-                                    let byte = debug_info.vram[row_addr + (if h_flip { 7 - px } else { px }) / 2];
-                                    let color_idx = if (if h_flip { 7 - px } else { px }) % 2 == 0 { byte >> 4 } else { byte & 0x0F };
-                                    
-                                    let color565 = debug_info.cram[palette * 16 + color_idx as usize];
-                                    let r = (((color565 >> 11) & 0x1F) << 3) as u8;
-                                    let g = (((color565 >> 5) & 0x3F) << 2) as u8;
-                                    let b = ((color565 & 0x1F) << 3) as u8;
-                                    
-                                    let pixel_idx = ((ty * 8 + py) * plane_w * 8 + (tx * 8 + px)) * 4;
-                                    pixels[pixel_idx] = r;
-                                    pixels[pixel_idx + 1] = g;
-                                    pixels[pixel_idx + 2] = b;
-                                    pixels[pixel_idx + 3] = 255;
-=======
                     let size_bits = debug_info.vdp_registers[16];
                     let plane_w = match size_bits & 0x03 {
                         0x00 => 32,
@@ -1092,7 +1018,6 @@ impl Framework {
                                         pixels[pixel_idx + 2] = b;
                                         pixels[pixel_idx + 3] = 255;
                                     }
->>>>>>> main
                                 }
                             }
                         }
@@ -1115,21 +1040,7 @@ impl Framework {
                     ui.collapsing("Plane B", |ui| {
                         render_plane(ui, plane_b_base, &mut self.plane_b_texture, "plane_b");
                     });
-<<<<<<< HEAD
-                };
-                
-                match self.gui_state.scroll_plane_tab {
-                    PlaneTab::PlaneA => {
-                        render_plane(ui, plane_a_base, &mut self.plane_a_texture, "plane_a");
-                    }
-                    PlaneTab::PlaneB => {
-                        render_plane(ui, plane_b_base, &mut self.plane_b_texture, "plane_b");
-                    }
-                }
-            });
-=======
                 });
->>>>>>> main
             if !open {
                 self.gui_state.set_window_open("Scroll Plane Viewer", false);
             }
