@@ -277,7 +277,7 @@ impl Psg {
     }
 
     /// Generate a single instantaneous sample from current state
-    fn current_sample(&self) -> i16 {
+    pub fn current_sample(&self) -> i16 {
         let mut output: i32 = 0;
 
         for tone in &self.tones {

@@ -713,10 +713,11 @@ impl Emulator {
         // 4. Update APU and generate audio samples
         {
             let mut bus = bus_rc.bus.borrow_mut();
+            bus.apu.tick_cycles(m68k_cycles);
             bus.audio_accumulator += m68k_cycles as f32;
 
             while bus.audio_accumulator >= cycles_per_sample {
-                let (l, r) = bus.apu.step(cycles_per_sample as u32);
+                let (l, r) = bus.apu.generate_sample();
                 if bus.audio_buffer.len() < 32768 {
                     bus.audio_buffer.push(l);
                     bus.audio_buffer.push(r);

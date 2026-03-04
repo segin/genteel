@@ -68,18 +68,19 @@ impl Apu {
         self.fm.write_data_bank(bank, data);
     }
 
-    /// Run one sample cycle (at ~44100Hz or system clock)
-    /// Returns a stereo mixed sample pair.
-    pub fn step(&mut self, m68k_cycles: u32) -> (i16, i16) {
-        // 1. Step the components
+    /// Run the components for the given number of M68k cycles
+    pub fn tick_cycles(&mut self, m68k_cycles: u32) {
         self.fm.step(m68k_cycles);
-
-        // PSG is clocked at 3.58MHz (M68k/2)
         let psg_cycles = m68k_cycles / 2;
-        let psg_sample = self.psg.step_cycles(psg_cycles);
+        self.psg.step_cycles(psg_cycles);
+    }
 
-        // 2. Generate samples from new state
+    /// Generate one sample cycle (at ~44100Hz or system clock)
+    /// Returns a stereo mixed sample pair.
+    pub fn generate_sample(&mut self) -> (i16, i16) {
+        // 1. Generate samples from current state
         let (fm_l, fm_r) = self.fm.generate_sample();
+        let psg_sample = self.psg.current_sample();
 
         // Capture channel samples for visualization
         let fm_samples = self.fm.generate_channel_samples();
