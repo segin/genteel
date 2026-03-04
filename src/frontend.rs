@@ -103,6 +103,16 @@ mod tests {
             keycode_to_button(KeyCode::ArrowUp, InputMapping::Original),
             Some(("up", true))
         );
+
+        // Ensure other basic mappings map properly
+        assert_eq!(
+            keycode_to_button(KeyCode::ArrowDown, InputMapping::Original),
+            Some(("down", true))
+        );
+        assert_eq!(
+            keycode_to_button(KeyCode::KeyC, InputMapping::Original),
+            Some(("c", true))
+        );
     }
 
     #[cfg(any(feature = "gui", feature = "test_headless"))]
@@ -220,19 +230,35 @@ mod tests {
     #[test]
     fn test_unmapped_keys() {
         let mappings = [InputMapping::Original, InputMapping::Ergonomic];
+
+        // Comprehensive list of commonly unmapped keys to ensure they don't accidentally trigger actions
         let unmapped_keys = [
-            KeyCode::KeyB,
-            KeyCode::KeyE,
-            KeyCode::KeyF,
-            KeyCode::KeyH,
-            KeyCode::Digit1,
-            KeyCode::F1,
-            KeyCode::Escape,
-            KeyCode::ShiftLeft,
+            // Unmapped letters (B, E, F, G, H, M, N, P, R, T, V, X/Y/Z depending on mapping)
+            KeyCode::KeyB, KeyCode::KeyE, KeyCode::KeyF, KeyCode::KeyG,
+            KeyCode::KeyH, KeyCode::KeyM, KeyCode::KeyN, KeyCode::KeyP,
+            KeyCode::KeyR, KeyCode::KeyT, KeyCode::KeyV,
+
+            // Digits
+            KeyCode::Digit0, KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3,
+            KeyCode::Digit4, KeyCode::Digit5, KeyCode::Digit6, KeyCode::Digit7,
+            KeyCode::Digit8, KeyCode::Digit9,
+
+            // Function keys
+            KeyCode::F1, KeyCode::F2, KeyCode::F3, KeyCode::F4,
+            KeyCode::F5, KeyCode::F6, KeyCode::F7, KeyCode::F8,
+            KeyCode::F9, KeyCode::F10, KeyCode::F11, KeyCode::F12,
+
+            // Special keys
+            KeyCode::Escape, KeyCode::ShiftLeft, KeyCode::ShiftRight,
+            KeyCode::ControlLeft, KeyCode::ControlRight,
+            KeyCode::AltLeft, KeyCode::AltRight,
+            KeyCode::Tab, KeyCode::Backspace,
         ];
 
         for mapping in mappings {
             for key in unmapped_keys {
+                // Some keys are unmapped in one mode but mapped in another
+                // We test keys that should be unmapped in BOTH modes here.
                 assert_eq!(
                     keycode_to_button(key, mapping),
                     None,
