@@ -983,6 +983,7 @@ impl Emulator {
             }
         }
 
+        let mut mem_access = BusGdbMemory { bus: &self.bus };
         while let Some(cmd) = gdb.receive_packet() {
             let mut regs = GdbRegisters {
                 d: self.cpu.d,
@@ -990,7 +991,6 @@ impl Emulator {
                 sr: self.cpu.sr,
                 pc: self.cpu.pc,
             };
-            let mut mem_access = BusGdbMemory { bus: &self.bus };
             let response = gdb.process_command(&cmd, &mut regs, &mut mem_access);
             self.cpu.d = regs.d;
             self.cpu.a = regs.a;
@@ -1035,6 +1035,7 @@ impl Emulator {
         }
         let mut stepping = false;
         let mut running = false;
+        let mut mem_access = BusGdbMemory { bus: &self.bus };
         loop {
             // Check for GDB commands
             if let Some(cmd) = gdb.receive_packet() {
@@ -1045,8 +1046,6 @@ impl Emulator {
                     sr: self.cpu.sr,
                     pc: self.cpu.pc,
                 };
-                // Create memory accessor
-                let mut mem_access = BusGdbMemory { bus: &self.bus };
                 let response = gdb.process_command(&cmd, &mut regs, &mut mem_access);
                 // Apply register changes back to CPU
                 self.cpu.d = regs.d;
