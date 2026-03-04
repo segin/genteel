@@ -84,7 +84,7 @@ pub struct GdbServer {
     /// TCP listener
     listener: TcpListener,
     /// Connected client stream
-    client: Option<TcpStream>,
+    pub client: Option<TcpStream>,
     /// Breakpoints (set of addresses)
     pub breakpoints: HashSet<u32>,
     /// Last stop reason
@@ -171,17 +171,6 @@ impl GdbServer {
     /// Check if client is connected
     pub fn is_connected(&self) -> bool {
         self.client.is_some()
-    }
-
-    /// Send a packet to the client
-    pub fn send_packet(&mut self, data: &str) -> std::io::Result<()> {
-        if let Some(ref mut client) = self.client {
-            let checksum = data.bytes().fold(0u8, |acc, b| acc.wrapping_add(b));
-            let packet = format!("${}#{:02x}", data, checksum);
-            client.write_all(packet.as_bytes())?;
-            client.flush()?;
-        }
-        Ok(())
     }
 
     /// Receive a packet from the client (non-blocking)

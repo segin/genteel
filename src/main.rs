@@ -32,8 +32,19 @@ use memory::bus::Bus;
 use memory::{SharedBus, Z80Bus};
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
+use std::io::Write;
 use std::rc::Rc;
 use z80::Z80;
+
+fn send_gdb_packet(gdb: &mut GdbServer, data: &str) -> std::io::Result<()> {
+    if let Some(ref mut client) = gdb.client {
+        let checksum = data.bytes().fold(0u8, |acc, b| acc.wrapping_add(b));
+        let packet = format!("${}#{:02x}", data, checksum);
+        client.write_all(packet.as_bytes())?;
+        client.flush()?;
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, Copy)]
 struct Z80Change {
@@ -985,7 +996,7 @@ impl Emulator {
                     self.paused = false;
                 }
                 _ if !response.is_empty() => {
-                    gdb.send_packet(&response).ok();
+                    send_gdb_packet(gdb, &response).ok();
                 }
                 _ => {}
             }
@@ -1045,7 +1056,7 @@ impl Emulator {
                         running = true;
                     }
                     _ if !response.is_empty() => {
-                        gdb.send_packet(&response).ok();
+                        send_gdb_packet(gdb, &response).ok();
                     }
                     _ => {}
                 }
@@ -1059,12 +1070,12 @@ impl Emulator {
                 // Check for breakpoint
                 if gdb.is_breakpoint(self.cpu.pc) {
                     gdb.stop_reason = StopReason::Breakpoint;
-                    gdb.send_packet(&format!("S{:02x}", StopReason::Breakpoint.signal()))
+                    send_gdb_packet(gdb, &format!("S{:02x}", StopReason::Breakpoint.signal()))
                         .ok();
                     running = false;
                 } else if stepping {
                     gdb.stop_reason = StopReason::Step;
-                    gdb.send_packet(&format!("S{:02x}", StopReason::Step.signal()))
+                    send_gdb_packet(gdb, &format!("S{:02x}", StopReason::Step.signal()))
                         .ok();
                     running = false;
                 }
@@ -1080,6 +1091,7 @@ impl Emulator {
         }
         Ok(())
     }
+    #[cfg(feature = "gui")]
     pub(crate) fn log_debug(&self, frame_count: u64) {
         let bus = self.bus.borrow();
         let disp_en = if bus.vdp.display_enabled() {
