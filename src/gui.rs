@@ -188,6 +188,13 @@ pub struct DebugInfo {
 }
 
 #[cfg(feature = "gui")]
+pub fn lock_pending_rom(mutex: &Mutex<Option<PathBuf>>) -> std::sync::MutexGuard<'_, Option<PathBuf>> {
+    match mutex.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
 pub struct Framework {
     pub egui_ctx: egui::Context,
     pub egui_state: egui_winit::State,
@@ -265,7 +272,7 @@ impl Framework {
                 .add_filter("All Files", &["*"])
                 .pick_file();
             if let Some(path) = file {
-                let mut lock = pending.lock().unwrap();
+                let mut lock = lock_pending_rom(&pending);
                 *lock = Some(path);
             }
         });
@@ -379,7 +386,7 @@ impl Framework {
                             for path in recent {
                                 let filename = path.file_name().and_then(|f| f.to_str()).unwrap_or("Unknown");
                                 if ui.button(filename).clicked() {
-                                    let mut lock = self.pending_rom_path.lock().unwrap();
+                                    let mut lock = lock_pending_rom(&self.pending_rom_path);
                                     *lock = Some(path);
                                     ui.close_menu();
                                 }
@@ -1449,7 +1456,7 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
 
                             // Check for pending ROM load
                             let pending = {
-                                let mut lock = framework.pending_rom_path.lock().unwrap();
+                                let mut lock = lock_pending_rom(&framework.pending_rom_path);
                                 lock.take()
                             };
                             if let Some(path) = pending {
@@ -1674,4 +1681,38 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
             }
         })
         .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+#[cfg(feature = "gui")]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_mutex_poisoning_recovery() {
+        // Initialize a mutex with a known value
+        let pending = Arc::new(Mutex::new(Some(PathBuf::from("test.md"))));
+
+        // Poison the mutex by panicking while holding the lock
+        let pending_clone = pending.clone();
+        let _ = std::thread::spawn(move || {
+            let _lock = pending_clone.lock().unwrap();
+            panic!("Intentional panic to poison the mutex");
+        }).join();
+
+        // Verify the mutex is poisoned
+        assert!(pending.lock().is_err());
+
+        // Call our helper function to ensure it recovers the lock and data
+        let mut recovered_lock = lock_pending_rom(&pending);
+
+        // The data should still be intact
+        assert_eq!(recovered_lock.as_deref(), Some(std::path::Path::new("test.md")));
+
+        // We can still modify the data
+        *recovered_lock = Some(PathBuf::from("recovered.md"));
+        assert_eq!(recovered_lock.as_deref(), Some(std::path::Path::new("recovered.md")));
+    }
 }
