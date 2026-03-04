@@ -194,6 +194,43 @@ mod tests {
     }
 
     #[test]
+    fn test_wav_writer_new() {
+        let temp_dir = std::env::temp_dir();
+        let file_path = temp_dir.join("test_wav_writer_new.wav");
+        let file_path_str = file_path.to_str().unwrap();
+
+        // Ensure file does not exist before test
+        let _ = std::fs::remove_file(&file_path);
+
+        {
+            let wav = WavWriter::new(file_path_str, 44100, 2).unwrap();
+            assert_eq!(wav.channels(), 2);
+        } // wav dropped here, file is closed
+
+        // Check that the file was actually created and exists
+        assert!(file_path.exists());
+
+        // Check basic file size to ensure headers were written
+        let metadata = std::fs::metadata(&file_path).unwrap();
+        assert_eq!(metadata.len(), 44); // 44 bytes for an empty WAV file header
+
+        // Clean up
+        std::fs::remove_file(&file_path).unwrap();
+    }
+
+    #[test]
+    fn test_wav_writer_new_error() {
+        // Test with an invalid path that should fail to create a file
+        #[cfg(unix)]
+        let invalid_path = "/invalid/path/that/does/not/exist/test_wav_writer_new_error.wav";
+        #[cfg(windows)]
+        let invalid_path = "Z:\\invalid\\path\\that\\does\\not\\exist\\test_wav_writer_new_error.wav";
+
+        let result = WavWriter::new(invalid_path, 44100, 2);
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_wav_finalize() {
         let mut buffer = Vec::new();
         let writer = Cursor::new(&mut buffer);
