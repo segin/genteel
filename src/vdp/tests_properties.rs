@@ -2,7 +2,7 @@
 //!
 //! Uses proptest for comprehensive property testing of VDP behavior.
 
-use crate::vdp::{RenderOps, Vdp};
+use crate::vdp::{RenderOps, Vdp, REG_PLANE_SIZE};
 use proptest::prelude::*;
 
 proptest! {
@@ -44,11 +44,9 @@ proptest! {
     fn plane_size_always_valid(reg_value in 0u8..=0xFF) {
         let mut vdp = Vdp::new();
         vdp.bypass_fifo = true;
-        vdp.registers[16] = reg_value;
+        vdp.registers[REG_PLANE_SIZE] = reg_value;
 
-        let reg = vdp.registers[16];
-        let w = match reg & 0x03 { 0 => 32, 1 => 64, 3 => 128, _ => 32 };
-        let h = match (reg >> 4) & 0x03 { 0 => 32, 1 => 64, 3 => 128, _ => 32 };
+        let (w, h) = vdp.plane_size();
 
         prop_assert!(w == 32 || w == 64 || w == 128);
         prop_assert!(h == 32 || h == 64 || h == 128);
