@@ -1129,6 +1129,95 @@ mod tests {
     }
 
     #[test]
+    fn test_send_packet_write_failure() {
+        let mut server = GdbServer::new(0, None).expect("Failed to create GDB server");
+        let port = server
+            .listener
+            .local_addr()
+            .expect("Failed to get local addr")
+            .port();
+
+        // Connect via loopback
+        let client_stream =
+            TcpStream::connect(format!("127.0.0.1:{}", port)).expect("Failed to connect");
+        assert!(server.accept(), "Server should accept connection");
+        assert!(server.is_connected(), "Server should be connected");
+
+        // Forcefully close the client connection to simulate a dropped connection
+        client_stream
+            .shutdown(std::net::Shutdown::Both)
+            .expect("Failed to shutdown client stream");
+
+        // Give the OS a moment to propagate the shutdown
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        // Attempting to send a packet to a closed connection might buffer initially.
+        // We write enough data to ensure the TCP buffer fills and an error is returned.
+        let large_data = "A".repeat(100_000);
+        let mut result = Ok(());
+
+        // Retry a few times if the first write gets buffered
+        for _ in 0..10 {
+            result = server.send_packet(&large_data);
+            if result.is_err() {
+                break;
+            }
+        }
+
+        assert!(
+            result.is_err(),
+            "Expected send_packet to return an error when the client is disconnected"
+        );
+    }
+
+    #[test]
+    fn test_receive_packet_write_ack_failure() {
+        let mut server = GdbServer::new(0, None).expect("Failed to create GDB server");
+        // Disable no_ack_mode so the server attempts to write an ACK (+)
+        server.no_ack_mode = false;
+
+        let port = server
+            .listener
+            .local_addr()
+            .expect("Failed to get local addr")
+            .port();
+
+        // Connect via loopback
+        let mut client_stream =
+            TcpStream::connect(format!("127.0.0.1:{}", port)).expect("Failed to connect");
+        assert!(server.accept(), "Server should accept connection");
+
+        // We write a valid packet to the server, but then immediately shutdown
+        // the client connection BEFORE the server has a chance to read it and
+        // write the ACK back.
+        // Format of valid packet: $OK#9a
+        let packet = b"$OK#9a";
+        client_stream.write_all(packet).expect("Failed to write packet");
+        client_stream.flush().expect("Failed to flush");
+
+        // Forcefully close the client connection so the server's ACK write fails
+        client_stream
+            .shutdown(std::net::Shutdown::Both)
+            .expect("Failed to shutdown client stream");
+
+        // Give the OS a moment to propagate the shutdown
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        // Attempt to receive the packet.
+        // The server will read the packet, see it's valid, and try to write an ACK (+).
+        // Since the client is gone, writing the ACK fails, but the server just uses .ok()
+        // and ignores the error, returning the parsed packet.
+        // This test ensures that the .ok() correctly handles the failure without panicking.
+        let result = server.receive_packet();
+
+        // We might get None if the read fails due to the connection reset,
+        // or Some("OK") if the read succeeded before the reset was processed.
+        // Both are acceptable outcomes, but the key is that it shouldn't panic
+        // when attempting to write the ACK to a closed stream.
+        let _ = result;
+    }
+
+    #[test]
     fn test_oversized_packet_prevention() {
         let mut server = GdbServer::new(0, None).expect("Failed to create GDB server");
         let port = server.port();
