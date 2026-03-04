@@ -233,4 +233,48 @@ mod tests {
         z80_bus.write_port(0x0000, 0x42);
         z80_bus.write_port(0xFFFF, 0xAB);
     }
+
+    #[test]
+    fn test_set_reset_bank() {
+        let mut z80_bus = create_test_z80_bus();
+
+        // Initial state
+        {
+            let bus = z80_bus.bus.bus.borrow();
+            assert_eq!(bus.z80_bank_addr, 0);
+            assert_eq!(bus.z80_bank_bit, 0);
+        }
+
+        // set_bank(1) -> bit 15 of addr becomes 1, bank_bit becomes 1
+        z80_bus.set_bank(1);
+        {
+            let bus = z80_bus.bus.bus.borrow();
+            assert_eq!(bus.z80_bank_addr, 1 << 15);
+            assert_eq!(bus.z80_bank_bit, 1);
+        }
+
+        // set_bank(0) -> bit 16 of addr remains 0, bank_bit becomes 2
+        z80_bus.set_bank(0);
+        {
+            let bus = z80_bus.bus.bus.borrow();
+            assert_eq!(bus.z80_bank_addr, 1 << 15);
+            assert_eq!(bus.z80_bank_bit, 2);
+        }
+
+        // set_bank(1) -> bit 17 of addr becomes 1, bank_bit becomes 3
+        z80_bus.set_bank(1);
+        {
+            let bus = z80_bus.bus.bus.borrow();
+            assert_eq!(bus.z80_bank_addr, (1 << 15) | (1 << 17));
+            assert_eq!(bus.z80_bank_bit, 3);
+        }
+
+        // Reset
+        z80_bus.reset_bank();
+        {
+            let bus = z80_bus.bus.bus.borrow();
+            assert_eq!(bus.z80_bank_addr, 0);
+            assert_eq!(bus.z80_bank_bit, 0);
+        }
+    }
 }
