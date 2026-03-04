@@ -64,9 +64,27 @@ impl<W: Write + Seek> WavWriter<W> {
                 "Sample count not aligned with channel count",
             ));
         }
+
+        // Use a stack-allocated buffer to batch writes and reduce call overhead
+        let mut buffer = [0u8; 2048];
+        let mut offset = 0;
+
         for &sample in samples {
-            self.writer.write_all(&sample.to_le_bytes())?;
+            let bytes = sample.to_le_bytes();
+            buffer[offset] = bytes[0];
+            buffer[offset + 1] = bytes[1];
+            offset += 2;
+
+            if offset == buffer.len() {
+                self.writer.write_all(&buffer)?;
+                offset = 0;
+            }
         }
+
+        if offset > 0 {
+            self.writer.write_all(&buffer[..offset])?;
+        }
+
         self.data_size += (samples.len() * 2) as u32;
         Ok(())
     }
@@ -176,23 +194,38 @@ mod tests {
     }
 
     #[test]
-    fn test_wav_new_success() {
+    fn test_wav_writer_new() {
         let temp_dir = std::env::temp_dir();
-        let file_path = temp_dir.join(format!("test_wav_{}.wav", std::process::id()));
+        let file_path = temp_dir.join("test_wav_writer_new.wav");
+        let file_path_str = file_path.to_str().unwrap();
+
+        // Ensure file does not exist before test
+        let _ = std::fs::remove_file(&file_path);
 
         {
-            let wav = WavWriter::new(file_path.to_str().unwrap(), 44100, 2).unwrap();
+            let wav = WavWriter::new(file_path_str, 44100, 2).unwrap();
             assert_eq!(wav.channels(), 2);
-        } // Drop to close and finalize the file
+        } // wav dropped here, file is closed
 
+        // Check that the file was actually created and exists
         assert!(file_path.exists());
-        let _ = std::fs::remove_file(file_path);
+
+        // Check basic file size to ensure headers were written
+        let metadata = std::fs::metadata(&file_path).unwrap();
+        assert_eq!(metadata.len(), 44); // 44 bytes for an empty WAV file header
+
+        // Clean up
+        std::fs::remove_file(&file_path).unwrap();
     }
 
     #[test]
-    fn test_wav_new_invalid_path() {
-        // Use a directory that definitely doesn't exist
-        let invalid_path = "/this_directory_should_not_exist_12345/test.wav";
+    fn test_wav_writer_new_error() {
+        // Test with an invalid path that should fail to create a file
+        #[cfg(unix)]
+        let invalid_path = "/invalid/path/that/does/not/exist/test_wav_writer_new_error.wav";
+        #[cfg(windows)]
+        let invalid_path = "Z:\\invalid\\path\\that\\does\\not\\exist\\test_wav_writer_new_error.wav";
+
         let result = WavWriter::new(invalid_path, 44100, 2);
         assert!(result.is_err());
     }
