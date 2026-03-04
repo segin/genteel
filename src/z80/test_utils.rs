@@ -1,4 +1,4 @@
-use crate::memory::{IoInterface, Memory, MemoryInterface, Z80Interface};
+use crate::memory::{IoInterface, Memory, MemoryInterface};
 use crate::z80::Z80;
 use std::collections::HashMap;
 
@@ -18,6 +18,7 @@ impl IoInterface for TestIo {
 }
 
 /// Combined bus for testing Z80
+#[derive(Debug)]
 pub struct CombinedBus {
     pub memory: Memory,
     pub io: TestIo,
@@ -59,10 +60,10 @@ impl IoInterface for CombinedBus {
     }
 }
 
-pub fn create_z80(program: &[u8]) -> (Z80, CombinedBus) {
+pub fn create_z80(program: &[u8]) -> Z80<Memory, TestIo> {
     let mut m = Memory::new(0x10000);
     for (i, &b) in program.iter().enumerate() {
         m.data[i] = b;
     }
-    (Z80::new(), CombinedBus::new(m, TestIo::default()))
+    Z80::new(m, TestIo::default())
 }

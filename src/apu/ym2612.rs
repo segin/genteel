@@ -31,35 +31,107 @@ static EXP_TABLE: LazyLock<[u16; 256]> = LazyLock::new(|| {
 
 /// Detune table: phase increment deltas indexed by [key_code][detune_magnitude]
 const DETUNE_TABLE: [[u8; 4]; 32] = [
-    [0, 0, 1, 2], [0, 0, 1, 2], [0, 0, 1, 2], [0, 0, 1, 2],
-    [0, 1, 2, 2], [0, 1, 2, 3], [0, 1, 2, 3], [0, 1, 2, 3],
-    [0, 1, 2, 4], [0, 1, 3, 4], [0, 1, 3, 4], [0, 1, 3, 5],
-    [0, 2, 4, 5], [0, 2, 4, 6], [0, 2, 4, 6], [0, 2, 5, 7],
-    [0, 2, 5, 8], [0, 3, 6, 8], [0, 3, 6, 9], [0, 3, 7, 10],
-    [0, 4, 8, 11], [0, 4, 8, 12], [0, 4, 9, 13], [0, 5, 10, 14],
-    [0, 5, 11, 16], [0, 6, 12, 17], [0, 6, 13, 19], [0, 7, 14, 20],
-    [0, 8, 16, 22], [0, 8, 16, 22], [0, 8, 16, 22], [0, 8, 16, 22],
+    [0, 0, 1, 2],
+    [0, 0, 1, 2],
+    [0, 0, 1, 2],
+    [0, 0, 1, 2],
+    [0, 1, 2, 2],
+    [0, 1, 2, 3],
+    [0, 1, 2, 3],
+    [0, 1, 2, 3],
+    [0, 1, 2, 4],
+    [0, 1, 3, 4],
+    [0, 1, 3, 4],
+    [0, 1, 3, 5],
+    [0, 2, 4, 5],
+    [0, 2, 4, 6],
+    [0, 2, 4, 6],
+    [0, 2, 5, 7],
+    [0, 2, 5, 8],
+    [0, 3, 6, 8],
+    [0, 3, 6, 9],
+    [0, 3, 7, 10],
+    [0, 4, 8, 11],
+    [0, 4, 8, 12],
+    [0, 4, 9, 13],
+    [0, 5, 10, 14],
+    [0, 5, 11, 16],
+    [0, 6, 12, 17],
+    [0, 6, 13, 19],
+    [0, 7, 14, 20],
+    [0, 8, 16, 22],
+    [0, 8, 16, 22],
+    [0, 8, 16, 22],
+    [0, 8, 16, 22],
 ];
 
 /// Envelope update magnitude table — exact hardware-reverse-engineered values
 /// from gendev.spritesmind.net, indexed by [rate][cycle_step]
 const ENV_INCREMENT_TABLE: [[u8; 8]; 64] = [
-    [0,0,0,0,0,0,0,0], [0,0,0,0,0,0,0,0], [0,1,0,1,0,1,0,1], [0,1,0,1,0,1,0,1], // 0-3
-    [0,1,0,1,0,1,0,1], [0,1,0,1,0,1,0,1], [0,1,1,1,0,1,1,1], [0,1,1,1,0,1,1,1], // 4-7
-    [0,1,0,1,0,1,0,1], [0,1,0,1,1,1,0,1], [0,1,1,1,0,1,1,1], [0,1,1,1,1,1,1,1], // 8-11
-    [0,1,0,1,0,1,0,1], [0,1,0,1,1,1,0,1], [0,1,1,1,0,1,1,1], [0,1,1,1,1,1,1,1], // 12-15
-    [0,1,0,1,0,1,0,1], [0,1,0,1,1,1,0,1], [0,1,1,1,0,1,1,1], [0,1,1,1,1,1,1,1], // 16-19
-    [0,1,0,1,0,1,0,1], [0,1,0,1,1,1,0,1], [0,1,1,1,0,1,1,1], [0,1,1,1,1,1,1,1], // 20-23
-    [0,1,0,1,0,1,0,1], [0,1,0,1,1,1,0,1], [0,1,1,1,0,1,1,1], [0,1,1,1,1,1,1,1], // 24-27
-    [0,1,0,1,0,1,0,1], [0,1,0,1,1,1,0,1], [0,1,1,1,0,1,1,1], [0,1,1,1,1,1,1,1], // 28-31
-    [0,1,0,1,0,1,0,1], [0,1,0,1,1,1,0,1], [0,1,1,1,0,1,1,1], [0,1,1,1,1,1,1,1], // 32-35
-    [0,1,0,1,0,1,0,1], [0,1,0,1,1,1,0,1], [0,1,1,1,0,1,1,1], [0,1,1,1,1,1,1,1], // 36-39
-    [0,1,0,1,0,1,0,1], [0,1,0,1,1,1,0,1], [0,1,1,1,0,1,1,1], [0,1,1,1,1,1,1,1], // 40-43
-    [0,1,0,1,0,1,0,1], [0,1,0,1,1,1,0,1], [0,1,1,1,0,1,1,1], [0,1,1,1,1,1,1,1], // 44-47
-    [1,1,1,1,1,1,1,1], [1,1,1,2,1,1,1,2], [1,2,1,2,1,2,1,2], [1,2,2,2,1,2,2,2], // 48-51
-    [2,2,2,2,2,2,2,2], [2,2,2,4,2,2,2,4], [2,4,2,4,2,4,2,4], [2,4,4,4,2,4,4,4], // 52-55
-    [4,4,4,4,4,4,4,4], [4,4,4,8,4,4,4,8], [4,8,4,8,4,8,4,8], [4,8,8,8,4,8,8,8], // 56-59
-    [8,8,8,8,8,8,8,8], [8,8,8,8,8,8,8,8], [8,8,8,8,8,8,8,8], [8,8,8,8,8,8,8,8], // 60-63
+    [0, 0, 0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 0, 0, 0, 0],
+    [0, 1, 0, 1, 0, 1, 0, 1],
+    [0, 1, 0, 1, 0, 1, 0, 1], // 0-3
+    [0, 1, 0, 1, 0, 1, 0, 1],
+    [0, 1, 0, 1, 0, 1, 0, 1],
+    [0, 1, 1, 1, 0, 1, 1, 1],
+    [0, 1, 1, 1, 0, 1, 1, 1], // 4-7
+    [0, 1, 0, 1, 0, 1, 0, 1],
+    [0, 1, 0, 1, 1, 1, 0, 1],
+    [0, 1, 1, 1, 0, 1, 1, 1],
+    [0, 1, 1, 1, 1, 1, 1, 1], // 8-11
+    [0, 1, 0, 1, 0, 1, 0, 1],
+    [0, 1, 0, 1, 1, 1, 0, 1],
+    [0, 1, 1, 1, 0, 1, 1, 1],
+    [0, 1, 1, 1, 1, 1, 1, 1], // 12-15
+    [0, 1, 0, 1, 0, 1, 0, 1],
+    [0, 1, 0, 1, 1, 1, 0, 1],
+    [0, 1, 1, 1, 0, 1, 1, 1],
+    [0, 1, 1, 1, 1, 1, 1, 1], // 16-19
+    [0, 1, 0, 1, 0, 1, 0, 1],
+    [0, 1, 0, 1, 1, 1, 0, 1],
+    [0, 1, 1, 1, 0, 1, 1, 1],
+    [0, 1, 1, 1, 1, 1, 1, 1], // 20-23
+    [0, 1, 0, 1, 0, 1, 0, 1],
+    [0, 1, 0, 1, 1, 1, 0, 1],
+    [0, 1, 1, 1, 0, 1, 1, 1],
+    [0, 1, 1, 1, 1, 1, 1, 1], // 24-27
+    [0, 1, 0, 1, 0, 1, 0, 1],
+    [0, 1, 0, 1, 1, 1, 0, 1],
+    [0, 1, 1, 1, 0, 1, 1, 1],
+    [0, 1, 1, 1, 1, 1, 1, 1], // 28-31
+    [0, 1, 0, 1, 0, 1, 0, 1],
+    [0, 1, 0, 1, 1, 1, 0, 1],
+    [0, 1, 1, 1, 0, 1, 1, 1],
+    [0, 1, 1, 1, 1, 1, 1, 1], // 32-35
+    [0, 1, 0, 1, 0, 1, 0, 1],
+    [0, 1, 0, 1, 1, 1, 0, 1],
+    [0, 1, 1, 1, 0, 1, 1, 1],
+    [0, 1, 1, 1, 1, 1, 1, 1], // 36-39
+    [0, 1, 0, 1, 0, 1, 0, 1],
+    [0, 1, 0, 1, 1, 1, 0, 1],
+    [0, 1, 1, 1, 0, 1, 1, 1],
+    [0, 1, 1, 1, 1, 1, 1, 1], // 40-43
+    [0, 1, 0, 1, 0, 1, 0, 1],
+    [0, 1, 0, 1, 1, 1, 0, 1],
+    [0, 1, 1, 1, 0, 1, 1, 1],
+    [0, 1, 1, 1, 1, 1, 1, 1], // 44-47
+    [1, 1, 1, 1, 1, 1, 1, 1],
+    [1, 1, 1, 2, 1, 1, 1, 2],
+    [1, 2, 1, 2, 1, 2, 1, 2],
+    [1, 2, 2, 2, 1, 2, 2, 2], // 48-51
+    [2, 2, 2, 2, 2, 2, 2, 2],
+    [2, 2, 2, 4, 2, 2, 2, 4],
+    [2, 4, 2, 4, 2, 4, 2, 4],
+    [2, 4, 4, 4, 2, 4, 4, 4], // 52-55
+    [4, 4, 4, 4, 4, 4, 4, 4],
+    [4, 4, 4, 8, 4, 4, 4, 8],
+    [4, 8, 4, 8, 4, 8, 4, 8],
+    [4, 8, 8, 8, 4, 8, 8, 8], // 56-59
+    [8, 8, 8, 8, 8, 8, 8, 8],
+    [8, 8, 8, 8, 8, 8, 8, 8],
+    [8, 8, 8, 8, 8, 8, 8, 8],
+    [8, 8, 8, 8, 8, 8, 8, 8], // 60-63
 ];
 
 /// LFO divider table: samples per LFO counter increment
@@ -74,7 +146,9 @@ mod register_array {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
     pub fn serialize<S>(data: &[[u8; 256]; 2], serializer: S) -> Result<S::Ok, S::Error>
-    where S: Serializer {
+    where
+        S: Serializer,
+    {
         use serde::ser::SerializeTuple;
         let mut s = serializer.serialize_tuple(2)?;
         #[derive(Serialize)]
@@ -85,7 +159,9 @@ mod register_array {
     }
 
     pub fn deserialize<'de, D>(deserializer: D) -> Result<[[u8; 256]; 2], D::Error>
-    where D: Deserializer<'de> {
+    where
+        D: Deserializer<'de>,
+    {
         #[derive(Deserialize)]
         struct Wrapper(#[serde(with = "big_array")] [u8; 256]);
         let arr: [Wrapper; 2] = Deserialize::deserialize(deserializer)?;
@@ -112,14 +188,14 @@ enum AdsrPhase {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct FmOperator {
     /* Phase generator */
-    phase_counter: u32,   // 20-bit
+    phase_counter: u32, // 20-bit
     /* Envelope generator */
     env_phase: AdsrPhase,
-    env_level: u16,       // 10-bit attenuation (0=max vol, 0x3FF=silence)
+    env_level: u16, // 10-bit attenuation (0=max vol, 0x3FF=silence)
     key_on: bool,
     /* Output history (for feedback) */
-    last_output: i16,     // signed 14-bit
-    last_output2: i16,    // previous to last (for op1 feedback averaging)
+    last_output: i16,  // signed 14-bit
+    last_output2: i16, // previous to last (for op1 feedback averaging)
 }
 
 impl FmOperator {
@@ -136,7 +212,9 @@ impl FmOperator {
 
     /// Set key on/off state. Returns true if state changed.
     fn set_key_on(&mut self, on: bool) {
-        if on == self.key_on { return; }
+        if on == self.key_on {
+            return;
+        }
         self.key_on = on;
         if on {
             self.phase_counter = 0;
@@ -156,7 +234,9 @@ impl FmOperator {
         let key_code = compute_key_code(f_number, block);
         let dt_mag = detune & 0x03;
         let dt_sign = detune & 0x04;
-        let dt_delta = if dt_mag == 0 { 0u32 } else {
+        let dt_delta = if dt_mag == 0 {
+            0u32
+        } else {
             DETUNE_TABLE[key_code as usize][dt_mag as usize] as u32
         };
         let detuned = if dt_sign != 0 {
@@ -208,7 +288,9 @@ impl FmOperator {
         };
         let rks = key_code >> ks_shift;
         /* Rate = 2R + Rks, clamped to 63 */
-        let rate = if base_rate == 0 { 0u8 } else {
+        let rate = if base_rate == 0 {
+            0u8
+        } else {
             ((base_rate as u16 * 2) + rks as u16).min(63) as u8
         };
 
@@ -251,7 +333,11 @@ impl FmOperator {
             self.env_phase = AdsrPhase::Decay;
         }
         if self.env_phase == AdsrPhase::Decay {
-            let sl = if sustain_level == 15 { 0x1F } else { sustain_level as u16 };
+            let sl = if sustain_level == 15 {
+                0x1F
+            } else {
+                sustain_level as u16
+            };
             if self.env_level >= (sl << 5) {
                 self.env_phase = AdsrPhase::Sustain;
             }
@@ -285,13 +371,17 @@ impl FmOperator {
         let combined_atten = log_sine as u32 + ((total_atten as u32) << 2);
 
         /* If combined attenuation >= 14.0 in 5.8 fixed (0x1E00), output is 0 */
-        if combined_atten >= 0x1E00 { return 0; }
+        if combined_atten >= 0x1E00 {
+            return 0;
+        }
 
         /* Base-2 exponentiation: (table[fract] << 3) >> int_part */
         let exp_idx = (combined_atten & 0xFF) as usize;
         let exp_shift = (combined_atten >> 8) as u32;
-        if exp_shift >= 14 { return 0; }
-        
+        if exp_shift >= 14 {
+            return 0;
+        }
+
         /* The table stores (2^(1-x) * 1024) | 0x400, which is an 11-bit value [1024, 2047] */
         /* Shift << 3 to get 14-bit precision [8192, 16383] */
         let linear = ((EXP_TABLE[exp_idx] as u32) << 3) >> exp_shift;
@@ -317,15 +407,20 @@ struct FmChannel {
     panning_l: bool,
     panning_r: bool,
     /* Frequency latch */
-    fnum: u16,         // 11-bit
-    block: u8,          // 3-bit
-    fnum_latch: u8,     // latched high byte (applied when low is written)
+    fnum: u16,      // 11-bit
+    block: u8,      // 3-bit
+    fnum_latch: u8, // latched high byte (applied when low is written)
 }
 
 impl FmChannel {
     fn new() -> Self {
         Self {
-            operators: [FmOperator::new(), FmOperator::new(), FmOperator::new(), FmOperator::new()],
+            operators: [
+                FmOperator::new(),
+                FmOperator::new(),
+                FmOperator::new(),
+                FmOperator::new(),
+            ],
             algorithm: 0,
             feedback: 0,
             panning_l: true,
@@ -369,8 +464,14 @@ impl FmChannel {
 
             self.operators[op_idx].clock_phase(self.fnum as u32, self.block, detune, multiple);
             self.operators[op_idx].clock_envelope(
-                attack_rate, decay_rate, sr, release_rate,
-                sustain_level, key_scale, key_code, global_counter,
+                attack_rate,
+                decay_rate,
+                sr,
+                release_rate,
+                sustain_level,
+                key_scale,
+                key_code,
+                global_counter,
             );
         }
 
@@ -382,7 +483,8 @@ impl FmChannel {
 
         /* Compute operator 1 feedback */
         let fb_mod = if self.feedback > 0 {
-            let avg = (self.operators[0].last_output as i32 + self.operators[0].last_output2 as i32) >> 1;
+            let avg =
+                (self.operators[0].last_output as i32 + self.operators[0].last_output2 as i32) >> 1;
             (avg >> (9 - self.feedback as i32)) as i16
         } else {
             0
@@ -413,8 +515,8 @@ impl FmChannel {
             }
             1 => {
                 /* (M1+M2)→M3→C4 */
-                let out3 = self.operators[2].compute_output(
-                    (prev[0] as i32 + prev[1] as i32) as i16 >> 1, tl[2]); // delayed: both
+                let out3 = self.operators[2]
+                    .compute_output((prev[0] as i32 + prev[1] as i32) as i16 >> 1, tl[2]); // delayed: both
                 let out2 = self.operators[1].compute_output(0, tl[1]);
                 let out4 = self.operators[3].compute_output(out3 >> 1, tl[3]);
                 (out2, out3, out4)
@@ -423,16 +525,16 @@ impl FmChannel {
                 /* M1+(M2→M3)→C4 */
                 let out3 = self.operators[2].compute_output(prev[1] >> 1, tl[2]); // delayed
                 let out2 = self.operators[1].compute_output(0, tl[1]);
-                let out4 = self.operators[3].compute_output(
-                    (out1 as i32 + out3 as i32) as i16 >> 1, tl[3]);
+                let out4 = self.operators[3]
+                    .compute_output((out1 as i32 + out3 as i32) as i16 >> 1, tl[3]);
                 (out2, out3, out4)
             }
             3 => {
                 /* (M1→M2)+M3→C4 */
                 let out3 = self.operators[2].compute_output(0, tl[2]);
                 let out2 = self.operators[1].compute_output(out1 >> 1, tl[1]);
-                let out4 = self.operators[3].compute_output(
-                    (prev[1] as i32 + out3 as i32) as i16 >> 1, tl[3]); // delayed: op2→op4
+                let out4 = self.operators[3]
+                    .compute_output((prev[1] as i32 + out3 as i32) as i16 >> 1, tl[3]); // delayed: op2→op4
                 (out2, out3, out4)
             }
             4 => {
@@ -728,13 +830,17 @@ impl Ym2612 {
     fn handle_timer_control(&mut self, val: u8) {
         let old_val = self.registers[0][0x27];
 
-        if (val & 0x10) != 0 { self.status &= !0x01; }
-        if (val & 0x20) != 0 { self.status &= !0x02; }
+        if (val & 0x10) != 0 {
+            self.status &= !0x01;
+        }
+        if (val & 0x20) != 0 {
+            self.status &= !0x02;
+        }
 
         /* Load A transition 0→1 */
         if (val & 0x01) != 0 && (old_val & 0x01) == 0 {
-            let n = ((self.registers[0][0x24] as u32) << 2)
-                | (self.registers[0][0x25] as u32 & 0x03);
+            let n =
+                ((self.registers[0][0x24] as u32) << 2) | (self.registers[0][0x25] as u32 & 0x03);
             let period = (1024 - n as i32) * 504;
             self.timer_a_count = if period < 504 { 504 } else { period };
         }
@@ -753,8 +859,12 @@ impl Ym2612 {
         self.registers[0][0x28] = val;
         let ch_bits = val & 0x07;
         let ch_idx = match ch_bits {
-            0 => 0, 1 => 1, 2 => 2,
-            4 => 3, 5 => 4, 6 => 5,
+            0 => 0,
+            1 => 1,
+            2 => 2,
+            4 => 3,
+            5 => 4,
+            6 => 5,
             _ => return, // invalid
         };
         /* Bits 4-7 select which operators to key on/off */
@@ -825,8 +935,12 @@ impl Ym2612 {
             /* Channel 6 DAC override */
             if ch == 5 && self.dac_enabled {
                 let dac_signed = (self.dac_value as i16 - 128) << 5; // scale to ~14-bit
-                if self.channels[5].panning_l { left += dac_signed as i32; }
-                if self.channels[5].panning_r { right += dac_signed as i32; }
+                if self.channels[5].panning_l {
+                    left += dac_signed as i32;
+                }
+                if self.channels[5].panning_r {
+                    right += dac_signed as i32;
+                }
                 continue;
             }
 
@@ -834,8 +948,12 @@ impl Ym2612 {
             let regs = &self.registers[bank_idx];
             let output = self.channels[ch].clock(regs, ch_offset, self.env_counter);
 
-            if self.channels[ch].panning_l { left += output as i32; }
-            if self.channels[ch].panning_r { right += output as i32; }
+            if self.channels[ch].panning_l {
+                left += output as i32;
+            }
+            if self.channels[ch].panning_r {
+                right += output as i32;
+            }
         }
 
         /* Clamp to i16 range */
@@ -1038,7 +1156,11 @@ mod tests {
         assert_eq!(ym.read_status() & 0x80, 0x80);
 
         ym.step(31);
-        assert_eq!(ym.read_status() & 0x80, 0x80, "Should still be busy at 31 cycles");
+        assert_eq!(
+            ym.read_status() & 0x80,
+            0x80,
+            "Should still be busy at 31 cycles"
+        );
 
         ym.step(1);
         assert_eq!(ym.read_status() & 0x80, 0, "Should be free after 32 cycles");
@@ -1079,7 +1201,10 @@ mod tests {
         let mut saw_nonzero = false;
         for _ in 0..100 {
             let (l, r) = ym.generate_sample();
-            if l != 0 || r != 0 { saw_nonzero = true; break; }
+            if l != 0 || r != 0 {
+                saw_nonzero = true;
+                break;
+            }
         }
         assert!(saw_nonzero, "Keyed-on channel should produce audio");
     }
@@ -1132,8 +1257,16 @@ mod tests {
         /* Index 0 = phase near 0 → sin near 0 → -log2(sin) is large (high attenuation) */
         /* Index 255 = phase near π/2 → sin near 1 → -log2(sin) is small */
         let table = &*LOG_SINE_TABLE;
-        assert!(table[0] > 2000, "Index 0 should have large attenuation: {}", table[0]);
-        assert!(table[255] < 10, "Index 255 should have small attenuation: {}", table[255]);
+        assert!(
+            table[0] > 2000,
+            "Index 0 should have large attenuation: {}",
+            table[0]
+        );
+        assert!(
+            table[255] < 10,
+            "Index 255 should have small attenuation: {}",
+            table[255]
+        );
     }
 
     #[test]
@@ -1153,15 +1286,15 @@ mod tests {
     #[test]
     fn test_bug1_envelope_table_matches_hardware() {
         /* Rates 0-1 should be all zeros */
-        assert_eq!(ENV_INCREMENT_TABLE[0], [0,0,0,0,0,0,0,0]);
-        assert_eq!(ENV_INCREMENT_TABLE[1], [0,0,0,0,0,0,0,0]);
+        assert_eq!(ENV_INCREMENT_TABLE[0], [0, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(ENV_INCREMENT_TABLE[1], [0, 0, 0, 0, 0, 0, 0, 0]);
         /* Rates 2-3 should have the [0,1,0,1,0,1,0,1] pattern */
-        assert_eq!(ENV_INCREMENT_TABLE[2], [0,1,0,1,0,1,0,1]);
+        assert_eq!(ENV_INCREMENT_TABLE[2], [0, 1, 0, 1, 0, 1, 0, 1]);
         /* Rate 48 is the first with increment > 1 */
-        assert_eq!(ENV_INCREMENT_TABLE[48], [1,1,1,1,1,1,1,1]);
+        assert_eq!(ENV_INCREMENT_TABLE[48], [1, 1, 1, 1, 1, 1, 1, 1]);
         /* Rate 60-63 should all be [8,8,8,8,8,8,8,8] */
-        assert_eq!(ENV_INCREMENT_TABLE[60], [8,8,8,8,8,8,8,8]);
-        assert_eq!(ENV_INCREMENT_TABLE[63], [8,8,8,8,8,8,8,8]);
+        assert_eq!(ENV_INCREMENT_TABLE[60], [8, 8, 8, 8, 8, 8, 8, 8]);
+        assert_eq!(ENV_INCREMENT_TABLE[63], [8, 8, 8, 8, 8, 8, 8, 8]);
     }
 
     /// Bug 2: Attack formula must use signed arithmetic right shift: A' = A + ((I * -(A+1)) >> 4)
@@ -1177,13 +1310,26 @@ mod tests {
         /* shift=1, step_idx = (counter >> 1) & 7. counter=2 → step_idx=1 → table[40][1] = 1 */
         op.clock_envelope(20, 0, 0, 0, 0, 0, 0, 2);
         /* Attack should decrease: -(0x3FF+1) * 1 >> 4 = -64 */
-        assert!(op.env_level < 0x3FF, "Attack should decrease attenuation, got {}", op.env_level);
-        assert_eq!(op.env_level, 0x3FF - 64, "Expected 0x3FF - 64 = {}, got {}", 0x3FF - 64, op.env_level);
+        assert!(
+            op.env_level < 0x3FF,
+            "Attack should decrease attenuation, got {}",
+            op.env_level
+        );
+        assert_eq!(
+            op.env_level,
+            0x3FF - 64,
+            "Expected 0x3FF - 64 = {}, got {}",
+            0x3FF - 64,
+            op.env_level
+        );
 
         /* Test that small attenuation still reaches 0 via arithmetic right shift */
         op.env_level = 1;
         op.clock_envelope(20, 0, 0, 0, 0, 0, 0, 2);
-        assert_eq!(op.env_level, 0, "Attenuation 1 should reach 0 via arithmetic right shift");
+        assert_eq!(
+            op.env_level, 0,
+            "Attenuation 1 should reach 0 via arithmetic right shift"
+        );
     }
 
     /// Bug 3: Exp table output must use (table[fract] << 3) >> int_part for 14-bit output
@@ -1194,10 +1340,14 @@ mod tests {
         op.env_phase = AdsrPhase::Attack;
         op.key_on = true;
         op.phase_counter = 256 << 10; // phase = 256 (quarter cycle, peak of sine)
-        /* At zero attenuation, output should be close to max 14-bit precision value (~16383) */
+                                      /* At zero attenuation, output should be close to max 14-bit precision value (~16383) */
         let output = op.compute_output(0, 0);
         /* With << 3 the max is ~8*2048 = 16384; without << 3 max is ~2048 */
-        assert!(output.abs() > 8000, "Output should be > 8000 with << 3 scaling, got {}", output);
+        assert!(
+            output.abs() > 8000,
+            "Output should be > 8000 with << 3 scaling, got {}",
+            output
+        );
     }
 
     /// Bug 4: Mute threshold: combined attenuation >= 14.0 (5.8 fixed) should mute
@@ -1207,15 +1357,22 @@ mod tests {
         op.phase_counter = 256 << 10;
         /* total_atten = 0x3F8 -> combined = 0x3F8 << 2 = 0xFE0 + log_sine */
         /* combined >= 0xFE0 (which is > 14.0 in 5.8 fixed point) */
-        
+
         op.env_level = 0;
         let output_loud = op.compute_output(0, 0);
-        assert!(output_loud.abs() > 0, "Zero attenuation should produce output");
+        assert!(
+            output_loud.abs() > 0,
+            "Zero attenuation should produce output"
+        );
 
         /* TL=127: total_atten = (0 + 127<<3) = 1016 = 0x3F8 */
         /* combined_atten = 0x3F8 << 2 = 0xFE0. Integer part = 0xFE0 >> 8 = 15. 15 >= 14 -> Mute. */
         let output_quiet = op.compute_output(0, 127);
-        assert_eq!(output_quiet, 0, "High attenuation should mute with 14-bit threshold, got {}", output_quiet);
+        assert_eq!(
+            output_quiet, 0,
+            "High attenuation should mute with 14-bit threshold, got {}",
+            output_quiet
+        );
     }
 
     /// Bug 5: Rate 0 (R=0) must skip envelope updates entirely, regardless of table contents
@@ -1230,7 +1387,10 @@ mod tests {
         for counter in 1..100 {
             op.clock_envelope(0, 0, 0, 0, 0, 0, 0, counter);
         }
-        assert_eq!(op.env_level, original, "Rate 0 (sustain_rate=0) should hold attenuation constant");
+        assert_eq!(
+            op.env_level, original,
+            "Rate 0 (sustain_rate=0) should hold attenuation constant"
+        );
     }
 
     /// Bug 6: Total Level must be shifted << 3 (multiplied by 8) before adding to envelope
@@ -1249,9 +1409,17 @@ mod tests {
         /* TL=16: adds 128 to attenuation (16 << 3), should be much quieter */
         let out_tl16 = op.compute_output(0, 16);
 
-        assert!(out_tl0.abs() > out_tl1.abs(),
-            "TL=0 ({}) should be louder than TL=1 ({})", out_tl0, out_tl1);
-        assert!(out_tl1.abs() > out_tl16.abs(),
-            "TL=1 ({}) should be louder than TL=16 ({})", out_tl1, out_tl16);
+        assert!(
+            out_tl0.abs() > out_tl1.abs(),
+            "TL=0 ({}) should be louder than TL=1 ({})",
+            out_tl0,
+            out_tl1
+        );
+        assert!(
+            out_tl1.abs() > out_tl16.abs(),
+            "TL=1 ({}) should be louder than TL=16 ({})",
+            out_tl1,
+            out_tl16
+        );
     }
 }
