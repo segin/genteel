@@ -55,7 +55,7 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
 }
 
 /// GDB stop reasons
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum StopReason {
     /// Target halted (initial state)
     Halted,
@@ -75,6 +75,16 @@ impl StopReason {
             StopReason::Breakpoint => 5, // SIGTRAP
             StopReason::Step => 5,       // SIGTRAP
             StopReason::Interrupt => 2,  // SIGINT
+        }
+    }
+
+    /// Pre-formatted GDB signal response string. This avoids allocation and formatting during the emulation loop.
+    pub fn signal_string(&self) -> &'static str {
+        match self {
+            StopReason::Halted => "S05",
+            StopReason::Breakpoint => "S05",
+            StopReason::Step => "S05",
+            StopReason::Interrupt => "S02",
         }
     }
 }
@@ -297,7 +307,7 @@ impl GdbServer {
         match first_char {
             '?' => {
                 // Stop reason
-                format!("S{:02x}", self.stop_reason.signal())
+                self.stop_reason.signal_string().to_string()
             }
             'c' => {
                 // Continue
@@ -323,7 +333,7 @@ impl GdbServer {
             }
             _ => {
                 if cmd == "INTERRUPT" {
-                    format!("S{:02x}", StopReason::Interrupt.signal())
+                    StopReason::Interrupt.signal_string().to_string()
                 } else {
                     "".to_string()
                 }
@@ -728,7 +738,7 @@ impl GdbServer {
                         AUTH_LOCKOUT_DURATION.as_secs()
                     );
                 }
-                "E01".to_string()// Invalid password
+                "E01".to_string() // Invalid password
             }
         } else {
             // No password set, already authenticated
@@ -868,6 +878,8 @@ mod tests {
     fn test_stop_reason() {
         let sr = StopReason::Breakpoint;
         assert_eq!(sr.signal(), 5);
+        assert_eq!(sr.signal_string(), "S05");
+        assert_eq!(StopReason::Interrupt.signal_string(), "S02");
     }
 
     #[test]
