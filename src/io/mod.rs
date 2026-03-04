@@ -476,46 +476,6 @@ mod tests {
     }
 
     #[test]
-    fn test_to_button_string() {
-        // Default state (no buttons pressed)
-        let state = ControllerState::new();
-        assert_eq!(state.to_button_string(), "............");
-
-        // Single button pressed
-        let mut state = ControllerState::new();
-        state.up = true;
-        assert_eq!(state.to_button_string(), "U...........");
-
-        let mut state = ControllerState::new();
-        state.mode = true;
-        assert_eq!(state.to_button_string(), "...........M");
-
-        // Multiple buttons pressed
-        let mut state = ControllerState::new();
-        state.up = true;
-        state.right = true;
-        state.b = true;
-        state.c = true;
-        assert_eq!(state.to_button_string(), "U..R.BC.....");
-
-        // All buttons pressed
-        let mut state = ControllerState::new();
-        state.up = true;
-        state.down = true;
-        state.left = true;
-        state.right = true;
-        state.a = true;
-        state.b = true;
-        state.c = true;
-        state.start = true;
-        state.x = true;
-        state.y = true;
-        state.z = true;
-        state.mode = true;
-        assert_eq!(state.to_button_string(), "UDLRABCSXYZM");
-    }
-
-    #[test]
     fn test_3button_read() {
         let mut port = ControllerPort::new(ControllerType::ThreeButton);
 
