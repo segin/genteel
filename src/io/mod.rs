@@ -399,7 +399,7 @@ impl Io {
 
 impl Debuggable for Io {
     fn read_state(&self) -> Value {
-        serde_json::to_value(self).unwrap()
+        serde_json::to_value(self).unwrap_or(Value::Null)
     }
 
     fn write_state(&mut self, state: &Value) {
@@ -709,6 +709,14 @@ mod tests {
             port_none.th_timer, 0,
             "Timer should not increment for None controller"
         );
+    }
+
+    #[test]
+    fn test_io_serialize() {
+        let io = Io::new();
+        // Test that the refactored read_state logic successfully serializes the object.
+        let state = io.read_state();
+        assert!(state.is_object(), "Serialized state should be a valid JSON object");
     }
 
     #[test]
