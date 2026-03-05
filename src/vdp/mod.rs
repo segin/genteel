@@ -630,7 +630,7 @@ impl Vdp {
     }
 
     pub(crate) fn window_address(&self) -> usize {
-        ((self.registers[REG_WINDOW] as usize) & 0x3E) << 11
+        ((self.registers[REG_WINDOW] as usize) & 0x3E) << 10
     }
 
     pub(crate) fn is_window_area(&self, x: u16, y: u16) -> bool {
