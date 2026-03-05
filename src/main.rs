@@ -874,20 +874,20 @@ impl Emulator {
             }
         }
         // HBlank Interrupt (Level 4) - Proper counter logic
-        if line < active_lines {
-            // Check if HInterrupt enabled (Reg 0, bit 4)
-            if (bus.vdp.mode1() & 0x10) != 0 {
-                // Decrement line counter
-                if bus.vdp.line_counter == 0 {
-                    // Counter expired - trigger HInt and reload
+        if line <= active_lines {
+            // Decrement line counter regardless of interrupt enable status
+            if bus.vdp.line_counter == 0 {
+                // Counter expired - reload
+                bus.vdp.line_counter = bus.vdp.registers[10] as u16;
+                // Trigger HInt if enabled
+                if (bus.vdp.mode1() & 0x10) != 0 {
                     self.cpu.request_interrupt(4);
-                    bus.vdp.line_counter = bus.vdp.registers[10] as u16;
-                } else {
-                    bus.vdp.line_counter = bus.vdp.line_counter.saturating_sub(1);
                 }
+            } else {
+                bus.vdp.line_counter -= 1;
             }
         } else {
-            // During VBlank, reload HInt counter every line
+            // During VBlank (after line == active_lines), reload HInt counter every line
             bus.vdp.line_counter = bus.vdp.registers[10] as u16;
         }
     }

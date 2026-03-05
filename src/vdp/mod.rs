@@ -551,8 +551,11 @@ impl Vdp {
     }
 
     pub fn sprite_table_address(&self) -> usize {
-        // Bits 0-6 specify bits 9-15 of VRAM address (H40 mode)
-        ((self.registers[REG_SPRITE_TABLE] as usize) & 0x7F) << 9
+        if self.h40_mode() {
+            ((self.registers[REG_SPRITE_TABLE] as usize) & 0x7E) << 9
+        } else {
+            ((self.registers[REG_SPRITE_TABLE] as usize) & 0x7F) << 9
+        }
     }
 
     pub fn hscroll_address(&self) -> usize {
@@ -630,7 +633,11 @@ impl Vdp {
     }
 
     pub(crate) fn window_address(&self) -> usize {
-        ((self.registers[REG_WINDOW] as usize) & 0x3E) << 10
+        if self.h40_mode() {
+            ((self.registers[REG_WINDOW] as usize) & 0x3C) << 10
+        } else {
+            ((self.registers[REG_WINDOW] as usize) & 0x3E) << 10
+        }
     }
 
     pub(crate) fn is_window_area(&self, x: u16, y: u16) -> bool {
