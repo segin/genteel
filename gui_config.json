@@ -1,33 +1,45 @@
 {
   "windows": {
-    "Sprite Viewer": {
-      "open": false
-    },
-    "Execution Control": {
-      "open": false
-    },
-    "Tile Viewer": {
-      "open": false
-    },
     "Settings": {
-      "open": false
-    },
-    "Z80 Status": {
-      "open": false
-    },
-    "M68k Status": {
-      "open": false
-    },
-    "Scroll Plane Viewer": {
       "open": false
     },
     "Sound Chip Visualizer": {
       "open": false
     },
-    "Audio Channel Waveforms": {
+    "Tile Viewer": {
+      "open": false
+    },
+    "Sprite Viewer": {
       "open": false
     },
     "Expansion Status": {
+      "open": false
+    },
+    "Controller Viewer": {
+      "open": false
+    },
+    "M68k Status": {
+      "open": false
+    },
+    "Disassembly": {
+      "open": false
+    },
+    "Execution Control": {
+      "open": false
+    },
+    "VDP Memory Hex": {
+      "open": false
+    },
+    "State Browser": {
+      "open": false
+    },
+    "Z80 Status": {
+      "open": false
+    },
+    "Scroll Plane Viewer": {
+      "open": false
+    },
+    "Audio Channel Waveforms": {
       "open": false
     },
     "Performance & Debug": {
@@ -36,19 +48,7 @@
     "Memory Viewer": {
       "open": false
     },
-    "Controller Viewer": {
-      "open": false
-    },
-    "State Browser": {
-      "open": false
-    },
     "Palette Viewer": {
-      "open": false
-    },
-    "Disassembly": {
-      "open": false
-    },
-    "VDP Memory Hex": {
       "open": false
     }
   },

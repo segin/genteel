@@ -188,6 +188,21 @@ pub struct DebugInfo {
 }
 
 #[cfg(feature = "gui")]
+#[cfg(feature = "gilrs")]
+fn init_gilrs() -> Option<Gilrs> {
+    if std::env::var("GENTEEL_TEST_FAIL_GILRS").is_ok() {
+        return None;
+    }
+    match Gilrs::new() {
+        Ok(gilrs) => Some(gilrs),
+        Err(e) => {
+            eprintln!("Failed to initialize gilrs: {}", e);
+            None
+        }
+    }
+}
+
+#[cfg(feature = "gui")]
 pub struct Framework {
     pub egui_ctx: egui::Context,
     pub egui_state: egui_winit::State,
@@ -199,7 +214,7 @@ pub struct Framework {
     pub plane_b_texture: Option<egui::TextureHandle>,
     pub pending_rom_path: Arc<Mutex<Option<PathBuf>>>,
     #[cfg(feature = "gilrs")]
-    pub gilrs: Gilrs,
+    pub gilrs: Option<Gilrs>,
 }
 
 #[cfg(feature = "gui")]
@@ -238,7 +253,7 @@ impl Framework {
             plane_b_texture: None,
             pending_rom_path: Arc::new(Mutex::new(None)),
             #[cfg(feature = "gilrs")]
-            gilrs: Gilrs::new().expect("Failed to initialize gilrs"),
+            gilrs: init_gilrs(),
         }
     }
     pub fn handle_event(
@@ -273,73 +288,75 @@ impl Framework {
 
     #[cfg(feature = "gilrs")]
     pub fn poll_gamepads(&mut self, state: &mut crate::io::ControllerState) {
-        while let Some(gilrs::Event { event, .. }) = self.gilrs.next_event() {
-            match event {
-                EventType::ButtonPressed(button, _) => {
-                    match button {
-                        Button::DPadUp => state.up = true,
-                        Button::DPadDown => state.down = true,
-                        Button::DPadLeft => state.left = true,
-                        Button::DPadRight => state.right = true,
-                        Button::South => state.b = true,
-                        Button::East => state.c = true,
-                        Button::West => state.a = true,
-                        Button::North => state.x = true,
-                        Button::LeftTrigger => state.y = true,
-                        Button::RightTrigger => state.z = true,
-                        Button::Select => state.mode = true,
-                        Button::Start => state.start = true,
-                        _ => {}
-                    }
-                }
-                EventType::ButtonReleased(button, _) => {
-                    match button {
-                        Button::DPadUp => state.up = false,
-                        Button::DPadDown => state.down = false,
-                        Button::DPadLeft => state.left = false,
-                        Button::DPadRight => state.right = false,
-                        Button::South => state.b = false,
-                        Button::East => state.c = false,
-                        Button::West => state.a = false,
-                        Button::North => state.x = false,
-                        Button::LeftTrigger => state.y = false,
-                        Button::RightTrigger => state.z = false,
-                        Button::Select => state.mode = false,
-                        Button::Start => state.start = false,
-                        _ => {}
-                    }
-                }
-                EventType::AxisChanged(axis, value, _) => {
-                    let threshold = 0.5;
-                    match axis {
-                        Axis::LeftStickX => {
-                            if value > threshold {
-                                state.right = true;
-                                state.left = false;
-                            } else if value < -threshold {
-                                state.left = true;
-                                state.right = false;
-                            } else {
-                                state.left = false;
-                                state.right = false;
-                            }
+        if let Some(gilrs) = &mut self.gilrs {
+            while let Some(gilrs::Event { event, .. }) = gilrs.next_event() {
+                match event {
+                    EventType::ButtonPressed(button, _) => {
+                        match button {
+                            Button::DPadUp => state.up = true,
+                            Button::DPadDown => state.down = true,
+                            Button::DPadLeft => state.left = true,
+                            Button::DPadRight => state.right = true,
+                            Button::South => state.b = true,
+                            Button::East => state.c = true,
+                            Button::West => state.a = true,
+                            Button::North => state.x = true,
+                            Button::LeftTrigger => state.y = true,
+                            Button::RightTrigger => state.z = true,
+                            Button::Select => state.mode = true,
+                            Button::Start => state.start = true,
+                            _ => {}
                         }
-                        Axis::LeftStickY => {
-                            if value > threshold {
-                                state.up = true;
-                                state.down = false;
-                            } else if value < -threshold {
-                                state.down = true;
-                                state.up = false;
-                            } else {
-                                state.up = false;
-                                state.down = false;
-                            }
-                        }
-                        _ => {}
                     }
+                    EventType::ButtonReleased(button, _) => {
+                        match button {
+                            Button::DPadUp => state.up = false,
+                            Button::DPadDown => state.down = false,
+                            Button::DPadLeft => state.left = false,
+                            Button::DPadRight => state.right = false,
+                            Button::South => state.b = false,
+                            Button::East => state.c = false,
+                            Button::West => state.a = false,
+                            Button::North => state.x = false,
+                            Button::LeftTrigger => state.y = false,
+                            Button::RightTrigger => state.z = false,
+                            Button::Select => state.mode = false,
+                            Button::Start => state.start = false,
+                            _ => {}
+                        }
+                    }
+                    EventType::AxisChanged(axis, value, _) => {
+                        let threshold = 0.5;
+                        match axis {
+                            Axis::LeftStickX => {
+                                if value > threshold {
+                                    state.right = true;
+                                    state.left = false;
+                                } else if value < -threshold {
+                                    state.left = true;
+                                    state.right = false;
+                                } else {
+                                    state.left = false;
+                                    state.right = false;
+                                }
+                            }
+                            Axis::LeftStickY => {
+                                if value > threshold {
+                                    state.up = true;
+                                    state.down = false;
+                                } else if value < -threshold {
+                                    state.down = true;
+                                    state.up = false;
+                                } else {
+                                    state.up = false;
+                                    state.down = false;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
         }
     }
@@ -529,8 +546,17 @@ impl Framework {
                 {
                     ui.separator();
                     ui.heading("Connected Gamepads");
-                    for (id, gamepad) in self.gilrs.gamepads() {
-                        ui.label(format!("{}: {}", id, gamepad.name()));
+                    if let Some(gilrs) = &self.gilrs {
+                        let mut found = false;
+                        for (id, gamepad) in gilrs.gamepads() {
+                            ui.label(format!("{}: {}", id, gamepad.name()));
+                            found = true;
+                        }
+                        if !found {
+                            ui.label("No gamepads connected");
+                        }
+                    } else {
+                        ui.label("Gamepad support disabled or failed to initialize");
                     }
                 }
             });
@@ -1674,4 +1700,24 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
             }
         })
         .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(feature = "gilrs")]
+    #[test]
+    fn test_gilrs_initialization_failure() {
+        // Set the environment variable to force initialization failure
+        std::env::set_var("GENTEEL_TEST_FAIL_GILRS", "1");
+
+        let result = init_gilrs();
+
+        // Clean up the environment variable
+        std::env::remove_var("GENTEEL_TEST_FAIL_GILRS");
+
+        // Assert that initialization failed gracefully by returning None
+        assert!(result.is_none(), "Expected Gilrs initialization to fail gracefully when GENTEEL_TEST_FAIL_GILRS is set");
+    }
 }
