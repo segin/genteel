@@ -756,11 +756,19 @@ impl Emulator {
             }
             let m68k_cycles = {
                 let mut bus = bus_rc.bus.borrow_mut();
-                if bus.dma_active() {
+                let cycles = if bus.dma_active() {
                     2 // Yield 2 cycles to let the bus step during DMA
                 } else {
                     cpu.step_instruction(&mut *bus)
+                };
+                
+                // Real Genesis uses level-triggered interrupts. If the game reads the VDP status
+                // or disables V-Int, the VDP drops the IRQ line. We must cancel it on the CPU.
+                if !bus.vdp.vblank_pending() {
+                    cpu.cancel_interrupt(6);
                 }
+
+                cycles
             };
 
             let trigger_vint = line == active_lines && pending_cycles < 10;
@@ -865,6 +873,12 @@ impl Emulator {
         bus.audio_buffer.clear();
     }
     fn handle_interrupts(&mut self, line: u16, active_lines: u16) {
+        // H-Blank only lasts for a short period at the end of a scanline.
+        // If the CPU hasn't taken the H-Int by the end of the subsequent scanline 
+        // (e.g., because it was handling V-Int or had interrupts masked), the VDP 
+        // will have dropped the IRQ line. We must cancel it here to prevent spurious interrupts.
+        self.cpu.cancel_interrupt(4);
+
         let mut bus = self.bus.borrow_mut();
         // VBlank Interrupt (Level 6) - Triggered at start of VBlank (line 224/240)
         if line == active_lines {

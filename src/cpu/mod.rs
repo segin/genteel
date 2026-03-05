@@ -176,6 +176,13 @@ impl Cpu {
         }
     }
 
+    pub fn cancel_interrupt(&mut self, level: u8) {
+        if level > 0 && level <= 7 {
+            self.interrupt_pending_mask &= !(1 << level);
+            self.update_pending_interrupt();
+        }
+    }
+
     pub fn get_state(&self) -> CpuState {
         CpuState {
             d: self.d,
