@@ -12,36 +12,31 @@ fn test_ym2612_all_channels_enable() {
             (Bank::Bank1, ch - 3)
         };
 
-        // Freq setting (high byte first for latching, then low byte to apply)
         ym.write_addr(bank, 0xA4 + offset as u8);
         ym.write_data_bank(bank, 0x22);
         ym.write_addr(bank, 0xA0 + offset as u8);
         ym.write_data_bank(bank, 0x55);
 
-        // Algorithm 7 (all carriers) with no feedback
         ym.write_addr(bank, 0xB0 + offset as u8);
         ym.write_data_bank(bank, 0x07);
 
-        // Volume setting (TL=0 for all ops) and max attack rate
-        // Register offsets for 4 ops: 0, 4, 8, 12
         for op_off in [0u8, 4, 8, 12] {
             ym.write_addr(bank, 0x40 + offset as u8 + op_off);
-            ym.write_data_bank(bank, 0x00); // Max volume
+            ym.write_data_bank(bank, 0x00);
             ym.write_addr(bank, 0x50 + offset as u8 + op_off);
-            ym.write_data_bank(bank, 0x1F); // Max attack rate
+            ym.write_data_bank(bank, 0x1F);
         }
 
-        // Key-on all 4 operators for this channel
-        let ch_bits = if ch < 3 { ch as u8 } else { (ch - 3) as u8 + 4 };
+        let ch_bits = match ch { 0..=2 => ch as u8, 3..=5 => (ch as u8)+1, _ => 7 };
         ym.write_addr(Bank::Bank0, 0x28);
         ym.write_data_bank(Bank::Bank0, 0xF0 | ch_bits);
     }
 
-    // Generate samples and verify non-zero
+    // Step internal logic
     let mut saw_nonzero = false;
-    for _ in 0..100 {
-        let (l, r) = ym.generate_sample();
-        if l != 0 || r != 0 {
+    for _ in 0..1000 {
+        ym.step(1);
+        if ym.generate_channel_samples().iter().any(|&s| s != 0) {
             saw_nonzero = true;
             break;
         }
@@ -56,55 +51,48 @@ fn test_ym2612_all_channels_enable() {
 fn test_ym2612_dac_panning() {
     let mut ym = Ym2612::new();
 
-    // Enable DAC: Reg 0x2B bit 7
     ym.write_addr(Bank::Bank0, 0x2B);
     ym.write_data_bank(Bank::Bank0, 0x80);
 
-    // DAC Data: Reg 0x2A. Let's set it to 0xFF (Max positive)
     ym.write_addr(Bank::Bank0, 0x2A);
     ym.write_data_bank(Bank::Bank0, 0xFF);
-
-    // Panning for Ch6: Bank 1, Reg 0xB6
-    // Initially pan=0 (mixed) in current impl?
-    // Wait, generate_sample: `let pan = self.registers[1][0xB6]; if (pan & 0x80) != 0 { left += dac_f; }`
-    // So if pan is 0, it doesn't add to left/right for DAC?
 
     // Set Pan Left Only: 0x80
     ym.write_addr(Bank::Bank1, 0xB6);
     ym.write_data_bank(Bank::Bank1, 0x80);
 
-    let (l, r) = ym.generate_sample();
-    assert!(l > 0, "Left should be positive: {}", l);
-    assert_eq!(r, 0, "Right should be zero: {}", r);
+    ym.step(1);
+    assert!(ym.blip_l.read_instant() > 0, "Left should be positive");
+    assert_eq!(ym.blip_r.read_instant(), 0, "Right should be zero");
 
     // Set Pan Right Only: 0x40
     ym.write_addr(Bank::Bank1, 0xB6);
     ym.write_data_bank(Bank::Bank1, 0x40);
-    let (l, r) = ym.generate_sample();
-    assert_eq!(l, 0, "Left should be zero: {}", l);
-    assert!(r > 0, "Right should be positive: {}", r);
+    ym.step(1);
+    assert_eq!(ym.blip_l.read_instant(), 0, "Left should be zero");
+    assert!(ym.blip_r.read_instant() > 0, "Right should be positive");
 }
 
 #[test]
 fn test_ym2612_timer_ab_simultaneous() {
     let mut ym = Ym2612::new();
 
-    // Timer A: period 504 (min)
     ym.write_addr(Bank::Bank0, 0x24);
     ym.write_data_bank(Bank::Bank0, 0xFF);
     ym.write_addr(Bank::Bank0, 0x25);
     ym.write_data_bank(Bank::Bank0, 0x03);
 
-    // Timer B: period 8064 (min)
     ym.write_addr(Bank::Bank0, 0x26);
     ym.write_data_bank(Bank::Bank0, 0xFF);
 
-    // Enable both with flags: 0x01 | 0x02 | 0x04 | 0x08 = 0x0F
     ym.write_addr(Bank::Bank0, 0x27);
     ym.write_data_bank(Bank::Bank0, 0x0F);
 
-    // Step enough for Timer B (8064 / 7 = 1152 68k cycles)
-    ym.step(1153);
+    // Step enough for Timer B (8064 master cycles). 
+    // Since we step 1 cycle per call, we need ~1152 steps.
+    for _ in 0..2000 {
+        ym.step(1);
+    }
 
-    assert_eq!(ym.status & 0x03, 0x03, "Both timers should have fired");
+    assert_eq!(ym.read_status() & 0x03, 0x03, "Both timers should have fired");
 }

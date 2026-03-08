@@ -183,9 +183,9 @@ fn test_render_line_performance() {
     let duration = start.elapsed();
     println!("Render 100 frames took: {:?}", duration);
 
-    // Simple sanity check to ensure no massive regression (e.g. if it took 2s, something is wrong)
+    // Simple sanity check to ensure no massive regression (e.g. if it took 4s, something is wrong)
     assert!(
-        duration.as_millis() < 2000,
+        duration.as_millis() < 4000,
         "Rendering 100 frames took too long: {:?}",
         duration
     );

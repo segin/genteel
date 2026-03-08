@@ -721,10 +721,11 @@ impl Emulator {
             bus.audio_accumulator += m68k_cycles as f32;
 
             while bus.audio_accumulator >= cycles_per_sample {
-                let (l, r) = bus.apu.generate_sample();
-                if bus.audio_buffer.len() < 32768 {
-                    bus.audio_buffer.push(l);
-                    bus.audio_buffer.push(r);
+                if let Some((l, r)) = bus.apu.generate_sample() {
+                    if bus.audio_buffer.len() < 32768 {
+                        bus.audio_buffer.push(l);
+                        bus.audio_buffer.push(r);
+                    }
                 }
                 bus.audio_accumulator -= cycles_per_sample;
             }
@@ -767,6 +768,7 @@ impl Emulator {
                 if cpu.pending_interrupt == 6 && !bus.vdp.vblank_pending() {
                     cpu.cancel_interrupt(6);
                 }
+
 
                 cycles
             };
