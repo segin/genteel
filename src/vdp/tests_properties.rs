@@ -228,7 +228,8 @@ mod unit_tests {
     #[test]
     fn test_vdp_hv_counter() {
         let mut vdp = Vdp::new();
-        vdp.h_counter = 0x1234;
+        // Set state to midway through active area
+        vdp.mclk_line_clocks = 1280; // 2560 / 2
         vdp.v_counter = 0x00AB;
 
         let hv = vdp.read_hv_counter();
@@ -236,6 +237,7 @@ mod unit_tests {
         let h_out = hv as u8;
 
         assert_eq!(v_out, 0xAB);
-        assert_eq!(h_out, 0x1A); // h_counter >> 1
+        // H should be midway through active range: 0xB6 / 2 = 0x5B
+        assert_eq!(h_out, 0x5B);
     }
 }

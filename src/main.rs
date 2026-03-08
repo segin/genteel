@@ -612,6 +612,15 @@ impl Emulator {
         let samples_per_line = samples_per_frame / (LINES_PER_FRAME as f32);
         let mut z80_cycle_debt: f32 = 0.0;
         for line in 0..LINES_PER_FRAME {
+            // Update VDP VBlank status
+            {
+                let mut bus = self.bus.borrow_mut();
+                if line == active_lines {
+                    bus.vdp.set_vblank(true);
+                } else if line == 0 {
+                    bus.vdp.set_vblank(false);
+                }
+            }
             self.step_scanline(line, active_lines, samples_per_line, &mut z80_cycle_debt);
         }
         self.generate_audio_samples(samples_per_line);
@@ -639,7 +648,7 @@ impl Emulator {
     }
     #[allow(clippy::too_many_arguments)]
     fn sync_components(
-        bus_rc: &SharedBus,
+        bus: &mut Bus,
         m68k_cycles: u32,
         z80: &mut Z80<Z80Bus, Z80Bus>,
         z80_cycle_debt: &mut f32,
@@ -654,14 +663,10 @@ impl Emulator {
         let mclk = m68k_cycles * 7;
 
         // 1. Tick the Bus (VDP, etc)
-        {
-            let mut bus = bus_rc.bus.borrow_mut();
-            bus.tick(mclk);
-        }
+        bus.tick(mclk);
 
         // 2. Z80 State and Timing
         let (z80_can_run, z80_is_reset, cycles_per_sample) = {
-            let bus = bus_rc.bus.borrow();
             let prev = *z80_last_bus_req;
             if debug && bus.z80_bus_request != prev {
                 log::debug!(
@@ -712,7 +717,6 @@ impl Emulator {
 
         // 4. Update APU and generate audio samples
         {
-            let mut bus = bus_rc.bus.borrow_mut();
             bus.apu.tick_cycles(m68k_cycles);
             bus.audio_accumulator += m68k_cycles as f32;
 
@@ -730,7 +734,7 @@ impl Emulator {
     #[allow(clippy::too_many_arguments)]
     fn run_cpu_batch_static(
         cpu: &mut Cpu,
-        bus_rc: &SharedBus,
+        bus: &mut Bus,
         max_cycles: u32,
         z80: &mut Z80<Z80Bus, Z80Bus>,
         z80_cycle_debt: &mut f32,
@@ -742,10 +746,7 @@ impl Emulator {
         z80_trace_count: &mut u32,
         debug: bool,
     ) -> CpuBatchResult {
-        let (initial_req, initial_rst) = {
-            let bus = bus_rc.bus.borrow();
-            (bus.z80_bus_request, bus.z80_reset)
-        };
+        let (initial_req, initial_rst) = (bus.z80_bus_request, bus.z80_reset);
         let mut pending_cycles = 0;
         loop {
             if pending_cycles >= max_cycles {
@@ -755,16 +756,15 @@ impl Emulator {
                 };
             }
             let m68k_cycles = {
-                let mut bus = bus_rc.bus.borrow_mut();
                 let cycles = if bus.dma_active() {
                     2 // Yield 2 cycles to let the bus step during DMA
                 } else {
-                    cpu.step_instruction(&mut *bus)
+                    cpu.step_instruction(bus)
                 };
-                
+
                 // Real Genesis uses level-triggered interrupts. If the game reads the VDP status
                 // or disables V-Int, the VDP drops the IRQ line. We must cancel it on the CPU.
-                if !bus.vdp.vblank_pending() {
+                if cpu.pending_interrupt == 6 && !bus.vdp.vblank_pending() {
                     cpu.cancel_interrupt(6);
                 }
 
@@ -773,7 +773,7 @@ impl Emulator {
 
             let trigger_vint = line == active_lines && pending_cycles < 10;
             Self::sync_components(
-                bus_rc,
+                bus,
                 m68k_cycles,
                 z80,
                 z80_cycle_debt,
@@ -787,10 +787,7 @@ impl Emulator {
             );
 
             // Check for Z80 state change
-            let (req, rst) = {
-                let bus = bus_rc.bus.borrow();
-                (bus.z80_bus_request, bus.z80_reset)
-            };
+            let (req, rst) = (bus.z80_bus_request, bus.z80_reset);
 
             if req != initial_req || rst != initial_rst {
                 return CpuBatchResult {
@@ -807,16 +804,16 @@ impl Emulator {
     }
     fn run_cpu_loop(&mut self, line: u16, active_lines: u16, z80_cycle_debt: &mut f32) {
         const CYCLES_PER_LINE: u32 = 488;
-        const BATCH_SIZE: u32 = 128;
+        const BATCH_SIZE: u32 = 64;
         let mut cycles_scanline: u32 = 0;
-        let bus_rc = SharedBus::new(self.bus.clone());
+        let mut bus = self.bus.borrow_mut();
 
         while cycles_scanline < CYCLES_PER_LINE {
             let remaining = CYCLES_PER_LINE - cycles_scanline;
             let limit = std::cmp::min(remaining, BATCH_SIZE);
             let result = Self::run_cpu_batch_static(
                 &mut self.cpu,
-                &bus_rc,
+                &mut *bus,
                 limit,
                 &mut self.z80,
                 z80_cycle_debt,
@@ -832,17 +829,14 @@ impl Emulator {
             cycles_scanline += result.cycles;
 
             if let Some(change) = result.z80_change {
-                {
-                    let mut bus = self.bus.borrow_mut();
-                    // Apply the new state for the instruction that caused the change
-                    bus.z80_bus_request = change.new_req;
-                    bus.z80_reset = change.new_rst;
-                }
+                // Apply the new state for the instruction that caused the change
+                bus.z80_bus_request = change.new_req;
+                bus.z80_reset = change.new_rst;
 
                 let trigger_vint = line == active_lines && cycles_scanline < 10;
                 // Sync components for the instruction that triggered the state change
                 Self::sync_components(
-                    &bus_rc,
+                    &mut *bus,
                     change.instruction_cycles,
                     &mut self.z80,
                     z80_cycle_debt,
@@ -867,7 +861,7 @@ impl Emulator {
             let _ = writer.write_samples(&bus.audio_buffer);
         }
         // Move samples to emulator buffer for frontend consumption
-        if self.audio_buffer.len() < 32768 {
+        if self.audio_buffer.len() < audio::samples_per_frame() * 2 {
             self.audio_buffer.extend(bus.audio_buffer.iter());
         }
         bus.audio_buffer.clear();

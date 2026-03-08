@@ -593,10 +593,16 @@ impl Vdp {
     }
 
     pub fn read_hv_counter(&self) -> u16 {
-        // H counter: 0-487 (NTSC) or 0-481 (PAL).
-        // H32: 0x00-0x93, H40: 0x00-0xB6
-        // This is a simplified implementation.
-        let h = (self.h_counter >> 1) as u8;
+        // Approximate Genesis HV counter mapping for H40 mode
+        let h = if self.mclk_line_clocks < 2560 {
+            // Active area: map 0-2560 to 0x00-0xB6
+            ((self.mclk_line_clocks * 0xB6) / 2560) as u8
+        } else {
+            // HBlank area: map 2560-3420 to 0xE4-0xFF
+            let offset = self.mclk_line_clocks - 2560;
+            (0xE4 + ((offset * (0xFF - 0xE4)) / (3420 - 2560))) as u8
+        };
+
         let v = (self.v_counter & 0xFF) as u8;
         ((v as u16) << 8) | (h as u16)
     }
@@ -744,8 +750,8 @@ impl Vdp {
         }
 
         // HBlank status flag based on H counter approximation (mclk_line_clocks)
-        // HBlank starts roughly 85% through the line clocks
-        if self.mclk_line_clocks >= 2900 {
+        // HBlank starts roughly 75-80% through the line clocks
+        if self.mclk_line_clocks >= 2600 {
             self.status |= STATUS_HBLANK;
         } else {
             self.status &= !STATUS_HBLANK;
