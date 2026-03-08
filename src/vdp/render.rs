@@ -203,8 +203,7 @@ fn render_sprite_scanline(
                 let screen_x = base_screen_x.wrapping_add(i);
                 let eff_col = if attr.h_flip { 7 - i } else { i };
 
-                // SAFETY: eff_col is 0..8, so index 0..3 is valid. patterns is [u8; 4].
-                let byte = unsafe { *patterns.get_unchecked((eff_col as usize) / 2) };
+                let byte = patterns[(eff_col as usize) / 2];
 
                 let color_idx = if eff_col % 2 == 0 {
                     byte >> 4
@@ -219,8 +218,8 @@ fn render_sprite_scanline(
                     // If we draw in reverse order (sprites.iter().rev()), the highest priority sprite is drawn last and overwrites.
                     // Wait, S/H operators only apply if they are the TOP sprite pixel.
                     // By drawing in reverse order, the last drawn pixel is the top one.
-                    unsafe {
-                        *line_buf.get_unchecked_mut(screen_x as usize) = addr | pri_mask;
+                    if let Some(pixel) = line_buf.get_mut(screen_x as usize) {
+                        *pixel = addr | pri_mask;
                     }
                 }
             }
@@ -233,8 +232,7 @@ fn render_sprite_scanline(
 
                 let eff_col = if attr.h_flip { 7 - i } else { i };
 
-                // SAFETY: eff_col is 0..8, so index 0..3 is valid. patterns is [u8; 4].
-                let byte = unsafe { *patterns.get_unchecked((eff_col as usize) / 2) };
+                let byte = patterns[(eff_col as usize) / 2];
                 let color_idx = if eff_col % 2 == 0 {
                     byte >> 4
                 } else {
@@ -244,8 +242,8 @@ fn render_sprite_scanline(
                 if color_idx != 0 {
                     let addr = ((attr.palette as u8) << 4) | (color_idx as u8);
                     let pri_mask = if attr.priority { 0x80 } else { 0x00 };
-                    unsafe {
-                        *line_buf.get_unchecked_mut(screen_x as usize) = addr | pri_mask;
+                    if let Some(pixel) = line_buf.get_mut(screen_x as usize) {
+                        *pixel = addr | pri_mask;
                     }
                 }
             }
@@ -631,12 +629,9 @@ impl RenderOps for Vdp {
         plane_w: usize,
     ) -> u16 {
         let nt_entry_addr = base + (tile_v * plane_w + tile_h) * 2;
-        // SAFETY: nt_entry_addr & 0xFFFF guarantees range 0..65535, which is within vram bounds (65536)
-        unsafe {
-            let hi = *self.vram.get_unchecked(nt_entry_addr & 0xFFFF);
-            let lo = *self.vram.get_unchecked((nt_entry_addr + 1) & 0xFFFF);
-            ((hi as u16) << 8) | (lo as u16)
-        }
+        let hi = self.vram[nt_entry_addr & 0xFFFF];
+        let lo = self.vram[(nt_entry_addr + 1) & 0xFFFF];
+        ((hi as u16) << 8) | (lo as u16)
     }
 
     #[inline(always)]
@@ -644,19 +639,9 @@ impl RenderOps for Vdp {
         let row = if v_flip { 7 - pixel_v } else { pixel_v };
         let row_addr = (tile_index as usize * 32) + (row as usize * 4);
         // Mask to 64KB boundary and align to 4 bytes.
-        // We use (row_addr & 0xFFFF) to ensure we wrap within 64KB, and then mask with 0xFFFC
-        // to clear the bottom 2 bits for alignment. 0xFFFC effectively does both, but we make
-        // the wrapping explicit for clarity and safety against potential type width assumptions.
         let addr = (row_addr & 0xFFFF) & 0xFFFC;
 
-        // SAFETY:
-        // 1. addr is explicitly masked to be <= 0xFFFC and 4-byte aligned.
-        // 2. self.vram is [u8; 0x10000].
-        // 3. Reading 4 bytes from addr <= 0xFFFC accesses bytes up to 0xFFFF, which is within bounds.
-        unsafe {
-            let ptr = self.vram.as_ptr().add(addr) as *const u32;
-            ptr.read_unaligned().to_ne_bytes()
-        }
+        self.vram[addr..addr + 4].try_into().unwrap()
     }
 
     fn draw_partial_tile_row(
@@ -763,6 +748,6 @@ impl RenderOps for Vdp {
     #[inline(always)]
     fn get_cram_color(&self, palette: u8, index: u8) -> u16 {
         let addr = ((palette as usize) * 16) + (index as usize);
-        unsafe { *self.cram_cache.get_unchecked(addr & 0x3F) }
+        self.cram_cache[addr & 0x3F]
     }
 }

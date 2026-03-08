@@ -549,3 +549,74 @@ fn test_render_plane_vram_wrapping() {
         "Pixel at 0,0 should be Red (0xF800), indicating correct wrapping"
     );
 }
+
+#[test]
+fn test_sprite_oob_rendering() {
+    let mut vdp = Vdp::new();
+    vdp.is_pal = false;
+    vdp.registers[1] = 0x40; // Display
+    vdp.registers[12] = 0x81; // H40 Mode
+    vdp.registers[5] = 0x6A; // SAT at 0xD400
+
+    vdp.cram_cache[1] = 0xF800; // Red
+
+    // Tile 1: All 1s
+    for i in 0..32 {
+        vdp.vram[32 + i] = 0x11;
+    }
+
+    // Sprite 0: at screen_x = 316 (H Pos = 316 + 128 = 444 = 0x1BC)
+    // It's an 8x8 sprite, so it should span 316..324.
+    // Screen width is 320. So 316, 317, 318, 319 are visible. 320..323 are OOB.
+    let sat_base = 0xD400;
+    vdp.vram[sat_base + 0] = 0x00;
+    vdp.vram[sat_base + 1] = 128 + 0; // y=0
+    vdp.vram[sat_base + 2] = 0x00; // 1x1 tile
+    vdp.vram[sat_base + 3] = 0x00;
+    vdp.vram[sat_base + 4] = 0x00;
+    vdp.vram[sat_base + 5] = 0x01; // Tile 1
+    vdp.vram[sat_base + 6] = 0x01; // h_pos high bit? No, h_pos is 10 bits.
+    vdp.vram[sat_base + 7] = 0xBC; // 0x1BC & 0xFF = 0xBC. Wait, bit 0 of byte 6 is high bit of h_pos.
+    vdp.vram[sat_base + 6] = 0x01; // 0x1BC >> 8 = 0x01. Correct.
+
+    // Render line 0
+    vdp.render_line(0);
+
+    // Visible pixels
+    assert_eq!(vdp.framebuffer[316], 0xF800);
+    assert_eq!(vdp.framebuffer[319], 0xF800);
+
+    // If there was an OOB write, it would have panicked or corrupted memory.
+    // Now with .get_mut(), it gracefully clips.
+    // The framebuffer is size 320*240.
+}
+
+#[test]
+fn test_sprite_fully_oob_rendering() {
+    let mut vdp = Vdp::new();
+    vdp.is_pal = false;
+    vdp.registers[1] = 0x40; // Display
+    vdp.registers[12] = 0x81; // H40 Mode
+    vdp.registers[5] = 0x6A; // SAT at 0xD400
+
+    vdp.cram_cache[1] = 0xF800;
+
+    for i in 0..32 {
+        vdp.vram[32 + i] = 0x11;
+    }
+
+    // Sprite 0: at screen_x = 320 (H Pos = 320 + 128 = 448 = 0x1C0)
+    // Entirely OOB.
+    let sat_base = 0xD400;
+    vdp.vram[sat_base + 0] = 0x00;
+    vdp.vram[sat_base + 1] = 128 + 0;
+    vdp.vram[sat_base + 2] = 0x00;
+    vdp.vram[sat_base + 3] = 0x00;
+    vdp.vram[sat_base + 4] = 0x00;
+    vdp.vram[sat_base + 5] = 0x01;
+    vdp.vram[sat_base + 6] = 0x01;
+    vdp.vram[sat_base + 7] = 0xC0;
+
+    // This should not panic.
+    vdp.render_line(0);
+}
