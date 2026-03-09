@@ -287,19 +287,27 @@ impl GdbServer {
 
         // Read until #
         let mut data = String::new();
+        let mut calculated_checksum = 0u8;
+        let mut oversized = false;
+
         loop {
             match reader.read(&mut buf) {
                 Ok(1) => {
                     if buf[0] == b'#' {
                         break;
                     }
-                    // Security: Prevent unbounded memory consumption by disconnecting clients that send oversized packets
+                    calculated_checksum = calculated_checksum.wrapping_add(buf[0]);
+
+                    // Security: Prevent unbounded memory consumption by ignoring oversized packets
+                    // but stay in sync with the protocol by continuing to read until the checksum.
                     if data.len() >= MAX_PACKET_SIZE {
-                        eprintln!("⚠️  SECURITY ALERT: GDB packet exceeded maximum size of {}. Disconnecting.", MAX_PACKET_SIZE);
-                        self.client = None;
-                        return None;
+                        if !oversized {
+                            eprintln!("⚠️  SECURITY ALERT: GDB packet exceeded maximum size of {}. Refusing.", MAX_PACKET_SIZE);
+                            oversized = true;
+                        }
+                    } else {
+                        data.push(buf[0] as char);
                     }
-                    data.push(buf[0] as char);
                 }
                 Ok(0) => {
                     self.client = None;
@@ -319,8 +327,6 @@ impl GdbServer {
         let received_checksum =
             u8::from_str_radix(std::str::from_utf8(&checksum_buf).unwrap_or("00"), 16).unwrap_or(0);
 
-        let calculated_checksum = data.bytes().fold(0u8, |acc, b| acc.wrapping_add(b));
-
         // Send ACK/NAK
         if !self.no_ack_mode {
             if let Some(ref mut c) = self.client {
@@ -335,7 +341,12 @@ impl GdbServer {
         }
 
         if received_checksum == calculated_checksum {
-            Some(data)
+            if oversized {
+                self.send_packet("E01").ok();
+                None
+            } else {
+                Some(data)
+            }
         } else {
             None
         }
@@ -1227,16 +1238,17 @@ mod tests {
             TcpStream::connect(format!("127.0.0.1:{}", port)).expect("Failed to connect");
         assert!(server.accept(), "Server should accept connection");
 
-        // Send a very large packet without '#'
+        // Send a very large but validly framed packet: $AAA...A#XX
         let large_size = 10000;
-        let mut large_packet = String::with_capacity(large_size + 1);
-        large_packet.push('$');
+        let mut data = String::with_capacity(large_size);
         for _ in 0..large_size {
-            large_packet.push('A');
+            data.push('A');
         }
+        let checksum = data.bytes().fold(0u8, |acc, b| acc.wrapping_add(b));
+        let packet = format!("${}#{:02x}", data, checksum);
 
         client_stream
-            .write_all(large_packet.as_bytes())
+            .write_all(packet.as_bytes())
             .expect("Failed to write to server");
         client_stream.flush().expect("Failed to flush");
 
@@ -1247,9 +1259,15 @@ mod tests {
             "Should not return a valid packet for oversized input"
         );
         assert!(
-            !server.is_connected(),
-            "Server should have disconnected the client after oversized packet"
+            server.is_connected(),
+            "Server should STAY connected after oversized packet"
         );
+
+        // Verify that the server sent "E01"
+        client_stream.set_nonblocking(false).unwrap();
+        let mut response = [0u8; 7]; // $E01#XX
+        client_stream.read_exact(&mut response).expect("Failed to read response from server");
+        assert_eq!(&response[0..4], b"$E01");
     }
 
     #[test]
