@@ -346,6 +346,10 @@ impl Ym2612 {
                 let c = match v & 7 { 0..=2 => v&7, 4..=6 => (v&7)-1, _ => 7 } as usize;
                 if c < 6 { for i in 0..4 { self.channels[c].operators[i].set_key_on((v & (0x10 << i)) != 0); } }
             }
+            (Bank::Bank0, 0x27) => {
+                if (v & 0x10) != 0 { self.status &= !0x01; }
+                if (v & 0x20) != 0 { self.status &= !0x02; }
+            }
             (Bank::Bank0, 0x2A) => self.dac_val = v,
             (Bank::Bank0, 0x2B) => self.dac_en = (v & 0x80) != 0,
             (_, 0xB4..=0xB6) => { let c = (a-0xB4) as usize + bank_idx*3; if c < 6 { self.channels[c].panning_l = (v&0x80)!=0; self.channels[c].panning_r = (v&0x40)!=0; } }
