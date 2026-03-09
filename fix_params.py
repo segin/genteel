@@ -132,18 +132,18 @@ def fix():
     
     test_src = test_src.replace(
         "vdp.draw_full_tile_row(entry, pixel_v, dest_idx);",
-        "let mut buf = [0u8; 320];
-    vdp.draw_full_tile_row(entry, pixel_v, dest_idx, &mut buf);"
+        """let mut buf = [0u8; 320];
+    vdp.draw_full_tile_row(entry, pixel_v, dest_idx, &mut buf);"""
     )
     test_src = test_src.replace(
         "vdp.draw_full_tile_row(0, 0, dest_idx);",
-        "let mut buf = [0u8; 320];
-    vdp.draw_full_tile_row(0, 0, dest_idx, &mut buf);"
+        """let mut buf = [0u8; 320];
+    vdp.draw_full_tile_row(0, 0, dest_idx, &mut buf);"""
     )
     test_src = test_src.replace(
         "vdp.draw_full_tile_row(entry, 0, 0);",
-        "let mut buf = [0u8; 320];
-    vdp.draw_full_tile_row(entry, 0, 0, &mut buf);"
+        """let mut buf = [0u8; 320];
+    vdp.draw_full_tile_row(entry, 0, 0, &mut buf);"""
     )
     
     with open("src/vdp/tests_draw_row_refactor.rs", "w") as f2:
