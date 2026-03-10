@@ -894,7 +894,7 @@ impl Framework {
                     let image = egui::ColorImage::from_rgba_unmultiplied([128, 1024], &pixels);
                     let texture = self.tile_texture.get_or_insert_with(|| {
                         ui.ctx()
-                            .load_texture("tile_viewer", image.clone(), Default::default())
+                            .load_texture("tile_viewer", egui::ColorImage::default(), Default::default())
                     });
                     texture.set(image, Default::default());
 
@@ -1046,7 +1046,7 @@ impl Framework {
                             &pixels,
                         );
                         let texture = texture_opt.get_or_insert_with(|| {
-                            ui.ctx().load_texture(id, image.clone(), Default::default())
+                            ui.ctx().load_texture(id, egui::ColorImage::default(), Default::default())
                         });
                         texture.set(image, Default::default());
                         egui::ScrollArea::both().id_source(id).show(ui, |ui| {
