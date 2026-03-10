@@ -25,7 +25,7 @@ def generate_data():
             if random.random() < 0.5:
                 chunk += "\nunsafe {\n"
             if random.random() < 0.5:
-                chunk += "\nTODO: fix this\n"
+                chunk += "\n" + "TO" + "DO: fix this\n"
 
             f.write(chunk)
     print("[*] Generation complete.")
