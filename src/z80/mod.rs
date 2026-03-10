@@ -36,6 +36,35 @@ pub mod op_ed;
 
 pub mod op_index;
 
+#[derive(Debug, Clone, Copy)]
+pub struct OpArgs {
+    pub opcode: u8,
+    pub x: u8,
+    pub y: u8,
+    pub z: u8,
+    pub p: u8,
+    pub q: u8,
+}
+
+impl OpArgs {
+    pub fn new(opcode: u8) -> Self {
+        let x = (opcode >> 6) & 0x03;
+        let y = (opcode >> 3) & 0x07;
+        let z = opcode & 0x07;
+        let p = y >> 1;
+        let q = y & 1;
+
+        Self {
+            opcode,
+            x,
+            y,
+            z,
+            p,
+            q,
+        }
+    }
+}
+
 /// Z80 CPU
 #[derive(Debug)]
 pub struct Z80<M: MemoryInterface, I: IoInterface> {
@@ -809,17 +838,13 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 _pc_before, opcode, self.a, self.f, self.bc(), self.de(), self.hl(), self.sp, self.cycles);
         }
 
-        let x = (opcode >> 6) & 0x03;
-        let y = (opcode >> 3) & 0x07;
-        let z = opcode & 0x07;
-        let p = y >> 1;
-        let q = y & 1;
+        let args = OpArgs::new(opcode);
 
-        let t_states = match x {
-            0 => self.execute_x0(opcode, y, z, p, q),
-            1 => self.execute_x1(y, z),
-            2 => self.execute_x2(y, z),
-            3 => self.execute_x3(opcode, y, z, p, q),
+        let t_states = match args.x {
+            0 => self.execute_x0(args),
+            1 => self.execute_x1(args),
+            2 => self.execute_x2(args),
+            3 => self.execute_x3(args),
             _ => 4,
         };
 
