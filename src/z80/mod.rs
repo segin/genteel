@@ -949,7 +949,8 @@ mod tests;
 // mod tests_load;
 
 // #[cfg(test)]
-// mod tests_regression;
+#[cfg(test)]
+mod tests_regression;
 
 // #[cfg(test)]
 // mod tests_undoc;
