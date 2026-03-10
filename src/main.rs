@@ -1159,7 +1159,7 @@ fn print_usage() {
     println!("  --headless <n>   Run N frames without display");
     println!("  --screenshot <path> Save screenshot after headless run");
     println!("  --gdb [port]     Start GDB server (default port: 1234)");
-    println!("  --gdb-password <pwd> Set password for GDB server");
+    println!("                   Note: Set GENTEEL_GDB_PASSWORD env var for custom password.");
     println!("  --dump-audio <file> Dump audio output to WAV file");
     println!(
         "  --input-mapping <type> Set keyboard mapping (original|ergonomic, default: original)"
@@ -1220,6 +1220,7 @@ impl Config {
         I: IntoIterator<Item = String>,
     {
         let mut config = Config::default();
+        config.gdb_password = std::env::var("GENTEEL_GDB_PASSWORD").ok();
         let mut iter = args.into_iter().skip(1).peekable();
         while let Some(arg) = iter.next() {
             match arg.as_str() {
@@ -1257,9 +1258,6 @@ impl Config {
                         }
                     }
                     config.gdb_port = Some(port);
-                }
-                "--gdb-password" => {
-                    config.gdb_password = iter.next();
                 }
                 "--dump-audio" => {
                     config.dump_audio_path = iter.next();
@@ -1536,6 +1534,14 @@ mod tests {
         let config = Config::from_args(args);
         assert_eq!(config.gdb_port, Some(1234));
         assert_eq!(config.rom_path, Some("rom.bin".to_string()));
+
+        // Test environment variable password
+        std::env::set_var("GENTEEL_GDB_PASSWORD", "env_secret");
+        let args = vec!["genteel".to_string(), "rom.bin".to_string()];
+        let config = Config::from_args(args);
+        assert_eq!(config.gdb_password, Some("env_secret".to_string()));
+        std::env::remove_var("GENTEEL_GDB_PASSWORD");
+
         let args = vec![
             "genteel".to_string(),
             "rom".to_string(),
