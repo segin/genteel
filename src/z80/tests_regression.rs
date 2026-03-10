@@ -310,7 +310,7 @@ fn regression_ld_a_r_iff2_false() {
     assert!(!c.get_flag(flags::PARITY));
 }
 
-// Bug: LDIR/LDDR BC=0 means 64K
+// Z80 Hardware Behavior: LDIR/LDDR BC=0 means 64K
 #[test]
 fn regression_ldir_bc_zero() {
     let (mut c, mut bus) = create_z80(&[0xED, 0xB0]);
