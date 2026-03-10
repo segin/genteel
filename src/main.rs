@@ -23,9 +23,7 @@ pub mod vdp;
 pub mod wav_writer;
 pub mod z80;
 
-pub const SLOT_EXTS: [&str; 10] = [
-    "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9",
-];
+pub const SLOT_EXTS: [&str; 10] = ["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9"];
 
 use crate::vdp::RenderOps;
 use apu::Apu;
@@ -769,7 +767,6 @@ impl Emulator {
                     cpu.cancel_interrupt(6);
                 }
 
-
                 cycles
             };
 
@@ -870,8 +867,8 @@ impl Emulator {
     }
     fn handle_interrupts(&mut self, line: u16, active_lines: u16) {
         // H-Blank only lasts for a short period at the end of a scanline.
-        // If the CPU hasn't taken the H-Int by the end of the subsequent scanline 
-        // (e.g., because it was handling V-Int or had interrupts masked), the VDP 
+        // If the CPU hasn't taken the H-Int by the end of the subsequent scanline
+        // (e.g., because it was handling V-Int or had interrupts masked), the VDP
         // will have dropped the IRQ line. We must cancel it here to prevent spurious interrupts.
         self.cpu.cancel_interrupt(4);
 
@@ -1106,7 +1103,8 @@ impl Emulator {
         }
         Ok(())
     }
-    #[allow(dead_code)] pub(crate) fn log_debug(&self, frame_count: u64) {
+    #[allow(dead_code)]
+    pub(crate) fn log_debug(&self, frame_count: u64) {
         let bus = self.bus.borrow();
         let disp_en = if bus.vdp.display_enabled() {
             "ON "
@@ -1220,39 +1218,47 @@ impl Config {
         I: IntoIterator<Item = String>,
     {
         let mut config = Config::default();
-        let mut iter = args.into_iter().skip(1).peekable();
-        while let Some(arg) = iter.next() {
+        let mut iter = args.into_iter().skip(1);
+        let mut current_opt = iter.next();
+
+        while let Some(arg) = current_opt {
             match arg.as_str() {
                 "--help" | "-h" => {
                     config.show_help = true;
+                    current_opt = iter.next();
                 }
                 "--script" => {
                     config.script_path = iter.next();
+                    current_opt = iter.next();
                 }
                 "--record" => {
                     config.record_path = iter.next();
+                    current_opt = iter.next();
                 }
                 "--headless" => {
                     config.headless = true;
-                    if let Some(next) = iter.peek() {
+                    current_opt = iter.next();
+                    if let Some(ref next) = current_opt {
                         if !next.starts_with('-') {
                             if let Ok(n) = next.parse::<u32>() {
                                 config.headless_frames = Some(n);
-                                iter.next(); // consume
+                                current_opt = iter.next(); // consume
                             }
                         }
                     }
                 }
                 "--screenshot" => {
                     config.screenshot_path = iter.next();
+                    current_opt = iter.next();
                 }
                 "--gdb" => {
                     let mut port = debugger::DEFAULT_PORT;
-                    if let Some(next) = iter.peek() {
+                    current_opt = iter.next();
+                    if let Some(ref next) = current_opt {
                         if !next.starts_with('-') {
                             if let Ok(p) = next.parse() {
                                 port = p;
-                                iter.next(); // consume it
+                                current_opt = iter.next(); // consume it
                             }
                         }
                     }
@@ -1260,9 +1266,11 @@ impl Config {
                 }
                 "--gdb-password" => {
                     config.gdb_password = iter.next();
+                    current_opt = iter.next();
                 }
                 "--dump-audio" => {
                     config.dump_audio_path = iter.next();
+                    current_opt = iter.next();
                 }
                 "--input-mapping" => {
                     if let Some(mapping_str) = iter.next() {
@@ -1275,9 +1283,11 @@ impl Config {
                             }
                         }
                     }
+                    current_opt = iter.next();
                 }
                 "--debug" => {
                     config.debug = true;
+                    current_opt = iter.next();
                 }
                 arg if !arg.starts_with('-') => {
                     if let Some(ref mut path) = config.rom_path {
@@ -1286,9 +1296,11 @@ impl Config {
                     } else {
                         config.rom_path = Some(arg.to_string());
                     }
+                    current_opt = iter.next();
                 }
                 _ => {
                     eprintln!("Unknown option: {}", arg);
+                    current_opt = iter.next();
                 }
             }
         }
