@@ -52,7 +52,7 @@ def scan_slow(filename):
             if re.search(audit_tool.UNSAFE_PATTERN.pattern, line_content):
                 match_count += 1
 
-            # TODOs
+            # TODO matches
             if re.search(audit_tool.TODO_PATTERN.pattern, line_content):
                 match_count += 1
 
@@ -78,7 +78,7 @@ def scan_fast(filename):
             if audit_tool.UNSAFE_PATTERN.search(line_content):
                 match_count += 1
 
-            # TODOs
+            # TODO matches
             if audit_tool.TODO_PATTERN.search(line_content):
                 match_count += 1
 
