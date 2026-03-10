@@ -399,6 +399,28 @@ impl Framework {
             self.gui_state.load_requested = Some(0); // Default to slot 0
         }
 
+        self.render_top_menu_bar(debug_info);
+        self.render_about_window();
+        self.render_performance_debug_window(debug_info);
+        self.render_settings_window();
+        self.render_execution_control_window();
+        self.render_m68k_status_window(debug_info);
+        self.render_z80_status_window(debug_info);
+        self.render_disassembly_window(debug_info);
+        self.render_palette_viewer_window(debug_info);
+        self.render_tile_viewer_window(debug_info);
+        self.render_sprite_viewer_window(debug_info);
+        self.render_scroll_plane_viewer_window(debug_info);
+        self.render_vdp_memory_hex_window(debug_info);
+        self.render_memory_viewer_window(debug_info);
+        self.render_sound_chip_visualizer_window(debug_info);
+        self.render_audio_channel_waveforms_window(debug_info);
+        self.render_controller_viewer_window(debug_info);
+        self.render_expansion_status_window();
+        self.render_state_browser_window(debug_info);
+    }
+
+    fn render_top_menu_bar(&mut self, debug_info: &DebugInfo) {
         // Draw the GUI
         egui::TopBottomPanel::top("menubar_container").show(&self.egui_ctx, |ui| {
             egui::menu::bar(ui, |ui| {
@@ -517,6 +539,9 @@ impl Framework {
             });
         });
 
+    }
+
+    fn render_about_window(&mut self) {
         if self.gui_state.show_about {
             egui::Window::new("About Genteel")
                 .open(&mut self.gui_state.show_about)
@@ -554,6 +579,9 @@ impl Framework {
                 });
         }
 
+    }
+
+    fn render_performance_debug_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Performance & Debug") {
             let mut open = true;
             egui::Window::new("Performance & Debug")
@@ -607,6 +635,9 @@ impl Framework {
             }
         }
 
+    }
+
+    fn render_settings_window(&mut self) {
         if self.gui_state.is_window_open("Settings") {
             let mut open = true;
             egui::Window::new("Settings")
@@ -656,6 +687,9 @@ impl Framework {
             }
         }
 
+    }
+
+    fn render_execution_control_window(&mut self) {
         if self.gui_state.is_window_open("Execution Control") {
             let mut open = true;
             egui::Window::new("Execution Control")
@@ -684,6 +718,9 @@ impl Framework {
             }
         }
 
+    }
+
+    fn render_m68k_status_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("M68k Status") {
             let mut open = true;
             egui::Window::new("M68k Status")
@@ -724,6 +761,9 @@ impl Framework {
             }
         }
 
+    }
+
+    fn render_z80_status_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Z80 Status") {
             let mut open = true;
             egui::Window::new("Z80 Status")
@@ -777,6 +817,9 @@ impl Framework {
             }
         }
 
+    }
+
+    fn render_disassembly_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Disassembly") {
             let mut open = true;
             egui::Window::new("Disassembly")
@@ -823,6 +866,9 @@ impl Framework {
             }
         }
 
+    }
+
+    fn render_palette_viewer_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Palette Viewer") {
             let mut open = true;
             egui::Window::new("Palette Viewer")
@@ -859,6 +905,9 @@ impl Framework {
             }
         }
 
+    }
+
+    fn render_tile_viewer_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Tile Viewer") {
             let mut open = true;
             egui::Window::new("Tile Viewer")
@@ -907,6 +956,9 @@ impl Framework {
             }
         }
 
+    }
+
+    fn render_sprite_viewer_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Sprite Viewer") {
             let mut open = true;
             egui::Window::new("Sprite Viewer")
@@ -959,6 +1011,9 @@ impl Framework {
             }
         }
 
+    }
+
+    fn render_scroll_plane_viewer_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Scroll Plane Viewer") {
             let mut open = true;
             egui::Window::new("Scroll Plane Viewer")
@@ -1068,6 +1123,9 @@ impl Framework {
             }
         }
 
+    }
+
+    fn render_vdp_memory_hex_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("VDP Memory Hex") {
             let mut open = true;
             egui::Window::new("VDP Memory Hex")
@@ -1150,6 +1208,9 @@ impl Framework {
             }
         }
 
+    }
+
+    fn render_memory_viewer_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Memory Viewer") {
             let mut open = true;
             egui::Window::new("Memory Viewer")
@@ -1231,6 +1292,9 @@ impl Framework {
             }
         }
 
+    }
+
+    fn render_sound_chip_visualizer_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Sound Chip Visualizer") {
             let mut open = true;
             egui::Window::new("Sound Chip Visualizer")
@@ -1324,6 +1388,9 @@ impl Framework {
             }
         }
 
+    }
+
+    fn render_audio_channel_waveforms_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Audio Channel Waveforms") {
             let mut open = true;
             egui::Window::new("Audio Channel Waveforms")
@@ -1365,6 +1432,9 @@ impl Framework {
             }
         }
 
+    }
+
+    fn render_controller_viewer_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Controller Viewer") {
             let mut open = true;
             egui::Window::new("Controller Viewer")
@@ -1409,6 +1479,9 @@ impl Framework {
             }
         }
 
+    }
+
+    fn render_expansion_status_window(&mut self) {
         if self.gui_state.is_window_open("Expansion Status") {
             let mut open = true;
             egui::Window::new("Expansion Status")
@@ -1431,6 +1504,9 @@ impl Framework {
             }
         }
 
+    }
+
+    fn render_state_browser_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("State Browser") {
             let mut open = true;
             egui::Window::new("State Browser")
