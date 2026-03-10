@@ -142,6 +142,136 @@ pub trait RenderOps {
     fn get_cram_color(&self, palette: u8, index: u8) -> u16;
 }
 
+impl Vdp {
+    #[allow(clippy::too_many_arguments)]
+    fn composite_line(
+        &mut self,
+        line_offset: usize,
+        bg_color_idx: u8,
+        bg_color_val: u16,
+        buf_b: &[u8; 320],
+        buf_a: &[u8; 320],
+        buf_s: &[u8; 320],
+    ) {
+        let sh_enabled = (self.registers[REG_MODE4] & 0x08) != 0;
+        let mask_col0 = (self.registers[REG_MODE1] & 0x20) != 0;
+
+        for x in 0..320 {
+            if mask_col0 && x < 8 {
+                self.framebuffer[line_offset + x] = bg_color_val;
+                continue;
+            }
+
+            let b = buf_b[x];
+            let a = buf_a[x];
+            let s = buf_s[x];
+
+            let b_pri = (b & 0x80) != 0;
+            let a_pri = (a & 0x80) != 0;
+            let s_pri = (s & 0x80) != 0;
+
+            let b_col = b & 0x3F;
+            let a_col = a & 0x3F;
+            let s_col = s & 0x3F;
+
+            let b_trans = (b_col & 0x0F) == 0;
+            let a_trans = (a_col & 0x0F) == 0;
+            let s_trans = (s_col & 0x0F) == 0;
+
+            let any_high = b_pri || a_pri || s_pri;
+
+            let mut top_col = bg_color_idx;
+            let mut top_layer = 0; // 0=BG, 1=B, 2=A, 3=S
+
+            if s_pri && !s_trans {
+                top_col = s_col;
+                top_layer = 3;
+            } else if a_pri && !a_trans {
+                top_col = a_col;
+                top_layer = 2;
+            } else if b_pri && !b_trans {
+                top_col = b_col;
+                top_layer = 1;
+            } else if !s_trans {
+                top_col = s_col;
+                top_layer = 3;
+            } else if !a_trans {
+                top_col = a_col;
+                top_layer = 2;
+            } else if !b_trans {
+                top_col = b_col;
+                top_layer = 1;
+            }
+
+            if !sh_enabled {
+                self.framebuffer[line_offset + x] = self.cram_cache[top_col as usize];
+            } else {
+                let mut state = if any_high { 1 } else { 0 };
+
+                if top_layer == 3 {
+                    if s_col == 0x3E {
+                        top_col = bg_color_idx;
+                        if a_pri && !a_trans {
+                            top_col = a_col;
+                        } else if b_pri && !b_trans {
+                            top_col = b_col;
+                        } else if !a_trans {
+                            top_col = a_col;
+                        } else if !b_trans {
+                            top_col = b_col;
+                        }
+                        if state < 2 {
+                            state += 1;
+                        }
+                    } else if s_col == 0x3F {
+                        top_col = bg_color_idx;
+                        if a_pri && !a_trans {
+                            top_col = a_col;
+                        } else if b_pri && !b_trans {
+                            top_col = b_col;
+                        } else if !a_trans {
+                            top_col = a_col;
+                        } else if !b_trans {
+                            top_col = b_col;
+                        }
+                        if state > 0 {
+                            state -= 1;
+                        }
+                    } else if (s_col & 0x0F) == 0x0E {
+                        state = 1;
+                    }
+                }
+
+                let color = self.cram_cache[top_col as usize];
+                let final_color = match state {
+                    0 => {
+                        // Shadow (halve brightness)
+                        let r = ((color >> 11) & 0x1E) >> 1;
+                        let g = ((color >> 6) & 0x1E) >> 1;
+                        let b = ((color >> 1) & 0x1E) >> 1;
+                        (r << 11) | (g << 6) | (b << 1)
+                    }
+                    2 => {
+                        // Highlight (double brightness + offset)
+                        let r = (color >> 11) & 0x1E;
+                        let g = (color >> 6) & 0x1E;
+                        let b = (color >> 1) & 0x1E;
+                        let r2 = r + 0x10;
+                        let r_final = if r2 > 0x1E { 0x1E } else { r2 };
+                        let g2 = g + 0x10;
+                        let g_final = if g2 > 0x1E { 0x1E } else { g2 };
+                        let b2 = b + 0x10;
+                        let b_final = if b2 > 0x1E { 0x1E } else { b2 };
+                        (r_final << 11) | (g_final << 6) | (b_final << 1)
+                    }
+                    _ => color,
+                };
+                self.framebuffer[line_offset + x] = final_color;
+            }
+        }
+    }
+}
+
 fn render_sprite_scanline(
     vram: &[u8],
     line_buf: &mut [u8; 320],
@@ -284,123 +414,14 @@ impl RenderOps for Vdp {
         self.render_plane(true, fetch_line, &mut buf_a);
         self.render_sprites(active_sprites, fetch_line, &mut buf_s);
 
-        let sh_enabled = (self.registers[REG_MODE4] & 0x08) != 0;
-        let mask_col0 = (self.registers[REG_MODE1] & 0x20) != 0;
-
-        // Composite
-        for x in 0..320 {
-            if mask_col0 && x < 8 {
-                self.framebuffer[line_offset + x] = bg_color_val;
-                continue;
-            }
-
-            let b = buf_b[x];
-            let a = buf_a[x];
-            let s = buf_s[x];
-
-            let b_pri = (b & 0x80) != 0;
-            let a_pri = (a & 0x80) != 0;
-            let s_pri = (s & 0x80) != 0;
-
-            let b_col = b & 0x3F;
-            let a_col = a & 0x3F;
-            let s_col = s & 0x3F;
-
-            let b_trans = (b_col & 0x0F) == 0;
-            let a_trans = (a_col & 0x0F) == 0;
-            let s_trans = (s_col & 0x0F) == 0;
-
-            let any_high = b_pri || a_pri || s_pri;
-
-            let mut top_col = bg_color_idx;
-            let mut top_layer = 0; // 0=BG, 1=B, 2=A, 3=S
-
-            if s_pri && !s_trans {
-                top_col = s_col;
-                top_layer = 3;
-            } else if a_pri && !a_trans {
-                top_col = a_col;
-                top_layer = 2;
-            } else if b_pri && !b_trans {
-                top_col = b_col;
-                top_layer = 1;
-            } else if !s_trans {
-                top_col = s_col;
-                top_layer = 3;
-            } else if !a_trans {
-                top_col = a_col;
-                top_layer = 2;
-            } else if !b_trans {
-                top_col = b_col;
-                top_layer = 1;
-            }
-
-            if !sh_enabled {
-                self.framebuffer[line_offset + x] = self.cram_cache[top_col as usize];
-            } else {
-                let mut state = if any_high { 1 } else { 0 };
-
-                if top_layer == 3 {
-                    if s_col == 0x3E {
-                        top_col = bg_color_idx;
-                        if a_pri && !a_trans {
-                            top_col = a_col;
-                        } else if b_pri && !b_trans {
-                            top_col = b_col;
-                        } else if !a_trans {
-                            top_col = a_col;
-                        } else if !b_trans {
-                            top_col = b_col;
-                        }
-                        if state < 2 {
-                            state += 1;
-                        }
-                    } else if s_col == 0x3F {
-                        top_col = bg_color_idx;
-                        if a_pri && !a_trans {
-                            top_col = a_col;
-                        } else if b_pri && !b_trans {
-                            top_col = b_col;
-                        } else if !a_trans {
-                            top_col = a_col;
-                        } else if !b_trans {
-                            top_col = b_col;
-                        }
-                        if state > 0 {
-                            state -= 1;
-                        }
-                    } else if (s_col & 0x0F) == 0x0E {
-                        state = 1;
-                    }
-                }
-
-                let color = self.cram_cache[top_col as usize];
-                let final_color = match state {
-                    0 => {
-                        // Shadow (halve brightness)
-                        let r = ((color >> 11) & 0x1E) >> 1;
-                        let g = ((color >> 6) & 0x1E) >> 1;
-                        let b = ((color >> 1) & 0x1E) >> 1;
-                        (r << 11) | (g << 6) | (b << 1)
-                    }
-                    2 => {
-                        // Highlight (double brightness + offset)
-                        let r = (color >> 11) & 0x1E;
-                        let g = (color >> 6) & 0x1E;
-                        let b = (color >> 1) & 0x1E;
-                        let r2 = r + 0x10;
-                        let r_final = if r2 > 0x1E { 0x1E } else { r2 };
-                        let g2 = g + 0x10;
-                        let g_final = if g2 > 0x1E { 0x1E } else { g2 };
-                        let b2 = b + 0x10;
-                        let b_final = if b2 > 0x1E { 0x1E } else { b2 };
-                        (r_final << 11) | (g_final << 6) | (b_final << 1)
-                    }
-                    _ => color,
-                };
-                self.framebuffer[line_offset + x] = final_color;
-            }
-        }
+        self.composite_line(
+            line_offset,
+            bg_color_idx,
+            bg_color_val,
+            &buf_b,
+            &buf_a,
+            &buf_s,
+        );
     }
 
     fn render_plane(&self, is_plane_a: bool, fetch_line: u16, line_buf: &mut [u8; 320]) {
