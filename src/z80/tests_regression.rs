@@ -103,7 +103,7 @@ fn regression_ld_hl_l() {
     assert_eq!(bus.memory.read_byte(0x1234 as u32), 0x34); // L value
 }
 
-// Bug: PUSH/POP AF not preserving all flag bits
+// Edge Case: Z80 PUSH/POP AF preserves all bits, including unused bits 5 and 3
 #[test]
 fn regression_push_pop_af_all_bits() {
     // Test all possible values for F register to ensure full preservation
