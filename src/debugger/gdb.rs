@@ -42,25 +42,25 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
     result |= (a_len > MAX_PASSWORD_CHECK_LEN) as usize;
     result |= (b_len > MAX_PASSWORD_CHECK_LEN) as usize;
 
+    // Ensure slices have at least length 1 to allow safe, branchless index 0 reads
+    let a_safe = if a_len > 0 { a_bytes } else { &[0] };
+    let b_safe = if b_len > 0 { b_bytes } else { &[0] };
+
     for i in 0..MAX_PASSWORD_CHECK_LEN {
         // Use bitwise masking to avoid variable-time operations like slice copying or branching.
         // If i < len, mask is 0xFF (all 1s), so we use the byte.
         // If i >= len, mask is 0x00, so we use 0.
         // This relies on boolean to integer cast (true -> 1, false -> 0) and wrapping negation to produce 0 or !0
-        // (i < len) as u8 -> 1 or 0
-        // 0u8.wrapping_sub(1) -> 0xFF
-        // 0u8.wrapping_sub(0) -> 0x00
         let a_mask = 0u8.wrapping_sub((i < a_len) as u8);
         let b_mask = 0u8.wrapping_sub((i < b_len) as u8);
 
-        // Safely index using modulo or bitwise logic (if len is 0 we just read index 0 which is safe bounds check)
-        // Since we can't easily avoid bounds check branching completely without unsafe,
-        // we'll get the byte if it exists, or 0, but we MUST mask it regardless of what we get
-        // so that the result only depends on the mask (which depends on the length)
-        // To avoid branch in unwrap_or(&0), we can just use `get` and match, but match is a branch.
-        // However, the branch predictor will behave the same if we just use a default value.
-        let a_val = a_bytes.get(i).copied().unwrap_or(0);
-        let b_val = b_bytes.get(i).copied().unwrap_or(0);
+        // Safely index without branching: if i < len, we read index i, otherwise index 0.
+        // The read byte is then masked out if i >= len.
+        let a_idx = i * (i < a_len) as usize;
+        let b_idx = i * (i < b_len) as usize;
+
+        let a_val = a_safe[a_idx];
+        let b_val = b_safe[b_idx];
 
         let a_byte = a_val & a_mask;
         let b_byte = b_val & b_mask;
