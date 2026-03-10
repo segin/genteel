@@ -423,7 +423,7 @@ fn regression_add_hl_sp_flags() {
     assert!(c.get_flag(flags::Y_FLAG));
 }
 
-// Bug: BIT instruction H flag should always be set
+// Hardware Bug: BIT instruction H flag should always be set
 #[test]
 fn regression_bit_sets_h_flag() {
     // BIT 0, A
