@@ -430,168 +430,175 @@ impl Emulator {
 
         // Handle commands (e.g., SCREENSHOT <path>)
         if let Some(cmd) = &command {
-            let parts: Vec<&str> = cmd.split_whitespace().collect();
-            if !parts.is_empty() {
-                match parts[0].to_uppercase().as_str() {
-                    "SCREENSHOT" => {
-                        if parts.len() > 1 {
-                            let raw_path = parts[1];
-                            // Security: Sanitize path to prevent arbitrary file writes
-                            // Only allow saving to current directory by using only the file name component
-                            let path = std::path::Path::new(raw_path)
-                                .file_name()
-                                .and_then(|s| s.to_str())
-                                .unwrap_or("screenshot.png");
-
-                            if path != raw_path {
-                                eprintln!(
-                                    "Script Warning: Sanitized screenshot path '{}' to '{}'",
-                                    raw_path, path
-                                );
-                            }
-
-                            if let Err(e) = self.save_screenshot(path) {
-                                eprintln!(
-                                    "Script Error: Failed to save screenshot to {}: {}",
-                                    path, e
-                                );
-                            } else {
-                                println!("Script: Saved screenshot to {}", path);
-                            }
-                        }
-                    }
-                    "READ_BYTE" => {
-                        if parts.len() > 1 {
-                            if let Ok(addr) =
-                                u32::from_str_radix(parts[1].trim_start_matches("0x"), 16)
-                            {
-                                let val = self.bus.borrow_mut().read_byte(addr);
-                                println!("Script: READ_BYTE 0x{:06X} = 0x{:02X}", addr, val);
-                            }
-                        }
-                    }
-                    "WRITE_BYTE" => {
-                        if parts.len() > 2 {
-                            let addr_res =
-                                u32::from_str_radix(parts[1].trim_start_matches("0x"), 16);
-                            let val_res = u8::from_str_radix(parts[2].trim_start_matches("0x"), 16);
-                            if let (Ok(addr), Ok(val)) = (addr_res, val_res) {
-                                self.bus.borrow_mut().write_byte(addr, val);
-                                println!("Script: WRITE_BYTE 0x{:06X} = 0x{:02X}", addr, val);
-                            }
-                        }
-                    }
-                    "ASSERT_BYTE" => {
-                        if parts.len() > 2 {
-                            let addr_res =
-                                u32::from_str_radix(parts[1].trim_start_matches("0x"), 16);
-                            let val_res = u8::from_str_radix(parts[2].trim_start_matches("0x"), 16);
-                            if let (Ok(addr), Ok(expected)) = (addr_res, val_res) {
-                                let actual = self.bus.borrow_mut().read_byte(addr);
-                                if actual != expected {
-                                    panic!("Script Assertion Failed: [0x{:06X}] == 0x{:02X} (Expected 0x{:02X})", addr, actual, expected);
-                                }
-                                println!(
-                                    "Script: ASSERT_BYTE 0x{:06X} == 0x{:02X} OK",
-                                    addr, expected
-                                );
-                            }
-                        }
-                    }
-                    "READ_WORD" => {
-                        if parts.len() > 1 {
-                            if let Ok(addr) =
-                                u32::from_str_radix(parts[1].trim_start_matches("0x"), 16)
-                            {
-                                let val = self.bus.borrow_mut().read_word(addr);
-                                println!("Script: READ_WORD 0x{:06X} = 0x{:04X}", addr, val);
-                            }
-                        }
-                    }
-                    "WRITE_WORD" => {
-                        if parts.len() > 2 {
-                            let addr_res =
-                                u32::from_str_radix(parts[1].trim_start_matches("0x"), 16);
-                            let val_res =
-                                u16::from_str_radix(parts[2].trim_start_matches("0x"), 16);
-                            if let (Ok(addr), Ok(val)) = (addr_res, val_res) {
-                                self.bus.borrow_mut().write_word(addr, val);
-                                println!("Script: WRITE_WORD 0x{:06X} = 0x{:04X}", addr, val);
-                            }
-                        }
-                    }
-                    "ASSERT_WORD" => {
-                        if parts.len() > 2 {
-                            let addr_res =
-                                u32::from_str_radix(parts[1].trim_start_matches("0x"), 16);
-                            let val_res =
-                                u16::from_str_radix(parts[2].trim_start_matches("0x"), 16);
-                            if let (Ok(addr), Ok(expected)) = (addr_res, val_res) {
-                                let actual = self.bus.borrow_mut().read_word(addr);
-                                if actual != expected {
-                                    panic!("Script Assertion Failed: [0x{:06X}] == 0x{:04X} (Expected 0x{:04X})", addr, actual, expected);
-                                }
-                                println!(
-                                    "Script: ASSERT_WORD 0x{:06X} == 0x{:04X} OK",
-                                    addr, expected
-                                );
-                            }
-                        }
-                    }
-                    "READ_LONG" => {
-                        if parts.len() > 1 {
-                            if let Ok(addr) =
-                                u32::from_str_radix(parts[1].trim_start_matches("0x"), 16)
-                            {
-                                let val = self.bus.borrow_mut().read_long(addr);
-                                println!("Script: READ_LONG 0x{:06X} = 0x{:08X}", addr, val);
-                            }
-                        }
-                    }
-                    "WRITE_LONG" => {
-                        if parts.len() > 2 {
-                            let addr_res =
-                                u32::from_str_radix(parts[1].trim_start_matches("0x"), 16);
-                            let val_res =
-                                u32::from_str_radix(parts[2].trim_start_matches("0x"), 16);
-                            if let (Ok(addr), Ok(val)) = (addr_res, val_res) {
-                                self.bus.borrow_mut().write_long(addr, val);
-                                println!("Script: WRITE_LONG 0x{:06X} = 0x{:08X}", addr, val);
-                            }
-                        }
-                    }
-                    "ASSERT_LONG" => {
-                        if parts.len() > 2 {
-                            let addr_res =
-                                u32::from_str_radix(parts[1].trim_start_matches("0x"), 16);
-                            let val_res =
-                                u32::from_str_radix(parts[2].trim_start_matches("0x"), 16);
-                            if let (Ok(addr), Ok(expected)) = (addr_res, val_res) {
-                                let actual = self.bus.borrow_mut().read_long(addr);
-                                if actual != expected {
-                                    panic!("Script Assertion Failed: [0x{:06X}] == 0x{:08X} (Expected 0x{:08X})", addr, actual, expected);
-                                }
-                                println!(
-                                    "Script: ASSERT_LONG 0x{:06X} == 0x{:08X} OK",
-                                    addr, expected
-                                );
-                            }
-                        }
-                    }
-                    "LOG" => {
-                        if parts.len() > 1 {
-                            println!("Script LOG: {}", parts[1..].join(" "));
-                        }
-                    }
-                    _ => {
-                        eprintln!("Script Warning: Unknown command '{}'", parts[0]);
-                    }
-                }
-            }
+            self.execute_script_command(cmd);
         }
 
         self.step_frame_internal();
     }
+
+    fn execute_script_command(&self, cmd: &str) {
+        let parts: Vec<&str> = cmd.split_whitespace().collect();
+        if parts.is_empty() {
+            return;
+        }
+
+        match parts[0].to_uppercase().as_str() {
+            "SCREENSHOT" => {
+                if parts.len() > 1 {
+                    let raw_path = parts[1];
+                    // Security: Sanitize path to prevent arbitrary file writes
+                    // Only allow saving to current directory by using only the file name component
+                    let path = std::path::Path::new(raw_path)
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("screenshot.png");
+
+                    if path != raw_path {
+                        eprintln!(
+                            "Script Warning: Sanitized screenshot path '{}' to '{}'",
+                            raw_path, path
+                        );
+                    }
+
+                    if let Err(e) = self.save_screenshot(path) {
+                        eprintln!(
+                            "Script Error: Failed to save screenshot to {}: {}",
+                            path, e
+                        );
+                    } else {
+                        println!("Script: Saved screenshot to {}", path);
+                    }
+                }
+            }
+            "READ_BYTE" => {
+                if parts.len() > 1 {
+                    if let Ok(addr) =
+                        u32::from_str_radix(parts[1].trim_start_matches("0x"), 16)
+                    {
+                        let val = self.bus.borrow_mut().read_byte(addr);
+                        println!("Script: READ_BYTE 0x{:06X} = 0x{:02X}", addr, val);
+                    }
+                }
+            }
+            "WRITE_BYTE" => {
+                if parts.len() > 2 {
+                    let addr_res =
+                        u32::from_str_radix(parts[1].trim_start_matches("0x"), 16);
+                    let val_res = u8::from_str_radix(parts[2].trim_start_matches("0x"), 16);
+                    if let (Ok(addr), Ok(val)) = (addr_res, val_res) {
+                        self.bus.borrow_mut().write_byte(addr, val);
+                        println!("Script: WRITE_BYTE 0x{:06X} = 0x{:02X}", addr, val);
+                    }
+                }
+            }
+            "ASSERT_BYTE" => {
+                if parts.len() > 2 {
+                    let addr_res =
+                        u32::from_str_radix(parts[1].trim_start_matches("0x"), 16);
+                    let val_res = u8::from_str_radix(parts[2].trim_start_matches("0x"), 16);
+                    if let (Ok(addr), Ok(expected)) = (addr_res, val_res) {
+                        let actual = self.bus.borrow_mut().read_byte(addr);
+                        if actual != expected {
+                            panic!("Script Assertion Failed: [0x{:06X}] == 0x{:02X} (Expected 0x{:02X})", addr, actual, expected);
+                        }
+                        println!(
+                            "Script: ASSERT_BYTE 0x{:06X} == 0x{:02X} OK",
+                            addr, expected
+                        );
+                    }
+                }
+            }
+            "READ_WORD" => {
+                if parts.len() > 1 {
+                    if let Ok(addr) =
+                        u32::from_str_radix(parts[1].trim_start_matches("0x"), 16)
+                    {
+                        let val = self.bus.borrow_mut().read_word(addr);
+                        println!("Script: READ_WORD 0x{:06X} = 0x{:04X}", addr, val);
+                    }
+                }
+            }
+            "WRITE_WORD" => {
+                if parts.len() > 2 {
+                    let addr_res =
+                        u32::from_str_radix(parts[1].trim_start_matches("0x"), 16);
+                    let val_res =
+                        u16::from_str_radix(parts[2].trim_start_matches("0x"), 16);
+                    if let (Ok(addr), Ok(val)) = (addr_res, val_res) {
+                        self.bus.borrow_mut().write_word(addr, val);
+                        println!("Script: WRITE_WORD 0x{:06X} = 0x{:04X}", addr, val);
+                    }
+                }
+            }
+            "ASSERT_WORD" => {
+                if parts.len() > 2 {
+                    let addr_res =
+                        u32::from_str_radix(parts[1].trim_start_matches("0x"), 16);
+                    let val_res =
+                        u16::from_str_radix(parts[2].trim_start_matches("0x"), 16);
+                    if let (Ok(addr), Ok(expected)) = (addr_res, val_res) {
+                        let actual = self.bus.borrow_mut().read_word(addr);
+                        if actual != expected {
+                            panic!("Script Assertion Failed: [0x{:06X}] == 0x{:04X} (Expected 0x{:04X})", addr, actual, expected);
+                        }
+                        println!(
+                            "Script: ASSERT_WORD 0x{:06X} == 0x{:04X} OK",
+                            addr, expected
+                        );
+                    }
+                }
+            }
+            "READ_LONG" => {
+                if parts.len() > 1 {
+                    if let Ok(addr) =
+                        u32::from_str_radix(parts[1].trim_start_matches("0x"), 16)
+                    {
+                        let val = self.bus.borrow_mut().read_long(addr);
+                        println!("Script: READ_LONG 0x{:06X} = 0x{:08X}", addr, val);
+                    }
+                }
+            }
+            "WRITE_LONG" => {
+                if parts.len() > 2 {
+                    let addr_res =
+                        u32::from_str_radix(parts[1].trim_start_matches("0x"), 16);
+                    let val_res =
+                        u32::from_str_radix(parts[2].trim_start_matches("0x"), 16);
+                    if let (Ok(addr), Ok(val)) = (addr_res, val_res) {
+                        self.bus.borrow_mut().write_long(addr, val);
+                        println!("Script: WRITE_LONG 0x{:06X} = 0x{:08X}", addr, val);
+                    }
+                }
+            }
+            "ASSERT_LONG" => {
+                if parts.len() > 2 {
+                    let addr_res =
+                        u32::from_str_radix(parts[1].trim_start_matches("0x"), 16);
+                    let val_res =
+                        u32::from_str_radix(parts[2].trim_start_matches("0x"), 16);
+                    if let (Ok(addr), Ok(expected)) = (addr_res, val_res) {
+                        let actual = self.bus.borrow_mut().read_long(addr);
+                        if actual != expected {
+                            panic!("Script Assertion Failed: [0x{:06X}] == 0x{:08X} (Expected 0x{:08X})", addr, actual, expected);
+                        }
+                        println!(
+                            "Script: ASSERT_LONG 0x{:06X} == 0x{:08X} OK",
+                            addr, expected
+                        );
+                    }
+                }
+            }
+            "LOG" => {
+                if parts.len() > 1 {
+                    println!("Script LOG: {}", parts[1..].join(" "));
+                }
+            }
+            _ => {
+                eprintln!("Script Warning: Unknown command '{}'", parts[0]);
+            }
+        }
+    }
+
     pub fn step_frame_internal(&mut self) {
         self.internal_frame_count += 1;
         if self.debug {
