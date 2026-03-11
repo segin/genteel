@@ -40,6 +40,25 @@ pub const SLOT_NAMES: [&str; 10] = [
 
 pub const SLOT_EXTS: [&str; 10] = ["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9"];
 
+pub const HEX_LOOKUP: [&str; 256] = [
+    "00", "01", "02", "03", "04", "05", "06", "07", "08", "09", "0A", "0B", "0C", "0D", "0E", "0F",
+    "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "1A", "1B", "1C", "1D", "1E", "1F",
+    "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "2A", "2B", "2C", "2D", "2E", "2F",
+    "30", "31", "32", "33", "34", "35", "36", "37", "38", "39", "3A", "3B", "3C", "3D", "3E", "3F",
+    "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "4A", "4B", "4C", "4D", "4E", "4F",
+    "50", "51", "52", "53", "54", "55", "56", "57", "58", "59", "5A", "5B", "5C", "5D", "5E", "5F",
+    "60", "61", "62", "63", "64", "65", "66", "67", "68", "69", "6A", "6B", "6C", "6D", "6E", "6F",
+    "70", "71", "72", "73", "74", "75", "76", "77", "78", "79", "7A", "7B", "7C", "7D", "7E", "7F",
+    "80", "81", "82", "83", "84", "85", "86", "87", "88", "89", "8A", "8B", "8C", "8D", "8E", "8F",
+    "90", "91", "92", "93", "94", "95", "96", "97", "98", "99", "9A", "9B", "9C", "9D", "9E", "9F",
+    "A0", "A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9", "AA", "AB", "AC", "AD", "AE", "AF",
+    "B0", "B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B9", "BA", "BB", "BC", "BD", "BE", "BF",
+    "C0", "C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8", "C9", "CA", "CB", "CC", "CD", "CE", "CF",
+    "D0", "D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8", "D9", "DA", "DB", "DC", "DD", "DE", "DF",
+    "E0", "E1", "E2", "E3", "E4", "E5", "E6", "E7", "E8", "E9", "EA", "EB", "EC", "ED", "EE", "EF",
+    "F0", "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "FA", "FB", "FC", "FD", "FE", "FF",
+];
+
 #[cfg(feature = "gui")]
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub enum PlaneTab {
@@ -221,6 +240,15 @@ pub struct DebugInfo {
 }
 
 #[cfg(feature = "gui")]
+#[cfg(feature = "gilrs")]
+fn init_gilrs() -> Option<Gilrs> {
+    if std::env::var("GENTEEL_TEST_FAIL_GILRS").is_ok() {
+        return None;
+    }
+    init_gilrs_with_builder(Gilrs::new)
+}
+
+#[cfg(feature = "gui")]
 pub struct Framework {
     pub egui_ctx: egui::Context,
     pub egui_state: egui_winit::State,
@@ -271,7 +299,7 @@ impl Framework {
             plane_b_texture: None,
             pending_rom_path: Arc::new(Mutex::new(None)),
             #[cfg(feature = "gilrs")]
-            gilrs: init_gilrs_with_builder(Gilrs::new),
+            gilrs: init_gilrs(),
         }
     }
     pub fn handle_event(
@@ -382,29 +410,6 @@ impl Framework {
         let raw_input = self.egui_state.take_egui_input(window);
         self.egui_ctx.begin_frame(raw_input);
 
-        self.handle_shortcuts(debug_info);
-        self.draw_menu_bar(debug_info);
-        self.draw_about_window();
-        self.draw_performance_window(debug_info);
-        self.draw_settings_window();
-        self.draw_execution_control_window();
-        self.draw_m68k_status_window(debug_info);
-        self.draw_z80_status_window(debug_info);
-        self.draw_disassembly_window(debug_info);
-        self.draw_palette_viewer_window(debug_info);
-        self.draw_tile_viewer_window(debug_info);
-        self.draw_sprite_viewer_window(debug_info);
-        self.draw_scroll_plane_viewer_window(debug_info);
-        self.draw_vdp_memory_hex_window(debug_info);
-        self.draw_memory_viewer_window(debug_info);
-        self.draw_sound_chip_visualizer_window(debug_info);
-        self.draw_audio_channel_waveforms_window(debug_info);
-        self.draw_controller_viewer_window(debug_info);
-        self.draw_expansion_status_window();
-        self.draw_state_browser_window(debug_info);
-    }
-
-    fn handle_shortcuts(&mut self, debug_info: &DebugInfo) {
         // Global shortcuts
         let ctrl = self.egui_ctx.input(|i| i.modifiers.command);
         if ctrl && self.egui_ctx.input(|i| i.key_pressed(egui::Key::O)) {
@@ -419,9 +424,29 @@ impl Framework {
         if self.egui_ctx.input(|i| i.key_pressed(egui::Key::F8)) && debug_info.has_rom {
             self.gui_state.load_requested = Some(0); // Default to slot 0
         }
+
+        self.render_top_menu_bar(debug_info);
+        self.render_about_window();
+        self.render_performance_debug_window(debug_info);
+        self.render_settings_window();
+        self.render_execution_control_window();
+        self.render_m68k_status_window(debug_info);
+        self.render_z80_status_window(debug_info);
+        self.render_disassembly_window(debug_info);
+        self.render_palette_viewer_window(debug_info);
+        self.render_tile_viewer_window(debug_info);
+        self.render_sprite_viewer_window(debug_info);
+        self.render_scroll_plane_viewer_window(debug_info);
+        self.render_vdp_memory_hex_window(debug_info);
+        self.render_memory_viewer_window(debug_info);
+        self.render_sound_chip_visualizer_window(debug_info);
+        self.render_audio_channel_waveforms_window(debug_info);
+        self.render_controller_viewer_window(debug_info);
+        self.render_expansion_status_window();
+        self.render_state_browser_window(debug_info);
     }
 
-    fn draw_menu_bar(&mut self, debug_info: &DebugInfo) {
+    fn render_top_menu_bar(&mut self, debug_info: &DebugInfo) {
         // Draw the GUI
         egui::TopBottomPanel::top("menubar_container").show(&self.egui_ctx, |ui| {
             egui::menu::bar(ui, |ui| {
@@ -539,9 +564,10 @@ impl Framework {
                 });
             });
         });
+
     }
 
-    fn draw_about_window(&mut self) {
+    fn render_about_window(&mut self) {
         if self.gui_state.show_about {
             egui::Window::new("About Genteel")
                 .open(&mut self.gui_state.show_about)
@@ -578,9 +604,10 @@ impl Framework {
                     });
                 });
         }
+
     }
 
-    fn draw_performance_window(&mut self, debug_info: &DebugInfo) {
+    fn render_performance_debug_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Performance & Debug") {
             let mut open = true;
             egui::Window::new("Performance & Debug")
@@ -619,13 +646,18 @@ impl Framework {
                         ui.heading("Connected Gamepads");
                         if let Some(gilrs) = &self.gilrs {
                             let mut gamepad_str = String::with_capacity(64);
+                            let mut found = false;
                             for (id, gamepad) in gilrs.gamepads() {
                                 gamepad_str.clear();
                                 let _ = write!(&mut gamepad_str, "{}: {}", id, gamepad.name());
                                 ui.label(&gamepad_str);
+                                found = true;
+                            }
+                            if !found {
+                                ui.label("No gamepads connected");
                             }
                         } else {
-                            ui.label("Gamepad support unavailable");
+                            ui.label("Gamepad support disabled or failed to initialize");
                         }
                     }
                 });
@@ -633,9 +665,10 @@ impl Framework {
                 self.gui_state.set_window_open("Performance & Debug", false);
             }
         }
+
     }
 
-    fn draw_settings_window(&mut self) {
+    fn render_settings_window(&mut self) {
         if self.gui_state.is_window_open("Settings") {
             let mut open = true;
             egui::Window::new("Settings")
@@ -684,9 +717,10 @@ impl Framework {
                 self.gui_state.set_window_open("Settings", false);
             }
         }
+
     }
 
-    fn draw_execution_control_window(&mut self) {
+    fn render_execution_control_window(&mut self) {
         if self.gui_state.is_window_open("Execution Control") {
             let mut open = true;
             egui::Window::new("Execution Control")
@@ -714,9 +748,10 @@ impl Framework {
                 self.gui_state.set_window_open("Execution Control", false);
             }
         }
+
     }
 
-    fn draw_m68k_status_window(&mut self, debug_info: &DebugInfo) {
+    fn render_m68k_status_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("M68k Status") {
             let mut open = true;
             egui::Window::new("M68k Status")
@@ -756,9 +791,10 @@ impl Framework {
                 self.gui_state.set_window_open("M68k Status", false);
             }
         }
+
     }
 
-    fn draw_z80_status_window(&mut self, debug_info: &DebugInfo) {
+    fn render_z80_status_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Z80 Status") {
             let mut open = true;
             egui::Window::new("Z80 Status")
@@ -811,9 +847,10 @@ impl Framework {
                 self.gui_state.set_window_open("Z80 Status", false);
             }
         }
+
     }
 
-    fn draw_disassembly_window(&mut self, debug_info: &DebugInfo) {
+    fn render_disassembly_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Disassembly") {
             let mut open = true;
             egui::Window::new("Disassembly")
@@ -859,9 +896,10 @@ impl Framework {
                 self.gui_state.set_window_open("Disassembly", false);
             }
         }
+
     }
 
-    fn draw_palette_viewer_window(&mut self, debug_info: &DebugInfo) {
+    fn render_palette_viewer_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Palette Viewer") {
             let mut open = true;
             egui::Window::new("Palette Viewer")
@@ -897,9 +935,10 @@ impl Framework {
                 self.gui_state.set_window_open("Palette Viewer", false);
             }
         }
+
     }
 
-    fn draw_tile_viewer_window(&mut self, debug_info: &DebugInfo) {
+    fn render_tile_viewer_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Tile Viewer") {
             let mut open = true;
             egui::Window::new("Tile Viewer")
@@ -935,7 +974,7 @@ impl Framework {
                     let image = egui::ColorImage::from_rgba_unmultiplied([128, 1024], &pixels);
                     let texture = self.tile_texture.get_or_insert_with(|| {
                         ui.ctx()
-                            .load_texture("tile_viewer", image.clone(), Default::default())
+                            .load_texture("tile_viewer", egui::ColorImage::default(), Default::default())
                     });
                     texture.set(image, Default::default());
 
@@ -947,9 +986,10 @@ impl Framework {
                 self.gui_state.set_window_open("Tile Viewer", false);
             }
         }
+
     }
 
-    fn draw_sprite_viewer_window(&mut self, debug_info: &DebugInfo) {
+    fn render_sprite_viewer_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Sprite Viewer") {
             let mut open = true;
             egui::Window::new("Sprite Viewer")
@@ -1001,9 +1041,10 @@ impl Framework {
                 self.gui_state.set_window_open("Sprite Viewer", false);
             }
         }
+
     }
 
-    fn draw_scroll_plane_viewer_window(&mut self, debug_info: &DebugInfo) {
+    fn render_scroll_plane_viewer_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Scroll Plane Viewer") {
             let mut open = true;
             egui::Window::new("Scroll Plane Viewer")
@@ -1091,7 +1132,7 @@ impl Framework {
                             &pixels,
                         );
                         let texture = texture_opt.get_or_insert_with(|| {
-                            ui.ctx().load_texture(id, image.clone(), Default::default())
+                            ui.ctx().load_texture(id, egui::ColorImage::default(), Default::default())
                         });
                         texture.set(image, Default::default());
                         egui::ScrollArea::both().id_source(id).show(ui, |ui| {
@@ -1112,9 +1153,10 @@ impl Framework {
                 self.gui_state.set_window_open("Scroll Plane Viewer", false);
             }
         }
+
     }
 
-    fn draw_vdp_memory_hex_window(&mut self, debug_info: &DebugInfo) {
+    fn render_vdp_memory_hex_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("VDP Memory Hex") {
             let mut open = true;
             egui::Window::new("VDP Memory Hex")
@@ -1129,21 +1171,24 @@ impl Framework {
                                 0x10000 / 16,
                                 |ui, row_range| {
                                     egui::Grid::new("vram_grid").show(ui, |ui| {
+                                        let mut label_buffer = String::with_capacity(64);
                                         for row in row_range {
                                             let addr = row * 16;
+                                            label_buffer.clear();
+                                            let _ = write!(&mut label_buffer, "{:04X}:", addr);
                                             ui.label(
-                                                egui::RichText::new(format!("{:04X}:", addr))
-                                                    .monospace(),
+                                                egui::RichText::new(&label_buffer).monospace(),
                                             );
+
+                                            label_buffer.clear();
                                             for i in 0..16 {
-                                                ui.label(
-                                                    egui::RichText::new(format!(
-                                                        "{:02X}",
-                                                        debug_info.vram[addr + i]
-                                                    ))
-                                                    .monospace(),
-                                                );
+                                                label_buffer
+                                                    .push_str(HEX_LOOKUP[debug_info.vram[addr + i] as usize]);
+                                                label_buffer.push(' ');
                                             }
+                                            ui.label(
+                                                egui::RichText::new(&label_buffer).monospace(),
+                                            );
                                             ui.end_row();
                                         }
                                     });
@@ -1152,41 +1197,49 @@ impl Framework {
                     });
                     ui.collapsing("CRAM", |ui| {
                         egui::Grid::new("cram_grid").show(ui, |ui| {
+                            let mut label_buffer = String::with_capacity(64);
                             for row in 0..4 {
                                 let addr = row * 16;
-                                ui.label(egui::RichText::new(format!("{:02X}:", addr)).monospace());
+                                label_buffer.clear();
+                                let _ = write!(&mut label_buffer, "{:02X}:", addr);
+                                ui.label(egui::RichText::new(&label_buffer).monospace());
+
+                                label_buffer.clear();
                                 for i in 0..16 {
                                     let val = if (addr + i) % 2 == 0 {
                                         debug_info.cram_raw[(addr + i) / 2] >> 8
                                     } else {
                                         debug_info.cram_raw[(addr + i) / 2] & 0xFF
                                     } as u8;
-                                    ui.label(
-                                        egui::RichText::new(format!("{:02X}", val)).monospace(),
-                                    );
+                                    label_buffer.push_str(HEX_LOOKUP[val as usize]);
+                                    label_buffer.push(' ');
                                 }
+                                ui.label(egui::RichText::new(&label_buffer).monospace());
                                 ui.end_row();
                             }
                         });
                     });
                     ui.collapsing("VSRAM", |ui| {
                         egui::Grid::new("vsram_grid").show(ui, |ui| {
+                            let mut label_buffer = String::with_capacity(64);
                             for row in 0..5 {
                                 let addr = row * 16;
-                                ui.label(egui::RichText::new(format!("{:02X}:", addr)).monospace());
+                                label_buffer.clear();
+                                let _ = write!(&mut label_buffer, "{:02X}:", addr);
+                                ui.label(egui::RichText::new(&label_buffer).monospace());
+
+                                label_buffer.clear();
                                 for i in 0..16 {
                                     if addr + i < 80 {
-                                        ui.label(
-                                            egui::RichText::new(format!(
-                                                "{:02X}",
-                                                debug_info.vsram[addr + i]
-                                            ))
-                                            .monospace(),
+                                        label_buffer.push_str(
+                                            HEX_LOOKUP[debug_info.vsram[addr + i] as usize],
                                         );
+                                        label_buffer.push(' ');
                                     } else {
-                                        ui.label("  ");
+                                        label_buffer.push_str("   ");
                                     }
                                 }
+                                ui.label(egui::RichText::new(&label_buffer).monospace());
                                 ui.end_row();
                             }
                         });
@@ -1196,9 +1249,10 @@ impl Framework {
                 self.gui_state.set_window_open("VDP Memory Hex", false);
             }
         }
+
     }
 
-    fn draw_memory_viewer_window(&mut self, debug_info: &DebugInfo) {
+    fn render_memory_viewer_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Memory Viewer") {
             let mut open = true;
             egui::Window::new("Memory Viewer")
@@ -1213,8 +1267,7 @@ impl Framework {
                                 0x10000 / 16,
                                 |ui, row_range| {
                                     egui::Grid::new("wram_grid").show(ui, |ui| {
-                                        let mut label_buffer = String::with_capacity(16);
-                                        let mut hex_buffer = String::with_capacity(4);
+                                        let mut label_buffer = String::with_capacity(64);
                                         for row in row_range {
                                             let addr = row * 16;
                                             label_buffer.clear();
@@ -1222,17 +1275,16 @@ impl Framework {
                                             ui.label(
                                                 egui::RichText::new(&label_buffer).monospace(),
                                             );
+
+                                            label_buffer.clear();
                                             for i in 0..16 {
-                                                hex_buffer.clear();
-                                                let _ = write!(
-                                                    &mut hex_buffer,
-                                                    "{:02X}",
-                                                    debug_info.wram[addr + i]
-                                                );
-                                                ui.label(
-                                                    egui::RichText::new(&hex_buffer).monospace(),
-                                                );
+                                                label_buffer
+                                                    .push_str(HEX_LOOKUP[debug_info.wram[addr + i] as usize]);
+                                                label_buffer.push(' ');
                                             }
+                                            ui.label(
+                                                egui::RichText::new(&label_buffer).monospace(),
+                                            );
                                             ui.end_row();
                                         }
                                     });
@@ -1248,8 +1300,7 @@ impl Framework {
                                 0x2000 / 16,
                                 |ui, row_range| {
                                     egui::Grid::new("z80_ram_grid").show(ui, |ui| {
-                                        let mut label_buffer = String::with_capacity(16);
-                                        let mut hex_buffer = String::with_capacity(4);
+                                        let mut label_buffer = String::with_capacity(64);
                                         for row in row_range {
                                             let addr = row * 16;
                                             label_buffer.clear();
@@ -1257,17 +1308,17 @@ impl Framework {
                                             ui.label(
                                                 egui::RichText::new(&label_buffer).monospace(),
                                             );
+
+                                            label_buffer.clear();
                                             for i in 0..16 {
-                                                hex_buffer.clear();
-                                                let _ = write!(
-                                                    &mut hex_buffer,
-                                                    "{:02X}",
-                                                    debug_info.z80_ram[addr + i]
+                                                label_buffer.push_str(
+                                                    HEX_LOOKUP[debug_info.z80_ram[addr + i] as usize],
                                                 );
-                                                ui.label(
-                                                    egui::RichText::new(&hex_buffer).monospace(),
-                                                );
+                                                label_buffer.push(' ');
                                             }
+                                            ui.label(
+                                                egui::RichText::new(&label_buffer).monospace(),
+                                            );
                                             ui.end_row();
                                         }
                                     });
@@ -1279,9 +1330,10 @@ impl Framework {
                 self.gui_state.set_window_open("Memory Viewer", false);
             }
         }
+
     }
 
-    fn draw_sound_chip_visualizer_window(&mut self, debug_info: &DebugInfo) {
+    fn render_sound_chip_visualizer_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Sound Chip Visualizer") {
             let mut open = true;
             egui::Window::new("Sound Chip Visualizer")
@@ -1374,9 +1426,10 @@ impl Framework {
                     .set_window_open("Sound Chip Visualizer", false);
             }
         }
+
     }
 
-    fn draw_audio_channel_waveforms_window(&mut self, debug_info: &DebugInfo) {
+    fn render_audio_channel_waveforms_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Audio Channel Waveforms") {
             let mut open = true;
             egui::Window::new("Audio Channel Waveforms")
@@ -1417,9 +1470,10 @@ impl Framework {
                     .set_window_open("Audio Channel Waveforms", false);
             }
         }
+
     }
 
-    fn draw_controller_viewer_window(&mut self, debug_info: &DebugInfo) {
+    fn render_controller_viewer_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Controller Viewer") {
             let mut open = true;
             egui::Window::new("Controller Viewer")
@@ -1463,9 +1517,10 @@ impl Framework {
                 self.gui_state.set_window_open("Controller Viewer", false);
             }
         }
+
     }
 
-    fn draw_expansion_status_window(&mut self) {
+    fn render_expansion_status_window(&mut self) {
         if self.gui_state.is_window_open("Expansion Status") {
             let mut open = true;
             egui::Window::new("Expansion Status")
@@ -1487,9 +1542,10 @@ impl Framework {
                 self.gui_state.set_window_open("Expansion Status", false);
             }
         }
+
     }
 
-    fn draw_state_browser_window(&mut self, debug_info: &DebugInfo) {
+    fn render_state_browser_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("State Browser") {
             let mut open = true;
             egui::Window::new("State Browser")
@@ -1548,7 +1604,6 @@ impl Framework {
             }
         }
     }
-
     pub fn render(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
@@ -1609,6 +1664,148 @@ impl Framework {
             }
         }
     }
+}
+
+#[cfg(feature = "gui")]
+fn collect_debug_info(emulator: &mut Emulator, force_red: bool, pixels_frame: &mut [u8]) -> DebugInfo {
+    let mut bus = emulator.bus.borrow_mut();
+    if force_red {
+        bus.vdp.framebuffer.fill(0xF800); // Red in RGB565
+    }
+    let m68k_disasm = {
+        let mut disasm = Vec::new();
+        let mut addr = emulator.cpu.pc;
+        for _ in 0..10 {
+            let opcode = bus.read_word(addr);
+            let instr = crate::cpu::decode(opcode);
+            disasm.push((addr, format!("{:?}", instr)));
+            addr += instr.length_words() * 2;
+        }
+        disasm
+    };
+    let z80_disasm = {
+        let mut disasm = Vec::new();
+        let mut addr = emulator.z80.pc;
+        for _ in 0..10 {
+            let byte = bus.read_byte(0xA00000 + addr as u32);
+            disasm.push((addr, format!("{:02X}", byte)));
+            addr += 1;
+        }
+        disasm
+    };
+
+    let mut cram_raw = [0u16; 64];
+    for i in 0..64 {
+        cram_raw[i] = u16::from_be_bytes([
+            bus.vdp.cram[i * 2],
+            bus.vdp.cram[i * 2 + 1],
+        ]);
+    }
+
+    let mut wram = [0u8; 0x10000];
+    wram.copy_from_slice(&bus.work_ram);
+    let mut z80_ram = [0u8; 0x2000];
+    z80_ram.copy_from_slice(&bus.z80_ram);
+
+    let info = DebugInfo {
+        m68k_pc: emulator.cpu.pc,
+        m68k_d: emulator.cpu.d,
+        m68k_a: emulator.cpu.a,
+        m68k_sr: emulator.cpu.sr,
+        m68k_usp: emulator.cpu.usp,
+        m68k_ssp: emulator.cpu.ssp,
+        m68k_disasm,
+        z80_pc: emulator.z80.pc,
+        z80_a: emulator.z80.a,
+        z80_f: emulator.z80.f,
+        z80_b: emulator.z80.b,
+        z80_c: emulator.z80.c,
+        z80_d: emulator.z80.d,
+        z80_e: emulator.z80.e,
+        z80_h: emulator.z80.h,
+        z80_l: emulator.z80.l,
+        z80_ix: emulator.z80.ix,
+        z80_iy: emulator.z80.iy,
+        z80_sp: emulator.z80.sp,
+        z80_i: emulator.z80.i,
+        z80_r: emulator.z80.r,
+        z80_memptr: emulator.z80.memptr,
+        z80_iff1: emulator.z80.iff1,
+        z80_im: emulator.z80.im,
+        z80_disasm,
+        frame_count: emulator.internal_frame_count,
+        vdp_status: bus.vdp.read_status(),
+        vdp_registers: bus.vdp.registers,
+        display_enabled: bus.vdp.display_enabled(),
+        bg_color_index: bus.vdp.registers[7],
+        cram: bus.vdp.cram_cache,
+        cram_raw,
+        vram: bus.vdp.vram,
+        vsram: bus.vdp.vsram,
+        wram,
+        z80_ram,
+        ym2612_regs: bus.apu.fm.registers,
+        psg_tone: bus.apu.psg.tones.clone(),
+        psg_noise: bus.apu.psg.noise.clone(),
+        channel_waveforms: bus.apu.channel_buffers,
+        port1_state: bus.io.port1.state,
+        port1_type: bus.io.port1.controller_type,
+        port2_state: bus.io.port2.state,
+        port2_type: bus.io.port2.controller_type,
+        has_rom: !bus.rom.is_empty(),
+        current_rom_path: emulator.current_rom_path.clone(),
+    };
+    frontend::rgb565_to_rgba8(&bus.vdp.framebuffer, pixels_frame);
+    info
+}
+
+#[cfg(feature = "gui")]
+fn handle_keyboard_input(
+    key_event: &winit::event::KeyEvent,
+    emulator: &mut Emulator,
+    input: &mut crate::input::FrameInput,
+    framework: &mut Framework,
+    record_path: &Option<String>,
+) -> bool {
+    // If egui wants focus, don't process game input
+    if framework.egui_ctx.wants_keyboard_input() {
+        return false;
+    }
+    let pressed = key_event.state == ElementState::Pressed;
+    // 1. Try physical key first
+    let mut handled = false;
+    if let PhysicalKey::Code(keycode) = key_event.physical_key {
+        if keycode == KeyCode::Escape && pressed {
+            println!("Escape pressed, exiting");
+            framework.handle_exit(emulator, record_path);
+            return true;
+        }
+        if let Some((button, _)) =
+            frontend::keycode_to_button(keycode, emulator.input_mapping)
+        {
+            input.p1.set_button(button, pressed);
+            handled = true;
+        }
+    }
+    // 2. Fallback to logical key
+    if !handled {
+        use winit::keyboard::Key;
+        if let Key::Named(named) = key_event.logical_key {
+            let button = match named {
+                winit::keyboard::NamedKey::ArrowUp => Some("up"),
+                winit::keyboard::NamedKey::ArrowDown => Some("down"),
+                winit::keyboard::NamedKey::ArrowLeft => Some("left"),
+                winit::keyboard::NamedKey::ArrowRight => Some("right"),
+                winit::keyboard::NamedKey::Enter => Some("start"),
+                winit::keyboard::NamedKey::Space => Some("mode"),
+                _ => None,
+            };
+            if let Some(btn) = button {
+                input.p1.set_button(btn, pressed);
+            }
+        }
+    }
+    false
 }
 
 #[cfg(feature = "gui")]
@@ -1689,44 +1886,14 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                         WindowEvent::KeyboardInput {
                             event: key_event, ..
                         } => {
-                            // If egui wants focus, don't process game input
-                            if framework.egui_ctx.wants_keyboard_input() {
-                                return;
-                            }
-                            let pressed = key_event.state == ElementState::Pressed;
-                            // 1. Try physical key first
-                            let mut handled = false;
-                            if let PhysicalKey::Code(keycode) = key_event.physical_key {
-                                if keycode == KeyCode::Escape && pressed {
-                                    println!("Escape pressed, exiting");
-                                    framework.handle_exit(&mut emulator, &record_path);
-                                    target.exit();
-                                    return;
-                                }
-                                if let Some((button, _)) =
-                                    frontend::keycode_to_button(keycode, emulator.input_mapping)
-                                {
-                                    input.p1.set_button(button, pressed);
-                                    handled = true;
-                                }
-                            }
-                            // 2. Fallback to logical key
-                            if !handled {
-                                use winit::keyboard::Key;
-                                if let Key::Named(named) = key_event.logical_key {
-                                    let button = match named {
-                                        winit::keyboard::NamedKey::ArrowUp => Some("up"),
-                                        winit::keyboard::NamedKey::ArrowDown => Some("down"),
-                                        winit::keyboard::NamedKey::ArrowLeft => Some("left"),
-                                        winit::keyboard::NamedKey::ArrowRight => Some("right"),
-                                        winit::keyboard::NamedKey::Enter => Some("start"),
-                                        winit::keyboard::NamedKey::Space => Some("mode"),
-                                        _ => None,
-                                    };
-                                    if let Some(btn) = button {
-                                        input.p1.set_button(btn, pressed);
-                                    }
-                                }
+                            if handle_keyboard_input(
+                                &key_event,
+                                &mut emulator,
+                                &mut input,
+                                &mut framework,
+                                &record_path,
+                            ) {
+                                target.exit();
                             }
                         }
                         WindowEvent::Resized(size) => {
@@ -1853,97 +2020,7 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                             emulator.audio_buffer.clear();
 
                             // Collect debug info and render
-                            let debug_info = {
-                                let mut bus = emulator.bus.borrow_mut();
-                                if force_red {
-                                    bus.vdp.framebuffer.fill(0xF800); // Red in RGB565
-                                }
-                                let m68k_disasm = {
-                                    let mut disasm = Vec::new();
-                                    let mut addr = emulator.cpu.pc;
-                                    for _ in 0..10 {
-                                        let opcode = bus.read_word(addr);
-                                        let instr = crate::cpu::decode(opcode);
-                                        disasm.push((addr, format!("{:?}", instr)));
-                                        addr += instr.length_words() * 2;
-                                    }
-                                    disasm
-                                };
-                                let z80_disasm = {
-                                    let mut disasm = Vec::new();
-                                    let mut addr = emulator.z80.pc;
-                                    for _ in 0..10 {
-                                        let byte = bus.read_byte(0xA00000 + addr as u32);
-                                        disasm.push((addr, format!("{:02X}", byte)));
-                                        addr += 1;
-                                    }
-                                    disasm
-                                };
-
-                                let mut cram_raw = [0u16; 64];
-                                for i in 0..64 {
-                                    cram_raw[i] = u16::from_be_bytes([
-                                        bus.vdp.cram[i * 2],
-                                        bus.vdp.cram[i * 2 + 1],
-                                    ]);
-                                }
-
-                                let mut wram = [0u8; 0x10000];
-                                wram.copy_from_slice(&bus.work_ram);
-                                let mut z80_ram = [0u8; 0x2000];
-                                z80_ram.copy_from_slice(&bus.z80_ram);
-
-                                let info = DebugInfo {
-                                    m68k_pc: emulator.cpu.pc,
-                                    m68k_d: emulator.cpu.d,
-                                    m68k_a: emulator.cpu.a,
-                                    m68k_sr: emulator.cpu.sr,
-                                    m68k_usp: emulator.cpu.usp,
-                                    m68k_ssp: emulator.cpu.ssp,
-                                    m68k_disasm,
-                                    z80_pc: emulator.z80.pc,
-                                    z80_a: emulator.z80.a,
-                                    z80_f: emulator.z80.f,
-                                    z80_b: emulator.z80.b,
-                                    z80_c: emulator.z80.c,
-                                    z80_d: emulator.z80.d,
-                                    z80_e: emulator.z80.e,
-                                    z80_h: emulator.z80.h,
-                                    z80_l: emulator.z80.l,
-                                    z80_ix: emulator.z80.ix,
-                                    z80_iy: emulator.z80.iy,
-                                    z80_sp: emulator.z80.sp,
-                                    z80_i: emulator.z80.i,
-                                    z80_r: emulator.z80.r,
-                                    z80_memptr: emulator.z80.memptr,
-                                    z80_iff1: emulator.z80.iff1,
-                                    z80_im: emulator.z80.im,
-                                    z80_disasm,
-                                    frame_count: emulator.internal_frame_count,
-                                    vdp_status: bus.vdp.read_status(),
-                                    vdp_registers: bus.vdp.registers,
-                                    display_enabled: bus.vdp.display_enabled(),
-                                    bg_color_index: bus.vdp.registers[7],
-                                    cram: bus.vdp.cram_cache,
-                                    cram_raw,
-                                    vram: bus.vdp.vram,
-                                    vsram: bus.vdp.vsram,
-                                    wram,
-                                    z80_ram,
-                                    ym2612_regs: bus.apu.fm.registers,
-                                    psg_tone: bus.apu.psg.tones.clone(),
-                                    psg_noise: bus.apu.psg.noise.clone(),
-                                    channel_waveforms: bus.apu.channel_buffers,
-                                    port1_state: bus.io.port1.state,
-                                    port1_type: bus.io.port1.controller_type,
-                                    port2_state: bus.io.port2.state,
-                                    port2_type: bus.io.port2.controller_type,
-                                    has_rom: !bus.rom.is_empty(),
-                                    current_rom_path: emulator.current_rom_path.clone(),
-                                };
-                                frontend::rgb565_to_rgba8(&bus.vdp.framebuffer, pixels.frame_mut());
-                                info
-                            };
+                            let debug_info = collect_debug_info(&mut emulator, force_red, pixels.frame_mut());
 
                             // Update egui
                             framework.prepare(window, &debug_info);
@@ -1979,4 +2056,27 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
             }
         })
         .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(feature = "gilrs")]
+    #[test]
+    fn test_gilrs_initialization_failure() {
+        // Set the environment variable to force initialization failure
+        std::env::set_var("GENTEEL_TEST_FAIL_GILRS", "1");
+
+        let result = init_gilrs();
+
+        // Clean up the environment variable
+        std::env::remove_var("GENTEEL_TEST_FAIL_GILRS");
+
+        // Assert that initialization failed gracefully by returning None
+        assert!(
+            result.is_none(),
+            "Expected Gilrs initialization to fail gracefully when GENTEEL_TEST_FAIL_GILRS is set"
+        );
+    }
 }
