@@ -2,135 +2,6 @@ use super::constants::*;
 use super::Vdp;
 use serde::{Deserialize, Serialize};
 
-impl Vdp {
-    #[allow(clippy::too_many_arguments)]
-    fn composite_line(
-        &mut self,
-        line_offset: usize,
-        bg_color_val: u16,
-        bg_color_idx: u8,
-        buf_b: &[u8; 320],
-        buf_a: &[u8; 320],
-        buf_s: &[u8; 320],
-        sh_enabled: bool,
-        mask_col0: bool,
-    ) {
-        for x in 0..320 {
-            if mask_col0 && x < 8 {
-                self.framebuffer[line_offset + x] = bg_color_val;
-                continue;
-            }
-
-            let b = buf_b[x];
-            let a = buf_a[x];
-            let s = buf_s[x];
-
-            let b_pri = (b & 0x80) != 0;
-            let a_pri = (a & 0x80) != 0;
-            let s_pri = (s & 0x80) != 0;
-
-            let b_col = b & 0x3F;
-            let a_col = a & 0x3F;
-            let s_col = s & 0x3F;
-
-            let b_trans = (b_col & 0x0F) == 0;
-            let a_trans = (a_col & 0x0F) == 0;
-            let s_trans = (s_col & 0x0F) == 0;
-
-            let any_high = b_pri || a_pri || s_pri;
-
-            let mut top_col = bg_color_idx;
-            let mut top_layer = 0; // 0=BG, 1=B, 2=A, 3=S
-
-            if s_pri && !s_trans {
-                top_col = s_col;
-                top_layer = 3;
-            } else if a_pri && !a_trans {
-                top_col = a_col;
-                top_layer = 2;
-            } else if b_pri && !b_trans {
-                top_col = b_col;
-                top_layer = 1;
-            } else if !s_trans {
-                top_col = s_col;
-                top_layer = 3;
-            } else if !a_trans {
-                top_col = a_col;
-                top_layer = 2;
-            } else if !b_trans {
-                top_col = b_col;
-                top_layer = 1;
-            }
-
-            if !sh_enabled {
-                self.framebuffer[line_offset + x] = self.cram_cache[top_col as usize];
-            } else {
-                let mut state = if any_high { 1 } else { 0 };
-
-                if top_layer == 3 {
-                    if s_col == 0x3E {
-                        top_col = bg_color_idx;
-                        if a_pri && !a_trans {
-                            top_col = a_col;
-                        } else if b_pri && !b_trans {
-                            top_col = b_col;
-                        } else if !a_trans {
-                            top_col = a_col;
-                        } else if !b_trans {
-                            top_col = b_col;
-                        }
-                        if state < 2 {
-                            state += 1;
-                        }
-                    } else if s_col == 0x3F {
-                        top_col = bg_color_idx;
-                        if a_pri && !a_trans {
-                            top_col = a_col;
-                        } else if b_pri && !b_trans {
-                            top_col = b_col;
-                        } else if !a_trans {
-                            top_col = a_col;
-                        } else if !b_trans {
-                            top_col = b_col;
-                        }
-                        if state > 0 {
-                            state -= 1;
-                        }
-                    } else if (s_col & 0x0F) == 0x0E {
-                        state = 1;
-                    }
-                }
-
-                let color = self.cram_cache[top_col as usize];
-                let final_color = match state {
-                    0 => {
-                        // Shadow (halve brightness)
-                        let r = ((color >> 11) & 0x1E) >> 1;
-                        let g = ((color >> 6) & 0x1E) >> 1;
-                        let b = ((color >> 1) & 0x1E) >> 1;
-                        (r << 11) | (g << 6) | (b << 1)
-                    }
-                    2 => {
-                        // Highlight (double brightness + offset)
-                        let r = (color >> 11) & 0x1E;
-                        let g = (color >> 6) & 0x1E;
-                        let b = (color >> 1) & 0x1E;
-                        let r2 = r + 0x10;
-                        let r_final = if r2 > 0x1E { 0x1E } else { r2 };
-                        let g2 = g + 0x10;
-                        let g_final = if g2 > 0x1E { 0x1E } else { g2 };
-                        let b2 = b + 0x10;
-                        let b_final = if b2 > 0x1E { 0x1E } else { b2 };
-                        (r_final << 11) | (g_final << 6) | (b_final << 1)
-                    }
-                    _ => color,
-                };
-                self.framebuffer[line_offset + x] = final_color;
-            }
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct SpriteAttributes {
     pub v_pos: u16,
@@ -271,6 +142,136 @@ pub trait RenderOps {
     fn get_cram_color(&self, palette: u8, index: u8) -> u16;
 }
 
+impl Vdp {
+    #[allow(clippy::too_many_arguments)]
+    fn composite_line(
+        &mut self,
+        line_offset: usize,
+        bg_color_idx: u8,
+        bg_color_val: u16,
+        buf_b: &[u8; 320],
+        buf_a: &[u8; 320],
+        buf_s: &[u8; 320],
+    ) {
+        let sh_enabled = (self.registers[REG_MODE4] & 0x08) != 0;
+        let mask_col0 = (self.registers[REG_MODE1] & 0x20) != 0;
+
+        for x in 0..320 {
+            if mask_col0 && x < 8 {
+                self.framebuffer[line_offset + x] = bg_color_val;
+                continue;
+            }
+
+            let b = buf_b[x];
+            let a = buf_a[x];
+            let s = buf_s[x];
+
+            let b_pri = (b & 0x80) != 0;
+            let a_pri = (a & 0x80) != 0;
+            let s_pri = (s & 0x80) != 0;
+
+            let b_col = b & 0x3F;
+            let a_col = a & 0x3F;
+            let s_col = s & 0x3F;
+
+            let b_trans = (b_col & 0x0F) == 0;
+            let a_trans = (a_col & 0x0F) == 0;
+            let s_trans = (s_col & 0x0F) == 0;
+
+            let any_high = b_pri || a_pri || s_pri;
+
+            let mut top_col = bg_color_idx;
+            let mut top_layer = 0; // 0=BG, 1=B, 2=A, 3=S
+
+            if s_pri && !s_trans {
+                top_col = s_col;
+                top_layer = 3;
+            } else if a_pri && !a_trans {
+                top_col = a_col;
+                top_layer = 2;
+            } else if b_pri && !b_trans {
+                top_col = b_col;
+                top_layer = 1;
+            } else if !s_trans {
+                top_col = s_col;
+                top_layer = 3;
+            } else if !a_trans {
+                top_col = a_col;
+                top_layer = 2;
+            } else if !b_trans {
+                top_col = b_col;
+                top_layer = 1;
+            }
+
+            if !sh_enabled {
+                self.framebuffer[line_offset + x] = self.cram_cache[top_col as usize];
+            } else {
+                let mut state = if any_high { 1 } else { 0 };
+
+                if top_layer == 3 {
+                    if s_col == 0x3E {
+                        top_col = bg_color_idx;
+                        if a_pri && !a_trans {
+                            top_col = a_col;
+                        } else if b_pri && !b_trans {
+                            top_col = b_col;
+                        } else if !a_trans {
+                            top_col = a_col;
+                        } else if !b_trans {
+                            top_col = b_col;
+                        }
+                        if state < 2 {
+                            state += 1;
+                        }
+                    } else if s_col == 0x3F {
+                        top_col = bg_color_idx;
+                        if a_pri && !a_trans {
+                            top_col = a_col;
+                        } else if b_pri && !b_trans {
+                            top_col = b_col;
+                        } else if !a_trans {
+                            top_col = a_col;
+                        } else if !b_trans {
+                            top_col = b_col;
+                        }
+                        if state > 0 {
+                            state -= 1;
+                        }
+                    } else if (s_col & 0x0F) == 0x0E {
+                        state = 1;
+                    }
+                }
+
+                let color = self.cram_cache[top_col as usize];
+                let final_color = match state {
+                    0 => {
+                        // Shadow (halve brightness)
+                        let r = ((color >> 11) & 0x1E) >> 1;
+                        let g = ((color >> 6) & 0x1E) >> 1;
+                        let b = ((color >> 1) & 0x1E) >> 1;
+                        (r << 11) | (g << 6) | (b << 1)
+                    }
+                    2 => {
+                        // Highlight (double brightness + offset)
+                        let r = (color >> 11) & 0x1E;
+                        let g = (color >> 6) & 0x1E;
+                        let b = (color >> 1) & 0x1E;
+                        let r2 = r + 0x10;
+                        let r_final = if r2 > 0x1E { 0x1E } else { r2 };
+                        let g2 = g + 0x10;
+                        let g_final = if g2 > 0x1E { 0x1E } else { g2 };
+                        let b2 = b + 0x10;
+                        let b_final = if b2 > 0x1E { 0x1E } else { b2 };
+                        (r_final << 11) | (g_final << 6) | (b_final << 1)
+                    }
+                    _ => color,
+                };
+                self.framebuffer[line_offset + x] = final_color;
+            }
+        }
+    }
+}
+
 fn render_sprite_scanline(
     vram: &[u8],
     line_buf: &mut [u8; 320],
@@ -332,8 +333,7 @@ fn render_sprite_scanline(
                 let screen_x = base_screen_x.wrapping_add(i);
                 let eff_col = if attr.h_flip { 7 - i } else { i };
 
-                // SAFETY: eff_col is 0..8, so index 0..3 is valid. patterns is [u8; 4].
-                let byte = unsafe { *patterns.get_unchecked((eff_col as usize) / 2) };
+                let byte = patterns[(eff_col as usize) / 2];
 
                 let color_idx = if eff_col % 2 == 0 {
                     byte >> 4
@@ -348,8 +348,8 @@ fn render_sprite_scanline(
                     // If we draw in reverse order (sprites.iter().rev()), the highest priority sprite is drawn last and overwrites.
                     // Wait, S/H operators only apply if they are the TOP sprite pixel.
                     // By drawing in reverse order, the last drawn pixel is the top one.
-                    unsafe {
-                        *line_buf.get_unchecked_mut(screen_x as usize) = addr | pri_mask;
+                    if let Some(pixel) = line_buf.get_mut(screen_x as usize) {
+                        *pixel = addr | pri_mask;
                     }
                 }
             }
@@ -362,8 +362,7 @@ fn render_sprite_scanline(
 
                 let eff_col = if attr.h_flip { 7 - i } else { i };
 
-                // SAFETY: eff_col is 0..8, so index 0..3 is valid. patterns is [u8; 4].
-                let byte = unsafe { *patterns.get_unchecked((eff_col as usize) / 2) };
+                let byte = patterns[(eff_col as usize) / 2];
                 let color_idx = if eff_col % 2 == 0 {
                     byte >> 4
                 } else {
@@ -373,8 +372,8 @@ fn render_sprite_scanline(
                 if color_idx != 0 {
                     let addr = ((attr.palette as u8) << 4) | (color_idx as u8);
                     let pri_mask = if attr.priority { 0x80 } else { 0x00 };
-                    unsafe {
-                        *line_buf.get_unchecked_mut(screen_x as usize) = addr | pri_mask;
+                    if let Some(pixel) = line_buf.get_mut(screen_x as usize) {
+                        *pixel = addr | pri_mask;
                     }
                 }
             }
@@ -413,18 +412,13 @@ impl RenderOps for Vdp {
         self.render_plane(true, fetch_line, &mut buf_a);
         self.render_sprites(active_sprites, fetch_line, &mut buf_s);
 
-        let sh_enabled = (self.registers[REG_MODE4] & 0x08) != 0;
-        let mask_col0 = (self.registers[REG_MODE1] & 0x20) != 0;
-
         self.composite_line(
             line_offset,
-            bg_color_val,
             bg_color_idx,
+            bg_color_val,
             &buf_b,
             &buf_a,
             &buf_s,
-            sh_enabled,
-            mask_col0,
         );
     }
 
@@ -656,12 +650,9 @@ impl RenderOps for Vdp {
         plane_w: usize,
     ) -> u16 {
         let nt_entry_addr = base + (tile_v * plane_w + tile_h) * 2;
-        // SAFETY: nt_entry_addr & 0xFFFF guarantees range 0..65535, which is within vram bounds (65536)
-        unsafe {
-            let hi = *self.vram.get_unchecked(nt_entry_addr & 0xFFFF);
-            let lo = *self.vram.get_unchecked((nt_entry_addr + 1) & 0xFFFF);
-            ((hi as u16) << 8) | (lo as u16)
-        }
+        let hi = self.vram[nt_entry_addr & 0xFFFF];
+        let lo = self.vram[(nt_entry_addr + 1) & 0xFFFF];
+        ((hi as u16) << 8) | (lo as u16)
     }
 
     #[inline(always)]
@@ -669,19 +660,9 @@ impl RenderOps for Vdp {
         let row = if v_flip { 7 - pixel_v } else { pixel_v };
         let row_addr = (tile_index as usize * 32) + (row as usize * 4);
         // Mask to 64KB boundary and align to 4 bytes.
-        // We use (row_addr & 0xFFFF) to ensure we wrap within 64KB, and then mask with 0xFFFC
-        // to clear the bottom 2 bits for alignment. 0xFFFC effectively does both, but we make
-        // the wrapping explicit for clarity and safety against potential type width assumptions.
         let addr = (row_addr & 0xFFFF) & 0xFFFC;
 
-        // SAFETY:
-        // 1. addr is explicitly masked to be <= 0xFFFC and 4-byte aligned.
-        // 2. self.vram is [u8; 0x10000].
-        // 3. Reading 4 bytes from addr <= 0xFFFC accesses bytes up to 0xFFFF, which is within bounds.
-        unsafe {
-            let ptr = self.vram.as_ptr().add(addr) as *const u32;
-            ptr.read_unaligned().to_ne_bytes()
-        }
+        self.vram[addr..addr + 4].try_into().unwrap()
     }
 
     fn draw_partial_tile_row(
@@ -788,6 +769,6 @@ impl RenderOps for Vdp {
     #[inline(always)]
     fn get_cram_color(&self, palette: u8, index: u8) -> u16 {
         let addr = ((palette as usize) * 16) + (index as usize);
-        unsafe { *self.cram_cache.get_unchecked(addr & 0x3F) }
+        self.cram_cache[addr & 0x3F]
     }
 }
