@@ -408,6 +408,81 @@ fn test_decode_memory_shifts_others() {
 }
 
 #[test]
+fn test_decode_memory_shifts_missing() {
+    // LSR (A0) - op_type 0b01, dir=false
+    // Opcode: 1110 001 0 11 010 000 (0xE2D0)
+    // Type=LS (01), Dir=R (0), Size=Word (11), Mode=(An) (010), Reg=0
+    check_decode(
+        0xE2D0,
+        Instruction::Bits(BitsInstruction::Lsr {
+            size: Size::Word,
+            dst: AddressingMode::AddressIndirect(0),
+            count: ShiftCount::Immediate(1),
+        }),
+    );
+
+    // LSL (A0) - op_type 0b01, dir=true
+    // Opcode: 1110 001 1 11 010 000 (0xE3D0)
+    // Type=LS (01), Dir=L (1), Size=Word (11), Mode=(An) (010), Reg=0
+    check_decode(
+        0xE3D0,
+        Instruction::Bits(BitsInstruction::Lsl {
+            size: Size::Word,
+            dst: AddressingMode::AddressIndirect(0),
+            count: ShiftCount::Immediate(1),
+        }),
+    );
+
+    // ROXR (A0) - op_type 0b10, dir=false
+    // Opcode: 1110 010 0 11 010 000 (0xE4D0)
+    // Type=ROX (10), Dir=R (0), Size=Word (11), Mode=(An) (010), Reg=0
+    check_decode(
+        0xE4D0,
+        Instruction::Bits(BitsInstruction::Roxr {
+            size: Size::Word,
+            dst: AddressingMode::AddressIndirect(0),
+            count: ShiftCount::Immediate(1),
+        }),
+    );
+
+    // ROXL (A0) - op_type 0b10, dir=true
+    // Opcode: 1110 010 1 11 010 000 (0xE5D0)
+    // Type=ROX (10), Dir=L (1), Size=Word (11), Mode=(An) (010), Reg=0
+    check_decode(
+        0xE5D0,
+        Instruction::Bits(BitsInstruction::Roxl {
+            size: Size::Word,
+            dst: AddressingMode::AddressIndirect(0),
+            count: ShiftCount::Immediate(1),
+        }),
+    );
+
+    // ROR (A0) - op_type 0b11, dir=false
+    // Opcode: 1110 011 0 11 010 000 (0xE6D0)
+    // Type=RO (11), Dir=R (0), Size=Word (11), Mode=(An) (010), Reg=0
+    check_decode(
+        0xE6D0,
+        Instruction::Bits(BitsInstruction::Ror {
+            size: Size::Word,
+            dst: AddressingMode::AddressIndirect(0),
+            count: ShiftCount::Immediate(1),
+        }),
+    );
+
+    // ROL (A0) - op_type 0b11, dir=true
+    // Opcode: 1110 011 1 11 010 000 (0xE7D0)
+    // Type=RO (11), Dir=L (1), Size=Word (11), Mode=(An) (010), Reg=0
+    check_decode(
+        0xE7D0,
+        Instruction::Bits(BitsInstruction::Rol {
+            size: Size::Word,
+            dst: AddressingMode::AddressIndirect(0),
+            count: ShiftCount::Immediate(1),
+        }),
+    );
+}
+
+#[test]
 fn test_decode_memory_shifts_invalid_modes() {
     // ASL D0 - Invalid memory shift (mode 000 is register direct, but size=11 means memory)
     // However, the decoder might handle this.
