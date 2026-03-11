@@ -1669,6 +1669,7 @@ dependencies = [
  "rodio",
  "serde",
  "serde_json",
+ "subtle",
  "winit",
  "zip",
 ]

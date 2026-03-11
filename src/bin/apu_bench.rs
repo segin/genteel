@@ -1,4 +1,4 @@
-use genteel::apu::{Bank, ym2612::Ym2612};
+use genteel::apu::ym2612::{Bank, Ym2612};
 use std::time::Instant;
 
 fn main() {
