@@ -221,13 +221,22 @@ mod tests {
     #[test]
     fn test_wav_writer_new_error() {
         // Test with an invalid path that should fail to create a file
-        #[cfg(unix)]
-        let invalid_path = "/invalid/path/that/does/not/exist/test_wav_writer_new_error.wav";
-        #[cfg(windows)]
-        let invalid_path =
-            "Z:\\invalid\\path\\that\\does\\not\\exist\\test_wav_writer_new_error.wav";
+        let invalid_path = "/this_directory_does_not_exist/test.wav";
 
         let result = WavWriter::new(invalid_path, 44100, 2);
+        match result {
+            Err(e) => assert_eq!(e.kind(), std::io::ErrorKind::NotFound),
+            _ => panic!("Expected error"),
+        }
+    }
+
+    #[test]
+    fn test_wav_writer_new_directory_error() {
+        // Test with a path that is an existing directory
+        let temp_dir = std::env::temp_dir();
+        let path_str = temp_dir.to_str().unwrap();
+
+        let result = WavWriter::new(path_str, 44100, 2);
         assert!(result.is_err());
     }
 

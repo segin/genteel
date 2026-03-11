@@ -150,4 +150,56 @@ mod tests {
         apu.write_fm_data(Bank::Bank0, 0xF0);
         assert_eq!(apu.fm.registers[0][0x28], 0xF0);
     }
+
+    #[test]
+    fn test_read_fm_status() {
+        let mut apu = Apu::new();
+        // Initial status should be 0
+        assert_eq!(apu.read_fm_status(), 0);
+
+        // Writing FM data should set the busy bit (bit 7)
+        apu.write_fm_data(Bank::Bank0, 0);
+        assert!((apu.read_fm_status() & 0x80) != 0);
+
+        // Tick cycles to clear busy bit (busy is 224, mclks is cycles * 7, 32 cycles should clear it)
+        apu.tick_cycles(32);
+        assert_eq!(apu.read_fm_status() & 0x80, 0);
+
+        // Test Timer A
+        // Timer A is set via 0x24 (bits 9-2) and 0x25 (bits 1-0)
+        // Set it to a very small value to trigger quickly
+        apu.write_fm_addr(Bank::Bank0, 0x24);
+        apu.write_fm_data(Bank::Bank0, 0xFF);
+        apu.write_fm_addr(Bank::Bank0, 0x25);
+        apu.write_fm_data(Bank::Bank0, 0x03); // Max value is 1023 (0x3FF)
+
+        // Enable and trigger timer A (bit 0 = enable, bit 2 = load bit)
+        apu.write_fm_addr(Bank::Bank0, 0x27);
+        apu.write_fm_data(Bank::Bank0, 0x05);
+
+        // After some cycles, bit 0 should be set
+        // Period is (1024 - 1023) * 72 = 72 master clocks.
+        // tick_cycles(20) should be enough (20 * 7 = 140 master clocks)
+        apu.tick_cycles(20);
+        assert!((apu.read_fm_status() & 0x01) != 0);
+
+        // Test Timer B
+        // Reset status (YM2612 reset status bits via register 0x27 bits 4 and 5)
+        apu.write_fm_addr(Bank::Bank0, 0x27);
+        apu.write_fm_data(Bank::Bank0, 0x30);
+        assert_eq!(apu.read_fm_status() & 0x03, 0);
+
+        // Set Timer B to max value (255)
+        apu.write_fm_addr(Bank::Bank0, 0x26);
+        apu.write_fm_data(Bank::Bank0, 0xFF);
+
+        // Enable and trigger Timer B (bit 1 = enable, bit 3 = load bit)
+        apu.write_fm_addr(Bank::Bank0, 0x27);
+        apu.write_fm_data(Bank::Bank0, 0x0A);
+
+        // Period is (256 - 255) * 1152 = 1152 master clocks.
+        // tick_cycles(200) should be enough (200 * 7 = 1400 master clocks)
+        apu.tick_cycles(200);
+        assert!((apu.read_fm_status() & 0x02) != 0);
+    }
 }
