@@ -1011,7 +1011,7 @@ mod tests {
     }
 
     #[test]
-    fn test_exec_divs_remainder() {
+    fn test_exec_divs_remainder_check() {
         let (mut cpu, mut memory) = create_test_setup();
 
         // D0 = 7, D1 = 2
@@ -1032,7 +1032,7 @@ mod tests {
     }
 
     #[test]
-    fn test_exec_divs_negative_remainder() {
+    fn test_exec_divs_negative_remainder_check() {
         let (mut cpu, mut memory) = create_test_setup();
 
         // D0 = -7 (0xFFFFFFF9), D1 = 2
