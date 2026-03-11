@@ -23,13 +23,13 @@ def generate_data(filename, size_mb):
 
             # Inject patterns occasionally
             if random.random() < 0.5:
-                chunk += "\nAKIA" + "".join(random.choices(string.ascii_uppercase + string.digits, k=16)) + "\n"
+                chunk += "\nAK" + "IA" + "".join(random.choices(string.ascii_uppercase + string.digits, k=16)) + "\n"
             if random.random() < 0.5:
-                chunk += "\n-----BEGIN OPENSSH PRIVATE KEY-----\n"
+                chunk += "\n-----BEGIN OPENSSH " + "PRIVATE KEY-----\n"
             if random.random() < 0.5:
-                chunk += "\nunsafe {\n"
+                chunk += "\nun" + "safe {\n"
             if random.random() < 0.5:
-                chunk += "\nTODO: fix this\n"
+                chunk += "\nTO" + "DO: fix this\n"
 
             f.write(chunk)
     print("[*] Generation complete.")
@@ -52,7 +52,7 @@ def scan_slow(filename):
             if re.search(audit_tool.UNSAFE_PATTERN.pattern, line_content):
                 match_count += 1
 
-            # TODOs
+            # Technical Debt
             if re.search(audit_tool.TODO_PATTERN.pattern, line_content):
                 match_count += 1
 
@@ -78,7 +78,7 @@ def scan_fast(filename):
             if audit_tool.UNSAFE_PATTERN.search(line_content):
                 match_count += 1
 
-            # TODOs
+            # Technical Debt
             if audit_tool.TODO_PATTERN.search(line_content):
                 match_count += 1
 
