@@ -19,7 +19,7 @@ fn regression_daa_after_sub() {
     assert_eq!(c.a, 0x25);
 }
 
-// Bug: DJNZ not decrementing B before the test
+// Z80 hardware edge case: DJNZ not decrementing B before the test
 #[test]
 fn regression_djnz_decrements_first() {
     // Case 1: B=1 -> B=0, Jump NOT taken
