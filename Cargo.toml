@@ -26,8 +26,6 @@ cpal = { version = "0.15", optional = true }
 rodio = { version = "0.17", optional = true }
 gilrs = { version = "0.10", optional = true }
 rand = "0.10.0"
-
-# GUI
 egui = { version = "0.26", optional = true }
 egui-winit = { version = "0.26", optional = true, default-features = false, features = ["links"] }
 egui-wgpu = { version = "0.26", optional = true }
