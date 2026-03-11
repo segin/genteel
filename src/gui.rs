@@ -1591,6 +1591,148 @@ impl Framework {
 }
 
 #[cfg(feature = "gui")]
+fn collect_debug_info(emulator: &mut Emulator, force_red: bool, pixels_frame: &mut [u8]) -> DebugInfo {
+    let mut bus = emulator.bus.borrow_mut();
+    if force_red {
+        bus.vdp.framebuffer.fill(0xF800); // Red in RGB565
+    }
+    let m68k_disasm = {
+        let mut disasm = Vec::new();
+        let mut addr = emulator.cpu.pc;
+        for _ in 0..10 {
+            let opcode = bus.read_word(addr);
+            let instr = crate::cpu::decode(opcode);
+            disasm.push((addr, format!("{:?}", instr)));
+            addr += instr.length_words() * 2;
+        }
+        disasm
+    };
+    let z80_disasm = {
+        let mut disasm = Vec::new();
+        let mut addr = emulator.z80.pc;
+        for _ in 0..10 {
+            let byte = bus.read_byte(0xA00000 + addr as u32);
+            disasm.push((addr, format!("{:02X}", byte)));
+            addr += 1;
+        }
+        disasm
+    };
+
+    let mut cram_raw = [0u16; 64];
+    for i in 0..64 {
+        cram_raw[i] = u16::from_be_bytes([
+            bus.vdp.cram[i * 2],
+            bus.vdp.cram[i * 2 + 1],
+        ]);
+    }
+
+    let mut wram = [0u8; 0x10000];
+    wram.copy_from_slice(&bus.work_ram);
+    let mut z80_ram = [0u8; 0x2000];
+    z80_ram.copy_from_slice(&bus.z80_ram);
+
+    let info = DebugInfo {
+        m68k_pc: emulator.cpu.pc,
+        m68k_d: emulator.cpu.d,
+        m68k_a: emulator.cpu.a,
+        m68k_sr: emulator.cpu.sr,
+        m68k_usp: emulator.cpu.usp,
+        m68k_ssp: emulator.cpu.ssp,
+        m68k_disasm,
+        z80_pc: emulator.z80.pc,
+        z80_a: emulator.z80.a,
+        z80_f: emulator.z80.f,
+        z80_b: emulator.z80.b,
+        z80_c: emulator.z80.c,
+        z80_d: emulator.z80.d,
+        z80_e: emulator.z80.e,
+        z80_h: emulator.z80.h,
+        z80_l: emulator.z80.l,
+        z80_ix: emulator.z80.ix,
+        z80_iy: emulator.z80.iy,
+        z80_sp: emulator.z80.sp,
+        z80_i: emulator.z80.i,
+        z80_r: emulator.z80.r,
+        z80_memptr: emulator.z80.memptr,
+        z80_iff1: emulator.z80.iff1,
+        z80_im: emulator.z80.im,
+        z80_disasm,
+        frame_count: emulator.internal_frame_count,
+        vdp_status: bus.vdp.read_status(),
+        vdp_registers: bus.vdp.registers,
+        display_enabled: bus.vdp.display_enabled(),
+        bg_color_index: bus.vdp.registers[7],
+        cram: bus.vdp.cram_cache,
+        cram_raw,
+        vram: bus.vdp.vram,
+        vsram: bus.vdp.vsram,
+        wram,
+        z80_ram,
+        ym2612_regs: bus.apu.fm.registers,
+        psg_tone: bus.apu.psg.tones.clone(),
+        psg_noise: bus.apu.psg.noise.clone(),
+        channel_waveforms: bus.apu.channel_buffers,
+        port1_state: bus.io.port1.state,
+        port1_type: bus.io.port1.controller_type,
+        port2_state: bus.io.port2.state,
+        port2_type: bus.io.port2.controller_type,
+        has_rom: !bus.rom.is_empty(),
+        current_rom_path: emulator.current_rom_path.clone(),
+    };
+    frontend::rgb565_to_rgba8(&bus.vdp.framebuffer, pixels_frame);
+    info
+}
+
+#[cfg(feature = "gui")]
+fn handle_keyboard_input(
+    key_event: &winit::event::KeyEvent,
+    emulator: &mut Emulator,
+    input: &mut crate::input::FrameInput,
+    framework: &mut Framework,
+    record_path: &Option<String>,
+) -> bool {
+    // If egui wants focus, don't process game input
+    if framework.egui_ctx.wants_keyboard_input() {
+        return false;
+    }
+    let pressed = key_event.state == ElementState::Pressed;
+    // 1. Try physical key first
+    let mut handled = false;
+    if let PhysicalKey::Code(keycode) = key_event.physical_key {
+        if keycode == KeyCode::Escape && pressed {
+            println!("Escape pressed, exiting");
+            framework.handle_exit(emulator, record_path);
+            return true;
+        }
+        if let Some((button, _)) =
+            frontend::keycode_to_button(keycode, emulator.input_mapping)
+        {
+            input.p1.set_button(button, pressed);
+            handled = true;
+        }
+    }
+    // 2. Fallback to logical key
+    if !handled {
+        use winit::keyboard::Key;
+        if let Key::Named(named) = key_event.logical_key {
+            let button = match named {
+                winit::keyboard::NamedKey::ArrowUp => Some("up"),
+                winit::keyboard::NamedKey::ArrowDown => Some("down"),
+                winit::keyboard::NamedKey::ArrowLeft => Some("left"),
+                winit::keyboard::NamedKey::ArrowRight => Some("right"),
+                winit::keyboard::NamedKey::Enter => Some("start"),
+                winit::keyboard::NamedKey::Space => Some("mode"),
+                _ => None,
+            };
+            if let Some(btn) = button {
+                input.p1.set_button(btn, pressed);
+            }
+        }
+    }
+    false
+}
+
+#[cfg(feature = "gui")]
 pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), String> {
     if emulator.input_mapping == InputMapping::Original {
         println!("Controls: Arrow keys=D-pad, Z=A, X=B, C=C, Enter=Start");
@@ -1668,44 +1810,14 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                         WindowEvent::KeyboardInput {
                             event: key_event, ..
                         } => {
-                            // If egui wants focus, don't process game input
-                            if framework.egui_ctx.wants_keyboard_input() {
-                                return;
-                            }
-                            let pressed = key_event.state == ElementState::Pressed;
-                            // 1. Try physical key first
-                            let mut handled = false;
-                            if let PhysicalKey::Code(keycode) = key_event.physical_key {
-                                if keycode == KeyCode::Escape && pressed {
-                                    println!("Escape pressed, exiting");
-                                    framework.handle_exit(&mut emulator, &record_path);
-                                    target.exit();
-                                    return;
-                                }
-                                if let Some((button, _)) =
-                                    frontend::keycode_to_button(keycode, emulator.input_mapping)
-                                {
-                                    input.p1.set_button(button, pressed);
-                                    handled = true;
-                                }
-                            }
-                            // 2. Fallback to logical key
-                            if !handled {
-                                use winit::keyboard::Key;
-                                if let Key::Named(named) = key_event.logical_key {
-                                    let button = match named {
-                                        winit::keyboard::NamedKey::ArrowUp => Some("up"),
-                                        winit::keyboard::NamedKey::ArrowDown => Some("down"),
-                                        winit::keyboard::NamedKey::ArrowLeft => Some("left"),
-                                        winit::keyboard::NamedKey::ArrowRight => Some("right"),
-                                        winit::keyboard::NamedKey::Enter => Some("start"),
-                                        winit::keyboard::NamedKey::Space => Some("mode"),
-                                        _ => None,
-                                    };
-                                    if let Some(btn) = button {
-                                        input.p1.set_button(btn, pressed);
-                                    }
-                                }
+                            if handle_keyboard_input(
+                                &key_event,
+                                &mut emulator,
+                                &mut input,
+                                &mut framework,
+                                &record_path,
+                            ) {
+                                target.exit();
                             }
                         }
                         WindowEvent::Resized(size) => {
@@ -1832,97 +1944,7 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                             emulator.audio_buffer.clear();
 
                             // Collect debug info and render
-                            let debug_info = {
-                                let mut bus = emulator.bus.borrow_mut();
-                                if force_red {
-                                    bus.vdp.framebuffer.fill(0xF800); // Red in RGB565
-                                }
-                                let m68k_disasm = {
-                                    let mut disasm = Vec::new();
-                                    let mut addr = emulator.cpu.pc;
-                                    for _ in 0..10 {
-                                        let opcode = bus.read_word(addr);
-                                        let instr = crate::cpu::decode(opcode);
-                                        disasm.push((addr, format!("{:?}", instr)));
-                                        addr += instr.length_words() * 2;
-                                    }
-                                    disasm
-                                };
-                                let z80_disasm = {
-                                    let mut disasm = Vec::new();
-                                    let mut addr = emulator.z80.pc;
-                                    for _ in 0..10 {
-                                        let byte = bus.read_byte(0xA00000 + addr as u32);
-                                        disasm.push((addr, format!("{:02X}", byte)));
-                                        addr += 1;
-                                    }
-                                    disasm
-                                };
-
-                                let mut cram_raw = [0u16; 64];
-                                for i in 0..64 {
-                                    cram_raw[i] = u16::from_be_bytes([
-                                        bus.vdp.cram[i * 2],
-                                        bus.vdp.cram[i * 2 + 1],
-                                    ]);
-                                }
-
-                                let mut wram = [0u8; 0x10000];
-                                wram.copy_from_slice(&bus.work_ram);
-                                let mut z80_ram = [0u8; 0x2000];
-                                z80_ram.copy_from_slice(&bus.z80_ram);
-
-                                let info = DebugInfo {
-                                    m68k_pc: emulator.cpu.pc,
-                                    m68k_d: emulator.cpu.d,
-                                    m68k_a: emulator.cpu.a,
-                                    m68k_sr: emulator.cpu.sr,
-                                    m68k_usp: emulator.cpu.usp,
-                                    m68k_ssp: emulator.cpu.ssp,
-                                    m68k_disasm,
-                                    z80_pc: emulator.z80.pc,
-                                    z80_a: emulator.z80.a,
-                                    z80_f: emulator.z80.f,
-                                    z80_b: emulator.z80.b,
-                                    z80_c: emulator.z80.c,
-                                    z80_d: emulator.z80.d,
-                                    z80_e: emulator.z80.e,
-                                    z80_h: emulator.z80.h,
-                                    z80_l: emulator.z80.l,
-                                    z80_ix: emulator.z80.ix,
-                                    z80_iy: emulator.z80.iy,
-                                    z80_sp: emulator.z80.sp,
-                                    z80_i: emulator.z80.i,
-                                    z80_r: emulator.z80.r,
-                                    z80_memptr: emulator.z80.memptr,
-                                    z80_iff1: emulator.z80.iff1,
-                                    z80_im: emulator.z80.im,
-                                    z80_disasm,
-                                    frame_count: emulator.internal_frame_count,
-                                    vdp_status: bus.vdp.read_status(),
-                                    vdp_registers: bus.vdp.registers,
-                                    display_enabled: bus.vdp.display_enabled(),
-                                    bg_color_index: bus.vdp.registers[7],
-                                    cram: bus.vdp.cram_cache,
-                                    cram_raw,
-                                    vram: bus.vdp.vram,
-                                    vsram: bus.vdp.vsram,
-                                    wram,
-                                    z80_ram,
-                                    ym2612_regs: bus.apu.fm.registers,
-                                    psg_tone: bus.apu.psg.tones.clone(),
-                                    psg_noise: bus.apu.psg.noise.clone(),
-                                    channel_waveforms: bus.apu.channel_buffers,
-                                    port1_state: bus.io.port1.state,
-                                    port1_type: bus.io.port1.controller_type,
-                                    port2_state: bus.io.port2.state,
-                                    port2_type: bus.io.port2.controller_type,
-                                    has_rom: !bus.rom.is_empty(),
-                                    current_rom_path: emulator.current_rom_path.clone(),
-                                };
-                                frontend::rgb565_to_rgba8(&bus.vdp.framebuffer, pixels.frame_mut());
-                                info
-                            };
+                            let debug_info = collect_debug_info(&mut emulator, force_red, pixels.frame_mut());
 
                             // Update egui
                             framework.prepare(window, &debug_info);
