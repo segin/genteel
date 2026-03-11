@@ -24,7 +24,8 @@ static KERNEL: std::sync::LazyLock<[i32; KERNEL_SIZE * RES]> = std::sync::LazyLo
             let a = 0.42;
             let b = 0.50;
             let c = 0.08;
-            let window = a - b * (2.0 * std::f64::consts::PI * i as f64 / (KERNEL_SIZE * RES) as f64).cos()
+            let window = a - b
+                * (2.0 * std::f64::consts::PI * i as f64 / (KERNEL_SIZE * RES) as f64).cos()
                 + c * (4.0 * std::f64::consts::PI * i as f64 / (KERNEL_SIZE * RES) as f64).cos();
             kernel[i] = (sinc * window * 32767.0) as i32;
         }
@@ -40,8 +41,10 @@ pub struct BlipBuf {
     sample_rate: u32,
     /// Source clock rate (e.g. 53267 for FM, 3579545 for PSG)
     clock_rate: u32,
-    /// Time of the last delta added (in source clocks)
+    /// Time of the last sample generated (in source clocks)
     last_clock: u64,
+    /// Fractional clock remainder
+    clock_ptr: f64,
     /// Current DC offset
     accumulator: i32,
 }
@@ -53,6 +56,7 @@ impl BlipBuf {
             sample_rate,
             clock_rate,
             last_clock: 0,
+            clock_ptr: 0.0,
             accumulator: 0,
         }
     }
@@ -66,23 +70,20 @@ impl BlipBuf {
     pub fn clear(&mut self) {
         self.buffer.fill(0);
         self.accumulator = 0;
-        self.last_clock = 0;
     }
 
     /// Add a delta (amplitude change) at a specific clock time
     pub fn add_delta(&mut self, clock: u64, delta: i32) {
-        if delta == 0 { return; }
-        
-        // Safety: Ensure clock never goes backwards relative to last delta
-        let safe_clock = std::cmp::max(clock, self.last_clock);
-        self.last_clock = safe_clock;
+        if delta == 0 {
+            return;
+        }
 
-        let time_in_samples = (safe_clock as f64 * self.sample_rate as f64) / self.clock_rate as f64;
+        let time_in_samples = (clock as f64 * self.sample_rate as f64) / self.clock_rate as f64;
         let sample_idx = time_in_samples as usize;
         let fract = time_in_samples - sample_idx as f64;
 
         if sample_idx + KERNEL_SIZE >= self.buffer.len() {
-            // Out of bounds - should be read more frequently
+            // Should not happen if read frequently, but safety first
             return;
         }
 
@@ -92,7 +93,7 @@ impl BlipBuf {
             let kernel_val = KERNEL[i * RES + offset];
             self.buffer[sample_idx + i] += (delta * kernel_val) >> 15;
         }
-        
+
         // Update DC accumulator for integration
         self.accumulator += delta;
     }
@@ -100,8 +101,7 @@ impl BlipBuf {
     /// Read generated samples into a buffer
     pub fn read_samples(&mut self, samples: &mut [i16]) -> usize {
         let count = samples.len().min(self.buffer.len() - KERNEL_SIZE);
-        if count == 0 { return 0; }
-        
+
         let mut current = 0;
         for i in 0..count {
             current += self.buffer[i];
@@ -111,7 +111,7 @@ impl BlipBuf {
 
         // Shift remaining data (the "tails" of the kernels)
         self.buffer.rotate_left(count);
-        
+
         count
     }
 

@@ -1,5 +1,5 @@
-use std::time::Instant;
 use std::fmt::Write;
+use std::time::Instant;
 
 fn main() {
     let iterations = 10_000_000;
@@ -30,7 +30,10 @@ fn main() {
     println!("pre-allocated buf time: {:?}", duration2);
 
     // Test 3: static array
-    const SLOT_LABELS: [&str; 10] = ["Slot 0", "Slot 1", "Slot 2", "Slot 3", "Slot 4", "Slot 5", "Slot 6", "Slot 7", "Slot 8", "Slot 9"];
+    const SLOT_LABELS: [&str; 10] = [
+        "Slot 0", "Slot 1", "Slot 2", "Slot 3", "Slot 4", "Slot 5", "Slot 6", "Slot 7", "Slot 8",
+        "Slot 9",
+    ];
     let start = Instant::now();
     for _ in 0..iterations {
         for slot in 0..10 {

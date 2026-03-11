@@ -1,41 +1,49 @@
+//! Audio Processing Unit (APU)
+//!
+//! Refactored to use band-limited synthesis for both FM and PSG.
+
 pub mod blip_buf;
 pub mod psg;
 pub mod ym2612;
 
-use crate::apu::psg::Psg;
-use crate::apu::ym2612::Ym2612;
+#[cfg(test)]
+mod tests_psg_expansion;
+#[cfg(test)]
+mod tests_ym2612_expansion;
+
+use crate::debugger::Debuggable;
+use psg::Psg;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use crate::debugger::Debuggable;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Bank {
-    Bank0 = 0,
-    Bank1 = 1,
-}
+use ym2612::{Bank, Ym2612};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Apu {
-    pub fm: Ym2612,
     pub psg: Psg,
-    /// Visualize channel outputs [0-5: FM, 6-9: PSG]
-    pub channel_buffers: Vec<Vec<i16>>,
+    pub fm: Ym2612,
+    #[serde(skip, default = "default_channel_buffers")]
+    pub channel_buffers: [[i16; 128]; 10],
+    #[serde(skip)]
     pub buffer_idx: usize,
+}
+
+fn default_channel_buffers() -> [[i16; 128]; 10] {
+    [[0i16; 128]; 10]
 }
 
 impl Apu {
     pub fn new() -> Self {
         Self {
-            fm: Ym2612::new(),
             psg: Psg::new(),
-            channel_buffers: vec![vec![0; 128]; 10],
+            fm: Ym2612::new(),
+            channel_buffers: [[0; 128]; 10],
             buffer_idx: 0,
         }
     }
 
     pub fn reset(&mut self) {
-        self.fm.reset();
         self.psg.reset();
+        self.fm.reset();
     }
 
     pub fn write_psg(&mut self, data: u8) {
@@ -56,31 +64,40 @@ impl Apu {
 
     pub fn tick_cycles(&mut self, m68k_cycles: u32) {
         self.fm.step(m68k_cycles);
-        self.psg.step_cycles(m68k_cycles);
+        let psg_cycles = m68k_cycles / 2;
+        self.psg.step_cycles(psg_cycles);
     }
 
     /// Attempts to generate a mixed audio sample pair.
+    /// Returns `Some((left, right))` if a sample is available in the blip buffers,
+    /// otherwise returns `None`.
     pub fn generate_sample(&mut self) -> Option<(i16, i16)> {
-        // Try to read from FM blip buffers
         let mut fm_l = [0i16; 1];
         let mut fm_r = [0i16; 1];
-        
+        let mut psg_buf = [0i16; 1];
+
+        // We check FM left as the primary clock
         if self.fm.blip_l.read_samples(&mut fm_l) > 0 {
             self.fm.blip_r.read_samples(&mut fm_r);
-            self.fm.total_clocks = 0;
+            self.psg.blip.read_samples(&mut psg_buf);
 
-            // PSG should ideally be synced to FM sample rate
-            let psg_val = self.psg.current_sample();
+            let fm_l_val = fm_l[0];
+            let fm_r_val = fm_r[0];
+            let psg_val = psg_buf[0];
 
-            // Update visualization every 128 samples approx
+            // Update visualization
             let fm_samples = self.fm.generate_channel_samples();
             let psg_samples = self.psg.get_channel_samples();
-            for i in 0..6 { self.channel_buffers[i][self.buffer_idx] = fm_samples[i]; }
-            for i in 0..4 { self.channel_buffers[6 + i][self.buffer_idx] = psg_samples[i]; }
+            for i in 0..6 {
+                self.channel_buffers[i][self.buffer_idx] = fm_samples[i];
+            }
+            for i in 0..4 {
+                self.channel_buffers[6 + i][self.buffer_idx] = psg_samples[i];
+            }
             self.buffer_idx = (self.buffer_idx + 1) % 128;
 
-            let left = (fm_l[0] as i32 + psg_val as i32).clamp(-32768, 32767) as i16;
-            let right = (fm_r[0] as i32 + psg_val as i32).clamp(-32768, 32767) as i16;
+            let left = (fm_l_val as i32 + psg_val as i32).clamp(-32768, 32767) as i16;
+            let right = (fm_r_val as i32 + psg_val as i32).clamp(-32768, 32767) as i16;
 
             Some((left, right))
         } else {
@@ -132,5 +149,57 @@ mod tests {
         apu.write_fm_addr(Bank::Bank0, 0x28);
         apu.write_fm_data(Bank::Bank0, 0xF0);
         assert_eq!(apu.fm.registers[0][0x28], 0xF0);
+    }
+
+    #[test]
+    fn test_read_fm_status() {
+        let mut apu = Apu::new();
+        // Initial status should be 0
+        assert_eq!(apu.read_fm_status(), 0);
+
+        // Writing FM data should set the busy bit (bit 7)
+        apu.write_fm_data(Bank::Bank0, 0);
+        assert!((apu.read_fm_status() & 0x80) != 0);
+
+        // Tick cycles to clear busy bit (busy is 224, mclks is cycles * 7, 32 cycles should clear it)
+        apu.tick_cycles(32);
+        assert_eq!(apu.read_fm_status() & 0x80, 0);
+
+        // Test Timer A
+        // Timer A is set via 0x24 (bits 9-2) and 0x25 (bits 1-0)
+        // Set it to a very small value to trigger quickly
+        apu.write_fm_addr(Bank::Bank0, 0x24);
+        apu.write_fm_data(Bank::Bank0, 0xFF);
+        apu.write_fm_addr(Bank::Bank0, 0x25);
+        apu.write_fm_data(Bank::Bank0, 0x03); // Max value is 1023 (0x3FF)
+
+        // Enable and trigger timer A (bit 0 = enable, bit 2 = load bit)
+        apu.write_fm_addr(Bank::Bank0, 0x27);
+        apu.write_fm_data(Bank::Bank0, 0x05);
+
+        // After some cycles, bit 0 should be set
+        // Period is (1024 - 1023) * 72 = 72 master clocks.
+        // tick_cycles(20) should be enough (20 * 7 = 140 master clocks)
+        apu.tick_cycles(20);
+        assert!((apu.read_fm_status() & 0x01) != 0);
+
+        // Test Timer B
+        // Reset status (YM2612 reset status bits via register 0x27 bits 4 and 5)
+        apu.write_fm_addr(Bank::Bank0, 0x27);
+        apu.write_fm_data(Bank::Bank0, 0x30);
+        assert_eq!(apu.read_fm_status() & 0x03, 0);
+
+        // Set Timer B to max value (255)
+        apu.write_fm_addr(Bank::Bank0, 0x26);
+        apu.write_fm_data(Bank::Bank0, 0xFF);
+
+        // Enable and trigger Timer B (bit 1 = enable, bit 3 = load bit)
+        apu.write_fm_addr(Bank::Bank0, 0x27);
+        apu.write_fm_data(Bank::Bank0, 0x0A);
+
+        // Period is (256 - 255) * 1152 = 1152 master clocks.
+        // tick_cycles(200) should be enough (200 * 7 = 1400 master clocks)
+        apu.tick_cycles(200);
+        assert!((apu.read_fm_status() & 0x02) != 0);
     }
 }

@@ -308,25 +308,51 @@ mod tests {
         // Comprehensive list of commonly unmapped keys to ensure they don't accidentally trigger actions
         let unmapped_keys = [
             // Unmapped letters (B, E, F, G, H, M, N, P, R, T, V, X/Y/Z depending on mapping)
-            KeyCode::KeyB, KeyCode::KeyE, KeyCode::KeyF, KeyCode::KeyG,
-            KeyCode::KeyH, KeyCode::KeyM, KeyCode::KeyN, KeyCode::KeyP,
-            KeyCode::KeyR, KeyCode::KeyT, KeyCode::KeyV,
-
+            KeyCode::KeyB,
+            KeyCode::KeyE,
+            KeyCode::KeyF,
+            KeyCode::KeyG,
+            KeyCode::KeyH,
+            KeyCode::KeyM,
+            KeyCode::KeyN,
+            KeyCode::KeyP,
+            KeyCode::KeyR,
+            KeyCode::KeyT,
+            KeyCode::KeyV,
             // Digits
-            KeyCode::Digit0, KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3,
-            KeyCode::Digit4, KeyCode::Digit5, KeyCode::Digit6, KeyCode::Digit7,
-            KeyCode::Digit8, KeyCode::Digit9,
-
+            KeyCode::Digit0,
+            KeyCode::Digit1,
+            KeyCode::Digit2,
+            KeyCode::Digit3,
+            KeyCode::Digit4,
+            KeyCode::Digit5,
+            KeyCode::Digit6,
+            KeyCode::Digit7,
+            KeyCode::Digit8,
+            KeyCode::Digit9,
             // Function keys
-            KeyCode::F1, KeyCode::F2, KeyCode::F3, KeyCode::F4,
-            KeyCode::F5, KeyCode::F6, KeyCode::F7, KeyCode::F8,
-            KeyCode::F9, KeyCode::F10, KeyCode::F11, KeyCode::F12,
-
+            KeyCode::F1,
+            KeyCode::F2,
+            KeyCode::F3,
+            KeyCode::F4,
+            KeyCode::F5,
+            KeyCode::F6,
+            KeyCode::F7,
+            KeyCode::F8,
+            KeyCode::F9,
+            KeyCode::F10,
+            KeyCode::F11,
+            KeyCode::F12,
             // Special keys
-            KeyCode::Escape, KeyCode::ShiftLeft, KeyCode::ShiftRight,
-            KeyCode::ControlLeft, KeyCode::ControlRight,
-            KeyCode::AltLeft, KeyCode::AltRight,
-            KeyCode::Tab, KeyCode::Backspace,
+            KeyCode::Escape,
+            KeyCode::ShiftLeft,
+            KeyCode::ShiftRight,
+            KeyCode::ControlLeft,
+            KeyCode::ControlRight,
+            KeyCode::AltLeft,
+            KeyCode::AltRight,
+            KeyCode::Tab,
+            KeyCode::Backspace,
         ];
 
         for mapping in mappings {
@@ -433,9 +459,9 @@ mod tests {
 
         // A mid gray
         rgb565_to_rgba8(&[0x8410], &mut output); // 10000 100000 10000
-        // r: (16 << 3) | (16 >> 2) = 128 | 4 = 132
-        // g: (32 << 2) | (32 >> 4) = 128 | 2 = 130
-        // b: (16 << 3) | (16 >> 2) = 128 | 4 = 132
+                                                 // r: (16 << 3) | (16 >> 2) = 128 | 4 = 132
+                                                 // g: (32 << 2) | (32 >> 4) = 128 | 2 = 130
+                                                 // b: (16 << 3) | (16 >> 2) = 128 | 4 = 132
         assert_eq!(output, [132, 130, 132, 255]);
     }
 
@@ -445,33 +471,64 @@ mod tests {
         let test_cases = [
             // Original Mapping
             (InputMapping::Original, KeyCode::ArrowUp, Some(("up", true))),
-            (InputMapping::Original, KeyCode::ArrowDown, Some(("down", true))),
-            (InputMapping::Original, KeyCode::ArrowLeft, Some(("left", true))),
-            (InputMapping::Original, KeyCode::ArrowRight, Some(("right", true))),
+            (
+                InputMapping::Original,
+                KeyCode::ArrowDown,
+                Some(("down", true)),
+            ),
+            (
+                InputMapping::Original,
+                KeyCode::ArrowLeft,
+                Some(("left", true)),
+            ),
+            (
+                InputMapping::Original,
+                KeyCode::ArrowRight,
+                Some(("right", true)),
+            ),
             (InputMapping::Original, KeyCode::KeyZ, Some(("a", true))),
             (InputMapping::Original, KeyCode::KeyX, Some(("b", true))),
             (InputMapping::Original, KeyCode::KeyC, Some(("c", true))),
-            (InputMapping::Original, KeyCode::Enter, Some(("start", true))),
+            (
+                InputMapping::Original,
+                KeyCode::Enter,
+                Some(("start", true)),
+            ),
             (InputMapping::Original, KeyCode::KeyA, Some(("x", true))),
             (InputMapping::Original, KeyCode::KeyS, Some(("y", true))),
             (InputMapping::Original, KeyCode::KeyD, Some(("z", true))),
             (InputMapping::Original, KeyCode::KeyQ, Some(("mode", true))),
             (InputMapping::Original, KeyCode::KeyB, None),
-
             // Ergonomic Mapping
             (InputMapping::Ergonomic, KeyCode::KeyW, Some(("up", true))),
             (InputMapping::Ergonomic, KeyCode::KeyS, Some(("down", true))),
             (InputMapping::Ergonomic, KeyCode::KeyA, Some(("left", true))),
-            (InputMapping::Ergonomic, KeyCode::KeyD, Some(("right", true))),
-            (InputMapping::Ergonomic, KeyCode::ArrowUp, Some(("up", true))),
+            (
+                InputMapping::Ergonomic,
+                KeyCode::KeyD,
+                Some(("right", true)),
+            ),
+            (
+                InputMapping::Ergonomic,
+                KeyCode::ArrowUp,
+                Some(("up", true)),
+            ),
             (InputMapping::Ergonomic, KeyCode::KeyJ, Some(("a", true))),
             (InputMapping::Ergonomic, KeyCode::KeyK, Some(("b", true))),
             (InputMapping::Ergonomic, KeyCode::KeyL, Some(("c", true))),
             (InputMapping::Ergonomic, KeyCode::KeyU, Some(("x", true))),
             (InputMapping::Ergonomic, KeyCode::KeyI, Some(("y", true))),
             (InputMapping::Ergonomic, KeyCode::KeyO, Some(("z", true))),
-            (InputMapping::Ergonomic, KeyCode::Enter, Some(("start", true))),
-            (InputMapping::Ergonomic, KeyCode::Space, Some(("mode", true))),
+            (
+                InputMapping::Ergonomic,
+                KeyCode::Enter,
+                Some(("start", true)),
+            ),
+            (
+                InputMapping::Ergonomic,
+                KeyCode::Space,
+                Some(("mode", true)),
+            ),
             (InputMapping::Ergonomic, KeyCode::KeyZ, Some(("a", true))),
             (InputMapping::Ergonomic, KeyCode::KeyX, Some(("b", true))),
             (InputMapping::Ergonomic, KeyCode::KeyC, Some(("c", true))),
@@ -481,11 +538,9 @@ mod tests {
         for (mapping, keycode, expected) in test_cases {
             let result = keycode_to_button(keycode, mapping);
             assert_eq!(
-                result,
-                expected,
+                result, expected,
                 "Failed for mapping {:?} and keycode {:?}",
-                mapping,
-                keycode
+                mapping, keycode
             );
         }
     }
