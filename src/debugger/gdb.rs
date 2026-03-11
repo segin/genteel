@@ -822,9 +822,6 @@ impl GdbServer {
             return "E01".to_string();
         }
 
-        // Handle other monitor commands here using match
-        // match cmd.as_str() { ... }
-
         // Unknown monitor command.
         // We return "OK" to prevent the client from treating this as an error,
         // effectively ignoring unknown commands.
