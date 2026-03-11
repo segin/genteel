@@ -1,5 +1,5 @@
-use std::time::Instant;
 use std::fmt::Write;
+use std::time::Instant;
 
 fn main() {
     let m68k_disasm = vec![
@@ -55,5 +55,8 @@ fn main() {
 
     println!("Baseline duration: {:?}", baseline_duration);
     println!("Optimized duration: {:?}", optimized_duration);
-    println!("Improvement: {:.2}x", baseline_duration.as_secs_f64() / optimized_duration.as_secs_f64());
+    println!(
+        "Improvement: {:.2}x",
+        baseline_duration.as_secs_f64() / optimized_duration.as_secs_f64()
+    );
 }
