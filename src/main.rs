@@ -23,9 +23,7 @@ pub mod vdp;
 pub mod wav_writer;
 pub mod z80;
 
-pub const SLOT_EXTS: [&str; 10] = [
-    "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9",
-];
+pub const SLOT_EXTS: [&str; 10] = ["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9"];
 
 use crate::vdp::RenderOps;
 use apu::Apu;
@@ -776,7 +774,6 @@ impl Emulator {
                     cpu.cancel_interrupt(6);
                 }
 
-
                 cycles
             };
 
@@ -877,8 +874,8 @@ impl Emulator {
     }
     fn handle_interrupts(&mut self, line: u16, active_lines: u16) {
         // H-Blank only lasts for a short period at the end of a scanline.
-        // If the CPU hasn't taken the H-Int by the end of the subsequent scanline 
-        // (e.g., because it was handling V-Int or had interrupts masked), the VDP 
+        // If the CPU hasn't taken the H-Int by the end of the subsequent scanline
+        // (e.g., because it was handling V-Int or had interrupts masked), the VDP
         // will have dropped the IRQ line. We must cancel it here to prevent spurious interrupts.
         self.cpu.cancel_interrupt(4);
 
@@ -1113,7 +1110,8 @@ impl Emulator {
         }
         Ok(())
     }
-    #[allow(dead_code)] pub(crate) fn log_debug(&self, frame_count: u64) {
+    #[allow(dead_code)]
+    pub(crate) fn log_debug(&self, frame_count: u64) {
         let bus = self.bus.borrow();
         let disp_en = if bus.vdp.display_enabled() {
             "ON "
