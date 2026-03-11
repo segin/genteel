@@ -667,11 +667,9 @@ impl Framework {
                                 self.gui_state.paused = false;
                                 self.gui_state.save();
                             }
-                        } else {
-                            if ui.button("⏸ Pause").clicked() {
-                                self.gui_state.paused = true;
-                                self.gui_state.save();
-                            }
+                        } else if ui.button("⏸ Pause").clicked() {
+                            self.gui_state.paused = true;
+                            self.gui_state.save();
                         }
                         if ui.button("⏭ Single Step").clicked() {
                             self.gui_state.single_step = true;
@@ -894,7 +892,7 @@ impl Framework {
                     let image = egui::ColorImage::from_rgba_unmultiplied([128, 1024], &pixels);
                     let texture = self.tile_texture.get_or_insert_with(|| {
                         ui.ctx()
-                            .load_texture("tile_viewer", image.clone(), Default::default())
+                            .load_texture("tile_viewer", egui::ColorImage::default(), Default::default())
                     });
                     texture.set(image, Default::default());
 
@@ -1046,7 +1044,7 @@ impl Framework {
                             &pixels,
                         );
                         let texture = texture_opt.get_or_insert_with(|| {
-                            ui.ctx().load_texture(id, image.clone(), Default::default())
+                            ui.ctx().load_texture(id, egui::ColorImage::default(), Default::default())
                         });
                         texture.set(image, Default::default());
                         egui::ScrollArea::both().id_source(id).show(ui, |ui| {
@@ -1821,8 +1819,8 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                                 };
 
                                 let mut cram_raw = [0u16; 64];
-                                for i in 0..64 {
-                                    cram_raw[i] = u16::from_be_bytes([
+                                for (i, item) in cram_raw.iter_mut().enumerate() {
+                                    *item = u16::from_be_bytes([
                                         bus.vdp.cram[i * 2],
                                         bus.vdp.cram[i * 2 + 1],
                                     ]);
