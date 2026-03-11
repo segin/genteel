@@ -224,7 +224,8 @@ mod tests {
         #[cfg(unix)]
         let invalid_path = "/invalid/path/that/does/not/exist/test_wav_writer_new_error.wav";
         #[cfg(windows)]
-        let invalid_path = "Z:\\invalid\\path\\that\\does\\not\\exist\\test_wav_writer_new_error.wav";
+        let invalid_path =
+            "Z:\\invalid\\path\\that\\does\\not\\exist\\test_wav_writer_new_error.wav";
 
         let result = WavWriter::new(invalid_path, 44100, 2);
         assert!(result.is_err());

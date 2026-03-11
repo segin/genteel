@@ -292,7 +292,10 @@ impl Instruction {
                 DataInstruction::MoveA { size, src, .. } => {
                     words += src.extension_words(*size);
                 }
-                DataInstruction::MoveQ { .. } | DataInstruction::Swap { .. } | DataInstruction::Ext { .. } | DataInstruction::Exg { .. } => {}
+                DataInstruction::MoveQ { .. }
+                | DataInstruction::Swap { .. }
+                | DataInstruction::Ext { .. }
+                | DataInstruction::Exg { .. } => {}
                 DataInstruction::Lea { src, .. } | DataInstruction::Pea { src } => {
                     words += src.extension_words(Size::Long);
                 }
@@ -307,35 +310,57 @@ impl Instruction {
                 }
             },
             Instruction::Arithmetic(arith) => match arith {
-                ArithmeticInstruction::Add { size, src, dst, .. } | ArithmeticInstruction::Sub { size, src, dst, .. } => {
+                ArithmeticInstruction::Add { size, src, dst, .. }
+                | ArithmeticInstruction::Sub { size, src, dst, .. } => {
                     words += src.extension_words(*size) + dst.extension_words(*size);
                 }
-                ArithmeticInstruction::AddA { size, src, .. } | ArithmeticInstruction::SubA { size, src, .. } | ArithmeticInstruction::CmpA { size, src, .. } => {
+                ArithmeticInstruction::AddA { size, src, .. }
+                | ArithmeticInstruction::SubA { size, src, .. }
+                | ArithmeticInstruction::CmpA { size, src, .. } => {
                     words += src.extension_words(*size);
                 }
-                ArithmeticInstruction::AddI { size, dst } | ArithmeticInstruction::SubI { size, dst } | ArithmeticInstruction::CmpI { size, dst } => {
-                    words += AddressingMode::Immediate.extension_words(*size) + dst.extension_words(*size);
+                ArithmeticInstruction::AddI { size, dst }
+                | ArithmeticInstruction::SubI { size, dst }
+                | ArithmeticInstruction::CmpI { size, dst } => {
+                    words += AddressingMode::Immediate.extension_words(*size)
+                        + dst.extension_words(*size);
                 }
-                ArithmeticInstruction::AddQ { size, dst, .. } | ArithmeticInstruction::SubQ { size, dst, .. } | ArithmeticInstruction::Neg { size, dst } | ArithmeticInstruction::NegX { size, dst } | ArithmeticInstruction::Tst { size, dst } => {
+                ArithmeticInstruction::AddQ { size, dst, .. }
+                | ArithmeticInstruction::SubQ { size, dst, .. }
+                | ArithmeticInstruction::Neg { size, dst }
+                | ArithmeticInstruction::NegX { size, dst }
+                | ArithmeticInstruction::Tst { size, dst } => {
                     words += dst.extension_words(*size);
                 }
-                ArithmeticInstruction::MulU { src, .. } | ArithmeticInstruction::MulS { src, .. } | ArithmeticInstruction::DivU { src, .. } | ArithmeticInstruction::DivS { src, .. } | ArithmeticInstruction::Chk { src, .. } => {
+                ArithmeticInstruction::MulU { src, .. }
+                | ArithmeticInstruction::MulS { src, .. }
+                | ArithmeticInstruction::DivU { src, .. }
+                | ArithmeticInstruction::DivS { src, .. }
+                | ArithmeticInstruction::Chk { src, .. } => {
                     words += src.extension_words(Size::Word);
                 }
                 ArithmeticInstruction::Cmp { size, src, .. } => {
                     words += src.extension_words(*size);
                 }
-                ArithmeticInstruction::Abcd { .. } | ArithmeticInstruction::Sbcd { .. } | ArithmeticInstruction::AddX { .. } | ArithmeticInstruction::SubX { .. } | ArithmeticInstruction::CmpM { .. } => {}
+                ArithmeticInstruction::Abcd { .. }
+                | ArithmeticInstruction::Sbcd { .. }
+                | ArithmeticInstruction::AddX { .. }
+                | ArithmeticInstruction::SubX { .. }
+                | ArithmeticInstruction::CmpM { .. } => {}
                 ArithmeticInstruction::Nbcd { dst } => {
                     words += dst.extension_words(Size::Byte);
                 }
             },
             Instruction::Bits(bits) => match bits {
-                BitsInstruction::And { size, src, dst, .. } | BitsInstruction::Or { size, src, dst, .. } => {
+                BitsInstruction::And { size, src, dst, .. }
+                | BitsInstruction::Or { size, src, dst, .. } => {
                     words += src.extension_words(*size) + dst.extension_words(*size);
                 }
-                BitsInstruction::AndI { size, dst } | BitsInstruction::OrI { size, dst } | BitsInstruction::EorI { size, dst } => {
-                    words += AddressingMode::Immediate.extension_words(*size) + dst.extension_words(*size);
+                BitsInstruction::AndI { size, dst }
+                | BitsInstruction::OrI { size, dst }
+                | BitsInstruction::EorI { size, dst } => {
+                    words += AddressingMode::Immediate.extension_words(*size)
+                        + dst.extension_words(*size);
                 }
                 BitsInstruction::Eor { size, dst, .. } => {
                     words += dst.extension_words(*size);
@@ -343,13 +368,25 @@ impl Instruction {
                 BitsInstruction::Not { size, dst } => {
                     words += dst.extension_words(*size);
                 }
-                BitsInstruction::Lsl { size, dst, .. } | BitsInstruction::Lsr { size, dst, .. } | BitsInstruction::Asl { size, dst, .. } | BitsInstruction::Asr { size, dst, .. } | BitsInstruction::Rol { size, dst, .. } | BitsInstruction::Ror { size, dst, .. } | BitsInstruction::Roxl { size, dst, .. } | BitsInstruction::Roxr { size, dst, .. } => {
+                BitsInstruction::Lsl { size, dst, .. }
+                | BitsInstruction::Lsr { size, dst, .. }
+                | BitsInstruction::Asl { size, dst, .. }
+                | BitsInstruction::Asr { size, dst, .. }
+                | BitsInstruction::Rol { size, dst, .. }
+                | BitsInstruction::Ror { size, dst, .. }
+                | BitsInstruction::Roxl { size, dst, .. }
+                | BitsInstruction::Roxr { size, dst, .. } => {
                     words += dst.extension_words(*size);
                 }
-                BitsInstruction::AslM { dst } | BitsInstruction::AsrM { dst } | BitsInstruction::Tas { dst } => {
+                BitsInstruction::AslM { dst }
+                | BitsInstruction::AsrM { dst }
+                | BitsInstruction::Tas { dst } => {
                     words += dst.extension_words(Size::Byte);
                 }
-                BitsInstruction::Btst { bit, dst } | BitsInstruction::Bset { bit, dst } | BitsInstruction::Bclr { bit, dst } | BitsInstruction::Bchg { bit, dst } => {
+                BitsInstruction::Btst { bit, dst }
+                | BitsInstruction::Bset { bit, dst }
+                | BitsInstruction::Bclr { bit, dst }
+                | BitsInstruction::Bchg { bit, dst } => {
                     if let BitSource::Immediate = bit {
                         words += 1;
                     }
@@ -357,7 +394,8 @@ impl Instruction {
                 }
             },
             Instruction::System(sys) => match sys {
-                SystemInstruction::Bra { displacement } | SystemInstruction::Bsr { displacement } => {
+                SystemInstruction::Bra { displacement }
+                | SystemInstruction::Bsr { displacement } => {
                     if *displacement == 0 {
                         words += 1;
                     }
@@ -370,7 +408,9 @@ impl Instruction {
                 SystemInstruction::Scc { dst, .. } => {
                     words += dst.extension_words(Size::Byte);
                 }
-                SystemInstruction::DBcc { .. } | SystemInstruction::Link { .. } | SystemInstruction::Stop => {
+                SystemInstruction::DBcc { .. }
+                | SystemInstruction::Link { .. }
+                | SystemInstruction::Stop => {
                     words += 1;
                 }
                 SystemInstruction::Jmp { dst } | SystemInstruction::Jsr { dst } => {
@@ -382,7 +422,12 @@ impl Instruction {
                 SystemInstruction::MoveFromSr { dst } => {
                     words += dst.extension_words(Size::Word);
                 }
-                SystemInstruction::AndiToCcr | SystemInstruction::AndiToSr | SystemInstruction::OriToCcr | SystemInstruction::OriToSr | SystemInstruction::EoriToCcr | SystemInstruction::EoriToSr => {
+                SystemInstruction::AndiToCcr
+                | SystemInstruction::AndiToSr
+                | SystemInstruction::OriToCcr
+                | SystemInstruction::OriToSr
+                | SystemInstruction::EoriToCcr
+                | SystemInstruction::EoriToSr => {
                     words += 1;
                 }
                 _ => {}
