@@ -96,6 +96,7 @@ pub mod big_array {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::{Deserialize, Serialize};
 
     #[test]
     fn test_u16_ops() {
@@ -130,43 +131,53 @@ mod tests {
         assert_eq!(split_u32_to_words(0xFFFF0000), (0xFFFF, 0x0000));
     }
 
-    #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
+    #[derive(Debug, PartialEq, Serialize, Deserialize)]
     struct BigArrayTestStruct {
-        #[serde(with = "crate::memory::byte_utils::big_array")]
+        #[serde(with = "big_array")]
         data: [u8; 64],
     }
 
     #[test]
-    fn test_big_array_serialization() {
-        let original = BigArrayTestStruct {
-            data: [42; 64],
-        };
+    fn test_big_array_serialization_roundtrip() {
+        let mut data = [0u8; 64];
+        for i in 0..64 {
+            data[i] = i as u8;
+        }
 
-        let serialized = serde_json::to_string(&original).unwrap();
-        let deserialized: BigArrayTestStruct = serde_json::from_str(&serialized).unwrap();
+        let test_struct = BigArrayTestStruct { data };
 
-        assert_eq!(original, deserialized);
+        // Serialize
+        let serialized = serde_json::to_string(&test_struct).expect("Serialization failed");
+
+        // Deserialize
+        let deserialized: BigArrayTestStruct =
+            serde_json::from_str(&serialized).expect("Deserialization failed");
+
+        // Verify roundtrip
+        assert_eq!(test_struct, deserialized);
     }
 
     #[test]
-    fn test_big_array_deserialization_error() {
-        let mut json = String::from(r#"{"data":["#);
-        for _ in 0..63 {
-            json.push_str("42,");
-        }
-        json.push_str("42]}"); // length 64, this should pass
+    fn test_big_array_deserialization_error_too_short() {
+        // Create an array that's too short (length 3 instead of 64)
+        let json = r#"{"data":[1, 2, 3]}"#;
 
-        let deserialized: Result<BigArrayTestStruct, _> = serde_json::from_str(&json);
-        assert!(deserialized.is_ok());
+        let result: Result<BigArrayTestStruct, _> = serde_json::from_str(json);
 
-        // Now test invalid length
-        let mut json_invalid = String::from(r#"{"data":["#);
-        for _ in 0..62 {
-            json_invalid.push_str("42,");
-        }
-        json_invalid.push_str("42]}"); // length 63, this should fail
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("invalid length 3, expected an array of length 64"));
+    }
 
-        let deserialized_invalid: Result<BigArrayTestStruct, _> = serde_json::from_str(&json_invalid);
-        assert!(deserialized_invalid.is_err());
+    #[test]
+    fn test_big_array_deserialization_error_wrong_type() {
+        // Try to deserialize a string instead of an array
+        let json = r#"{"data":"not an array"}"#;
+
+        let result: Result<BigArrayTestStruct, _> = serde_json::from_str(json);
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("invalid type: string \"not an array\", expected an array of length 64"));
     }
 }
