@@ -1062,6 +1062,12 @@ fn test_move_usp() {
 
     cpu.step_instruction(&mut memory);
 
-    assert_eq!(cpu.pc, 0x4000, "MOVE USP in user mode should trap to vector 8");
-    assert!(cpu.sr & flags::SUPERVISOR != 0, "Exception should set supervisor bit");
+    assert_eq!(
+        cpu.pc, 0x4000,
+        "MOVE USP in user mode should trap to vector 8"
+    );
+    assert!(
+        cpu.sr & flags::SUPERVISOR != 0,
+        "Exception should set supervisor bit"
+    );
 }
