@@ -23,7 +23,7 @@ def generate_data(filename, size_mb):
 
             # Inject patterns occasionally
             if random.random() < 0.5:
-                chunk += "\nAKIA" + "".join(random.choices(string.ascii_uppercase + string.digits, k=16)) + "\n"
+                chunk += "\nAK" + "IA" + "".join(random.choices(string.ascii_uppercase + string.digits, k=16)) + "\n"
             if random.random() < 0.5:
                 chunk += "\n-----BEGIN OPENSSH " + "PRIVATE KEY-----\n"
             if random.random() < 0.5:
