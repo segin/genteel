@@ -253,41 +253,19 @@ fn render_sprite_scanline(
     }
 }
 
-impl RenderOps for Vdp {
-    fn render_line(&mut self, line: u16) {
-        if line >= self.screen_height() {
-            return;
-        }
-
-        let draw_line = line;
-        let fetch_line = line;
-        let line_offset = (draw_line as usize) * 320;
-
-        let (pal_line, color_idx) = self.bg_color();
-        let bg_color_val = self.get_cram_color(pal_line, color_idx);
-        let bg_color_idx = (pal_line << 4) | color_idx;
-
-        if !self.display_enabled() || line >= self.screen_height() {
-            self.framebuffer[line_offset..line_offset + 320].fill(bg_color_val);
-            return;
-        }
-
-        let mut sprite_buffer = [SpriteAttributes::default(); 80];
-        let sprite_count = self.get_active_sprites(fetch_line, &mut sprite_buffer);
-        let active_sprites = &sprite_buffer[..sprite_count];
-
-        let mut buf_b = [0u8; 320];
-        let mut buf_a = [0u8; 320];
-        let mut buf_s = [0u8; 320];
-
-        self.render_plane(false, fetch_line, &mut buf_b);
-        self.render_plane(true, fetch_line, &mut buf_a);
-        self.render_sprites(active_sprites, fetch_line, &mut buf_s);
-
-        let sh_enabled = (self.registers[REG_MODE4] & 0x08) != 0;
-        let mask_col0 = (self.registers[REG_MODE1] & 0x20) != 0;
-
-        // Composite
+impl Vdp {
+    #[allow(clippy::too_many_arguments)]
+    fn compose_line(
+        &mut self,
+        line_offset: usize,
+        bg_color_val: u16,
+        bg_color_idx: u8,
+        sh_enabled: bool,
+        mask_col0: bool,
+        buf_b: &[u8; 320],
+        buf_a: &[u8; 320],
+        buf_s: &[u8; 320],
+    ) {
         for x in 0..320 {
             if mask_col0 && x < 8 {
                 self.framebuffer[line_offset + x] = bg_color_val;
@@ -401,6 +379,54 @@ impl RenderOps for Vdp {
                 self.framebuffer[line_offset + x] = final_color;
             }
         }
+    }
+}
+
+impl RenderOps for Vdp {
+    fn render_line(&mut self, line: u16) {
+        if line >= self.screen_height() {
+            return;
+        }
+
+        let draw_line = line;
+        let fetch_line = line;
+        let line_offset = (draw_line as usize) * 320;
+
+        let (pal_line, color_idx) = self.bg_color();
+        let bg_color_val = self.get_cram_color(pal_line, color_idx);
+        let bg_color_idx = (pal_line << 4) | color_idx;
+
+        if !self.display_enabled() || line >= self.screen_height() {
+            self.framebuffer[line_offset..line_offset + 320].fill(bg_color_val);
+            return;
+        }
+
+        let mut sprite_buffer = [SpriteAttributes::default(); 80];
+        let sprite_count = self.get_active_sprites(fetch_line, &mut sprite_buffer);
+        let active_sprites = &sprite_buffer[..sprite_count];
+
+        let mut buf_b = [0u8; 320];
+        let mut buf_a = [0u8; 320];
+        let mut buf_s = [0u8; 320];
+
+        self.render_plane(false, fetch_line, &mut buf_b);
+        self.render_plane(true, fetch_line, &mut buf_a);
+        self.render_sprites(active_sprites, fetch_line, &mut buf_s);
+
+        let sh_enabled = (self.registers[REG_MODE4] & 0x08) != 0;
+        let mask_col0 = (self.registers[REG_MODE1] & 0x20) != 0;
+
+        // Composite
+        self.compose_line(
+            line_offset,
+            bg_color_val,
+            bg_color_idx,
+            sh_enabled,
+            mask_col0,
+            &buf_b,
+            &buf_a,
+            &buf_s,
+        );
     }
 
     fn render_plane(&self, is_plane_a: bool, fetch_line: u16, line_buf: &mut [u8; 320]) {
