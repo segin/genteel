@@ -3,6 +3,7 @@
 //! Implements a GDB stub for debugging M68k code running in the emulator.
 //! Connect with: `m68k-elf-gdb -ex "target remote :1234"`
 
+use subtle::{Choice, ConstantTimeEq, ConditionallySelectable};
 use std::collections::HashSet;
 use std::io::{BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -36,39 +37,34 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
     let a_len = a_bytes.len();
     let b_len = b_bytes.len();
 
-    let mut result = 0usize;
+    // Lengths must be equal and within the maximum check length.
+    // Use u64 casts since subtle implements ConstantTimeEq for u64 but not for usize.
+    let mut is_equal = (a_len as u64).ct_eq(&(b_len as u64));
 
-    result |= a_len ^ b_len;
-    result |= (a_len > MAX_PASSWORD_CHECK_LEN) as usize;
-    result |= (b_len > MAX_PASSWORD_CHECK_LEN) as usize;
+    // Also check that both lengths are within bounds.
+    let a_len_ok = (a_len <= MAX_PASSWORD_CHECK_LEN) as u8;
+    let b_len_ok = (b_len <= MAX_PASSWORD_CHECK_LEN) as u8;
+    is_equal &= Choice::from(a_len_ok);
+    is_equal &= Choice::from(b_len_ok);
 
     for i in 0..MAX_PASSWORD_CHECK_LEN {
-        // Use bitwise masking to avoid variable-time operations like slice copying or branching.
-        // If i < len, mask is 0xFF (all 1s), so we use the byte.
-        // If i >= len, mask is 0x00, so we use 0.
-        // This relies on boolean to integer cast (true -> 1, false -> 0) and wrapping negation to produce 0 or !0
-        // (i < len) as u8 -> 1 or 0
-        // 0u8.wrapping_sub(1) -> 0xFF
-        // 0u8.wrapping_sub(0) -> 0x00
-        let a_mask = 0u8.wrapping_sub((i < a_len) as u8);
-        let b_mask = 0u8.wrapping_sub((i < b_len) as u8);
+        // Create a mask indicating if we are within the bounds of both strings.
+        // Boolean-to-integer casts are generally constant-time in Rust.
+        let within_bounds = (i < a_len && i < b_len) as u8;
 
-        // Safely index using modulo or bitwise logic (if len is 0 we just read index 0 which is safe bounds check)
-        // Since we can't easily avoid bounds check branching completely without unsafe,
-        // we'll get the byte if it exists, or 0, but we MUST mask it regardless of what we get
-        // so that the result only depends on the mask (which depends on the length)
-        // To avoid branch in unwrap_or(&0), we can just use `get` and match, but match is a branch.
-        // However, the branch predictor will behave the same if we just use a default value.
-        let a_val = a_bytes.get(i).copied().unwrap_or(0);
-        let b_val = b_bytes.get(i).copied().unwrap_or(0);
+        // Retrieve bytes safely; if out of bounds, use a dummy value.
+        let a_byte = a_bytes.get(i).copied().unwrap_or(0);
+        let b_byte = b_bytes.get(i).copied().unwrap_or(0);
 
-        let a_byte = a_val & a_mask;
-        let b_byte = b_val & b_mask;
+        // Compare current bytes.
+        let bytes_match = a_byte.ct_eq(&b_byte);
 
-        result |= (a_byte ^ b_byte) as usize;
+        // Update the running equality check: if within bounds, we must match.
+        // If out of bounds, we ignore the comparison result (keep current is_equal).
+        is_equal &= Choice::conditional_select(&Choice::from(1u8), &bytes_match, Choice::from(within_bounds));
     }
 
-    result == 0
+    is_equal.unwrap_u8() == 1
 }
 
 /// GDB stop reasons
