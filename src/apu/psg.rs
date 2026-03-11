@@ -141,7 +141,8 @@ impl Psg {
     fn write_frequency_low(&mut self, channel: u8, data: u8) {
         match channel {
             0..=2 => {
-                self.tones[channel as usize].frequency = (self.tones[channel as usize].frequency & 0x3F0) | (data as u16);
+                self.tones[channel as usize].frequency =
+                    (self.tones[channel as usize].frequency & 0x3F0) | (data as u16);
             }
             3 => {
                 self.noise.white_noise = (data & 0x04) != 0;
@@ -155,7 +156,8 @@ impl Psg {
 
     fn write_frequency_high(&mut self, channel: u8, data: u8) {
         if channel < 3 {
-            self.tones[channel as usize].frequency = (self.tones[channel as usize].frequency & 0x00F) | ((data as u16) << 4);
+            self.tones[channel as usize].frequency =
+                (self.tones[channel as usize].frequency & 0x00F) | ((data as u16) << 4);
         }
     }
 
@@ -172,7 +174,11 @@ impl Psg {
         for _ in 0..cycles {
             // 1. Update Tones
             for i in 0..3 {
-                let freq = if self.tones[i].frequency == 0 { 0x400 } else { self.tones[i].frequency };
+                let freq = if self.tones[i].frequency == 0 {
+                    0x400
+                } else {
+                    self.tones[i].frequency
+                };
                 if self.tones[i].counter > 0 {
                     self.tones[i].counter -= 1;
                 }
@@ -190,7 +196,7 @@ impl Psg {
             }
             if self.noise.counter == 0 {
                 self.noise.counter = n_freq;
-                
+
                 let feedback = if self.noise.white_noise {
                     ((self.noise.lfsr & 1) ^ ((self.noise.lfsr >> 1) & 1)) & 1
                 } else {
@@ -205,14 +211,18 @@ impl Psg {
 
     pub fn current_sample(&self) -> i16 {
         let mut out = 0i32;
-        for i in 0..3 { out += self.tones[i].last_amp; }
+        for i in 0..3 {
+            out += self.tones[i].last_amp;
+        }
         out += self.noise.last_amp;
         out.clamp(-32768, 32767) as i16
     }
 
     pub fn get_channel_samples(&self) -> [i16; 4] {
         let mut s = [0i16; 4];
-        for i in 0..3 { s[i] = self.tones[i].last_amp as i16; }
+        for i in 0..3 {
+            s[i] = self.tones[i].last_amp as i16;
+        }
         s[3] = self.noise.last_amp as i16;
         s
     }

@@ -24,7 +24,8 @@ static KERNEL: std::sync::LazyLock<[i32; KERNEL_SIZE * RES]> = std::sync::LazyLo
             let a = 0.42;
             let b = 0.50;
             let c = 0.08;
-            let window = a - b * (2.0 * std::f64::consts::PI * i as f64 / (KERNEL_SIZE * RES) as f64).cos()
+            let window = a - b
+                * (2.0 * std::f64::consts::PI * i as f64 / (KERNEL_SIZE * RES) as f64).cos()
                 + c * (4.0 * std::f64::consts::PI * i as f64 / (KERNEL_SIZE * RES) as f64).cos();
             kernel[i] = (sinc * window * 32767.0) as i32;
         }
@@ -73,7 +74,9 @@ impl BlipBuf {
 
     /// Add a delta (amplitude change) at a specific clock time
     pub fn add_delta(&mut self, clock: u64, delta: i32) {
-        if delta == 0 { return; }
+        if delta == 0 {
+            return;
+        }
 
         let time_in_samples = (clock as f64 * self.sample_rate as f64) / self.clock_rate as f64;
         let sample_idx = time_in_samples as usize;
@@ -90,7 +93,7 @@ impl BlipBuf {
             let kernel_val = KERNEL[i * RES + offset];
             self.buffer[sample_idx + i] += (delta * kernel_val) >> 15;
         }
-        
+
         // Update DC accumulator for integration
         self.accumulator += delta;
     }
@@ -98,7 +101,7 @@ impl BlipBuf {
     /// Read generated samples into a buffer
     pub fn read_samples(&mut self, samples: &mut [i16]) -> usize {
         let count = samples.len().min(self.buffer.len() - KERNEL_SIZE);
-        
+
         let mut current = 0;
         for i in 0..count {
             current += self.buffer[i];
@@ -108,7 +111,7 @@ impl BlipBuf {
 
         // Shift remaining data (the "tails" of the kernels)
         self.buffer.rotate_left(count);
-        
+
         count
     }
 
