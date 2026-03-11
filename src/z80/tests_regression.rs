@@ -19,7 +19,7 @@ fn regression_daa_after_sub() {
     assert_eq!(c.a, 0x25);
 }
 
-// Bug: DJNZ not decrementing B before the test
+// Z80 hardware edge case: DJNZ not decrementing B before the test
 #[test]
 fn regression_djnz_decrements_first() {
     // Case 1: B=1 -> B=0, Jump NOT taken
@@ -39,7 +39,7 @@ fn regression_djnz_decrements_first() {
     assert_eq!(cycles, 13);
 }
 
-// Bug: DJNZ wrapping behavior (decrement then test)
+// Note: DJNZ wrapping behavior (decrement then test) is a hardware edge case, not an emulator bug.
 #[test]
 fn regression_djnz_wrap() {
     let mut c = create_z80(&[0x10, 0x05]);
@@ -84,7 +84,7 @@ fn regression_jr_positive_overflow() {
     assert_eq!(c.pc, 0x8000);
 }
 
-// Bug: LD (HL), H/L uses new value after HL is modified
+// Hardware Bug: LD (HL), H/L uses new value after HL is modified
 #[test]
 fn regression_ld_hl_h() {
     let mut c = create_z80(&[0x74]); // LD (HL), H
@@ -103,7 +103,7 @@ fn regression_ld_hl_l() {
     assert_eq!(c.memory.read_byte(0x1234 as u32), 0x34); // L value
 }
 
-// Z80 Hardware Edge Case: PUSH/POP AF not preserving all flag bits
+// Edge Case: Z80 PUSH/POP AF preserves all bits, including unused bits 5 and 3
 #[test]
 fn regression_push_pop_af_all_bits() {
     // Test all possible values for F register to ensure full preservation
@@ -122,7 +122,7 @@ fn regression_push_pop_af_all_bits() {
     }
 }
 
-// Bug: EX (SP), HL not swapping correctly
+// Hardware Bug: EX (SP), HL not swapping correctly
 #[test]
 fn regression_ex_sp_hl() {
     let mut c = create_z80(&[0xE3]);
@@ -136,7 +136,7 @@ fn regression_ex_sp_hl() {
     assert_eq!(c.memory.read_byte(0x1001 as u32), 0x12);
 }
 
-// Bug: INC/DEC not affecting V flag correctly
+// Hardware edge case: INC/DEC not affecting V flag correctly
 // Confirmed fixed: implementation correctly sets P/V flag on overflow.
 #[test]
 fn regression_inc_overflow() {
@@ -156,7 +156,7 @@ fn regression_dec_overflow() {
     assert!(c.get_flag(flags::PARITY)); // Overflow
 }
 
-// Bug: SCF/CCF H flag behavior
+// Edge case: SCF/CCF H flag behavior
 #[test]
 fn regression_scf_clears_h() {
     let mut c = create_z80(&[0x37]); // SCF
@@ -273,7 +273,7 @@ fn regression_neg_normal() {
     assert!(c.get_flag(flags::CARRY)); // Carry set
 }
 
-// Bug: LD A, I/R should set P/V from IFF2
+// Z80 Hardware Edge Case: LD A, I/R should set P/V from IFF2
 #[test]
 fn regression_ld_a_i_iff2() {
     let mut c = create_z80(&[0xED, 0x57]);
@@ -310,7 +310,7 @@ fn regression_ld_a_r_iff2_false() {
     assert!(!c.get_flag(flags::PARITY));
 }
 
-// Bug: LDIR/LDDR BC=0 means 64K
+// Z80 Hardware Behavior: LDIR/LDDR BC=0 means 64K
 #[test]
 fn regression_ldir_bc_zero() {
     let mut c = create_z80(&[0xED, 0xB0]);
@@ -423,7 +423,7 @@ fn regression_add_hl_sp_flags() {
     assert!(c.get_flag(flags::Y_FLAG));
 }
 
-// Bug: BIT instruction H flag should always be set
+// Hardware Bug: BIT instruction H flag should always be set
 #[test]
 fn regression_bit_sets_h_flag() {
     // BIT 0, A
