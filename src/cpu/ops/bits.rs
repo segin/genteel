@@ -1255,31 +1255,118 @@ mod tests {
         assert!(cpu.get_flag(flags::NEGATIVE));
     }
 
-    #[test]
-    fn test_exec_shift_comprehensive() {
-        struct TestCase {
-            desc: &'static str,
-            size: Size,
-            // If use_reg_count is true, count is put in D1 and Register(1) is used.
-            // Otherwise Immediate(count as u8) is used.
-            count: u32,
-            use_reg_count: bool,
-            left: bool,
-            arithmetic: bool,
-            initial_val: u32,
-            initial_x: bool,
+    struct TestCase {
+        desc: &'static str,
+        size: Size,
+        // If use_reg_count is true, count is put in D1 and Register(1) is used.
+        // Otherwise Immediate(count as u8) is used.
+        count: u32,
+        use_reg_count: bool,
+        left: bool,
+        arithmetic: bool,
+        initial_val: u32,
+        initial_x: bool,
 
-            // Expected results
-            expected_val: u32,
-            expected_c: bool,
-            expected_v: bool,
-            expected_z: bool,
-            expected_n: bool,
-            // If None, expects X to be same as expected_c.
-            // If Some(val), expects X to be val.
-            expected_x: Option<bool>,
+        // Expected results
+        expected_val: u32,
+        expected_c: bool,
+        expected_v: bool,
+        expected_z: bool,
+        expected_n: bool,
+        // If None, expects X to be same as expected_c.
+        // If Some(val), expects X to be val.
+        expected_x: Option<bool>,
+    }
+
+    fn run_shift_test_cases(cases: Vec<TestCase>) {
+        for case in cases {
+            let (mut cpu, mut memory) = create_test_setup();
+
+            // Setup operands
+            cpu.d[0] = case.initial_val;
+
+            let count_arg = if case.use_reg_count {
+                cpu.d[1] = case.count;
+                ShiftCount::Register(1)
+            } else {
+                ShiftCount::Immediate(case.count as u8)
+            };
+
+            // Setup initial flags
+            cpu.set_flag(flags::EXTEND, case.initial_x);
+            // Set other flags to known bad state to ensure they are updated
+            cpu.set_flag(flags::CARRY, !case.expected_c);
+            cpu.set_flag(flags::OVERFLOW, !case.expected_v);
+            cpu.set_flag(flags::ZERO, !case.expected_z);
+            cpu.set_flag(flags::NEGATIVE, !case.expected_n);
+
+            exec_shift(
+                &mut cpu,
+                case.size,
+                AddressingMode::DataRegister(0),
+                count_arg,
+                case.left,
+                case.arithmetic,
+                &mut memory,
+            );
+
+            // Mask result to size
+            let res_masked = match case.size {
+                Size::Byte => cpu.d[0] & 0xFF,
+                Size::Word => cpu.d[0] & 0xFFFF,
+                Size::Long => cpu.d[0],
+            };
+
+            assert_eq!(
+                res_masked, case.expected_val,
+                "{}: Value mismatch",
+                case.desc
+            );
+            assert_eq!(
+                cpu.get_flag(flags::CARRY),
+                case.expected_c,
+                "{}: C flag mismatch",
+                case.desc
+            );
+            assert_eq!(
+                cpu.get_flag(flags::OVERFLOW),
+                case.expected_v,
+                "{}: V flag mismatch",
+                case.desc
+            );
+            assert_eq!(
+                cpu.get_flag(flags::ZERO),
+                case.expected_z,
+                "{}: Z flag mismatch",
+                case.desc
+            );
+            assert_eq!(
+                cpu.get_flag(flags::NEGATIVE),
+                case.expected_n,
+                "{}: N flag mismatch",
+                case.desc
+            );
+
+            if let Some(expected_x) = case.expected_x {
+                assert_eq!(
+                    cpu.get_flag(flags::EXTEND),
+                    expected_x,
+                    "{}: X flag mismatch (Explicit)",
+                    case.desc
+                );
+            } else {
+                assert_eq!(
+                    cpu.get_flag(flags::EXTEND),
+                    case.expected_c,
+                    "{}: X flag mismatch (Implicit=C)",
+                    case.desc
+                );
+            }
         }
+    }
 
+    #[test]
+    fn test_exec_shift_lsl() {
         let cases = vec![
             // --- LSL (Logical Shift Left) ---
             // LSL.B #1, 0x01 -> 0x02. C=0, V=0, Z=0, N=0, X=0
@@ -1350,6 +1437,13 @@ mod tests {
                 expected_n: false,
                 expected_x: None,
             },
+        ];
+        run_shift_test_cases(cases);
+    }
+
+    #[test]
+    fn test_exec_shift_lsr() {
+        let cases = vec![
             // --- LSR (Logical Shift Right) ---
             // LSR.B #1, 0x02 -> 0x01.
             TestCase {
@@ -1385,6 +1479,13 @@ mod tests {
                 expected_n: false,
                 expected_x: None,
             },
+        ];
+        run_shift_test_cases(cases);
+    }
+
+    #[test]
+    fn test_exec_shift_asl() {
+        let cases = vec![
             // --- ASL (Arithmetic Shift Left) ---
             // ASL is LSL but sets V on sign change.
             // ASL.B #1, 0x40 (01000000) -> 0x80 (10000000). Sign changed 0->1. V=1.
@@ -1421,6 +1522,13 @@ mod tests {
                 expected_n: false,
                 expected_x: None,
             },
+        ];
+        run_shift_test_cases(cases);
+    }
+
+    #[test]
+    fn test_exec_shift_asr() {
+        let cases = vec![
             // --- ASR (Arithmetic Shift Right) ---
             // ASR preserves MSB (sign bit).
             // ASR.B #1, 0x80 (-128) -> 0xC0 (-64). 10000000 -> 11000000.
@@ -1457,6 +1565,13 @@ mod tests {
                 expected_n: false,
                 expected_x: None,
             },
+        ];
+        run_shift_test_cases(cases);
+    }
+
+    #[test]
+    fn test_exec_shift_edge_cases() {
+        let cases = vec![
             // --- Shift Counts and Edge Cases ---
 
             // Shift by 0 (Immediate). Should clear C, Clear V, Unaffected X.
@@ -1549,91 +1664,7 @@ mod tests {
                 expected_x: Some(true),
             },
         ];
-
-        for case in cases {
-            let (mut cpu, mut memory) = create_test_setup();
-
-            // Setup operands
-            cpu.d[0] = case.initial_val;
-
-            let count_arg = if case.use_reg_count {
-                cpu.d[1] = case.count;
-                ShiftCount::Register(1)
-            } else {
-                ShiftCount::Immediate(case.count as u8)
-            };
-
-            // Setup initial flags
-            cpu.set_flag(flags::EXTEND, case.initial_x);
-            // Set other flags to known bad state to ensure they are updated
-            cpu.set_flag(flags::CARRY, !case.expected_c);
-            cpu.set_flag(flags::OVERFLOW, !case.expected_v);
-            cpu.set_flag(flags::ZERO, !case.expected_z);
-            cpu.set_flag(flags::NEGATIVE, !case.expected_n);
-
-            exec_shift(
-                &mut cpu,
-                case.size,
-                AddressingMode::DataRegister(0),
-                count_arg,
-                case.left,
-                case.arithmetic,
-                &mut memory,
-            );
-
-            // Mask result to size
-            let res_masked = match case.size {
-                Size::Byte => cpu.d[0] & 0xFF,
-                Size::Word => cpu.d[0] & 0xFFFF,
-                Size::Long => cpu.d[0],
-            };
-
-            assert_eq!(
-                res_masked, case.expected_val,
-                "{}: Value mismatch",
-                case.desc
-            );
-            assert_eq!(
-                cpu.get_flag(flags::CARRY),
-                case.expected_c,
-                "{}: C flag mismatch",
-                case.desc
-            );
-            assert_eq!(
-                cpu.get_flag(flags::OVERFLOW),
-                case.expected_v,
-                "{}: V flag mismatch",
-                case.desc
-            );
-            assert_eq!(
-                cpu.get_flag(flags::ZERO),
-                case.expected_z,
-                "{}: Z flag mismatch",
-                case.desc
-            );
-            assert_eq!(
-                cpu.get_flag(flags::NEGATIVE),
-                case.expected_n,
-                "{}: N flag mismatch",
-                case.desc
-            );
-
-            if let Some(expected_x) = case.expected_x {
-                assert_eq!(
-                    cpu.get_flag(flags::EXTEND),
-                    expected_x,
-                    "{}: X flag mismatch (Explicit)",
-                    case.desc
-                );
-            } else {
-                assert_eq!(
-                    cpu.get_flag(flags::EXTEND),
-                    case.expected_c,
-                    "{}: X flag mismatch (Implicit=C)",
-                    case.desc
-                );
-            }
-        }
+        run_shift_test_cases(cases);
     }
 
     #[test]
