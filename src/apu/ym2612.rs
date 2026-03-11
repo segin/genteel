@@ -110,6 +110,16 @@ mod register_array {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 enum AdsrPhase { Attack, Decay, Sustain, Release }
 
+#[derive(Debug, Clone, Copy)]
+pub struct EnvelopeParams {
+    pub ar: u8,
+    pub dr: u8,
+    pub sr: u8,
+    pub rr: u8,
+    pub sl: u8,
+    pub ks: u8,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct FmOperator {
     phase_counter: u32,
@@ -154,14 +164,14 @@ impl FmOperator {
         self.phase_counter = (self.phase_counter.wrapping_add(increment)) & 0xFFFFF;
     }
 
-    fn clock_envelope(&mut self, ar: u8, dr: u8, sr: u8, rr: u8, sl: u8, ks: u8, kc: u8, counter: u16) {
+    fn clock_envelope(&mut self, params: &EnvelopeParams, kc: u8, counter: u16) {
         let base_rate = match self.env_phase {
-            AdsrPhase::Attack => ar,
-            AdsrPhase::Decay => dr,
-            AdsrPhase::Sustain => sr,
-            AdsrPhase::Release => (rr << 1) | 1,
+            AdsrPhase::Attack => params.ar,
+            AdsrPhase::Decay => params.dr,
+            AdsrPhase::Sustain => params.sr,
+            AdsrPhase::Release => (params.rr << 1) | 1,
         };
-        let ks_shift = match ks { 0 => 3, 1 => 2, 2 => 1, 3 => 0, _ => 3 };
+        let ks_shift = match params.ks { 0 => 3, 1 => 2, 2 => 1, 3 => 0, _ => 3 };
         let rate = if base_rate == 0 { 0 } else { ((base_rate as u16 * 2) + (kc >> ks_shift) as u16).min(63) as u8 };
         let shift = 11u8.saturating_sub(rate / 4);
         if rate >= 48 || (counter & ((1 << shift) - 1)) == 0 {
@@ -181,7 +191,7 @@ impl FmOperator {
             }
         }
         if self.env_phase == AdsrPhase::Attack && self.env_level == 0 { self.env_phase = AdsrPhase::Decay; }
-        if self.env_phase == AdsrPhase::Decay && self.env_level >= ((sl as u16) << 5) { self.env_phase = AdsrPhase::Sustain; }
+        if self.env_phase == AdsrPhase::Decay && self.env_level >= ((params.sl as u16) << 5) { self.env_phase = AdsrPhase::Sustain; }
     }
 
     fn compute_output(&self, phase_mod: i16, total_level: u16) -> i16 {
@@ -229,7 +239,15 @@ impl FmChannel {
         for i in 0..4 {
             let off = op_offsets[i] + ch_off;
             self.operators[i].clock_phase(self.fnum as u32, self.block, (regs[0x30+off]>>4)&7, regs[0x30+off]&0xF);
-            self.operators[i].clock_envelope(regs[0x50+off]&0x1F, regs[0x60+off]&0x1F, regs[0x70+off]&0x1F, regs[0x80+off]&0xF, (regs[0x80+off]>>4)&0xF, (regs[0x50+off]>>6)&3, kc, counter);
+            let params = EnvelopeParams {
+                ar: regs[0x50+off]&0x1F,
+                dr: regs[0x60+off]&0x1F,
+                sr: regs[0x70+off]&0x1F,
+                rr: regs[0x80+off]&0xF,
+                sl: (regs[0x80+off]>>4)&0xF,
+                ks: (regs[0x50+off]>>6)&3,
+            };
+            self.operators[i].clock_envelope(&params, kc, counter);
         }
         let tl: [u16; 4] = std::array::from_fn(|i| (regs[0x40+op_offsets[i]+ch_off]&0x7F) as u16);
         let fb = if self.feedback > 0 { ((self.operators[0].last_output as i32 + self.operators[0].last_output2 as i32) >> 1) >> (9 - self.feedback as i32) } else { 0 } as i16;
