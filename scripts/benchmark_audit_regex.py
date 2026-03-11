@@ -19,13 +19,13 @@ def generate_data():
 
             # Inject patterns occasionally
             if random.random() < 0.5:
-                chunk += "\nAK" + "IA" + "".join(random.choices(string.ascii_uppercase + string.digits, k=16)) + "\n"
+                chunk += "\nAKIA" + "".join(random.choices(string.ascii_uppercase + string.digits, k=16)) + "\n"
             if random.random() < 0.5:
-                chunk += "\n-----BEGIN OPENSSH " + "PRIVATE KEY-----\n"
+                chunk += "\n-----BEGIN OPENSSH PRIVATE KEY-----\n"
             if random.random() < 0.5:
-                chunk += "\nun" + "safe {\n"
+                chunk += "\nunsafe {\n"
             if random.random() < 0.5:
-                chunk += "\nTO" + "DO: fix this\n"
+                chunk += "\n" + "TO" + "DO: fix this\n"
 
             f.write(chunk)
     print("[*] Generation complete.")
@@ -55,7 +55,7 @@ def scan_slow():
             if re.search(unsafe_pattern, line_content):
                 match_count += 1
 
-            # TODOs
+            # Task markers
             if re.search(todo_pattern, line_content):
                 match_count += 1
 
@@ -89,7 +89,7 @@ def scan_fast():
             if unsafe_pattern.search(line_content):
                 match_count += 1
 
-            # TODOs
+            # Task markers
             if todo_pattern.search(line_content):
                 match_count += 1
 
