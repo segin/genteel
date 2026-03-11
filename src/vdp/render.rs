@@ -142,152 +142,20 @@ pub trait RenderOps {
     fn get_cram_color(&self, palette: u8, index: u8) -> u16;
 }
 
-fn render_sprite_scanline(
-    vram: &[u8],
-    line_buf: &mut [u8; 320],
-    line: u16,
-    attr: &SpriteAttributes,
-    screen_width: u16,
-) {
-    let sprite_v_px = (attr.v_size as u16) * 8;
-
-    let py = line.wrapping_sub(attr.v_pos);
-    let fetch_py = if attr.v_flip {
-        (sprite_v_px - 1) - py
-    } else {
-        py
-    };
-
-    let tile_v_offset = fetch_py / 8;
-    let pixel_v = fetch_py % 8;
-
-    // Iterate by tiles instead of pixels for efficiency
-    for t_h in 0..attr.h_size {
-        let tile_h_offset = t_h as u16;
-        let fetch_tile_h_offset = if attr.h_flip {
-            (attr.h_size as u16 - 1) - tile_h_offset
-        } else {
-            tile_h_offset
-        };
-
-        // In a multi-tile sprite, tiles are arranged vertically first
-        let tile_idx = (attr
-            .base_tile
-            .wrapping_add(fetch_tile_h_offset * attr.v_size as u16)
-            .wrapping_add(tile_v_offset))
-            & 0x07FF;
-
-        // Calculate pattern address for the row (pixel_v is 0..7)
-        // Each tile is 32 bytes (4 bytes per row)
-        let row_addr = (tile_idx as usize * 32) + (pixel_v as usize * 4);
-
-        // Check if row is within VRAM bounds
-        if row_addr + 4 > 0x10000 {
-            continue;
-        }
-
-        // Prefetch the 4 bytes (8 pixels) for this row.
-        // row_addr is guaranteed to be 4-byte aligned (32*k + 4*j).
-        // We already checked row_addr + 4 <= 0x10000.
-        let patterns: [u8; 4] = unsafe {
-            vram.get_unchecked(row_addr..row_addr + 4)
-                .try_into()
-                .unwrap_unchecked()
-        };
-
-        let base_screen_x = attr.h_pos.wrapping_add(tile_h_offset * 8);
-
-        // Optimization: If the entire 8-pixel block is visible, skip per-pixel checks.
-        if (base_screen_x as u32) + 8 <= screen_width as u32 {
-            for i in 0..8 {
-                let screen_x = base_screen_x.wrapping_add(i);
-                let eff_col = if attr.h_flip { 7 - i } else { i };
-
-                // SAFETY: eff_col is 0..8, so index 0..3 is valid. patterns is [u8; 4].
-                let byte = unsafe { *patterns.get_unchecked((eff_col as usize) / 2) };
-
-                let color_idx = if eff_col % 2 == 0 {
-                    byte >> 4
-                } else {
-                    byte & 0x0F
-                };
-
-                if color_idx != 0 {
-                    let addr = ((attr.palette as u8) << 4) | (color_idx as u8);
-                    let pri_mask = if attr.priority { 0x80 } else { 0x00 };
-                    // Only write if not already occupied by a higher-priority sprite (in this case we draw in reverse order, so we overwrite, wait actually sprite 0 is highest priority.
-                    // If we draw in reverse order (sprites.iter().rev()), the highest priority sprite is drawn last and overwrites.
-                    // Wait, S/H operators only apply if they are the TOP sprite pixel.
-                    // By drawing in reverse order, the last drawn pixel is the top one.
-                    unsafe {
-                        *line_buf.get_unchecked_mut(screen_x as usize) = addr | pri_mask;
-                    }
-                }
-            }
-        } else {
-            for i in 0..8 {
-                let screen_x = base_screen_x.wrapping_add(i);
-                if screen_x >= screen_width {
-                    continue;
-                }
-
-                let eff_col = if attr.h_flip { 7 - i } else { i };
-
-                // SAFETY: eff_col is 0..8, so index 0..3 is valid. patterns is [u8; 4].
-                let byte = unsafe { *patterns.get_unchecked((eff_col as usize) / 2) };
-                let color_idx = if eff_col % 2 == 0 {
-                    byte >> 4
-                } else {
-                    byte & 0x0F
-                };
-
-                if color_idx != 0 {
-                    let addr = ((attr.palette as u8) << 4) | (color_idx as u8);
-                    let pri_mask = if attr.priority { 0x80 } else { 0x00 };
-                    unsafe {
-                        *line_buf.get_unchecked_mut(screen_x as usize) = addr | pri_mask;
-                    }
-                }
-            }
-        }
-    }
-}
-
-impl RenderOps for Vdp {
-    fn render_line(&mut self, line: u16) {
-        if line >= self.screen_height() {
-            return;
-        }
-
-        let draw_line = line;
-        let fetch_line = line;
-        let line_offset = (draw_line as usize) * 320;
-
-        let (pal_line, color_idx) = self.bg_color();
-        let bg_color_val = self.get_cram_color(pal_line, color_idx);
-        let bg_color_idx = (pal_line << 4) | color_idx;
-
-        if !self.display_enabled() || line >= self.screen_height() {
-            self.framebuffer[line_offset..line_offset + 320].fill(bg_color_val);
-            return;
-        }
-
-        let mut sprite_buffer = [SpriteAttributes::default(); 80];
-        let sprite_count = self.get_active_sprites(fetch_line, &mut sprite_buffer);
-        let active_sprites = &sprite_buffer[..sprite_count];
-
-        let mut buf_b = [0u8; 320];
-        let mut buf_a = [0u8; 320];
-        let mut buf_s = [0u8; 320];
-
-        self.render_plane(false, fetch_line, &mut buf_b);
-        self.render_plane(true, fetch_line, &mut buf_a);
-        self.render_sprites(active_sprites, fetch_line, &mut buf_s);
-
+impl Vdp {
+    #[allow(clippy::too_many_arguments)]
+    fn composite_line(
+        &mut self,
+        line_offset: usize,
+        bg_color_idx: u8,
+        bg_color_val: u16,
+        buf_b: &[u8; 320],
+        buf_a: &[u8; 320],
+        buf_s: &[u8; 320],
+    ) {
         let sh_enabled = (self.registers[REG_MODE4] & 0x08) != 0;
         let mask_col0 = (self.registers[REG_MODE1] & 0x20) != 0;
 
-        // Composite
         for x in 0..320 {
             if mask_col0 && x < 8 {
                 self.framebuffer[line_offset + x] = bg_color_val;
@@ -401,6 +269,157 @@ impl RenderOps for Vdp {
                 self.framebuffer[line_offset + x] = final_color;
             }
         }
+    }
+}
+
+fn render_sprite_scanline(
+    vram: &[u8],
+    line_buf: &mut [u8; 320],
+    line: u16,
+    attr: &SpriteAttributes,
+    screen_width: u16,
+) {
+    let sprite_v_px = (attr.v_size as u16) * 8;
+
+    let py = line.wrapping_sub(attr.v_pos);
+    let fetch_py = if attr.v_flip {
+        (sprite_v_px - 1) - py
+    } else {
+        py
+    };
+
+    let tile_v_offset = fetch_py / 8;
+    let pixel_v = fetch_py % 8;
+
+    // Iterate by tiles instead of pixels for efficiency
+    for t_h in 0..attr.h_size {
+        let tile_h_offset = t_h as u16;
+        let fetch_tile_h_offset = if attr.h_flip {
+            (attr.h_size as u16 - 1) - tile_h_offset
+        } else {
+            tile_h_offset
+        };
+
+        // In a multi-tile sprite, tiles are arranged vertically first
+        let tile_idx = (attr
+            .base_tile
+            .wrapping_add(fetch_tile_h_offset * attr.v_size as u16)
+            .wrapping_add(tile_v_offset))
+            & 0x07FF;
+
+        // Calculate pattern address for the row (pixel_v is 0..7)
+        // Each tile is 32 bytes (4 bytes per row)
+        let row_addr = (tile_idx as usize * 32) + (pixel_v as usize * 4);
+
+        // Check if row is within VRAM bounds
+        if row_addr + 4 > 0x10000 {
+            continue;
+        }
+
+        // Prefetch the 4 bytes (8 pixels) for this row.
+        // row_addr is guaranteed to be 4-byte aligned (32*k + 4*j).
+        // We already checked row_addr + 4 <= 0x10000.
+        let patterns: [u8; 4] = unsafe {
+            vram.get_unchecked(row_addr..row_addr + 4)
+                .try_into()
+                .unwrap_unchecked()
+        };
+
+        let base_screen_x = attr.h_pos.wrapping_add(tile_h_offset * 8);
+
+        // Optimization: If the entire 8-pixel block is visible, skip per-pixel checks.
+        if (base_screen_x as u32) + 8 <= screen_width as u32 {
+            for i in 0..8 {
+                let screen_x = base_screen_x.wrapping_add(i);
+                let eff_col = if attr.h_flip { 7 - i } else { i };
+
+                let byte = patterns[(eff_col as usize) / 2];
+
+                let color_idx = if eff_col % 2 == 0 {
+                    byte >> 4
+                } else {
+                    byte & 0x0F
+                };
+
+                if color_idx != 0 {
+                    let addr = ((attr.palette as u8) << 4) | (color_idx as u8);
+                    let pri_mask = if attr.priority { 0x80 } else { 0x00 };
+                    // Only write if not already occupied by a higher-priority sprite (in this case we draw in reverse order, so we overwrite, wait actually sprite 0 is highest priority.
+                    // If we draw in reverse order (sprites.iter().rev()), the highest priority sprite is drawn last and overwrites.
+                    // Wait, S/H operators only apply if they are the TOP sprite pixel.
+                    // By drawing in reverse order, the last drawn pixel is the top one.
+                    if let Some(pixel) = line_buf.get_mut(screen_x as usize) {
+                        *pixel = addr | pri_mask;
+                    }
+                }
+            }
+        } else {
+            for i in 0..8 {
+                let screen_x = base_screen_x.wrapping_add(i);
+                if screen_x >= screen_width {
+                    continue;
+                }
+
+                let eff_col = if attr.h_flip { 7 - i } else { i };
+
+                let byte = patterns[(eff_col as usize) / 2];
+                let color_idx = if eff_col % 2 == 0 {
+                    byte >> 4
+                } else {
+                    byte & 0x0F
+                };
+
+                if color_idx != 0 {
+                    let addr = ((attr.palette as u8) << 4) | (color_idx as u8);
+                    let pri_mask = if attr.priority { 0x80 } else { 0x00 };
+                    if let Some(pixel) = line_buf.get_mut(screen_x as usize) {
+                        *pixel = addr | pri_mask;
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl RenderOps for Vdp {
+    fn render_line(&mut self, line: u16) {
+        if line >= self.screen_height() {
+            return;
+        }
+
+        let draw_line = line;
+        let fetch_line = line;
+        let line_offset = (draw_line as usize) * 320;
+
+        let (pal_line, color_idx) = self.bg_color();
+        let bg_color_val = self.get_cram_color(pal_line, color_idx);
+        let bg_color_idx = (pal_line << 4) | color_idx;
+
+        if !self.display_enabled() || line >= self.screen_height() {
+            self.framebuffer[line_offset..line_offset + 320].fill(bg_color_val);
+            return;
+        }
+
+        let mut sprite_buffer = [SpriteAttributes::default(); 80];
+        let sprite_count = self.get_active_sprites(fetch_line, &mut sprite_buffer);
+        let active_sprites = &sprite_buffer[..sprite_count];
+
+        let mut buf_b = [0u8; 320];
+        let mut buf_a = [0u8; 320];
+        let mut buf_s = [0u8; 320];
+
+        self.render_plane(false, fetch_line, &mut buf_b);
+        self.render_plane(true, fetch_line, &mut buf_a);
+        self.render_sprites(active_sprites, fetch_line, &mut buf_s);
+
+        self.composite_line(
+            line_offset,
+            bg_color_idx,
+            bg_color_val,
+            &buf_b,
+            &buf_a,
+            &buf_s,
+        );
     }
 
     fn render_plane(&self, is_plane_a: bool, fetch_line: u16, line_buf: &mut [u8; 320]) {
@@ -631,12 +650,9 @@ impl RenderOps for Vdp {
         plane_w: usize,
     ) -> u16 {
         let nt_entry_addr = base + (tile_v * plane_w + tile_h) * 2;
-        // SAFETY: nt_entry_addr & 0xFFFF guarantees range 0..65535, which is within vram bounds (65536)
-        unsafe {
-            let hi = *self.vram.get_unchecked(nt_entry_addr & 0xFFFF);
-            let lo = *self.vram.get_unchecked((nt_entry_addr + 1) & 0xFFFF);
-            ((hi as u16) << 8) | (lo as u16)
-        }
+        let hi = self.vram[nt_entry_addr & 0xFFFF];
+        let lo = self.vram[(nt_entry_addr + 1) & 0xFFFF];
+        ((hi as u16) << 8) | (lo as u16)
     }
 
     #[inline(always)]
@@ -644,19 +660,9 @@ impl RenderOps for Vdp {
         let row = if v_flip { 7 - pixel_v } else { pixel_v };
         let row_addr = (tile_index as usize * 32) + (row as usize * 4);
         // Mask to 64KB boundary and align to 4 bytes.
-        // We use (row_addr & 0xFFFF) to ensure we wrap within 64KB, and then mask with 0xFFFC
-        // to clear the bottom 2 bits for alignment. 0xFFFC effectively does both, but we make
-        // the wrapping explicit for clarity and safety against potential type width assumptions.
         let addr = (row_addr & 0xFFFF) & 0xFFFC;
 
-        // SAFETY:
-        // 1. addr is explicitly masked to be <= 0xFFFC and 4-byte aligned.
-        // 2. self.vram is [u8; 0x10000].
-        // 3. Reading 4 bytes from addr <= 0xFFFC accesses bytes up to 0xFFFF, which is within bounds.
-        unsafe {
-            let ptr = self.vram.as_ptr().add(addr) as *const u32;
-            ptr.read_unaligned().to_ne_bytes()
-        }
+        self.vram[addr..addr + 4].try_into().unwrap()
     }
 
     fn draw_partial_tile_row(
@@ -763,6 +769,6 @@ impl RenderOps for Vdp {
     #[inline(always)]
     fn get_cram_color(&self, palette: u8, index: u8) -> u16 {
         let addr = ((palette as usize) * 16) + (index as usize);
-        unsafe { *self.cram_cache.get_unchecked(addr & 0x3F) }
+        self.cram_cache[addr & 0x3F]
     }
 }
