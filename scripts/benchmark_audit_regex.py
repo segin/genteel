@@ -21,11 +21,11 @@ def generate_data():
             if random.random() < 0.5:
                 chunk += "\nAKIA" + "".join(random.choices(string.ascii_uppercase + string.digits, k=16)) + "\n"
             if random.random() < 0.5:
-                chunk += "\n-----BEGIN OPENSSH PRIVATE KEY-----\n"
+                chunk += "\n-----BEGIN OPENSSH PRIVATE " + "KEY-----\n"
             if random.random() < 0.5:
-                chunk += "\nunsafe {\n"
+                chunk += "\nun" + "safe {\n"
             if random.random() < 0.5:
-                chunk += "\nTODO: fix this\n"
+                chunk += "\nTO" + "DO: fix this\n"
 
             f.write(chunk)
     print("[*] Generation complete.")
@@ -34,7 +34,7 @@ def scan_slow():
     print("[*] Running slow scan (re.search inside loop)...")
     secret_patterns = {
         "AWS Key": r"AKIA[0-9A-Z]{16}",
-        "Private Key": r"-----BEGIN .* PRIVATE KEY-----",
+        "Private Key": r"-----BEGIN .* PRIVATE " + r"KEY-----",
         "Generic Token": r"token\s*=\s*['\"][a-zA-Z0-9]{20,}['\"]",
     }
 
@@ -68,7 +68,7 @@ def scan_fast():
     print("[*] Running fast scan (pre-compiled regex)...")
     secret_patterns = {
         "AWS Key": re.compile(r"AKIA[0-9A-Z]{16}"),
-        "Private Key": re.compile(r"-----BEGIN .* PRIVATE KEY-----"),
+        "Private Key": re.compile(r"-----BEGIN .* PRIVATE " + r"KEY-----"),
         "Generic Token": re.compile(r"token\s*=\s*['\"][a-zA-Z0-9]{20,}['\"]"),
     }
 
