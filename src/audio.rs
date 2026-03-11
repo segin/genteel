@@ -216,7 +216,7 @@ mod tests {
     }
 
     #[test]
-    fn test_create_audio_buffer() {
+    fn test_create_audio_buffer_layout() {
         let shared_buf = create_audio_buffer();
         let buf = shared_buf.lock().unwrap();
 

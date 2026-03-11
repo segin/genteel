@@ -459,10 +459,7 @@ impl Emulator {
                     }
 
                     if let Err(e) = self.save_screenshot(path) {
-                        eprintln!(
-                            "Script Error: Failed to save screenshot to {}: {}",
-                            path, e
-                        );
+                        eprintln!("Script Error: Failed to save screenshot to {}: {}", path, e);
                     } else {
                         println!("Script: Saved screenshot to {}", path);
                     }
@@ -470,9 +467,7 @@ impl Emulator {
             }
             "READ_BYTE" => {
                 if parts.len() > 1 {
-                    if let Ok(addr) =
-                        u32::from_str_radix(parts[1].trim_start_matches("0x"), 16)
-                    {
+                    if let Ok(addr) = u32::from_str_radix(parts[1].trim_start_matches("0x"), 16) {
                         let val = self.bus.borrow_mut().read_byte(addr);
                         println!("Script: READ_BYTE 0x{:06X} = 0x{:02X}", addr, val);
                     }
@@ -480,8 +475,7 @@ impl Emulator {
             }
             "WRITE_BYTE" => {
                 if parts.len() > 2 {
-                    let addr_res =
-                        u32::from_str_radix(parts[1].trim_start_matches("0x"), 16);
+                    let addr_res = u32::from_str_radix(parts[1].trim_start_matches("0x"), 16);
                     let val_res = u8::from_str_radix(parts[2].trim_start_matches("0x"), 16);
                     if let (Ok(addr), Ok(val)) = (addr_res, val_res) {
                         self.bus.borrow_mut().write_byte(addr, val);
@@ -491,8 +485,7 @@ impl Emulator {
             }
             "ASSERT_BYTE" => {
                 if parts.len() > 2 {
-                    let addr_res =
-                        u32::from_str_radix(parts[1].trim_start_matches("0x"), 16);
+                    let addr_res = u32::from_str_radix(parts[1].trim_start_matches("0x"), 16);
                     let val_res = u8::from_str_radix(parts[2].trim_start_matches("0x"), 16);
                     if let (Ok(addr), Ok(expected)) = (addr_res, val_res) {
                         let actual = self.bus.borrow_mut().read_byte(addr);
@@ -508,9 +501,7 @@ impl Emulator {
             }
             "READ_WORD" => {
                 if parts.len() > 1 {
-                    if let Ok(addr) =
-                        u32::from_str_radix(parts[1].trim_start_matches("0x"), 16)
-                    {
+                    if let Ok(addr) = u32::from_str_radix(parts[1].trim_start_matches("0x"), 16) {
                         let val = self.bus.borrow_mut().read_word(addr);
                         println!("Script: READ_WORD 0x{:06X} = 0x{:04X}", addr, val);
                     }
@@ -518,10 +509,8 @@ impl Emulator {
             }
             "WRITE_WORD" => {
                 if parts.len() > 2 {
-                    let addr_res =
-                        u32::from_str_radix(parts[1].trim_start_matches("0x"), 16);
-                    let val_res =
-                        u16::from_str_radix(parts[2].trim_start_matches("0x"), 16);
+                    let addr_res = u32::from_str_radix(parts[1].trim_start_matches("0x"), 16);
+                    let val_res = u16::from_str_radix(parts[2].trim_start_matches("0x"), 16);
                     if let (Ok(addr), Ok(val)) = (addr_res, val_res) {
                         self.bus.borrow_mut().write_word(addr, val);
                         println!("Script: WRITE_WORD 0x{:06X} = 0x{:04X}", addr, val);
@@ -530,10 +519,8 @@ impl Emulator {
             }
             "ASSERT_WORD" => {
                 if parts.len() > 2 {
-                    let addr_res =
-                        u32::from_str_radix(parts[1].trim_start_matches("0x"), 16);
-                    let val_res =
-                        u16::from_str_radix(parts[2].trim_start_matches("0x"), 16);
+                    let addr_res = u32::from_str_radix(parts[1].trim_start_matches("0x"), 16);
+                    let val_res = u16::from_str_radix(parts[2].trim_start_matches("0x"), 16);
                     if let (Ok(addr), Ok(expected)) = (addr_res, val_res) {
                         let actual = self.bus.borrow_mut().read_word(addr);
                         if actual != expected {
@@ -548,9 +535,7 @@ impl Emulator {
             }
             "READ_LONG" => {
                 if parts.len() > 1 {
-                    if let Ok(addr) =
-                        u32::from_str_radix(parts[1].trim_start_matches("0x"), 16)
-                    {
+                    if let Ok(addr) = u32::from_str_radix(parts[1].trim_start_matches("0x"), 16) {
                         let val = self.bus.borrow_mut().read_long(addr);
                         println!("Script: READ_LONG 0x{:06X} = 0x{:08X}", addr, val);
                     }
@@ -558,10 +543,8 @@ impl Emulator {
             }
             "WRITE_LONG" => {
                 if parts.len() > 2 {
-                    let addr_res =
-                        u32::from_str_radix(parts[1].trim_start_matches("0x"), 16);
-                    let val_res =
-                        u32::from_str_radix(parts[2].trim_start_matches("0x"), 16);
+                    let addr_res = u32::from_str_radix(parts[1].trim_start_matches("0x"), 16);
+                    let val_res = u32::from_str_radix(parts[2].trim_start_matches("0x"), 16);
                     if let (Ok(addr), Ok(val)) = (addr_res, val_res) {
                         self.bus.borrow_mut().write_long(addr, val);
                         println!("Script: WRITE_LONG 0x{:06X} = 0x{:08X}", addr, val);
@@ -570,10 +553,8 @@ impl Emulator {
             }
             "ASSERT_LONG" => {
                 if parts.len() > 2 {
-                    let addr_res =
-                        u32::from_str_radix(parts[1].trim_start_matches("0x"), 16);
-                    let val_res =
-                        u32::from_str_radix(parts[2].trim_start_matches("0x"), 16);
+                    let addr_res = u32::from_str_radix(parts[1].trim_start_matches("0x"), 16);
+                    let val_res = u32::from_str_radix(parts[2].trim_start_matches("0x"), 16);
                     if let (Ok(addr), Ok(expected)) = (addr_res, val_res) {
                         let actual = self.bus.borrow_mut().read_long(addr);
                         if actual != expected {
@@ -617,15 +598,6 @@ impl Emulator {
         let samples_per_line = samples_per_frame / (LINES_PER_FRAME as f32);
         let mut z80_cycle_debt: f32 = 0.0;
         for line in 0..LINES_PER_FRAME {
-            // Update VDP VBlank status
-            {
-                let mut bus = self.bus.borrow_mut();
-                if line == active_lines {
-                    bus.vdp.set_vblank(true);
-                } else if line == 0 {
-                    bus.vdp.set_vblank(false);
-                }
-            }
             self.step_scanline(line, active_lines, samples_per_line, &mut z80_cycle_debt);
         }
         self.generate_audio_samples(samples_per_line);
@@ -641,7 +613,7 @@ impl Emulator {
     ) {
         self.vdp_scanline_setup(line, active_lines);
         self.run_cpu_loop(line, active_lines, z80_cycle_debt);
-        self.handle_interrupts(line, active_lines);
+        self.handle_interrupts();
     }
     fn vdp_scanline_setup(&mut self, line: u16, _active_lines: u16) {
         let mut bus = self.bus.borrow_mut();
@@ -872,37 +844,19 @@ impl Emulator {
         }
         bus.audio_buffer.clear();
     }
-    fn handle_interrupts(&mut self, line: u16, active_lines: u16) {
+    fn handle_interrupts(&mut self) {
         // H-Blank only lasts for a short period at the end of a scanline.
         // If the CPU hasn't taken the H-Int by the end of the subsequent scanline
         // (e.g., because it was handling V-Int or had interrupts masked), the VDP
         // will have dropped the IRQ line. We must cancel it here to prevent spurious interrupts.
         self.cpu.cancel_interrupt(4);
 
-        let mut bus = self.bus.borrow_mut();
-        // VBlank Interrupt (Level 6) - Triggered at start of VBlank (line 224/240)
-        if line == active_lines {
-            // Check if VInterrupt enabled (Reg 1, bit 5)
-            if (bus.vdp.mode2() & 0x20) != 0 {
-                self.cpu.request_interrupt(6);
-            }
+        let bus = self.bus.borrow_mut();
+        if bus.vdp.vblank_pending() {
+            self.cpu.request_interrupt(6);
         }
-        // HBlank Interrupt (Level 4) - Proper counter logic
-        if line <= active_lines {
-            // Decrement line counter regardless of interrupt enable status
-            if bus.vdp.line_counter == 0 {
-                // Counter expired - reload
-                bus.vdp.line_counter = bus.vdp.registers[10] as u16;
-                // Trigger HInt if enabled
-                if (bus.vdp.mode1() & 0x10) != 0 {
-                    self.cpu.request_interrupt(4);
-                }
-            } else {
-                bus.vdp.line_counter -= 1;
-            }
-        } else {
-            // During VBlank (after line == active_lines), reload HInt counter every line
-            bus.vdp.line_counter = bus.vdp.registers[10] as u16;
+        if bus.vdp.hint_pending() {
+            self.cpu.request_interrupt(4);
         }
     }
     /// Run headless for N frames (or until script ends if N is None)

@@ -2,7 +2,9 @@
 //!
 //! Uses proptest for comprehensive property testing of VDP behavior.
 
-use crate::vdp::{RenderOps, Vdp, REG_PLANE_SIZE};
+use crate::vdp::{
+    RenderOps, Vdp, MODE1_HINT_ENABLE, REG_H_INT_COUNTER, REG_PLANE_SIZE, STATUS_VBLANK,
+};
 use proptest::prelude::*;
 
 proptest! {
@@ -239,5 +241,39 @@ mod unit_tests {
         assert_eq!(v_out, 0xAB);
         // H should be midway through active range: 0xB6 / 2 = 0x5B
         assert_eq!(h_out, 0x5B);
+    }
+
+    #[test]
+    fn test_vdp_tick_drives_hint_counter_on_active_lines() {
+        let mut vdp = Vdp::new();
+        vdp.registers[0] = MODE1_HINT_ENABLE;
+        vdp.registers[REG_H_INT_COUNTER] = 5;
+        vdp.v_counter = 222;
+        vdp.line_counter = 0;
+        vdp.mclk_line_clocks = 3419;
+
+        vdp.tick(1, |_| 0);
+
+        assert_eq!(vdp.v_counter, 223);
+        assert_eq!(vdp.line_counter, 5);
+        assert!(vdp.hint_pending());
+        assert_eq!(vdp.status & STATUS_VBLANK, 0);
+    }
+
+    #[test]
+    fn test_vdp_tick_does_not_fire_hint_on_first_vblank_line() {
+        let mut vdp = Vdp::new();
+        vdp.registers[0] = MODE1_HINT_ENABLE;
+        vdp.registers[REG_H_INT_COUNTER] = 7;
+        vdp.v_counter = 223;
+        vdp.line_counter = 0;
+        vdp.mclk_line_clocks = 3419;
+
+        vdp.tick(1, |_| 0);
+
+        assert_eq!(vdp.v_counter, 224);
+        assert_eq!(vdp.line_counter, 7);
+        assert!(!vdp.hint_pending());
+        assert_ne!(vdp.status & STATUS_VBLANK, 0);
     }
 }
