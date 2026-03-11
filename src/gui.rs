@@ -38,9 +38,7 @@ pub const SLOT_NAMES: [&str; 10] = [
     "Slot 9",
 ];
 
-pub const SLOT_EXTS: [&str; 10] = [
-    "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9",
-];
+pub const SLOT_EXTS: [&str; 10] = ["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9"];
 
 #[cfg(feature = "gui")]
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -223,6 +221,15 @@ pub struct DebugInfo {
 }
 
 #[cfg(feature = "gui")]
+#[cfg(feature = "gilrs")]
+fn init_gilrs() -> Option<Gilrs> {
+    if std::env::var("GENTEEL_TEST_FAIL_GILRS").is_ok() {
+        return None;
+    }
+    init_gilrs_with_builder(Gilrs::new)
+}
+
+#[cfg(feature = "gui")]
 pub struct Framework {
     pub egui_ctx: egui::Context,
     pub egui_state: egui_winit::State,
@@ -273,7 +280,7 @@ impl Framework {
             plane_b_texture: None,
             pending_rom_path: Arc::new(Mutex::new(None)),
             #[cfg(feature = "gilrs")]
-            gilrs: init_gilrs_with_builder(Gilrs::new),
+            gilrs: init_gilrs(),
         }
     }
     pub fn handle_event(
@@ -592,13 +599,18 @@ impl Framework {
                         ui.heading("Connected Gamepads");
                         if let Some(gilrs) = &self.gilrs {
                             let mut gamepad_str = String::with_capacity(64);
+                            let mut found = false;
                             for (id, gamepad) in gilrs.gamepads() {
                                 gamepad_str.clear();
                                 let _ = write!(&mut gamepad_str, "{}: {}", id, gamepad.name());
                                 ui.label(&gamepad_str);
+                                found = true;
+                            }
+                            if !found {
+                                ui.label("No gamepads connected");
                             }
                         } else {
-                            ui.label("Gamepad support unavailable");
+                            ui.label("Gamepad support disabled or failed to initialize");
                         }
                     }
                 });
@@ -1919,4 +1931,27 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
             }
         })
         .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(feature = "gilrs")]
+    #[test]
+    fn test_gilrs_initialization_failure() {
+        // Set the environment variable to force initialization failure
+        std::env::set_var("GENTEEL_TEST_FAIL_GILRS", "1");
+
+        let result = init_gilrs();
+
+        // Clean up the environment variable
+        std::env::remove_var("GENTEEL_TEST_FAIL_GILRS");
+
+        // Assert that initialization failed gracefully by returning None
+        assert!(
+            result.is_none(),
+            "Expected Gilrs initialization to fail gracefully when GENTEEL_TEST_FAIL_GILRS is set"
+        );
+    }
 }
