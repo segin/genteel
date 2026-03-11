@@ -38,9 +38,7 @@ pub const SLOT_NAMES: [&str; 10] = [
     "Slot 9",
 ];
 
-pub const SLOT_EXTS: [&str; 10] = [
-    "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9",
-];
+pub const SLOT_EXTS: [&str; 10] = ["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9"];
 
 #[cfg(feature = "gui")]
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -169,6 +167,98 @@ impl GuiState {
     pub fn toggle_window(&mut self, name: &str) {
         let open = self.is_window_open(name);
         self.set_window_open(name, !open);
+    }
+}
+
+#[cfg(feature = "gui")]
+impl DebugInfo {
+    pub fn collect(emulator: &Emulator, force_red: bool, frame: &mut [u8]) -> Self {
+        let mut bus = emulator.bus.borrow_mut();
+        if force_red {
+            bus.vdp.framebuffer.fill(0xF800); // Red in RGB565
+        }
+        let m68k_disasm = {
+            let mut disasm = Vec::new();
+            let mut addr = emulator.cpu.pc;
+            for _ in 0..10 {
+                let opcode = bus.read_word(addr);
+                let instr = crate::cpu::decode(opcode);
+                disasm.push((addr, format!("{:?}", instr)));
+                addr += instr.length_words() * 2;
+            }
+            disasm
+        };
+        let z80_disasm = {
+            let mut disasm = Vec::new();
+            let mut addr = emulator.z80.pc;
+            for _ in 0..10 {
+                let byte = bus.read_byte(0xA00000 + addr as u32);
+                disasm.push((addr, format!("{:02X}", byte)));
+                addr += 1;
+            }
+            disasm
+        };
+
+        let mut cram_raw = [0u16; 64];
+        for i in 0..64 {
+            cram_raw[i] = u16::from_be_bytes([bus.vdp.cram[i * 2], bus.vdp.cram[i * 2 + 1]]);
+        }
+
+        let mut wram = [0u8; 0x10000];
+        wram.copy_from_slice(&bus.work_ram);
+        let mut z80_ram = [0u8; 0x2000];
+        z80_ram.copy_from_slice(&bus.z80_ram);
+
+        let info = DebugInfo {
+            m68k_pc: emulator.cpu.pc,
+            m68k_d: emulator.cpu.d,
+            m68k_a: emulator.cpu.a,
+            m68k_sr: emulator.cpu.sr,
+            m68k_usp: emulator.cpu.usp,
+            m68k_ssp: emulator.cpu.ssp,
+            m68k_disasm,
+            z80_pc: emulator.z80.pc,
+            z80_a: emulator.z80.a,
+            z80_f: emulator.z80.f,
+            z80_b: emulator.z80.b,
+            z80_c: emulator.z80.c,
+            z80_d: emulator.z80.d,
+            z80_e: emulator.z80.e,
+            z80_h: emulator.z80.h,
+            z80_l: emulator.z80.l,
+            z80_ix: emulator.z80.ix,
+            z80_iy: emulator.z80.iy,
+            z80_sp: emulator.z80.sp,
+            z80_i: emulator.z80.i,
+            z80_r: emulator.z80.r,
+            z80_memptr: emulator.z80.memptr,
+            z80_iff1: emulator.z80.iff1,
+            z80_im: emulator.z80.im,
+            z80_disasm,
+            frame_count: emulator.internal_frame_count,
+            vdp_status: bus.vdp.read_status(),
+            vdp_registers: bus.vdp.registers,
+            display_enabled: bus.vdp.display_enabled(),
+            bg_color_index: bus.vdp.registers[7],
+            cram: bus.vdp.cram_cache,
+            cram_raw,
+            vram: bus.vdp.vram,
+            vsram: bus.vdp.vsram,
+            wram,
+            z80_ram,
+            ym2612_regs: bus.apu.fm.registers,
+            psg_tone: bus.apu.psg.tones.clone(),
+            psg_noise: bus.apu.psg.noise.clone(),
+            channel_waveforms: bus.apu.channel_buffers,
+            port1_state: bus.io.port1.state,
+            port1_type: bus.io.port1.controller_type,
+            port2_state: bus.io.port2.state,
+            port2_type: bus.io.port2.controller_type,
+            has_rom: !bus.rom.is_empty(),
+            current_rom_path: emulator.current_rom_path.clone(),
+        };
+        frontend::rgb565_to_rgba8(&bus.vdp.framebuffer, frame);
+        info
     }
 }
 
@@ -1533,6 +1623,87 @@ impl Framework {
         }
     }
 
+    pub fn process_gui_requests(&mut self, emulator: &mut Emulator) {
+        // Check for pick ROM request
+        if self.gui_state.pick_rom_requested {
+            self.pick_rom();
+            self.gui_state.pick_rom_requested = false;
+        }
+
+        // Check for pending ROM load
+        let pending = {
+            match self.pending_rom_path.lock() {
+                Ok(mut lock) => lock.take(),
+                Err(_) => {
+                    eprintln!("Failed to acquire pending_rom_path lock");
+                    None
+                }
+            }
+        };
+        if let Some(path) = pending {
+            println!("Loading ROM: {:?}", path);
+            // Security: Whitelist the directory containing the ROM
+            if let Ok(canonical) = path.canonicalize() {
+                if let Some(parent) = canonical.parent() {
+                    let _ = emulator.add_allowed_path(parent);
+                }
+            }
+            if let Err(e) = emulator.load_rom(path.to_str().unwrap_or("")) {
+                eprintln!("Failed to load ROM: {}", e);
+            } else {
+                // Update recent ROMs
+                let mut recent = self.gui_state.recent_roms.clone();
+                recent.retain(|p| p != &path);
+                recent.insert(0, path.clone());
+                recent.truncate(10);
+                self.gui_state.recent_roms = recent;
+                self.gui_state.save();
+
+                // Auto-Load if enabled
+                if self.gui_state.auto_save_load {
+                    let auto_path = path.with_extension("auto");
+                    if auto_path.exists() {
+                        emulator.load_state_from_path(auto_path);
+                    }
+                }
+            }
+        }
+        if self.gui_state.reset_requested {
+            println!("Hard resetting emulator");
+            emulator.hard_reset();
+            self.gui_state.reset_requested = false;
+        }
+        if self.gui_state.close_requested {
+            println!("Closing ROM");
+            if self.gui_state.auto_save_load {
+                if let Some(path) = &emulator.current_rom_path {
+                    emulator.save_state_to_path(path.with_extension("auto"));
+                }
+            }
+            emulator.close_rom();
+            self.gui_state.save();
+            self.gui_state.close_requested = false;
+        }
+        if let Some(slot) = self.gui_state.save_requested {
+            emulator.save_state(slot);
+            self.gui_state.save_requested = None;
+        }
+        if let Some(slot) = self.gui_state.load_requested {
+            emulator.load_state(slot);
+            self.gui_state.load_requested = None;
+        }
+        if let Some(slot) = self.gui_state.delete_state_requested {
+            emulator.delete_state(slot);
+            self.gui_state.delete_state_requested = None;
+        }
+
+        // Sync settings from GUI
+        emulator.input_mapping = self.gui_state.input_mapping;
+        emulator.paused = self.gui_state.paused;
+        emulator.single_step = self.gui_state.single_step;
+        self.gui_state.single_step = false; // Reset GUI state
+    }
+
     pub fn handle_exit(&mut self, emulator: &mut Emulator, record_path: &Option<String>) {
         if self.gui_state.auto_save_load {
             if let Some(path) = &emulator.current_rom_path {
@@ -1683,85 +1854,9 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                             #[cfg(feature = "gilrs")]
                             framework.poll_gamepads(&mut input.p1);
 
-                            // Check for pick ROM request
-                            if framework.gui_state.pick_rom_requested {
-                                framework.pick_rom();
-                                framework.gui_state.pick_rom_requested = false;
-                            }
-
-                            // Check for pending ROM load
-                            let pending = {
-                                match framework.pending_rom_path.lock() {
-                                    Ok(mut lock) => lock.take(),
-                                    Err(_) => {
-                                        eprintln!("Failed to acquire pending_rom_path lock");
-                                        None
-                                    }
-                                }
-                            };
-                            if let Some(path) = pending {
-                                println!("Loading ROM: {:?}", path);
-                                // Security: Whitelist the directory containing the ROM
-                                if let Ok(canonical) = path.canonicalize() {
-                                    if let Some(parent) = canonical.parent() {
-                                        let _ = emulator.add_allowed_path(parent);
-                                    }
-                                }
-                                if let Err(e) = emulator.load_rom(path.to_str().unwrap_or("")) {
-                                    eprintln!("Failed to load ROM: {}", e);
-                                } else {
-                                    // Update recent ROMs
-                                    let mut recent = framework.gui_state.recent_roms.clone();
-                                    recent.retain(|p| p != &path);
-                                    recent.insert(0, path.clone());
-                                    recent.truncate(10);
-                                    framework.gui_state.recent_roms = recent;
-                                    framework.gui_state.save();
-
-                                    // Auto-Load if enabled
-                                    if framework.gui_state.auto_save_load {
-                                        let auto_path = path.with_extension("auto");
-                                        if auto_path.exists() {
-                                            emulator.load_state_from_path(auto_path);
-                                        }
-                                    }
-                                }
-                            }
-                            if framework.gui_state.reset_requested {
-                                println!("Hard resetting emulator");
-                                emulator.hard_reset();
-                                framework.gui_state.reset_requested = false;
-                            }
-                            if framework.gui_state.close_requested {
-                                println!("Closing ROM");
-                                if framework.gui_state.auto_save_load {
-                                    if let Some(path) = &emulator.current_rom_path {
-                                        emulator.save_state_to_path(path.with_extension("auto"));
-                                    }
-                                }
-                                emulator.close_rom();
-                                framework.gui_state.save();
-                                framework.gui_state.close_requested = false;
-                            }
-                            if let Some(slot) = framework.gui_state.save_requested {
-                                emulator.save_state(slot);
-                                framework.gui_state.save_requested = None;
-                            }
-                            if let Some(slot) = framework.gui_state.load_requested {
-                                emulator.load_state(slot);
-                                framework.gui_state.load_requested = None;
-                            }
-                            if let Some(slot) = framework.gui_state.delete_state_requested {
-                                emulator.delete_state(slot);
-                                framework.gui_state.delete_state_requested = None;
-                            }
-
-                            // Sync settings from GUI
-                            emulator.input_mapping = framework.gui_state.input_mapping;
+                            // Process GUI requests
+                            framework.process_gui_requests(&mut emulator);
                             let force_red = framework.gui_state.force_red;
-                            emulator.paused = framework.gui_state.paused;
-                            emulator.single_step = framework.gui_state.single_step;
-                            framework.gui_state.single_step = false; // Reset GUI state
 
                             // Poll GDB (can override GUI state)
                             emulator.poll_gdb();
@@ -1793,97 +1888,8 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                             emulator.audio_buffer.clear();
 
                             // Collect debug info and render
-                            let debug_info = {
-                                let mut bus = emulator.bus.borrow_mut();
-                                if force_red {
-                                    bus.vdp.framebuffer.fill(0xF800); // Red in RGB565
-                                }
-                                let m68k_disasm = {
-                                    let mut disasm = Vec::new();
-                                    let mut addr = emulator.cpu.pc;
-                                    for _ in 0..10 {
-                                        let opcode = bus.read_word(addr);
-                                        let instr = crate::cpu::decode(opcode);
-                                        disasm.push((addr, format!("{:?}", instr)));
-                                        addr += instr.length_words() * 2;
-                                    }
-                                    disasm
-                                };
-                                let z80_disasm = {
-                                    let mut disasm = Vec::new();
-                                    let mut addr = emulator.z80.pc;
-                                    for _ in 0..10 {
-                                        let byte = bus.read_byte(0xA00000 + addr as u32);
-                                        disasm.push((addr, format!("{:02X}", byte)));
-                                        addr += 1;
-                                    }
-                                    disasm
-                                };
-
-                                let mut cram_raw = [0u16; 64];
-                                for i in 0..64 {
-                                    cram_raw[i] = u16::from_be_bytes([
-                                        bus.vdp.cram[i * 2],
-                                        bus.vdp.cram[i * 2 + 1],
-                                    ]);
-                                }
-
-                                let mut wram = [0u8; 0x10000];
-                                wram.copy_from_slice(&bus.work_ram);
-                                let mut z80_ram = [0u8; 0x2000];
-                                z80_ram.copy_from_slice(&bus.z80_ram);
-
-                                let info = DebugInfo {
-                                    m68k_pc: emulator.cpu.pc,
-                                    m68k_d: emulator.cpu.d,
-                                    m68k_a: emulator.cpu.a,
-                                    m68k_sr: emulator.cpu.sr,
-                                    m68k_usp: emulator.cpu.usp,
-                                    m68k_ssp: emulator.cpu.ssp,
-                                    m68k_disasm,
-                                    z80_pc: emulator.z80.pc,
-                                    z80_a: emulator.z80.a,
-                                    z80_f: emulator.z80.f,
-                                    z80_b: emulator.z80.b,
-                                    z80_c: emulator.z80.c,
-                                    z80_d: emulator.z80.d,
-                                    z80_e: emulator.z80.e,
-                                    z80_h: emulator.z80.h,
-                                    z80_l: emulator.z80.l,
-                                    z80_ix: emulator.z80.ix,
-                                    z80_iy: emulator.z80.iy,
-                                    z80_sp: emulator.z80.sp,
-                                    z80_i: emulator.z80.i,
-                                    z80_r: emulator.z80.r,
-                                    z80_memptr: emulator.z80.memptr,
-                                    z80_iff1: emulator.z80.iff1,
-                                    z80_im: emulator.z80.im,
-                                    z80_disasm,
-                                    frame_count: emulator.internal_frame_count,
-                                    vdp_status: bus.vdp.read_status(),
-                                    vdp_registers: bus.vdp.registers,
-                                    display_enabled: bus.vdp.display_enabled(),
-                                    bg_color_index: bus.vdp.registers[7],
-                                    cram: bus.vdp.cram_cache,
-                                    cram_raw,
-                                    vram: bus.vdp.vram,
-                                    vsram: bus.vdp.vsram,
-                                    wram,
-                                    z80_ram,
-                                    ym2612_regs: bus.apu.fm.registers,
-                                    psg_tone: bus.apu.psg.tones.clone(),
-                                    psg_noise: bus.apu.psg.noise.clone(),
-                                    channel_waveforms: bus.apu.channel_buffers,
-                                    port1_state: bus.io.port1.state,
-                                    port1_type: bus.io.port1.controller_type,
-                                    port2_state: bus.io.port2.state,
-                                    port2_type: bus.io.port2.controller_type,
-                                    has_rom: !bus.rom.is_empty(),
-                                    current_rom_path: emulator.current_rom_path.clone(),
-                                };
-                                frontend::rgb565_to_rgba8(&bus.vdp.framebuffer, pixels.frame_mut());
-                                info
-                            };
+                            let debug_info =
+                                DebugInfo::collect(&emulator, force_red, pixels.frame_mut());
 
                             // Update egui
                             framework.prepare(window, &debug_info);

@@ -970,11 +970,17 @@ mod tests {
     fn test_gdb_server_new_bind_error() {
         // Bind a listener to a random port to keep it occupied
         let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind listener");
-        let port = listener.local_addr().expect("Failed to get local addr").port();
+        let port = listener
+            .local_addr()
+            .expect("Failed to get local addr")
+            .port();
 
         // Attempt to create a GdbServer on the same port, which should fail
         let result = GdbServer::new(port, None);
-        assert!(result.is_err(), "Expected GdbServer::new to fail when port is already in use");
+        assert!(
+            result.is_err(),
+            "Expected GdbServer::new to fail when port is already in use"
+        );
 
         let err = result.err().unwrap();
         assert_eq!(err.kind(), std::io::ErrorKind::AddrInUse);
@@ -1192,7 +1198,9 @@ mod tests {
         // write the ACK back.
         // Format of valid packet: $OK#9a
         let packet = b"$OK#9a";
-        client_stream.write_all(packet).expect("Failed to write packet");
+        client_stream
+            .write_all(packet)
+            .expect("Failed to write packet");
         client_stream.flush().expect("Failed to flush");
 
         // Forcefully close the client connection so the server's ACK write fails
