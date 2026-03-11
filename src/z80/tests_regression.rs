@@ -273,7 +273,7 @@ fn regression_neg_normal() {
     assert!(c.get_flag(flags::CARRY)); // Carry set
 }
 
-// Bug: LD A, I/R should set P/V from IFF2
+// Z80 Hardware Edge Case: LD A, I/R should set P/V from IFF2
 #[test]
 fn regression_ld_a_i_iff2() {
     let mut c = create_z80(&[0xED, 0x57]);
