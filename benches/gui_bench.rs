@@ -35,12 +35,14 @@ fn bench_vec_allocation(c: &mut Criterion) {
 
     group.bench_function("map_collect", |b| {
         b.iter(|| {
-            let points: Vec<_> = (0..128).map(|i| {
-                let val = channel_waveform[i];
-                let x = i as f32 * 2.0;
-                let y = 100.0 - (val as f32 / 16384.0 * 20.0);
-                (x, y)
-            }).collect();
+            let points: Vec<_> = (0..128)
+                .map(|i| {
+                    let val = channel_waveform[i];
+                    let x = i as f32 * 2.0;
+                    let y = 100.0 - (val as f32 / 16384.0 * 20.0);
+                    (x, y)
+                })
+                .collect();
             black_box(points);
         });
     });

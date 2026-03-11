@@ -822,9 +822,15 @@ mod tests {
         // we satisfy the requirement by catching the panic explicitly if it were to occur.
         let result = std::panic::catch_unwind(|| io.serialize());
 
-        assert!(result.is_ok(), "Io serialization should never panic for valid states");
+        assert!(
+            result.is_ok(),
+            "Io serialization should never panic for valid states"
+        );
         let state = result.unwrap();
-        assert!(state.get("version").is_some(), "State should contain version key");
+        assert!(
+            state.get("version").is_some(),
+            "State should contain version key"
+        );
     }
 
     #[test]
@@ -837,6 +843,9 @@ mod tests {
         io.write_state(&invalid_state);
 
         // Verify Io state is unchanged
-        assert_eq!(io.version, original_version, "Io state should not change when given invalid JSON");
+        assert_eq!(
+            io.version, original_version,
+            "Io state should not change when given invalid JSON"
+        );
     }
 }

@@ -2,9 +2,9 @@
 //!
 //! Refactored to use band-limited synthesis for both FM and PSG.
 
+pub mod blip_buf;
 pub mod psg;
 pub mod ym2612;
-pub mod blip_buf;
 
 #[cfg(test)]
 mod tests_psg_expansion;
@@ -88,8 +88,12 @@ impl Apu {
             // Update visualization
             let fm_samples = self.fm.generate_channel_samples();
             let psg_samples = self.psg.get_channel_samples();
-            for i in 0..6 { self.channel_buffers[i][self.buffer_idx] = fm_samples[i]; }
-            for i in 0..4 { self.channel_buffers[6 + i][self.buffer_idx] = psg_samples[i]; }
+            for i in 0..6 {
+                self.channel_buffers[i][self.buffer_idx] = fm_samples[i];
+            }
+            for i in 0..4 {
+                self.channel_buffers[6 + i][self.buffer_idx] = psg_samples[i];
+            }
             self.buffer_idx = (self.buffer_idx + 1) % 128;
 
             let left = (fm_l_val as i32 + psg_val as i32).clamp(-32768, 32767) as i16;

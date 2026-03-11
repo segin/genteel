@@ -27,7 +27,11 @@ fn test_ym2612_all_channels_enable() {
             ym.write_data_bank(bank, 0x1F);
         }
 
-        let ch_bits = match ch { 0..=2 => ch as u8, 3..=5 => (ch as u8)+1, _ => 7 };
+        let ch_bits = match ch {
+            0..=2 => ch as u8,
+            3..=5 => (ch as u8) + 1,
+            _ => 7,
+        };
         ym.write_addr(Bank::Bank0, 0x28);
         ym.write_data_bank(Bank::Bank0, 0xF0 | ch_bits);
     }
@@ -88,11 +92,15 @@ fn test_ym2612_timer_ab_simultaneous() {
     ym.write_addr(Bank::Bank0, 0x27);
     ym.write_data_bank(Bank::Bank0, 0x0F);
 
-    // Step enough for Timer B (8064 master cycles). 
+    // Step enough for Timer B (8064 master cycles).
     // Since we step 1 cycle per call, we need ~1152 steps.
     for _ in 0..2000 {
         ym.step(1);
     }
 
-    assert_eq!(ym.read_status() & 0x03, 0x03, "Both timers should have fired");
+    assert_eq!(
+        ym.read_status() & 0x03,
+        0x03,
+        "Both timers should have fired"
+    );
 }
