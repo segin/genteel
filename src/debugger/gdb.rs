@@ -42,6 +42,9 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
     result |= (a_len > MAX_PASSWORD_CHECK_LEN) as usize;
     result |= (b_len > MAX_PASSWORD_CHECK_LEN) as usize;
 
+    let a_safe: &[u8] = if a_len == 0 { &[0u8] } else { a_bytes };
+    let b_safe: &[u8] = if b_len == 0 { &[0u8] } else { b_bytes };
+
     for i in 0..MAX_PASSWORD_CHECK_LEN {
         // Use bitwise masking to avoid variable-time operations like slice copying or branching.
         // If i < len, mask is 0xFF (all 1s), so we use the byte.
@@ -53,14 +56,15 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
         let a_mask = 0u8.wrapping_sub((i < a_len) as u8);
         let b_mask = 0u8.wrapping_sub((i < b_len) as u8);
 
-        // Safely index using modulo or bitwise logic (if len is 0 we just read index 0 which is safe bounds check)
-        // Since we can't easily avoid bounds check branching completely without unsafe,
-        // we'll get the byte if it exists, or 0, but we MUST mask it regardless of what we get
-        // so that the result only depends on the mask (which depends on the length)
-        // To avoid branch in unwrap_or(&0), we can just use `get` and match, but match is a branch.
-        // However, the branch predictor will behave the same if we just use a default value.
-        let a_val = a_bytes.get(i).copied().unwrap_or(0);
-        let b_val = b_bytes.get(i).copied().unwrap_or(0);
+        // Safely index using bitwise logic to avoid bounds check branching.
+        // We use a safe slice that is at least length 1 (a_safe/b_safe).
+        // If i < len, index is i. If i >= len, index is 0.
+        // This strictly avoids unwrap_or, match, or any branches inside the loop.
+        let a_idx = i * (i < a_len) as usize;
+        let b_idx = i * (i < b_len) as usize;
+
+        let a_val = a_safe[a_idx];
+        let b_val = b_safe[b_idx];
 
         let a_byte = a_val & a_mask;
         let b_byte = b_val & b_mask;
