@@ -129,4 +129,44 @@ mod tests {
         assert_eq!(split_u32_to_words(0x0000FFFF), (0x0000, 0xFFFF));
         assert_eq!(split_u32_to_words(0xFFFF0000), (0xFFFF, 0x0000));
     }
+
+    #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
+    struct BigArrayTestStruct {
+        #[serde(with = "crate::memory::byte_utils::big_array")]
+        data: [u8; 64],
+    }
+
+    #[test]
+    fn test_big_array_serialization() {
+        let original = BigArrayTestStruct {
+            data: [42; 64],
+        };
+
+        let serialized = serde_json::to_string(&original).unwrap();
+        let deserialized: BigArrayTestStruct = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(original, deserialized);
+    }
+
+    #[test]
+    fn test_big_array_deserialization_error() {
+        let mut json = String::from(r#"{"data":["#);
+        for _ in 0..63 {
+            json.push_str("42,");
+        }
+        json.push_str("42]}"); // length 64, this should pass
+
+        let deserialized: Result<BigArrayTestStruct, _> = serde_json::from_str(&json);
+        assert!(deserialized.is_ok());
+
+        // Now test invalid length
+        let mut json_invalid = String::from(r#"{"data":["#);
+        for _ in 0..62 {
+            json_invalid.push_str("42,");
+        }
+        json_invalid.push_str("42]}"); // length 63, this should fail
+
+        let deserialized_invalid: Result<BigArrayTestStruct, _> = serde_json::from_str(&json_invalid);
+        assert!(deserialized_invalid.is_err());
+    }
 }
