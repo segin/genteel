@@ -29,7 +29,14 @@ use serde_json::Value;
 #[macro_use]
 mod macros;
 
-#[derive(Clone, Copy, Debug)]
+pub mod op_general;
+use op_general::GeneralOps;
+
+pub mod op_ed;
+
+pub mod op_index;
+
+/// Decoded parameters for a Z80 instruction opcode
 pub struct OpParams {
     pub opcode: u8,
     pub x: u8,
@@ -38,13 +45,6 @@ pub struct OpParams {
     pub p: u8,
     pub q: u8,
 }
-
-pub mod op_general;
-use op_general::GeneralOps;
-
-pub mod op_ed;
-
-pub mod op_index;
 
 /// Z80 CPU
 #[derive(Debug)]
@@ -819,26 +819,20 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 _pc_before, opcode, self.a, self.f, self.bc(), self.de(), self.hl(), self.sp, self.cycles);
         }
 
-        let x = (opcode >> 6) & 0x03;
-        let y = (opcode >> 3) & 0x07;
-        let z = opcode & 0x07;
-        let p = y >> 1;
-        let q = y & 1;
-
         let op_params = OpParams {
             opcode,
-            x,
-            y,
-            z,
-            p,
-            q,
+            x: (opcode >> 6) & 0x03,
+            y: (opcode >> 3) & 0x07,
+            z: opcode & 0x07,
+            p: ((opcode >> 3) & 0x07) >> 1,
+            q: ((opcode >> 3) & 0x07) & 1,
         };
 
-        let t_states = match x {
-            0 => self.execute_x0(op_params),
-            1 => self.execute_x1(op_params),
-            2 => self.execute_x2(op_params),
-            3 => self.execute_x3(op_params),
+        let t_states = match op_params.x {
+            0 => self.execute_x0(&op_params),
+            1 => self.execute_x1(&op_params),
+            2 => self.execute_x2(&op_params),
+            3 => self.execute_x3(&op_params),
             _ => 4,
         };
 
@@ -967,8 +961,8 @@ mod tests;
 // #[cfg(test)]
 // mod tests_load;
 
-// #[cfg(test)]
-// mod tests_regression;
+#[cfg(test)]
+mod tests_regression;
 
 // #[cfg(test)]
 // mod tests_undoc;
@@ -976,8 +970,8 @@ mod tests;
 // #[cfg(test)]
 // mod tests_exhaustive;
 
-// #[cfg(test)]
-// mod tests_block;
+#[cfg(test)]
+mod tests_block;
 
 // #[cfg(test)]
 // mod tests_halfcarry;
