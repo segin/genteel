@@ -140,6 +140,8 @@ pub trait RenderOps {
     );
     fn bg_color(&self) -> (u8, u8);
     fn get_cram_color(&self, palette: u8, index: u8) -> u16;
+    fn get_cram_rgb565(&self) -> [u16; 64];
+    fn get_cram_raw(&self) -> [u16; 64];
 }
 
 fn render_sprite_scanline(
@@ -764,5 +766,17 @@ impl RenderOps for Vdp {
     fn get_cram_color(&self, palette: u8, index: u8) -> u16 {
         let addr = ((palette as usize) * 16) + (index as usize);
         unsafe { *self.cram_cache.get_unchecked(addr & 0x3F) }
+    }
+
+    fn get_cram_rgb565(&self) -> [u16; 64] {
+        self.cram_cache
+    }
+
+    fn get_cram_raw(&self) -> [u16; 64] {
+        let mut raw = [0u16; 64];
+        for i in 0..64 {
+            raw[i] = ((self.cram[i * 2] as u16) << 8) | (self.cram[i * 2 + 1] as u16);
+        }
+        raw
     }
 }

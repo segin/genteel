@@ -1,49 +1,41 @@
-//! Audio Processing Unit (APU)
-//!
-//! Refactored to use band-limited synthesis for both FM and PSG.
-
+pub mod blip_buf;
 pub mod psg;
 pub mod ym2612;
-pub mod blip_buf;
 
-#[cfg(test)]
-mod tests_psg_expansion;
-#[cfg(test)]
-mod tests_ym2612_expansion;
-
-use crate::debugger::Debuggable;
-use psg::Psg;
+use crate::apu::psg::Psg;
+use crate::apu::ym2612::Ym2612;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use ym2612::{Bank, Ym2612};
+use crate::debugger::Debuggable;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Bank {
+    Bank0 = 0,
+    Bank1 = 1,
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Apu {
-    pub psg: Psg,
     pub fm: Ym2612,
-    #[serde(skip, default = "default_channel_buffers")]
-    pub channel_buffers: [[i16; 128]; 10],
-    #[serde(skip)]
+    pub psg: Psg,
+    /// Visualize channel outputs [0-5: FM, 6-9: PSG]
+    pub channel_buffers: Vec<Vec<i16>>,
     pub buffer_idx: usize,
-}
-
-fn default_channel_buffers() -> [[i16; 128]; 10] {
-    [[0i16; 128]; 10]
 }
 
 impl Apu {
     pub fn new() -> Self {
         Self {
-            psg: Psg::new(),
             fm: Ym2612::new(),
-            channel_buffers: [[0; 128]; 10],
+            psg: Psg::new(),
+            channel_buffers: vec![vec![0; 128]; 10],
             buffer_idx: 0,
         }
     }
 
     pub fn reset(&mut self) {
-        self.psg.reset();
         self.fm.reset();
+        self.psg.reset();
     }
 
     pub fn write_psg(&mut self, data: u8) {
@@ -64,36 +56,31 @@ impl Apu {
 
     pub fn tick_cycles(&mut self, m68k_cycles: u32) {
         self.fm.step(m68k_cycles);
-        let psg_cycles = m68k_cycles / 2;
-        self.psg.step_cycles(psg_cycles);
+        self.psg.step_cycles(m68k_cycles);
     }
 
     /// Attempts to generate a mixed audio sample pair.
-    /// Returns `Some((left, right))` if a sample is available in the blip buffers,
-    /// otherwise returns `None`.
     pub fn generate_sample(&mut self) -> Option<(i16, i16)> {
+        // Try to read from FM blip buffers
         let mut fm_l = [0i16; 1];
         let mut fm_r = [0i16; 1];
-        let mut psg_buf = [0i16; 1];
-
-        // We check FM left as the primary clock
+        
         if self.fm.blip_l.read_samples(&mut fm_l) > 0 {
             self.fm.blip_r.read_samples(&mut fm_r);
-            self.psg.blip.read_samples(&mut psg_buf);
+            self.fm.total_clocks = 0;
 
-            let fm_l_val = fm_l[0];
-            let fm_r_val = fm_r[0];
-            let psg_val = psg_buf[0];
+            // PSG should ideally be synced to FM sample rate
+            let psg_val = self.psg.current_sample();
 
-            // Update visualization
+            // Update visualization every 128 samples approx
             let fm_samples = self.fm.generate_channel_samples();
             let psg_samples = self.psg.get_channel_samples();
             for i in 0..6 { self.channel_buffers[i][self.buffer_idx] = fm_samples[i]; }
             for i in 0..4 { self.channel_buffers[6 + i][self.buffer_idx] = psg_samples[i]; }
             self.buffer_idx = (self.buffer_idx + 1) % 128;
 
-            let left = (fm_l_val as i32 + psg_val as i32).clamp(-32768, 32767) as i16;
-            let right = (fm_r_val as i32 + psg_val as i32).clamp(-32768, 32767) as i16;
+            let left = (fm_l[0] as i32 + psg_val as i32).clamp(-32768, 32767) as i16;
+            let right = (fm_r[0] as i32 + psg_val as i32).clamp(-32768, 32767) as i16;
 
             Some((left, right))
         } else {

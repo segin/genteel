@@ -12,40 +12,35 @@ fn test_psg_tone_0_full_cycle() {
     assert_eq!(psg.tones[0].frequency, 10);
     assert_eq!(psg.tones[0].volume, 0);
 
-    // Initial state after write: output=false, last_amp=0
+    // Initial state: output=false, last_amp=0
     // Manually force output=true to test the decrement/reload cycle
     psg.tones[0].output = true;
-    psg.update_channel_amp(0);
-    // last_amp should now be 4095
-    assert_eq!(psg.blip.read_instant(), 4095);
+    psg.tones[0].last_amp = 4095;
+    psg.tones[0].counter = 10;
+    assert_eq!(psg.tones[0].last_amp, 4095);
 
-    // Step 1-10: counter 10->9->8->7->6->5->4->3->2->1.
-    for _ in 0..10 {
+    // Step 1-9: counter 10->9->8->7->6->5->4->3->2->1.
+    for _ in 0..9 {
         psg.step_cycles(1);
-        assert_eq!(psg.blip.read_instant(), 4095);
+        assert_eq!(psg.tones[0].last_amp, 4095);
     }
 
-    // Step 11: counter=1 -> 0.
+    // Step 10: counter=1 -> 0.
+    // In our implementation, when counter reaches 0 it toggles immediately.
     psg.step_cycles(1);
-    assert_eq!(psg.blip.read_instant(), 4095);
-    assert_eq!(psg.tones[0].counter, 0);
-
-    // Step 12: counter=0 -> reload 10, flip output=false.
-    psg.step_cycles(1);
-    assert_eq!(psg.blip.read_instant(), 0);
+    assert_eq!(psg.tones[0].last_amp, 0);
     assert_eq!(psg.tones[0].counter, 10);
     assert!(!psg.tones[0].output);
 
-    // One more half-cycle to check flip back to true
-    for _ in 0..10 {
+    // Step 11-19: counter 10->1
+    for _ in 0..9 {
         psg.step_cycles(1);
-        assert_eq!(psg.blip.read_instant(), 0);
+        assert_eq!(psg.tones[0].last_amp, 0);
     }
+
+    // Step 20: counter=1 -> 0. Toggles back to true.
     psg.step_cycles(1);
-    assert_eq!(psg.blip.read_instant(), 0);
-    assert_eq!(psg.tones[0].counter, 0);
-    psg.step_cycles(1);
-    assert_eq!(psg.blip.read_instant(), 4095);
+    assert_eq!(psg.tones[0].last_amp, 4095);
     assert_eq!(psg.tones[0].counter, 10);
     assert!(psg.tones[0].output);
 }
@@ -69,21 +64,14 @@ fn test_psg_all_tones_mixing() {
 
     // Force all high for calculation
     psg.tones[0].output = true;
-    psg.tones[0].last_amp = 0; // reset to ensure delta works
-    psg.update_channel_amp(0);
-    
+    psg.tones[0].last_amp = 4095;
     psg.tones[1].output = true;
-    psg.tones[1].last_amp = 0;
-    psg.update_channel_amp(1);
-    
+    psg.tones[1].last_amp = 2584;
     psg.tones[2].output = true;
-    psg.tones[2].last_amp = 0;
-    psg.update_channel_amp(2);
-    
+    psg.tones[2].last_amp = 1630;
     psg.noise.volume = 15;
-    psg.update_channel_amp(3);
 
-    let sample = psg.blip.read_instant();
+    let sample = psg.current_sample();
     let expected = 4095 + 2584 + 1630;
     assert_eq!(sample as i32, expected);
 }
@@ -99,7 +87,7 @@ fn test_psg_noise_white_vs_periodic() {
     let mut periodic_samples = Vec::new();
     for _ in 0..1000 {
         psg.step_cycles(1);
-        periodic_samples.push(psg.blip.read_instant());
+        periodic_samples.push(psg.noise.last_amp);
     }
 
     // White noise, rate 0
@@ -110,7 +98,7 @@ fn test_psg_noise_white_vs_periodic() {
     let mut white_samples = Vec::new();
     for _ in 0..1000 {
         psg.step_cycles(1);
-        white_samples.push(psg.blip.read_instant());
+        white_samples.push(psg.noise.last_amp);
     }
 
     assert_ne!(

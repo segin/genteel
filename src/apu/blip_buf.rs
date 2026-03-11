@@ -40,10 +40,8 @@ pub struct BlipBuf {
     sample_rate: u32,
     /// Source clock rate (e.g. 53267 for FM, 3579545 for PSG)
     clock_rate: u32,
-    /// Time of the last sample generated (in source clocks)
+    /// Time of the last delta added (in source clocks)
     last_clock: u64,
-    /// Fractional clock remainder
-    clock_ptr: f64,
     /// Current DC offset
     accumulator: i32,
 }
@@ -55,7 +53,6 @@ impl BlipBuf {
             sample_rate,
             clock_rate,
             last_clock: 0,
-            clock_ptr: 0.0,
             accumulator: 0,
         }
     }
@@ -69,18 +66,23 @@ impl BlipBuf {
     pub fn clear(&mut self) {
         self.buffer.fill(0);
         self.accumulator = 0;
+        self.last_clock = 0;
     }
 
     /// Add a delta (amplitude change) at a specific clock time
     pub fn add_delta(&mut self, clock: u64, delta: i32) {
         if delta == 0 { return; }
+        
+        // Safety: Ensure clock never goes backwards relative to last delta
+        let safe_clock = std::cmp::max(clock, self.last_clock);
+        self.last_clock = safe_clock;
 
-        let time_in_samples = (clock as f64 * self.sample_rate as f64) / self.clock_rate as f64;
+        let time_in_samples = (safe_clock as f64 * self.sample_rate as f64) / self.clock_rate as f64;
         let sample_idx = time_in_samples as usize;
         let fract = time_in_samples - sample_idx as f64;
 
         if sample_idx + KERNEL_SIZE >= self.buffer.len() {
-            // Should not happen if read frequently, but safety first
+            // Out of bounds - should be read more frequently
             return;
         }
 
@@ -98,6 +100,7 @@ impl BlipBuf {
     /// Read generated samples into a buffer
     pub fn read_samples(&mut self, samples: &mut [i16]) -> usize {
         let count = samples.len().min(self.buffer.len() - KERNEL_SIZE);
+        if count == 0 { return 0; }
         
         let mut current = 0;
         for i in 0..count {

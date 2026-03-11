@@ -4,7 +4,8 @@
 //! for the Genesis emulator using pure Rust libraries.
 
 #[cfg(any(feature = "gui", feature = "test_headless"))]
-use winit::keyboard::KeyCode;
+use winit::keyboard::{KeyCode, Key};
+use std::path::PathBuf;
 
 /// Genesis display dimensions
 pub const GENESIS_WIDTH: u32 = 320;
@@ -17,7 +18,47 @@ pub enum InputMapping {
     Ergonomic,
 }
 
-/// Key mapping for player 1
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PsgToneInfo {
+    pub frequency: u16,
+    pub volume: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PsgNoiseInfo {
+    pub volume: u8,
+    pub white: bool,
+    pub rate: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DebugInfo {
+    pub frame_count: u64,
+    pub m68k_pc: u32,
+    pub z80_pc: u16,
+    pub display_enabled: bool,
+    pub vdp_status: u16,
+    pub bg_color_index: usize,
+    pub cram: Vec<u16>,
+    pub cram_raw: Vec<u16>,
+    pub vram: Vec<u8>,
+    pub vsram: Vec<u8>,
+    pub wram: Vec<u8>,
+    pub z80_ram: Vec<u8>,
+    pub psg_tone: [PsgToneInfo; 3],
+    pub psg_noise: PsgNoiseInfo,
+    pub vdp_registers: [u8; 24],
+    pub m68k_disasm: Vec<(u32, String)>,
+    pub z80_disasm: Vec<(u16, String)>,
+    pub port1_type: crate::io::ControllerType,
+    pub port2_type: crate::io::ControllerType,
+    pub has_rom: bool,
+    pub current_rom_path: Option<PathBuf>,
+}
+
+use serde::{Serialize, Deserialize};
+
+/// Key mapping for player 1 (Physical KeyCode)
 #[cfg(any(feature = "gui", feature = "test_headless"))]
 pub fn keycode_to_button(keycode: KeyCode, mapping: InputMapping) -> Option<(&'static str, bool)> {
     match mapping {
@@ -63,6 +104,39 @@ pub fn keycode_to_button(keycode: KeyCode, mapping: InputMapping) -> Option<(&'s
             KeyCode::KeyZ => Some(("a", true)),
             KeyCode::KeyX => Some(("b", true)),
             KeyCode::KeyC => Some(("c", true)),
+            _ => None,
+        },
+    }
+}
+
+/// Key mapping for player 1 (Logical Key)
+#[cfg(any(feature = "gui", feature = "test_headless"))]
+pub fn key_to_button(key: &Key, mapping: InputMapping) -> Option<(&'static str, bool)> {
+    match mapping {
+        InputMapping::Original => match key {
+            Key::Named(winit::keyboard::NamedKey::ArrowUp) => Some(("up", true)),
+            Key::Named(winit::keyboard::NamedKey::ArrowDown) => Some(("down", true)),
+            Key::Named(winit::keyboard::NamedKey::ArrowLeft) => Some(("left", true)),
+            Key::Named(winit::keyboard::NamedKey::ArrowRight) => Some(("right", true)),
+            Key::Character(s) if s == "z" || s == "Z" => Some(("a", true)),
+            Key::Character(s) if s == "x" || s == "X" => Some(("b", true)),
+            Key::Character(s) if s == "c" || s == "C" => Some(("c", true)),
+            Key::Named(winit::keyboard::NamedKey::Enter) => Some(("start", true)),
+            _ => None,
+        },
+        InputMapping::Ergonomic => match key {
+            Key::Character(s) if s == "w" || s == "W" => Some(("up", true)),
+            Key::Character(s) if s == "s" || s == "S" => Some(("down", true)),
+            Key::Character(s) if s == "a" || s == "A" => Some(("left", true)),
+            Key::Character(s) if s == "d" || s == "D" => Some(("right", true)),
+            Key::Character(s) if s == "j" || s == "J" => Some(("a", true)),
+            Key::Character(s) if s == "k" || s == "K" => Some(("b", true)),
+            Key::Character(s) if s == "l" || s == "L" => Some(("c", true)),
+            Key::Character(s) if s == "u" || s == "U" => Some(("x", true)),
+            Key::Character(s) if s == "i" || s == "I" => Some(("y", true)),
+            Key::Character(s) if s == "o" || s == "O" => Some(("z", true)),
+            Key::Named(winit::keyboard::NamedKey::Enter) => Some(("start", true)),
+            Key::Named(winit::keyboard::NamedKey::Space) => Some(("mode", true)),
             _ => None,
         },
     }

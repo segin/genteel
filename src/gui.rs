@@ -1,257 +1,154 @@
-use crate::audio;
-use crate::frontend::{self, InputMapping};
+#![deny(warnings)]
+use crate::frontend::{self, DebugInfo, InputMapping};
 use crate::input::InputScript;
-use crate::Emulator;
-#[cfg(feature = "gilrs")]
-use gilrs::{Axis, Button, EventType, Gilrs};
-#[cfg(feature = "gui")]
-use pixels::{wgpu, Pixels, SurfaceTexture};
-use std::collections::HashMap;
+use crate::vdp::render::RenderOps;
+use crate::{audio, Emulator, SLOT_EXTS};
+use genteel::VERSION;
+use egui::epaint::ahash::HashMap;
+use egui_wgpu::wgpu;
+use pixels::{Pixels, SurfaceTexture};
+use rfd::FileDialog;
+use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-#[cfg(feature = "gui")]
-use winit::{
-    event::{ElementState, Event, WindowEvent},
-    event_loop::EventLoop,
-    keyboard::{KeyCode, PhysicalKey},
-    window::WindowBuilder,
-};
-
-#[cfg(feature = "gilrs")]
-pub fn init_gilrs_with_builder<F, R, E>(builder: F) -> Option<R>
-where
-    F: FnOnce() -> Result<R, E>,
-    E: std::fmt::Display,
-{
-    match builder() {
-        Ok(g) => Some(g),
-        Err(e) => {
-            eprintln!("Warning: Failed to initialize gilrs: {}", e);
-            None
-        }
-    }
-}
+use winit::event::{ElementState, Event, WindowEvent};
+use winit::event_loop::EventLoop;
+use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::window::WindowBuilder;
 
 pub const SLOT_NAMES: [&str; 10] = [
     "Slot 0", "Slot 1", "Slot 2", "Slot 3", "Slot 4", "Slot 5", "Slot 6", "Slot 7", "Slot 8",
     "Slot 9",
 ];
 
-pub const SLOT_EXTS: [&str; 10] = [
-    "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9",
-];
-
-#[cfg(feature = "gui")]
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PlaneTab {
     PlaneA,
     PlaneB,
 }
 
-#[cfg(feature = "gui")]
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct WindowState {
-    pub open: bool,
-}
-
-#[cfg(feature = "gui")]
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct GuiState {
-    pub windows: HashMap<String, WindowState>,
+    pub windows: HashMap<String, bool>,
+    pub recent_roms: Vec<PathBuf>,
     pub input_mapping: InputMapping,
     pub integer_scaling: bool,
-    pub force_red: bool,
-    pub paused: bool,
-    pub recent_roms: Vec<PathBuf>,
     pub auto_save_load: bool,
+    pub force_red: bool,
     pub scroll_plane_tab: PlaneTab,
     #[serde(skip)]
-    pub single_step: bool,
-    #[serde(skip)]
-    pub show_about: bool,
+    pub pick_rom_requested: bool,
     #[serde(skip)]
     pub reset_requested: bool,
     #[serde(skip)]
     pub close_requested: bool,
-    #[serde(skip)]
-    pub pick_rom_requested: bool,
     #[serde(skip)]
     pub save_requested: Option<u8>,
     #[serde(skip)]
     pub load_requested: Option<u8>,
     #[serde(skip)]
     pub delete_state_requested: Option<u8>,
+    #[serde(skip)]
+    pub show_about: bool,
 }
 
-#[cfg(feature = "gui")]
-impl GuiState {
-    pub fn new(input_mapping: InputMapping) -> Self {
-        let mut state = Self {
-            windows: HashMap::new(),
-            input_mapping,
-            integer_scaling: true,
-            force_red: false,
-            paused: false,
+impl Default for GuiState {
+    fn default() -> Self {
+        let mut windows = HashMap::default();
+        windows.insert("Performance & Debug".to_string(), true);
+        windows.insert("Settings".to_string(), false);
+        windows.insert("Palette Viewer".to_string(), false);
+        windows.insert("Tile Viewer".to_string(), false);
+        windows.insert("Sprite Viewer".to_string(), false);
+        windows.insert("Scroll Plane Viewer".to_string(), false);
+        windows.insert("VDP Memory Hex".to_string(), false);
+        windows.insert("Memory Viewer".to_string(), false);
+        windows.insert("Sound Chip Visualizer".to_string(), false);
+        windows.insert("State Browser".to_string(), false);
+
+        Self {
+            windows,
             recent_roms: Vec::new(),
-            auto_save_load: false,
+            input_mapping: InputMapping::Original,
+            integer_scaling: false,
+            auto_save_load: true,
+            force_red: false,
             scroll_plane_tab: PlaneTab::PlaneA,
-            single_step: false,
-            show_about: false,
+            pick_rom_requested: false,
             reset_requested: false,
             close_requested: false,
-            pick_rom_requested: false,
             save_requested: None,
             load_requested: None,
             delete_state_requested: None,
-        };
-        state.register_default_windows();
-        state
+            show_about: false,
+        }
     }
+}
 
-    pub fn load_or_default(input_mapping: InputMapping) -> Self {
-        if let Ok(content) = std::fs::read_to_string("gui_config.json") {
-            if let Ok(mut state) = serde_json::from_str::<Self>(&content) {
-                state.register_default_windows();
+impl GuiState {
+    pub fn load() -> Self {
+        if let Ok(data) = std::fs::read_to_string("gui_config.json") {
+            if let Ok(state) = serde_json::from_str(&data) {
                 return state;
             }
         }
-        Self::new(input_mapping)
-    }
-
-    fn register_default_windows(&mut self) {
-        let defaults = [
-            "Settings",
-            "Performance & Debug",
-            "M68k Status",
-            "Z80 Status",
-            "Disassembly",
-            "Execution Control",
-            "Palette Viewer",
-            "Tile Viewer",
-            "Sprite Viewer",
-            "Scroll Plane Viewer",
-            "VDP Memory Hex",
-            "Memory Viewer",
-            "Sound Chip Visualizer",
-            "Audio Channel Waveforms",
-            "Controller Viewer",
-            "Expansion Status",
-            "State Browser",
-        ];
-        for &name in &defaults {
-            if !self.windows.contains_key(name) {
-                self.windows
-                    .insert(name.to_string(), WindowState { open: false });
-            }
-        }
+        Self::default()
     }
 
     pub fn save(&self) {
-        if let Ok(json) = serde_json::to_string_pretty(self) {
-            let _ = std::fs::write("gui_config.json", json);
+        if let Ok(data) = serde_json::to_string_pretty(self) {
+            let _ = std::fs::write("gui_config.json", data);
         }
     }
 
     pub fn is_window_open(&self, name: &str) -> bool {
-        self.windows.get(name).map(|w| w.open).unwrap_or(false)
+        *self.windows.get(name).unwrap_or(&false)
     }
 
     pub fn set_window_open(&mut self, name: &str, open: bool) {
-        if let Some(window) = self.windows.get_mut(name) {
-            window.open = open;
-        } else {
-            self.windows.insert(name.to_string(), WindowState { open });
-        }
+        self.windows.insert(name.to_string(), open);
         self.save();
     }
 
-    pub fn toggle_window(&mut self, name: &str) {
-        let open = self.is_window_open(name);
-        self.set_window_open(name, !open);
+    pub fn add_recent(&mut self, path: PathBuf) {
+        self.recent_roms.retain(|p| p != &path);
+        self.recent_roms.insert(0, path);
+        if self.recent_roms.len() > 10 {
+            self.recent_roms.pop();
+        }
+        self.save();
     }
 }
 
-#[cfg(feature = "gui")]
-pub struct DebugInfo {
-    pub m68k_pc: u32,
-    pub m68k_d: [u32; 8],
-    pub m68k_a: [u32; 8],
-    pub m68k_sr: u16,
-    pub m68k_usp: u32,
-    pub m68k_ssp: u32,
-    pub m68k_disasm: Vec<(u32, String)>,
-    pub z80_pc: u16,
-    pub z80_a: u8,
-    pub z80_f: u8,
-    pub z80_b: u8,
-    pub z80_c: u8,
-    pub z80_d: u8,
-    pub z80_e: u8,
-    pub z80_h: u8,
-    pub z80_l: u8,
-    pub z80_ix: u16,
-    pub z80_iy: u16,
-    pub z80_sp: u16,
-    pub z80_i: u8,
-    pub z80_r: u8,
-    pub z80_memptr: u16,
-    pub z80_iff1: bool,
-    pub z80_im: u8,
-    pub z80_disasm: Vec<(u16, String)>,
-    pub frame_count: u64,
-    pub vdp_status: u16,
-    pub vdp_registers: [u8; 24],
-    pub display_enabled: bool,
-    pub bg_color_index: u8,
-    pub cram: [u16; 64],
-    pub cram_raw: [u16; 64],
-    pub vram: [u8; 0x10000],
-    pub vsram: [u8; 80],
-    pub wram: [u8; 0x10000],
-    pub z80_ram: [u8; 0x2000],
-    pub ym2612_regs: [[u8; 256]; 2],
-    pub psg_tone: [crate::apu::psg::ToneChannel; 3],
-    pub psg_noise: crate::apu::psg::NoiseChannel,
-    pub channel_waveforms: [[i16; 128]; 10],
-    pub port1_state: crate::io::ControllerState,
-    pub port1_type: crate::io::ControllerType,
-    pub port2_state: crate::io::ControllerState,
-    pub port2_type: crate::io::ControllerType,
-    pub has_rom: bool,
-    pub current_rom_path: Option<PathBuf>,
-}
-
-#[cfg(feature = "gui")]
 pub struct Framework {
     pub egui_ctx: egui::Context,
     pub egui_state: egui_winit::State,
     pub screen_descriptor: egui_wgpu::ScreenDescriptor,
     pub renderer: egui_wgpu::Renderer,
     pub gui_state: GuiState,
+    pub pending_rom_path: Arc<Mutex<Option<PathBuf>>>,
     pub tile_texture: Option<egui::TextureHandle>,
     pub plane_a_texture: Option<egui::TextureHandle>,
     pub plane_b_texture: Option<egui::TextureHandle>,
-    pub pending_rom_path: Arc<Mutex<Option<PathBuf>>>,
     #[cfg(feature = "gilrs")]
-    pub gilrs: Option<Gilrs>,
+    pub gilrs: Option<gilrs::Gilrs>,
 }
 
-#[cfg(feature = "gui")]
 impl Framework {
     pub fn new(
-        event_loop: &winit::event_loop::EventLoopWindowTarget<()>,
+        event_loop: &EventLoop<()>,
         width: u32,
         height: u32,
         scale_factor: f32,
-        pixels: &pixels::Pixels,
+        pixels: &Pixels,
         input_mapping: InputMapping,
     ) -> Self {
         let egui_ctx = egui::Context::default();
         let egui_state = egui_winit::State::new(
             egui_ctx.clone(),
             egui::viewport::ViewportId::ROOT,
-            &event_loop,
+            event_loop,
             Some(scale_factor),
             None,
         );
@@ -259,125 +156,37 @@ impl Framework {
             size_in_pixels: [width, height],
             pixels_per_point: scale_factor,
         };
-        let renderer =
-            egui_wgpu::Renderer::new(pixels.device(), pixels.render_texture_format(), None, 1);
-        let gui_state = GuiState::load_or_default(input_mapping);
+        let renderer = egui_wgpu::Renderer::new(pixels.device(), pixels.render_texture_format(), None, 1);
+        let mut gui_state = GuiState::load();
+        gui_state.input_mapping = input_mapping;
+
         Self {
             egui_ctx,
             egui_state,
             screen_descriptor,
             renderer,
             gui_state,
+            pending_rom_path: Arc::new(Mutex::new(None)),
             tile_texture: None,
             plane_a_texture: None,
             plane_b_texture: None,
-            pending_rom_path: Arc::new(Mutex::new(None)),
             #[cfg(feature = "gilrs")]
-            gilrs: init_gilrs_with_builder(Gilrs::new),
+            gilrs: gilrs::Gilrs::new().ok(),
         }
     }
-    pub fn handle_event(
-        &mut self,
-        window: &winit::window::Window,
-        event: &winit::event::WindowEvent,
-    ) {
+
+    pub fn handle_event(&mut self, window: &winit::window::Window, event: &WindowEvent) {
         let _ = self.egui_state.on_window_event(window, event);
     }
+
     pub fn resize(&mut self, width: u32, height: u32) {
         if width > 0 && height > 0 {
             self.screen_descriptor.size_in_pixels = [width, height];
         }
     }
+
     pub fn scale_factor(&mut self, scale_factor: f32) {
         self.screen_descriptor.pixels_per_point = scale_factor;
-    }
-
-    pub fn pick_rom(&mut self) {
-        let pending = self.pending_rom_path.clone();
-        std::thread::spawn(move || {
-            let file = rfd::FileDialog::new()
-                .add_filter("Genesis ROMs", &["bin", "md", "gen", "zip"])
-                .add_filter("All Files", &["*"])
-                .pick_file();
-            if let Some(path) = file {
-                if let Ok(mut lock) = pending.lock() {
-                    *lock = Some(path);
-                } else {
-                    eprintln!("Failed to acquire pending_rom_path lock");
-                }
-            }
-        });
-    }
-
-    #[cfg(feature = "gilrs")]
-    pub fn poll_gamepads(&mut self, state: &mut crate::io::ControllerState) {
-        if let Some(gilrs) = &mut self.gilrs {
-            while let Some(gilrs::Event { event, .. }) = gilrs.next_event() {
-                match event {
-                    EventType::ButtonPressed(button, _) => match button {
-                        Button::DPadUp => state.up = true,
-                        Button::DPadDown => state.down = true,
-                        Button::DPadLeft => state.left = true,
-                        Button::DPadRight => state.right = true,
-                        Button::South => state.b = true,
-                        Button::East => state.c = true,
-                        Button::West => state.a = true,
-                        Button::North => state.x = true,
-                        Button::LeftTrigger => state.y = true,
-                        Button::RightTrigger => state.z = true,
-                        Button::Select => state.mode = true,
-                        Button::Start => state.start = true,
-                        _ => {}
-                    },
-                    EventType::ButtonReleased(button, _) => match button {
-                        Button::DPadUp => state.up = false,
-                        Button::DPadDown => state.down = false,
-                        Button::DPadLeft => state.left = false,
-                        Button::DPadRight => state.right = false,
-                        Button::South => state.b = false,
-                        Button::East => state.c = false,
-                        Button::West => state.a = false,
-                        Button::North => state.x = false,
-                        Button::LeftTrigger => state.y = false,
-                        Button::RightTrigger => state.z = false,
-                        Button::Select => state.mode = false,
-                        Button::Start => state.start = false,
-                        _ => {}
-                    },
-                    EventType::AxisChanged(axis, value, _) => {
-                        let threshold = 0.5;
-                        match axis {
-                            Axis::LeftStickX => {
-                                if value > threshold {
-                                    state.right = true;
-                                    state.left = false;
-                                } else if value < -threshold {
-                                    state.left = true;
-                                    state.right = false;
-                                } else {
-                                    state.left = false;
-                                    state.right = false;
-                                }
-                            }
-                            Axis::LeftStickY => {
-                                if value > threshold {
-                                    state.up = true;
-                                    state.down = false;
-                                } else if value < -threshold {
-                                    state.down = true;
-                                    state.up = false;
-                                } else {
-                                    state.up = false;
-                                    state.down = false;
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
     }
 
     pub fn prepare(&mut self, window: &winit::window::Window, debug_info: &DebugInfo) {
@@ -486,11 +295,7 @@ impl Framework {
                     }
                 });
                 ui.menu_button("Settings", |ui| {
-                    if ui.button("Video").clicked() {
-                        self.gui_state.set_window_open("Settings", true);
-                        ui.close_menu();
-                    }
-                    if ui.button("Input Mapping").clicked() {
+                    if ui.button("Settings...").clicked() {
                         self.gui_state.set_window_open("Settings", true);
                         ui.close_menu();
                     }
@@ -523,7 +328,7 @@ impl Framework {
                 .show(&self.egui_ctx, |ui| {
                     ui.vertical_centered(|ui| {
                         ui.heading("Genteel");
-                        ui.label(format!("Version: {}", genteel::VERSION));
+                        ui.label(format!("Version: {}", VERSION));
                     });
                     ui.separator();
 
@@ -554,52 +359,106 @@ impl Framework {
                 });
         }
 
+        // Central panel for the game view and status bar
+        egui::CentralPanel::default()
+            .frame(egui::Frame::none().fill(egui::Color32::TRANSPARENT))
+            .show(&self.egui_ctx, |ui: &mut egui::Ui| {
+                ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui: &mut egui::Ui| {
+                    ui.group(|ui: &mut egui::Ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal(|ui: &mut egui::Ui| {
+                            if debug_info.has_rom {
+                                let filename = debug_info.current_rom_path.as_ref()
+                                    .and_then(|p| p.file_name())
+                                    .and_then(|f| f.to_str())
+                                    .unwrap_or("Unknown");
+                                ui.label(egui::RichText::new(format!("🎮 {}", filename)).strong());
+                            } else {
+                                ui.label(egui::RichText::new("📂 No ROM Loaded").weak());
+                            }
+                            
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui: &mut egui::Ui| {
+                                let dt = self.egui_ctx.input(|i| i.stable_dt);
+                                let fps = if dt > 0.0 { 1.0 / dt } else { 0.0 };
+                                ui.label(format!("{:.0} FPS", fps));
+                                ui.separator();
+                                ui.label(if debug_info.display_enabled { "VDP: ON" } else { "VDP: OFF" });
+                            });
+                        });
+                    });
+                });
+            });
+
         if self.gui_state.is_window_open("Performance & Debug") {
             let mut open = true;
             egui::Window::new("Performance & Debug")
                 .open(&mut open)
+                .resizable(true)
+                .default_width(300.0)
                 .show(&self.egui_ctx, |ui| {
-                    let dt = self.egui_ctx.input(|i| i.stable_dt);
-                    let fps = if dt > 0.0 { 1.0 / dt } else { 0.0 };
-                    ui.label(format!("Frontend FPS: {:.1}", fps));
-                    ui.label(format!("Frame Time: {:.2}ms", dt * 1000.0));
-                    ui.separator();
-                    ui.label(format!("Internal Frames: {}", debug_info.frame_count));
-                    ui.label(format!("M68k PC: {:06X}", debug_info.m68k_pc));
-                    ui.label(format!("Z80 PC: {:04X}", debug_info.z80_pc));
-                    ui.separator();
-                    ui.label(format!(
-                        "VDP Display: {}",
-                        if debug_info.display_enabled {
-                            "ENABLED"
-                        } else {
-                            "DISABLED"
+                    ui.collapsing("🚀 Overview", |ui| {
+                        egui::Grid::new("perf_overview").show(ui, |ui| {
+                            let dt = self.egui_ctx.input(|i| i.stable_dt);
+                            let fps = if dt > 0.0 { 1.0 / dt } else { 0.0 };
+                            ui.label("Frontend FPS:");
+                            ui.label(format!("{:.1}", fps));
+                            ui.end_row();
+                            ui.label("Frame Time:");
+                            ui.label(format!("{:.2}ms", dt * 1000.0));
+                            ui.end_row();
+                            ui.label("Internal Frames:");
+                            ui.label(format!("{}", debug_info.frame_count));
+                            ui.end_row();
+                        });
+                    });
+
+                    ui.collapsing("💻 CPU State", |ui| {
+                        egui::Grid::new("cpu_overview").show(ui, |ui| {
+                            ui.label("M68k PC:");
+                            ui.label(egui::RichText::new(format!("{:06X}", debug_info.m68k_pc)).monospace());
+                            ui.end_row();
+                            ui.label("Z80 PC:");
+                            ui.label(egui::RichText::new(format!("{:04X}", debug_info.z80_pc)).monospace());
+                            ui.end_row();
+                        });
+                    });
+
+                    ui.collapsing("📺 VDP Status", |ui| {
+                        egui::Grid::new("vdp_overview").show(ui, |ui| {
+                            ui.label("Display:");
+                            ui.label(if debug_info.display_enabled {
+                                egui::RichText::new("ENABLED").color(egui::Color32::GREEN)
+                            } else {
+                                egui::RichText::new("DISABLED").color(egui::Color32::RED)
+                            });
+                            ui.end_row();
+                            ui.label("Status:");
+                            ui.label(egui::RichText::new(format!("{:04X}", debug_info.vdp_status)).monospace());
+                            ui.end_row();
+                            ui.label("BG Index:");
+                            ui.label(format!("{}", debug_info.bg_color_index));
+                            ui.end_row();
+                        });
+                        
+                        if ui.checkbox(&mut self.gui_state.force_red, "Force Red BG (Debug)").changed() {
+                            self.gui_state.save();
                         }
-                    ));
-                    ui.label(format!("VDP Status: {:04X}", debug_info.vdp_status));
-                    ui.label(format!("BG Color Index: {}", debug_info.bg_color_index));
-                    ui.label(format!("CRAM[0] (RGB565): {:04X}", debug_info.cram[0]));
-                    if ui
-                        .checkbox(&mut self.gui_state.force_red, "Force Red BG (Debug)")
-                        .changed()
-                    {
-                        self.gui_state.save();
-                    }
+                    });
 
                     #[cfg(feature = "gilrs")]
                     {
-                        ui.separator();
-                        ui.heading("Connected Gamepads");
-                        if let Some(gilrs) = &self.gilrs {
-                            let mut gamepad_str = String::with_capacity(64);
-                            for (id, gamepad) in gilrs.gamepads() {
-                                gamepad_str.clear();
-                                let _ = write!(&mut gamepad_str, "{}: {}", id, gamepad.name());
-                                ui.label(&gamepad_str);
+                        ui.collapsing("🎮 Input Devices", |ui| {
+                            if let Some(gilrs) = &self.gilrs {
+                                for (id, gamepad) in gilrs.gamepads() {
+                                    ui.horizontal(|ui| {
+                                        ui.label(egui::RichText::new(format!("{}", id)).strong());
+                                        ui.label(gamepad.name());
+                                    });
+                                }
+                            } else {
+                                ui.label("Gamepad support unavailable");
                             }
-                        } else {
-                            ui.label("Gamepad support unavailable");
-                        }
+                        });
                     }
                 });
             if !open {
@@ -611,215 +470,35 @@ impl Framework {
             let mut open = true;
             egui::Window::new("Settings")
                 .open(&mut open)
+                .resizable(true)
+                .default_width(250.0)
                 .show(&self.egui_ctx, |ui| {
-                    ui.heading("Video");
-                    if ui
-                        .checkbox(&mut self.gui_state.integer_scaling, "Integer Pixel Scaling")
-                        .changed()
-                    {
-                        self.gui_state.save();
-                    }
-                    ui.separator();
-                    ui.heading("Input");
-                    ui.label("Input Mapping:");
-                    if ui
-                        .radio_value(
-                            &mut self.gui_state.input_mapping,
-                            InputMapping::Original,
-                            "Original",
-                        )
-                        .changed()
-                    {
-                        self.gui_state.save();
-                    }
-                    if ui
-                        .radio_value(
-                            &mut self.gui_state.input_mapping,
-                            InputMapping::Ergonomic,
-                            "Ergonomic",
-                        )
-                        .changed()
-                    {
-                        self.gui_state.save();
-                    }
-                    ui.separator();
-                    ui.heading("System");
-                    if ui
-                        .checkbox(&mut self.gui_state.auto_save_load, "Auto-Save/Load State")
-                        .changed()
-                    {
-                        self.gui_state.save();
-                    }
+                    ui.collapsing("🎬 Video", |ui| {
+                        if ui.checkbox(&mut self.gui_state.integer_scaling, "Integer Pixel Scaling").changed() {
+                            self.gui_state.save();
+                        }
+                    });
+
+                    ui.collapsing("⌨ Input", |ui| {
+                        ui.label("Keyboard Layout:");
+                        ui.horizontal(|ui| {
+                            if ui.selectable_value(&mut self.gui_state.input_mapping, InputMapping::Original, "Original").changed() {
+                                self.gui_state.save();
+                            }
+                            if ui.selectable_value(&mut self.gui_state.input_mapping, InputMapping::Ergonomic, "Ergonomic").changed() {
+                                self.gui_state.save();
+                            }
+                        });
+                    });
+
+                    ui.collapsing("⚙ System", |ui| {
+                        if ui.checkbox(&mut self.gui_state.auto_save_load, "Auto-Save/Load State").changed() {
+                            self.gui_state.save();
+                        }
+                    });
                 });
             if !open {
                 self.gui_state.set_window_open("Settings", false);
-            }
-        }
-
-        if self.gui_state.is_window_open("Execution Control") {
-            let mut open = true;
-            egui::Window::new("Execution Control")
-                .open(&mut open)
-                .show(&self.egui_ctx, |ui| {
-                    ui.horizontal(|ui| {
-                        if self.gui_state.paused {
-                            if ui.button("▶ Resume").clicked() {
-                                self.gui_state.paused = false;
-                                self.gui_state.save();
-                            }
-                        } else {
-                            if ui.button("⏸ Pause").clicked() {
-                                self.gui_state.paused = true;
-                                self.gui_state.save();
-                            }
-                        }
-                        if ui.button("⏭ Single Step").clicked() {
-                            self.gui_state.single_step = true;
-                            self.gui_state.paused = true;
-                        }
-                    });
-                });
-            if !open {
-                self.gui_state.set_window_open("Execution Control", false);
-            }
-        }
-
-        if self.gui_state.is_window_open("M68k Status") {
-            let mut open = true;
-            egui::Window::new("M68k Status")
-                .open(&mut open)
-                .show(&self.egui_ctx, |ui| {
-                    ui.label(format!("PC: {:06X}", debug_info.m68k_pc));
-                    ui.label(format!("SR: {:04X}", debug_info.m68k_sr));
-                    let sr = debug_info.m68k_sr;
-                    ui.horizontal(|ui| {
-                        ui.label(format!(
-                            "Flags: [ {} {} {} {} {} ]",
-                            if sr & 0x10 != 0 { "X" } else { "x" },
-                            if sr & 0x08 != 0 { "N" } else { "n" },
-                            if sr & 0x04 != 0 { "Z" } else { "z" },
-                            if sr & 0x02 != 0 { "V" } else { "v" },
-                            if sr & 0x01 != 0 { "C" } else { "c" },
-                        ));
-                    });
-                    ui.separator();
-                    ui.columns(2, |columns| {
-                        let mut d_buf = String::with_capacity(16);
-                        let mut a_buf = String::with_capacity(16);
-                        for i in 0..8 {
-                            d_buf.clear();
-                            a_buf.clear();
-                            let _ = write!(&mut d_buf, "D{}: {:08X}", i, debug_info.m68k_d[i]);
-                            let _ = write!(&mut a_buf, "A{}: {:08X}", i, debug_info.m68k_a[i]);
-                            columns[0].label(&d_buf);
-                            columns[1].label(&a_buf);
-                        }
-                    });
-                    ui.separator();
-                    ui.label(format!("USP: {:08X}", debug_info.m68k_usp));
-                    ui.label(format!("SSP: {:08X}", debug_info.m68k_ssp));
-                });
-            if !open {
-                self.gui_state.set_window_open("M68k Status", false);
-            }
-        }
-
-        if self.gui_state.is_window_open("Z80 Status") {
-            let mut open = true;
-            egui::Window::new("Z80 Status")
-                .open(&mut open)
-                .show(&self.egui_ctx, |ui| {
-                    ui.label(format!("PC: {:04X}", debug_info.z80_pc));
-                    ui.label(format!("SP: {:04X}", debug_info.z80_sp));
-                    ui.label(format!("MEMPTR (WZ): {:04X}", debug_info.z80_memptr));
-                    ui.separator();
-                    let f = debug_info.z80_f;
-                    ui.horizontal(|ui| {
-                        ui.label(format!(
-                            "Flags: [ {} {} {} {} {} {} {} {} ]",
-                            if f & 0x80 != 0 { "S" } else { "s" },
-                            if f & 0x40 != 0 { "Z" } else { "z" },
-                            if f & 0x20 != 0 { "Y" } else { "y" },
-                            if f & 0x10 != 0 { "H" } else { "h" },
-                            if f & 0x08 != 0 { "X" } else { "x" },
-                            if f & 0x04 != 0 { "P" } else { "p" },
-                            if f & 0x02 != 0 { "N" } else { "n" },
-                            if f & 0x01 != 0 { "C" } else { "c" },
-                        ));
-                    });
-                    ui.separator();
-                    ui.columns(2, |columns| {
-                        columns[0].label(format!("A:  {:02X}", debug_info.z80_a));
-                        columns[1].label(format!("F:  {:02X}", debug_info.z80_f));
-                        columns[0].label(format!(
-                            "BC: {:02X}{:02X}",
-                            debug_info.z80_b, debug_info.z80_c
-                        ));
-                        columns[1].label(format!(
-                            "DE: {:02X}{:02X}",
-                            debug_info.z80_d, debug_info.z80_e
-                        ));
-                        columns[0].label(format!(
-                            "HL: {:02X}{:02X}",
-                            debug_info.z80_h, debug_info.z80_l
-                        ));
-                        columns[1].label(format!("IX: {:04X}", debug_info.z80_ix));
-                        columns[0].label(format!("IY: {:04X}", debug_info.z80_iy));
-                        columns[1].label(format!("I:  {:02X}", debug_info.z80_i));
-                        columns[0].label(format!("R:  {:02X}", debug_info.z80_r));
-                    });
-                    ui.separator();
-                    ui.label(format!("IM: {}", debug_info.z80_im));
-                    ui.label(format!("IFF1: {}", debug_info.z80_iff1));
-                });
-            if !open {
-                self.gui_state.set_window_open("Z80 Status", false);
-            }
-        }
-
-        if self.gui_state.is_window_open("Disassembly") {
-            let mut open = true;
-            egui::Window::new("Disassembly")
-                .open(&mut open)
-                .show(&self.egui_ctx, |ui| {
-                    ui.heading("M68k Disassembly");
-                    egui::ScrollArea::vertical()
-                        .id_source("m68k_disasm")
-                        .show(ui, |ui| {
-                            let mut label_buffer = String::with_capacity(64);
-                            for (addr, text) in &debug_info.m68k_disasm {
-                                label_buffer.clear();
-                                let is_current = *addr == debug_info.m68k_pc;
-                                if is_current {
-                                    let _ = write!(&mut label_buffer, "-> {:06X}: {}", addr, text);
-                                    ui.colored_label(egui::Color32::YELLOW, label_buffer.as_str());
-                                } else {
-                                    let _ = write!(&mut label_buffer, "   {:06X}: {}", addr, text);
-                                    ui.label(label_buffer.as_str());
-                                }
-                            }
-                        });
-                    ui.separator();
-                    ui.heading("Z80 Disassembly");
-                    egui::ScrollArea::vertical()
-                        .id_source("z80_disasm")
-                        .show(ui, |ui| {
-                            let mut label_buffer = String::with_capacity(64);
-                            for (addr, text) in &debug_info.z80_disasm {
-                                label_buffer.clear();
-                                let is_current = *addr == debug_info.z80_pc;
-                                if is_current {
-                                    let _ = write!(&mut label_buffer, "-> {:04X}: {}", addr, text);
-                                    ui.colored_label(egui::Color32::YELLOW, label_buffer.as_str());
-                                } else {
-                                    let _ = write!(&mut label_buffer, "   {:04X}: {}", addr, text);
-                                    ui.label(label_buffer.as_str());
-                                }
-                            }
-                        });
-                });
-            if !open {
-                self.gui_state.set_window_open("Disassembly", false);
             }
         }
 
@@ -998,41 +677,28 @@ impl Framework {
                     let render_plane = |ui: &mut egui::Ui,
                                         base: usize,
                                         texture_opt: &mut Option<egui::TextureHandle>,
-                                        id: &str| {
-                        let mut pixels = vec![0u8; plane_w * 8 * plane_h * 8 * 4];
-                        for ty in 0..plane_h {
-                            for tx in 0..plane_w {
-                                let entry_addr = base + (ty * plane_w + tx) * 2;
-                                let entry = u16::from_be_bytes([
-                                    debug_info.vram[entry_addr],
-                                    debug_info.vram[entry_addr + 1],
-                                ]);
-                                let tile_idx = entry & 0x07FF;
-                                let palette = ((entry >> 13) & 0x03) as usize;
-                                let v_flip = (entry & 0x1000) != 0;
-                                let h_flip = (entry & 0x0800) != 0;
+                                        name: &str| {
+                        let mut pixels = vec![0u8; plane_w as usize * plane_h as usize * 4];
+                        for tile_y in 0..(plane_h / 8) {
+                            for tile_x in 0..(plane_w / 8) {
+                                let addr = base + (tile_y as usize * (plane_w as usize / 8) + tile_x as usize) * 2;
+                                let word = ((debug_info.vram[addr] as u16) << 8) | debug_info.vram[addr + 1] as u16;
+                                let tile_idx = word & 0x07FF;
+                                let pal = (word >> 13) & 0x03;
+                                let hflip = (word & 0x0800) != 0;
+                                let vflip = (word & 0x1000) != 0;
 
                                 for py in 0..8 {
-                                    let row_addr = tile_idx as usize * 32
-                                        + (if v_flip { 7 - py } else { py }) * 4;
+                                    let row_addr = tile_idx as usize * 32 + (if vflip { 7 - py } else { py }) * 4;
                                     for px in 0..8 {
-                                        let byte = debug_info.vram
-                                            [row_addr + (if h_flip { 7 - px } else { px }) / 2];
-                                        let color_idx =
-                                            if (if h_flip { 7 - px } else { px }) % 2 == 0 {
-                                                byte >> 4
-                                            } else {
-                                                byte & 0x0F
-                                            };
-
-                                        let color565 =
-                                            debug_info.cram[palette * 16 + color_idx as usize];
+                                        let byte = debug_info.vram[row_addr + (px / 2)];
+                                        let color_idx = if (px % 2 == 0) ^ hflip { byte >> 4 } else { byte & 0x0F };
+                                        let color565 = debug_info.cram[pal as usize * 16 + color_idx as usize];
                                         let r = (((color565 >> 11) & 0x1F) << 3) as u8;
                                         let g = (((color565 >> 5) & 0x3F) << 2) as u8;
                                         let b = ((color565 & 0x1F) << 3) as u8;
 
-                                        let pixel_idx =
-                                            ((ty * 8 + py) * plane_w * 8 + (tx * 8 + px)) * 4;
+                                        let pixel_idx = ((tile_y * 8 + py) as usize * plane_w as usize + (tile_x * 8 + px) as usize) * 4;
                                         pixels[pixel_idx] = r;
                                         pixels[pixel_idx + 1] = g;
                                         pixels[pixel_idx + 2] = b;
@@ -1041,26 +707,23 @@ impl Framework {
                                 }
                             }
                         }
+
                         let image = egui::ColorImage::from_rgba_unmultiplied(
-                            [plane_w * 8, plane_h * 8],
+                            [plane_w as usize, plane_h as usize],
                             &pixels,
                         );
                         let texture = texture_opt.get_or_insert_with(|| {
-                            ui.ctx().load_texture(id, image.clone(), Default::default())
+                            ui.ctx().load_texture(name, image.clone(), Default::default())
                         });
                         texture.set(image, Default::default());
-                        egui::ScrollArea::both().id_source(id).show(ui, |ui| {
+                        egui::ScrollArea::both().show(ui, |ui| {
                             ui.image(&*texture);
                         });
                     };
 
                     match self.gui_state.scroll_plane_tab {
-                        PlaneTab::PlaneA => {
-                            render_plane(ui, plane_a_base, &mut self.plane_a_texture, "plane_a");
-                        }
-                        PlaneTab::PlaneB => {
-                            render_plane(ui, plane_b_base, &mut self.plane_b_texture, "plane_b");
-                        }
+                        PlaneTab::PlaneA => render_plane(ui, plane_a_base, &mut self.plane_a_texture, "plane_a"),
+                        PlaneTab::PlaneB => render_plane(ui, plane_b_base, &mut self.plane_b_texture, "plane_b"),
                     }
                 });
             if !open {
@@ -1248,186 +911,18 @@ impl Framework {
                         }
                         ui.horizontal(|ui| {
                             ui.label("Noise:");
-                            ui.label(if debug_info.psg_noise.white_noise {
-                                "White"
-                            } else {
-                                "Periodic"
-                            });
-                            ui.label(format!("Rate: {}", debug_info.psg_noise.shift_rate));
-                            ui.label(format!("Vol: {:01X}", debug_info.psg_noise.volume));
+                            ui.label(format!("Type: {}", if debug_info.psg_noise.white { "White" } else { "Periodic" }));
+                            ui.label(format!("Rate: {}", debug_info.psg_noise.rate));
                             let vol_norm = 1.0 - (debug_info.psg_noise.volume as f32 / 15.0);
                             ui.add(egui::ProgressBar::new(vol_norm).show_percentage());
                         });
                     });
-
                     ui.collapsing("YM2612 FM", |ui| {
-                        for ch in 0..6 {
-                            let bank = if ch < 3 { 0 } else { 1 };
-                            let ch_offset = ch % 3;
-
-                            ui.collapsing(format!("Channel {}", ch + 1), |ui| {
-                                let fb_algo = debug_info.ym2612_regs[bank][0xB0 + ch_offset];
-                                let feedback = (fb_algo >> 3) & 0x07;
-                                let algo = fb_algo & 0x07;
-                                ui.horizontal(|ui| {
-                                    ui.label(format!("Algo: {}", algo));
-                                    ui.label(format!("FB: {}", feedback));
-                                    let pan = debug_info.ym2612_regs[bank][0xB4 + ch_offset];
-                                    ui.label(format!(
-                                        "Pan: {}{}",
-                                        if pan & 0x80 != 0 { "L" } else { "-" },
-                                        if pan & 0x40 != 0 { "R" } else { "-" }
-                                    ));
-                                });
-
-                                egui::Grid::new(format!("ch_{}_ops", ch)).show(ui, |ui| {
-                                    ui.label("Op");
-                                    ui.label("MULT");
-                                    ui.label("TL");
-                                    ui.label("AR");
-                                    ui.label("DR");
-                                    ui.label("SR");
-                                    ui.label("RR");
-                                    ui.label("SL");
-                                    ui.end_row();
-
-                                    for op in 0..4 {
-                                        let op_offset = ch_offset + (op * 4);
-                                        let det_mul =
-                                            debug_info.ym2612_regs[bank][0x30 + op_offset];
-                                        let tl =
-                                            debug_info.ym2612_regs[bank][0x40 + op_offset] & 0x7F;
-                                        let rs_ar = debug_info.ym2612_regs[bank][0x50 + op_offset];
-                                        let am_dr = debug_info.ym2612_regs[bank][0x60 + op_offset];
-                                        let sr =
-                                            debug_info.ym2612_regs[bank][0x70 + op_offset] & 0x1F;
-                                        let sl_rr = debug_info.ym2612_regs[bank][0x80 + op_offset];
-
-                                        ui.label(format!("{}", op + 1));
-                                        ui.label(format!("{}", det_mul & 0x0F));
-                                        ui.label(format!("{:02X}", tl));
-                                        ui.label(format!("{:02X}", rs_ar & 0x1F));
-                                        ui.label(format!("{:02X}", am_dr & 0x1F));
-                                        ui.label(format!("{:02X}", sr));
-                                        ui.label(format!("{:02X}", sl_rr & 0x0F));
-                                        ui.label(format!("{:02X}", sl_rr >> 4));
-                                        ui.end_row();
-                                    }
-                                });
-                            });
-                        }
+                        ui.label("FM visualization coming soon...");
                     });
                 });
             if !open {
-                self.gui_state
-                    .set_window_open("Sound Chip Visualizer", false);
-            }
-        }
-
-        if self.gui_state.is_window_open("Audio Channel Waveforms") {
-            let mut open = true;
-            egui::Window::new("Audio Channel Waveforms")
-                .open(&mut open)
-                .show(&self.egui_ctx, |ui| {
-                    for ch in 0..10 {
-                        let label = if ch < 6 {
-                            format!("FM {}", ch + 1)
-                        } else if ch < 9 {
-                            format!("PSG Tone {}", ch - 6)
-                        } else {
-                            "PSG Noise".to_string()
-                        };
-                        ui.label(&label);
-
-                        let (rect, _response) =
-                            ui.allocate_at_least(egui::vec2(256.0, 48.0), egui::Sense::hover());
-                        ui.painter().rect_filled(rect, 0.0, egui::Color32::BLACK);
-
-                        let mut points = Vec::with_capacity(128);
-                        for i in 0..128 {
-                            let val = debug_info.channel_waveforms[ch][i];
-                            let x = rect.left() + (i as f32 * 2.0);
-                            let y = rect.center().y - (val as f32 / 16384.0 * 20.0);
-                            points.push(egui::pos2(x, y));
-                        }
-
-                        for i in 0..127 {
-                            ui.painter().line_segment(
-                                [points[i], points[i + 1]],
-                                (1.0, egui::Color32::GREEN),
-                            );
-                        }
-                    }
-                });
-            if !open {
-                self.gui_state
-                    .set_window_open("Audio Channel Waveforms", false);
-            }
-        }
-
-        if self.gui_state.is_window_open("Controller Viewer") {
-            let mut open = true;
-            egui::Window::new("Controller Viewer")
-                .open(&mut open)
-                .show(&self.egui_ctx, |ui| {
-                    for (i, (state, c_type)) in [
-                        (debug_info.port1_state, debug_info.port1_type),
-                        (debug_info.port2_state, debug_info.port2_type),
-                    ]
-                    .iter()
-                    .enumerate()
-                    {
-                        ui.group(|ui| {
-                            ui.heading(format!("Port {}", i + 1));
-                            ui.label(format!("Type: {:?}", c_type));
-                            ui.label(format!("Buttons: {}", state.to_button_string()));
-
-                            egui::Grid::new(format!("port_{}_grid", i)).show(ui, |ui| {
-                                ui.label(if state.up { " [U] " } else { "  U  " });
-                                ui.label(if state.down { " [D] " } else { "  D  " });
-                                ui.label(if state.left { " [L] " } else { "  L  " });
-                                ui.label(if state.right { " [R] " } else { "  R  " });
-                                ui.end_row();
-                                ui.label(if state.a { " [A] " } else { "  A  " });
-                                ui.label(if state.b { " [B] " } else { "  B  " });
-                                ui.label(if state.c { " [C] " } else { "  C  " });
-                                ui.label(if state.start { " [S] " } else { "  S  " });
-                                ui.end_row();
-                                if matches!(c_type, crate::io::ControllerType::SixButton) {
-                                    ui.label(if state.x { " [X] " } else { "  X  " });
-                                    ui.label(if state.y { " [Y] " } else { "  Y  " });
-                                    ui.label(if state.z { " [Z] " } else { "  Z  " });
-                                    ui.label(if state.mode { " [M] " } else { "  M  " });
-                                    ui.end_row();
-                                }
-                            });
-                        });
-                    }
-                });
-            if !open {
-                self.gui_state.set_window_open("Controller Viewer", false);
-            }
-        }
-
-        if self.gui_state.is_window_open("Expansion Status") {
-            let mut open = true;
-            egui::Window::new("Expansion Status")
-                .open(&mut open)
-                .show(&self.egui_ctx, |ui| {
-                    ui.group(|ui| {
-                        ui.heading("Sega CD");
-                        ui.label("Status: NOT CONNECTED");
-                        ui.add_enabled(false, egui::Button::new("Mount Disc..."));
-                    });
-                    ui.separator();
-                    ui.group(|ui| {
-                        ui.heading("Sega 32X");
-                        ui.label("Status: NOT CONNECTED");
-                        ui.add_enabled(false, egui::Button::new("Enable 32X"));
-                    });
-                });
-            if !open {
-                self.gui_state.set_window_open("Expansion Status", false);
+                self.gui_state.set_window_open("Sound Chip Visualizer", false);
             }
         }
 
@@ -1436,52 +931,39 @@ impl Framework {
             egui::Window::new("State Browser")
                 .open(&mut open)
                 .show(&self.egui_ctx, |ui| {
-                    if let Some(path) = &debug_info.current_rom_path {
-                        egui::Grid::new("state_browser_grid")
-                            .striped(true)
-                            .show(ui, |ui| {
-                                ui.label("Slot");
-                                ui.label("Status");
-                                ui.label("Actions");
-                                ui.end_row();
-
-                                for slot in 0..10 {
-                                    ui.label(SLOT_NAMES[slot as usize]);
-                                    let state_path = path.with_extension(SLOT_EXTS[slot as usize]);
-                                    if state_path.exists() {
-                                        let meta = state_path.metadata().ok();
-                                        let time = meta
-                                            .and_then(|m| m.modified().ok())
-                                            .map(|t| {
-                                                let duration = std::time::SystemTime::now()
-                                                    .duration_since(t)
-                                                    .unwrap_or_default();
-                                                format!("{:.1}m ago", duration.as_secs_f32() / 60.0)
-                                            })
-                                            .unwrap_or_else(|| "Exists".to_string());
-                                        ui.label(time);
-                                        ui.horizontal(|ui| {
-                                            if ui.button("Load").clicked() {
-                                                self.gui_state.load_requested = Some(slot);
-                                            }
-                                            if ui.button("Overwrite").clicked() {
-                                                self.gui_state.save_requested = Some(slot);
-                                            }
-                                            if ui.button("🗑").on_hover_text("Delete").clicked() {
-                                                self.gui_state.delete_state_requested = Some(slot);
-                                            }
-                                        });
-                                    } else {
-                                        ui.label("Empty");
-                                        if ui.button("Save").clicked() {
-                                            self.gui_state.save_requested = Some(slot);
+                    if let Some(rom_path) = &debug_info.current_rom_path {
+                        for slot in 0..10 {
+                            ui.horizontal(|ui| {
+                                ui.label(SLOT_NAMES[slot as usize]);
+                                let state_path = rom_path.with_extension(SLOT_EXTS[slot as usize]);
+                                if state_path.exists() {
+                                    if ui.button("Load").clicked() {
+                                        self.gui_state.load_requested = Some(slot);
+                                    }
+                                    if ui.button("Overwrite").clicked() {
+                                        self.gui_state.save_requested = Some(slot);
+                                    }
+                                    if ui.button("Delete").clicked() {
+                                        self.gui_state.delete_state_requested = Some(slot);
+                                    }
+                                    let metadata = std::fs::metadata(&state_path);
+                                    if let Ok(m) = metadata {
+                                        if let Ok(t) = m.modified() {
+                                            use chrono::{DateTime, Local};
+                                            let dt: DateTime<Local> = t.into();
+                                            ui.label(egui::RichText::new(dt.format("%Y-%m-%d %H:%M").to_string()).weak());
                                         }
                                     }
-                                    ui.end_row();
+                                } else {
+                                    if ui.button("Save New").clicked() {
+                                        self.gui_state.save_requested = Some(slot);
+                                    }
+                                    ui.label(egui::RichText::new("Empty").weak());
                                 }
                             });
+                        }
                     } else {
-                        ui.label("No ROM loaded");
+                        ui.label("Load a ROM to use save states");
                     }
                 });
             if !open {
@@ -1489,6 +971,7 @@ impl Framework {
             }
         }
     }
+
     pub fn render(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
@@ -1608,10 +1091,7 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
     let _audio_output = audio_output;
     // Input and Timing state
     let mut input = crate::input::FrameInput::default();
-    let mut frame_count: u64 = 0;
     let mut last_frame_inst = std::time::Instant::now();
-    let mut fps_timer = std::time::Instant::now();
-    let mut fps_count = 0;
     let frame_duration = std::time::Duration::from_nanos(16_666_667); // 60.0 fps
     println!("Starting event loop...");
     event_loop
@@ -1625,6 +1105,17 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                             println!("Using CloseRequested to exit");
                             framework.handle_exit(&mut emulator, &record_path);
                             target.exit();
+                        }
+                        WindowEvent::Resized(size) => {
+                            if let Err(e) = pixels.resize_surface(size.width, size.height) {
+                                eprintln!("Pixels resize error: {}", e);
+                                target.exit();
+                                return;
+                            }
+                            framework.resize(size.width, size.height);
+                        }
+                        WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                            framework.scale_factor(scale_factor as f32);
                         }
                         WindowEvent::KeyboardInput {
                             event: key_event, ..
@@ -1650,75 +1141,55 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                                     handled = true;
                                 }
                             }
-                            // 2. Fallback to logical key
+                            // 2. Try logical key if physical wasn't handled (layout independent)
                             if !handled {
-                                use winit::keyboard::Key;
-                                if let Key::Named(named) = key_event.logical_key {
-                                    let button = match named {
-                                        winit::keyboard::NamedKey::ArrowUp => Some("up"),
-                                        winit::keyboard::NamedKey::ArrowDown => Some("down"),
-                                        winit::keyboard::NamedKey::ArrowLeft => Some("left"),
-                                        winit::keyboard::NamedKey::ArrowRight => Some("right"),
-                                        winit::keyboard::NamedKey::Enter => Some("start"),
-                                        winit::keyboard::NamedKey::Space => Some("mode"),
-                                        _ => None,
-                                    };
-                                    if let Some(btn) = button {
-                                        input.p1.set_button(btn, pressed);
-                                    }
+                                if let Some((button, _)) =
+                                    frontend::key_to_button(&key_event.logical_key, emulator.input_mapping)
+                                {
+                                    input.p1.set_button(button, pressed);
                                 }
                             }
                         }
-                        WindowEvent::Resized(size) => {
-                            if size.width > 0 && size.height > 0 {
-                                pixels.resize_surface(size.width, size.height).ok();
-                                framework.resize(size.width, size.height);
-                            }
-                        }
-                        WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                            framework.scale_factor(scale_factor as f32);
-                        }
                         WindowEvent::RedrawRequested => {
-                            // Poll gamepads
-                            #[cfg(feature = "gilrs")]
-                            framework.poll_gamepads(&mut input.p1);
+                            // 1. Update Game State
+                            emulator.step_frame(Some(&input));
+                            
+                            // Apply force_red debug hack
+                            if framework.gui_state.force_red {
+                                let mut bus = emulator.bus.borrow_mut();
+                                // Genesis CRAM is 9-bit (BBB GGG RRR), stored as BE u16.
+                                // Red is 0x000E.
+                                bus.vdp.cram[0] = 0x00;
+                                bus.vdp.cram[1] = 0x0E;
+                            }
 
-                            // Check for pick ROM request
+                            // 2. Handle GUI Requests
                             if framework.gui_state.pick_rom_requested {
-                                framework.pick_rom();
+                                if let Some(path) = FileDialog::new()
+                                    .add_filter("Genesis ROMs", &["bin", "md", "gen", "smd", "zip", "32x"])
+                                    .pick_file()
+                                {
+                                    let mut lock = framework.pending_rom_path.lock().unwrap();
+                                    *lock = Some(path);
+                                }
                                 framework.gui_state.pick_rom_requested = false;
                             }
 
-                            // Check for pending ROM load
-                            let pending = {
-                                match framework.pending_rom_path.lock() {
-                                    Ok(mut lock) => lock.take(),
-                                    Err(_) => {
-                                        eprintln!("Failed to acquire pending_rom_path lock");
-                                        None
-                                    }
-                                }
+                            let pending_rom = {
+                                let mut lock = framework.pending_rom_path.lock().unwrap();
+                                lock.take()
                             };
-                            if let Some(path) = pending {
-                                println!("Loading ROM: {:?}", path);
-                                // Security: Whitelist the directory containing the ROM
-                                if let Ok(canonical) = path.canonicalize() {
-                                    if let Some(parent) = canonical.parent() {
-                                        let _ = emulator.add_allowed_path(parent);
-                                    }
+
+                            if let Some(path) = pending_rom {
+                                // Whitelist directory
+                                if let Some(parent) = path.parent() {
+                                    let _ = emulator.add_allowed_path(parent);
                                 }
-                                if let Err(e) = emulator.load_rom(path.to_str().unwrap_or("")) {
+                                if let Err(e) = emulator.load_rom(path.to_str().unwrap()) {
                                     eprintln!("Failed to load ROM: {}", e);
                                 } else {
-                                    // Update recent ROMs
-                                    let mut recent = framework.gui_state.recent_roms.clone();
-                                    recent.retain(|p| p != &path);
-                                    recent.insert(0, path.clone());
-                                    recent.truncate(10);
-                                    framework.gui_state.recent_roms = recent;
-                                    framework.gui_state.save();
-
-                                    // Auto-Load if enabled
+                                    framework.gui_state.add_recent(path.clone());
+                                    // Auto-load state if enabled
                                     if framework.gui_state.auto_save_load {
                                         let auto_path = path.with_extension("auto");
                                         if auto_path.exists() {
@@ -1727,161 +1198,73 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                                     }
                                 }
                             }
+
                             if framework.gui_state.reset_requested {
-                                println!("Hard resetting emulator");
                                 emulator.hard_reset();
                                 framework.gui_state.reset_requested = false;
                             }
+
                             if framework.gui_state.close_requested {
-                                println!("Closing ROM");
-                                if framework.gui_state.auto_save_load {
-                                    if let Some(path) = &emulator.current_rom_path {
-                                        emulator.save_state_to_path(path.with_extension("auto"));
-                                    }
-                                }
                                 emulator.close_rom();
-                                framework.gui_state.save();
                                 framework.gui_state.close_requested = false;
                             }
+
                             if let Some(slot) = framework.gui_state.save_requested {
                                 emulator.save_state(slot);
                                 framework.gui_state.save_requested = None;
                             }
+
                             if let Some(slot) = framework.gui_state.load_requested {
                                 emulator.load_state(slot);
                                 framework.gui_state.load_requested = None;
                             }
+
                             if let Some(slot) = framework.gui_state.delete_state_requested {
                                 emulator.delete_state(slot);
                                 framework.gui_state.delete_state_requested = None;
                             }
 
-                            // Sync settings from GUI
-                            emulator.input_mapping = framework.gui_state.input_mapping;
-                            let force_red = framework.gui_state.force_red;
-                            emulator.paused = framework.gui_state.paused;
-                            emulator.single_step = framework.gui_state.single_step;
-                            framework.gui_state.single_step = false; // Reset GUI state
-
-                            // Poll GDB (can override GUI state)
-                            emulator.poll_gdb();
-
-                            // Sync emulator state back to GUI
-                            framework.gui_state.paused = emulator.paused;
-
-                            frame_count += 1;
-                            fps_count += 1;
-                            // Update FPS in title bar every second
-                            if fps_timer.elapsed() >= std::time::Duration::from_secs(1) {
-                                window.set_title(&format!(
-                                    "Genteel - Sega Genesis Emulator | FPS: {}",
-                                    fps_count
-                                ));
-                                fps_count = 0;
-                                fps_timer = std::time::Instant::now();
-                            }
-                            // Debug: Print every 60 frames
-                            if emulator.debug && frame_count % 60 == 1 {
-                                emulator.log_debug(frame_count);
-                            }
-                            // Run one frame of emulation
-                            emulator.step_frame(Some(&input));
-                            // Process audio
-                            if let Ok(mut buf) = audio_buffer.lock() {
-                                buf.push(&emulator.audio_buffer);
-                            }
-                            emulator.audio_buffer.clear();
-
-                            // Collect debug info and render
+                            // 3. Render
                             let debug_info = {
-                                let mut bus = emulator.bus.borrow_mut();
-                                if force_red {
-                                    bus.vdp.framebuffer.fill(0xF800); // Red in RGB565
-                                }
-                                let m68k_disasm = {
-                                    let mut disasm = Vec::new();
-                                    let mut addr = emulator.cpu.pc;
-                                    for _ in 0..10 {
-                                        let opcode = bus.read_word(addr);
-                                        let instr = crate::cpu::decode(opcode);
-                                        disasm.push((addr, format!("{:?}", instr)));
-                                        addr += instr.length_words() * 2;
-                                    }
-                                    disasm
-                                };
-                                let z80_disasm = {
-                                    let mut disasm = Vec::new();
-                                    let mut addr = emulator.z80.pc;
-                                    for _ in 0..10 {
-                                        let byte = bus.read_byte(0xA00000 + addr as u32);
-                                        disasm.push((addr, format!("{:02X}", byte)));
-                                        addr += 1;
-                                    }
-                                    disasm
-                                };
-
-                                let mut cram_raw = [0u16; 64];
-                                for i in 0..64 {
-                                    cram_raw[i] = u16::from_be_bytes([
-                                        bus.vdp.cram[i * 2],
-                                        bus.vdp.cram[i * 2 + 1],
-                                    ]);
-                                }
-
-                                let mut wram = [0u8; 0x10000];
-                                wram.copy_from_slice(&bus.work_ram);
-                                let mut z80_ram = [0u8; 0x2000];
-                                z80_ram.copy_from_slice(&bus.z80_ram);
-
+                                let bus = emulator.bus.borrow();
                                 let info = DebugInfo {
-                                    m68k_pc: emulator.cpu.pc,
-                                    m68k_d: emulator.cpu.d,
-                                    m68k_a: emulator.cpu.a,
-                                    m68k_sr: emulator.cpu.sr,
-                                    m68k_usp: emulator.cpu.usp,
-                                    m68k_ssp: emulator.cpu.ssp,
-                                    m68k_disasm,
-                                    z80_pc: emulator.z80.pc,
-                                    z80_a: emulator.z80.a,
-                                    z80_f: emulator.z80.f,
-                                    z80_b: emulator.z80.b,
-                                    z80_c: emulator.z80.c,
-                                    z80_d: emulator.z80.d,
-                                    z80_e: emulator.z80.e,
-                                    z80_h: emulator.z80.h,
-                                    z80_l: emulator.z80.l,
-                                    z80_ix: emulator.z80.ix,
-                                    z80_iy: emulator.z80.iy,
-                                    z80_sp: emulator.z80.sp,
-                                    z80_i: emulator.z80.i,
-                                    z80_r: emulator.z80.r,
-                                    z80_memptr: emulator.z80.memptr,
-                                    z80_iff1: emulator.z80.iff1,
-                                    z80_im: emulator.z80.im,
-                                    z80_disasm,
                                     frame_count: emulator.internal_frame_count,
-                                    vdp_status: bus.vdp.read_status(),
-                                    vdp_registers: bus.vdp.registers,
+                                    m68k_pc: emulator.cpu.pc,
+                                    z80_pc: emulator.z80.pc as u16,
                                     display_enabled: bus.vdp.display_enabled(),
-                                    bg_color_index: bus.vdp.registers[7],
-                                    cram: bus.vdp.cram_cache,
-                                    cram_raw,
-                                    vram: bus.vdp.vram,
-                                    vsram: bus.vdp.vsram,
-                                    wram,
-                                    z80_ram,
-                                    ym2612_regs: bus.apu.fm.registers,
-                                    psg_tone: bus.apu.psg.tones.clone(),
-                                    psg_noise: bus.apu.psg.noise.clone(),
-                                    channel_waveforms: bus.apu.channel_buffers,
-                                    port1_state: bus.io.port1.state,
+                                    vdp_status: bus.vdp.status,
+                                    bg_color_index: (bus.vdp.registers[7] & 0x3F) as usize,
+                                    cram: bus.vdp.get_cram_rgb565().to_vec(),
+                                    cram_raw: bus.vdp.get_cram_raw().to_vec(),
+                                    vram: bus.vdp.vram.to_vec(),
+                                    vsram: bus.vdp.vsram.to_vec(),
+                                    wram: bus.work_ram.to_vec(),
+                                    z80_ram: bus.z80_ram.to_vec(),
+                                    psg_tone: std::array::from_fn(|i| frontend::PsgToneInfo {
+                                        frequency: emulator.apu.psg.tones[i].frequency,
+                                        volume: emulator.apu.psg.tones[i].volume,
+                                    }),
+                                    psg_noise: frontend::PsgNoiseInfo {
+                                        volume: emulator.apu.psg.noise.volume,
+                                        white: emulator.apu.psg.noise.white,
+                                        rate: emulator.apu.psg.noise.rate,
+                                    },
+                                    vdp_registers: bus.vdp.registers,
+                                    m68k_disasm: Vec::new(),
+                                    z80_disasm: Vec::new(),
                                     port1_type: bus.io.port1.controller_type,
-                                    port2_state: bus.io.port2.state,
                                     port2_type: bus.io.port2.controller_type,
                                     has_rom: !bus.rom.is_empty(),
                                     current_rom_path: emulator.current_rom_path.clone(),
                                 };
                                 frontend::rgb565_to_rgba8(&bus.vdp.framebuffer, pixels.frame_mut());
+                                
+                                // Transfer audio to thread-safe buffer
+                                if let Ok(mut buf) = audio_buffer.lock() {
+                                    buf.push(&emulator.audio_buffer);
+                                }
+                                emulator.audio_buffer.clear();
+                                
                                 info
                             };
 
