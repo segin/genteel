@@ -372,12 +372,12 @@ impl Vdp {
 
     pub fn read_data(&mut self) -> u16 {
         self.command.pending = false;
-        
+
         let val = self.command.read_buffer;
         self.command.cd4_flag = false;
-        
+
         self.try_prefetch();
-        
+
         val
     }
 
@@ -431,7 +431,10 @@ impl Vdp {
             }
         }
 
-        self.command.address = self.command.address.wrapping_add(self.auto_increment() as u16);
+        self.command.address = self
+            .command
+            .address
+            .wrapping_add(self.auto_increment() as u16);
     }
 
     pub fn write_control(&mut self, value: u16) {
@@ -548,8 +551,11 @@ impl Vdp {
     }
 
     pub fn sprite_table_address(&self) -> usize {
-        // Bits 0-6 specify bits 9-15 of VRAM address (H40 mode)
-        ((self.registers[REG_SPRITE_TABLE] as usize) & 0x7F) << 9
+        if self.h40_mode() {
+            ((self.registers[REG_SPRITE_TABLE] as usize) & 0x7E) << 9
+        } else {
+            ((self.registers[REG_SPRITE_TABLE] as usize) & 0x7F) << 9
+        }
     }
 
     pub fn hscroll_address(&self) -> usize {
@@ -587,10 +593,16 @@ impl Vdp {
     }
 
     pub fn read_hv_counter(&self) -> u16 {
-        // H counter: 0-487 (NTSC) or 0-481 (PAL).
-        // H32: 0x00-0x93, H40: 0x00-0xB6
-        // This is a simplified implementation.
-        let h = (self.h_counter >> 1) as u8;
+        // Approximate Genesis HV counter mapping for H40 mode
+        let h = if self.mclk_line_clocks < 2560 {
+            // Active area: map 0-2560 to 0x00-0xB6
+            ((self.mclk_line_clocks * 0xB6) / 2560) as u8
+        } else {
+            // HBlank area: map 2560-3420 to 0xE4-0xFF
+            let offset = self.mclk_line_clocks - 2560;
+            (0xE4 + ((offset * (0xFF - 0xE4)) / (3420 - 2560))) as u8
+        };
+
         let v = (self.v_counter & 0xFF) as u8;
         ((v as u16) << 8) | (h as u16)
     }
@@ -603,8 +615,8 @@ impl Vdp {
         self.h_counter = h;
     }
 
-    pub(crate) fn plane_size(&self) -> (usize, usize) {
-        let val = self.registers[REG_PLANE_SIZE];
+    /// Decode the plane size from the VDP register value (Reg 16)
+    pub fn decode_plane_size(val: u8) -> (usize, usize) {
         // Bits 0-1 (HSZ1-0): horizontal size (width in tiles)
         let w = match val & 0x03 {
             0x00 => 32,
@@ -622,8 +634,16 @@ impl Vdp {
         (w, h)
     }
 
+    pub(crate) fn plane_size(&self) -> (usize, usize) {
+        Self::decode_plane_size(self.registers[REG_PLANE_SIZE])
+    }
+
     pub(crate) fn window_address(&self) -> usize {
-        ((self.registers[REG_WINDOW] as usize) & 0x3E) << 11
+        if self.h40_mode() {
+            ((self.registers[REG_WINDOW] as usize) & 0x3C) << 10
+        } else {
+            ((self.registers[REG_WINDOW] as usize) & 0x3E) << 10
+        }
     }
 
     pub(crate) fn is_window_area(&self, x: u16, y: u16) -> bool {
@@ -697,7 +717,7 @@ impl Vdp {
         } else {
             self.mclk_line_clocks / 20
         };
-        
+
         let process_limit = std::cmp::min(curr_slot, total_slots as u32);
 
         for slot_idx in prev_slot..process_limit {
@@ -718,7 +738,7 @@ impl Vdp {
             } else if self.v_counter == 0 {
                 self.status &= !STATUS_VBLANK;
             }
-            
+
             let next_line_curr_slot = if is_h40 {
                 (self.mclk_line_clocks * 210) / 3420
             } else {
@@ -730,8 +750,8 @@ impl Vdp {
         }
 
         // HBlank status flag based on H counter approximation (mclk_line_clocks)
-        // HBlank starts roughly 85% through the line clocks
-        if self.mclk_line_clocks >= 2900 {
+        // HBlank starts roughly 75-80% through the line clocks
+        if self.mclk_line_clocks >= 2600 {
             self.status |= STATUS_HBLANK;
         } else {
             self.status &= !STATUS_HBLANK;
@@ -743,9 +763,17 @@ impl Vdp {
         F: FnMut(u32) -> u16,
     {
         let is_external = if is_h40 {
-            if slot_idx < 210 { H40_EXTERNAL_SLOTS[slot_idx] } else { false }
+            if slot_idx < 210 {
+                H40_EXTERNAL_SLOTS[slot_idx]
+            } else {
+                false
+            }
         } else {
-            if slot_idx < 171 { H32_EXTERNAL_SLOTS[slot_idx] } else { false }
+            if slot_idx < 171 {
+                H32_EXTERNAL_SLOTS[slot_idx]
+            } else {
+                false
+            }
         };
 
         // If in VBlank, nearly all slots are external opportunities
@@ -764,7 +792,7 @@ impl Vdp {
             self.status &= !STATUS_FIFO_FULL;
             if self.fifo.is_empty() {
                 self.status |= STATUS_FIFO_EMPTY;
-                
+
                 // Trigger deferred prefetch if waiting
                 if !self.command.cd4_flag && (self.command.code & 0x01) == 0 {
                     self.try_prefetch();

@@ -2,7 +2,7 @@
 //!
 //! Uses proptest for comprehensive property testing of VDP behavior.
 
-use crate::vdp::{RenderOps, Vdp};
+use crate::vdp::{RenderOps, Vdp, REG_PLANE_SIZE};
 use proptest::prelude::*;
 
 proptest! {
@@ -44,11 +44,9 @@ proptest! {
     fn plane_size_always_valid(reg_value in 0u8..=0xFF) {
         let mut vdp = Vdp::new();
         vdp.bypass_fifo = true;
-        vdp.registers[16] = reg_value;
+        vdp.registers[REG_PLANE_SIZE] = reg_value;
 
-        let reg = vdp.registers[16];
-        let w = match reg & 0x03 { 0 => 32, 1 => 64, 3 => 128, _ => 32 };
-        let h = match (reg >> 4) & 0x03 { 0 => 32, 1 => 64, 3 => 128, _ => 32 };
+        let (w, h) = vdp.plane_size();
 
         prop_assert!(w == 32 || w == 64 || w == 128);
         prop_assert!(h == 32 || h == 64 || h == 128);
@@ -230,7 +228,8 @@ mod unit_tests {
     #[test]
     fn test_vdp_hv_counter() {
         let mut vdp = Vdp::new();
-        vdp.h_counter = 0x1234;
+        // Set state to midway through active area
+        vdp.mclk_line_clocks = 1280; // 2560 / 2
         vdp.v_counter = 0x00AB;
 
         let hv = vdp.read_hv_counter();
@@ -238,6 +237,7 @@ mod unit_tests {
         let h_out = hv as u8;
 
         assert_eq!(v_out, 0xAB);
-        assert_eq!(h_out, 0x1A); // h_counter >> 1
+        // H should be midway through active range: 0xB6 / 2 = 0x5B
+        assert_eq!(h_out, 0x5B);
     }
 }
