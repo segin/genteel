@@ -29,6 +29,16 @@ use serde_json::Value;
 #[macro_use]
 mod macros;
 
+#[derive(Clone, Copy, Debug)]
+pub struct OpParams {
+    pub opcode: u8,
+    pub x: u8,
+    pub y: u8,
+    pub z: u8,
+    pub p: u8,
+    pub q: u8,
+}
+
 pub mod op_general;
 use op_general::GeneralOps;
 
@@ -815,11 +825,20 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         let p = y >> 1;
         let q = y & 1;
 
+        let op_params = OpParams {
+            opcode,
+            x,
+            y,
+            z,
+            p,
+            q,
+        };
+
         let t_states = match x {
-            0 => self.execute_x0(opcode, y, z, p, q),
-            1 => self.execute_x1(y, z),
-            2 => self.execute_x2(y, z),
-            3 => self.execute_x3(opcode, y, z, p, q),
+            0 => self.execute_x0(op_params),
+            1 => self.execute_x1(op_params),
+            2 => self.execute_x2(op_params),
+            3 => self.execute_x3(op_params),
             _ => 4,
         };
 
