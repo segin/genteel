@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 pub const SAMPLE_RATE: u32 = 53267;
 
 /// Audio buffer size (in stereo sample pairs)
-pub const BUFFER_SIZE: usize = 2048;
+pub const BUFFER_SIZE: usize = 512;
 
 /// Source for rodio that pulls from the emulator's ring buffer
 #[cfg(feature = "gui")]

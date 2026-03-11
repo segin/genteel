@@ -26,7 +26,7 @@ use crate::apu::Apu;
 use crate::audio;
 use crate::debugger::Debuggable;
 use crate::io::Io;
-use crate::vdp::{DmaOps, Vdp};
+use crate::vdp::Vdp;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -137,7 +137,7 @@ impl Bus {
                 self.rom[0x1BA],
                 self.rom[0x1BB],
             ]);
-            
+
             let size = if self.sram_end > self.sram_start {
                 (self.sram_end - self.sram_start + 1) as usize
             } else {
@@ -165,22 +165,28 @@ impl Bus {
         self.rom.len()
     }
 
+    /// Check if DMA is currently active
+    pub fn dma_active(&self) -> bool {
+        use crate::vdp::DmaOps;
+        self.vdp.command.dma_pending && self.vdp.is_dma_transfer()
+    }
+
     /// Reset volatile state while keeping ROM and sample_rate
     pub fn reset(&mut self) {
         self.work_ram.fill(0);
         self.z80_ram.fill(0);
         self.sram.fill(0);
         self.sram_enabled = false;
-        
+
         self.vdp.reset();
         self.vdp.vram.fill(0);
         self.vdp.cram.fill(0);
         self.vdp.vsram.fill(0);
         self.vdp.reconstruct_cram_cache();
-        
+
         self.io.reset();
         self.apu.reset();
-        
+
         self.z80_bus_request = false;
         self.z80_reset = true;
         self.z80_bank_addr = 0;
@@ -238,8 +244,7 @@ impl Bus {
     fn read_rom(&self, addr: u32) -> u8 {
         let rom_addr = addr as usize;
         if rom_addr < self.rom.len() {
-            // SAFETY: rom_addr is checked against self.rom.len() above
-            unsafe { *self.rom.get_unchecked(rom_addr) }
+            self.rom[rom_addr]
         } else {
             0xFF // Unmapped ROM area
         }
@@ -429,8 +434,7 @@ impl Bus {
         if addr <= 0x3FFFFF {
             let idx = addr as usize;
             if idx + 1 < self.rom.len() {
-                let bytes = &self.rom[idx..idx + 2];
-                return u16::from_be_bytes(bytes.try_into().unwrap());
+                return ((self.rom[idx] as u16) << 8) | (self.rom[idx + 1] as u16);
             } else if idx < self.rom.len() {
                 // Partial read at end of ROM
                 let high = self.rom[idx];
@@ -460,7 +464,7 @@ impl Bus {
         if addr >= 0xE00000 {
             let r_addr = (addr & 0xFFFF) as usize;
             if r_addr < 0xFFFF {
-                return byte_utils::join_u16(self.work_ram[r_addr], self.work_ram[r_addr + 1]);
+                return ((self.work_ram[r_addr] as u16) << 8) | (self.work_ram[r_addr + 1] as u16);
             }
         }
 
@@ -508,8 +512,10 @@ impl Bus {
         if addr <= 0x3FFFFF {
             let idx = addr as usize;
             if idx + 3 < self.rom.len() {
-                let bytes = &self.rom[idx..idx + 4];
-                return u32::from_be_bytes(bytes.try_into().unwrap());
+                return ((self.rom[idx] as u32) << 24)
+                    | ((self.rom[idx + 1] as u32) << 16)
+                    | ((self.rom[idx + 2] as u32) << 8)
+                    | (self.rom[idx + 3] as u32);
             }
         }
 
@@ -530,12 +536,10 @@ impl Bus {
         if addr >= 0xE00000 {
             let r_addr = (addr & 0xFFFF) as usize;
             if r_addr <= 0xFFFC {
-                return byte_utils::join_u32(
-                    self.work_ram[r_addr],
-                    self.work_ram[r_addr + 1],
-                    self.work_ram[r_addr + 2],
-                    self.work_ram[r_addr + 3],
-                );
+                return ((self.work_ram[r_addr] as u32) << 24)
+                    | ((self.work_ram[r_addr + 1] as u32) << 16)
+                    | ((self.work_ram[r_addr + 2] as u32) << 8)
+                    | (self.work_ram[r_addr + 3] as u32);
             }
         }
 
@@ -602,10 +606,6 @@ impl Bus {
         self.write_byte(address.wrapping_add(3), b3);
     }
 
-    pub fn dma_active(&self) -> bool {
-        self.vdp.command.dma_pending && self.vdp.is_dma_transfer()
-    }
-
     /// Advance system state by N MCLK cycles.
     pub fn tick(&mut self, mclk: u32) {
         let rom = &self.rom;
@@ -615,17 +615,16 @@ impl Bus {
             if addr <= 0x3FFFFF {
                 let idx = addr as usize;
                 if idx + 1 < rom.len() {
-                    let bytes = &rom[idx..idx + 2];
-                    u16::from_be_bytes(bytes.try_into().unwrap())
+                    ((rom[idx] as u16) << 8) | (rom[idx + 1] as u16)
                 } else if idx < rom.len() {
-                    byte_utils::join_u16(rom[idx], 0xFF)
+                    ((rom[idx] as u16) << 8) | 0xFF
                 } else {
                     0xFFFF
                 }
             } else if addr >= 0xE00000 {
                 let r_addr = (addr & 0xFFFF) as usize;
                 if r_addr < 0xFFFF {
-                    byte_utils::join_u16(work_ram[r_addr], work_ram[r_addr + 1])
+                    ((work_ram[r_addr] as u16) << 8) | (work_ram[r_addr + 1] as u16)
                 } else {
                     0xFFFF
                 }

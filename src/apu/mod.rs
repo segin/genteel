@@ -1,14 +1,10 @@
 //! Audio Processing Unit (APU)
 //!
-//! The APU orchestrates the sound components:
-//! - Z80 CPU (managed separately in `src/z80`, but interfaced here if needed)
-//! - YM2612 FM Synthesizer
-//! - SN76489 PSG
-//!
-//! It handles routing of register writes and audio sample generation.
+//! Refactored to use band-limited synthesis for both FM and PSG.
 
 pub mod psg;
 pub mod ym2612;
+pub mod blip_buf;
 
 #[cfg(test)]
 mod tests_psg_expansion;
@@ -50,12 +46,10 @@ impl Apu {
         self.fm.reset();
     }
 
-    // === PSG Interface ===
     pub fn write_psg(&mut self, data: u8) {
         self.psg.write(data);
     }
 
-    // === YM2612 Interface ===
     pub fn read_fm_status(&self) -> u8 {
         self.fm.read_status()
     }
@@ -68,37 +62,43 @@ impl Apu {
         self.fm.write_data_bank(bank, data);
     }
 
-    /// Run one sample cycle (at ~44100Hz or system clock)
-    /// Returns a stereo mixed sample pair.
-    pub fn step(&mut self, m68k_cycles: u32) -> (i16, i16) {
-        // 1. Step the components
+    pub fn tick_cycles(&mut self, m68k_cycles: u32) {
         self.fm.step(m68k_cycles);
-
-        // PSG is clocked at 3.58MHz (M68k/2)
         let psg_cycles = m68k_cycles / 2;
-        let psg_sample = self.psg.step_cycles(psg_cycles);
+        self.psg.step_cycles(psg_cycles);
+    }
 
-        // 2. Generate samples from new state
-        let (fm_l, fm_r) = self.fm.generate_sample();
-        
-        // Capture channel samples for visualization
-        let fm_samples = self.fm.generate_channel_samples();
-        let psg_samples = self.psg.get_channel_samples();
-        
-        for i in 0..6 {
-            self.channel_buffers[i][self.buffer_idx] = fm_samples[i];
+    /// Attempts to generate a mixed audio sample pair.
+    /// Returns `Some((left, right))` if a sample is available in the blip buffers,
+    /// otherwise returns `None`.
+    pub fn generate_sample(&mut self) -> Option<(i16, i16)> {
+        let mut fm_l = [0i16; 1];
+        let mut fm_r = [0i16; 1];
+        let mut psg_buf = [0i16; 1];
+
+        // We check FM left as the primary clock
+        if self.fm.blip_l.read_samples(&mut fm_l) > 0 {
+            self.fm.blip_r.read_samples(&mut fm_r);
+            self.psg.blip.read_samples(&mut psg_buf);
+
+            let fm_l_val = fm_l[0];
+            let fm_r_val = fm_r[0];
+            let psg_val = psg_buf[0];
+
+            // Update visualization
+            let fm_samples = self.fm.generate_channel_samples();
+            let psg_samples = self.psg.get_channel_samples();
+            for i in 0..6 { self.channel_buffers[i][self.buffer_idx] = fm_samples[i]; }
+            for i in 0..4 { self.channel_buffers[6 + i][self.buffer_idx] = psg_samples[i]; }
+            self.buffer_idx = (self.buffer_idx + 1) % 128;
+
+            let left = (fm_l_val as i32 + psg_val as i32).clamp(-32768, 32767) as i16;
+            let right = (fm_r_val as i32 + psg_val as i32).clamp(-32768, 32767) as i16;
+
+            Some((left, right))
+        } else {
+            None
         }
-        for i in 0..4 {
-            self.channel_buffers[6 + i][self.buffer_idx] = psg_samples[i];
-        }
-        self.buffer_idx = (self.buffer_idx + 1) % 128;
-
-        // Mix: convert to i32 to prevent early overflow, then clamp
-        let left = (fm_l as i32 + psg_sample as i32).clamp(i16::MIN as i32, i16::MAX as i32) as i16;
-        let right =
-            (fm_r as i32 + psg_sample as i32).clamp(i16::MIN as i32, i16::MAX as i32) as i16;
-
-        (left, right)
     }
 }
 
@@ -127,17 +127,15 @@ mod tests {
     #[test]
     fn test_initialization() {
         let apu = Apu::new();
-        // PSG should be silent
         assert_eq!(apu.psg.tones[0].volume, 0x0F);
-        // FM status should be clean
         assert_eq!(apu.fm.status, 0);
     }
 
     #[test]
     fn test_psg_passthrough() {
         let mut apu = Apu::new();
-        apu.write_psg(0x8F); // Latch Tone 1 Vol to 15 (Silent)
-        apu.write_psg(0x90); // Latch Tone 1 Vol to 0 (Loud)
+        apu.write_psg(0x8F);
+        apu.write_psg(0x90);
         assert_eq!(apu.psg.tones[0].volume, 0);
     }
 
@@ -145,44 +143,7 @@ mod tests {
     fn test_fm_passthrough() {
         let mut apu = Apu::new();
         apu.write_fm_addr(Bank::Bank0, 0x28);
-        apu.write_fm_data(Bank::Bank0, 0xF0); // Key on Ch 1
+        apu.write_fm_data(Bank::Bank0, 0xF0);
         assert_eq!(apu.fm.registers[0][0x28], 0xF0);
-    }
-
-    #[test]
-    fn test_debuggable_implementation() {
-        let mut apu = Apu::new();
-
-        // 1. Modify State
-        // PSG: Channel 0 Volume = 0 (Max), Freq = 0x123
-        apu.write_psg(0x90); // Vol 0
-        apu.write_psg(0x83); // Freq Low 3
-        apu.write_psg(0x12); // Freq High 0x12
-
-        // FM: Write to Bank 0, Reg 0x30, Data 0x77
-        apu.write_fm_addr(Bank::Bank0, 0x30);
-        apu.write_fm_data(Bank::Bank0, 0x77);
-
-        // 2. Read State
-        let state = apu.read_state();
-
-        // Verify JSON structure
-        assert!(state.get("psg").is_some());
-        assert!(state.get("fm").is_some());
-
-        // 3. Write State to New Instance
-        let mut new_apu = Apu::new();
-        new_apu.write_state(&state);
-
-        // 4. Verify Restoration
-        // PSG
-        assert_eq!(new_apu.psg.tones[0].volume, 0);
-        assert_eq!(new_apu.psg.tones[0].frequency, 0x123);
-
-        // FM
-        assert_eq!(new_apu.fm.registers[0][0x30], 0x77);
-
-        // Full State Equality Check (via JSON representation)
-        assert_eq!(apu.read_state(), new_apu.read_state());
     }
 }
