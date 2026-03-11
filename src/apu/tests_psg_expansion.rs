@@ -71,15 +71,15 @@ fn test_psg_all_tones_mixing() {
     psg.tones[0].output = true;
     psg.tones[0].last_amp = 0; // reset to ensure delta works
     psg.update_channel_amp(0);
-    
+
     psg.tones[1].output = true;
     psg.tones[1].last_amp = 0;
     psg.update_channel_amp(1);
-    
+
     psg.tones[2].output = true;
     psg.tones[2].last_amp = 0;
     psg.update_channel_amp(2);
-    
+
     psg.noise.volume = 15;
     psg.update_channel_amp(3);
 
