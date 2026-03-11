@@ -36,33 +36,14 @@ pub mod op_ed;
 
 pub mod op_index;
 
-#[derive(Debug, Clone, Copy)]
-pub struct OpArgs {
+/// Decoded parameters for a Z80 instruction opcode
+pub struct OpParams {
     pub opcode: u8,
     pub x: u8,
     pub y: u8,
     pub z: u8,
     pub p: u8,
     pub q: u8,
-}
-
-impl OpArgs {
-    pub fn new(opcode: u8) -> Self {
-        let x = (opcode >> 6) & 0x03;
-        let y = (opcode >> 3) & 0x07;
-        let z = opcode & 0x07;
-        let p = y >> 1;
-        let q = y & 1;
-
-        Self {
-            opcode,
-            x,
-            y,
-            z,
-            p,
-            q,
-        }
-    }
 }
 
 /// Z80 CPU
@@ -838,13 +819,20 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
                 _pc_before, opcode, self.a, self.f, self.bc(), self.de(), self.hl(), self.sp, self.cycles);
         }
 
-        let args = OpArgs::new(opcode);
+        let op_params = OpParams {
+            opcode,
+            x: (opcode >> 6) & 0x03,
+            y: (opcode >> 3) & 0x07,
+            z: opcode & 0x07,
+            p: ((opcode >> 3) & 0x07) >> 1,
+            q: ((opcode >> 3) & 0x07) & 1,
+        };
 
-        let t_states = match args.x {
-            0 => self.execute_x0(args),
-            1 => self.execute_x1(args),
-            2 => self.execute_x2(args),
-            3 => self.execute_x3(args),
+        let t_states = match op_params.x {
+            0 => self.execute_x0(&op_params),
+            1 => self.execute_x1(&op_params),
+            2 => self.execute_x2(&op_params),
+            3 => self.execute_x3(&op_params),
             _ => 4,
         };
 
@@ -973,8 +961,8 @@ mod tests;
 // #[cfg(test)]
 // mod tests_load;
 
-// #[cfg(test)]
-// mod tests_regression;
+#[cfg(test)]
+mod tests_regression;
 
 // #[cfg(test)]
 // mod tests_undoc;
@@ -982,8 +970,8 @@ mod tests;
 // #[cfg(test)]
 // mod tests_exhaustive;
 
-// #[cfg(test)]
-// mod tests_block;
+#[cfg(test)]
+mod tests_block;
 
 // #[cfg(test)]
 // mod tests_halfcarry;

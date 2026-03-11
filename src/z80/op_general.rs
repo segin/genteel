@@ -2,40 +2,40 @@ use crate::memory::{IoInterface, MemoryInterface};
 use crate::z80::op_cb::CbOps;
 use crate::z80::op_ed::EdOps;
 use crate::z80::op_index::IndexOps;
-use crate::z80::{flags, OpArgs, Z80};
+use crate::z80::{flags, OpParams, Z80};
 
 pub trait GeneralOps {
-    fn execute_x0(&mut self, args: OpArgs) -> u8;
-    fn execute_x1(&mut self, args: OpArgs) -> u8;
-    fn execute_x2(&mut self, args: OpArgs) -> u8;
-    fn execute_x3(&mut self, args: OpArgs) -> u8;
+    fn execute_x0(&mut self, params: &OpParams) -> u8;
+    fn execute_x1(&mut self, params: &OpParams) -> u8;
+    fn execute_x2(&mut self, params: &OpParams) -> u8;
+    fn execute_x3(&mut self, params: &OpParams) -> u8;
 }
 
 impl<M: MemoryInterface, I: IoInterface> GeneralOps for Z80<M, I> {
-    fn execute_x0(&mut self, args: OpArgs) -> u8 {
+    fn execute_x0(&mut self, params: &OpParams) -> u8 {
         dispatch_z!(
-            args.z,
-            execute_x0_control_misc(self, args.y),
-            execute_x0_load_add_hl(self, args.y),
-            execute_x0_load_indirect(self, args.y),
-            execute_x0_inc_dec_rp(self, args.y),
-            execute_x0_inc_r(self, args.y),
-            execute_x0_dec_r(self, args.y),
-            execute_x0_ld_r_n(self, args.y),
-            execute_x0_rotate_accum_flags(self, args.y)
+            params.z,
+            execute_x0_control_misc(self, params.y),
+            execute_x0_load_add_hl(self, params.y),
+            execute_x0_load_indirect(self, params.y),
+            execute_x0_inc_dec_rp(self, params.y),
+            execute_x0_inc_r(self, params.y),
+            execute_x0_dec_r(self, params.y),
+            execute_x0_ld_r_n(self, params.y),
+            execute_x0_rotate_accum_flags(self, params.y)
         )
     }
 
-    fn execute_x1(&mut self, args: OpArgs) -> u8 {
-        if args.y == 6 && args.z == 6 {
+    fn execute_x1(&mut self, params: &OpParams) -> u8 {
+        if params.y == 6 && params.z == 6 {
             // HALT
             self.halted = true;
             4
         } else {
             // LD r, r'
-            let val = self.get_reg(args.z);
-            self.set_reg(args.y, val);
-            if args.y == 6 || args.z == 6 {
+            let val = self.get_reg(params.z);
+            self.set_reg(params.y, val);
+            if params.y == 6 || params.z == 6 {
                 7
             } else {
                 4
@@ -43,10 +43,10 @@ impl<M: MemoryInterface, I: IoInterface> GeneralOps for Z80<M, I> {
         }
     }
 
-    fn execute_x2(&mut self, args: OpArgs) -> u8 {
+    fn execute_x2(&mut self, params: &OpParams) -> u8 {
         // ALU operations
-        let val = self.get_reg(args.z);
-        match args.y {
+        let val = self.get_reg(params.z);
+        match params.y {
             0 => self.add_a(val, false),        // ADD A, r
             1 => self.add_a(val, true),         // ADC A, r
             2 => self.sub_a(val, false, true),  // SUB r
@@ -57,24 +57,24 @@ impl<M: MemoryInterface, I: IoInterface> GeneralOps for Z80<M, I> {
             7 => self.sub_a(val, false, false), // CP r
             _ => {}
         }
-        if args.z == 6 {
+        if params.z == 6 {
             7
         } else {
             4
         }
     }
 
-    fn execute_x3(&mut self, args: OpArgs) -> u8 {
+    fn execute_x3(&mut self, params: &OpParams) -> u8 {
         dispatch_z!(
-            args.z,
-            execute_x3_ret_cc(self, args.y),
-            execute_x3_pop_ret_exx(self, args.y),
-            execute_x3_jp_cc(self, args.y),
-            execute_x3_jp_out_ex_di_ei(self, args.y),
-            execute_x3_call_cc(self, args.y),
-            execute_x3_push_call_prefixes(self, args.y),
-            execute_x3_alu_n(self, args.y),
-            execute_x3_rst(self, args.y)
+            params.z,
+            execute_x3_ret_cc(self, params.y),
+            execute_x3_pop_ret_exx(self, params.y),
+            execute_x3_jp_cc(self, params.y),
+            execute_x3_jp_out_ex_di_ei(self, params.y),
+            execute_x3_call_cc(self, params.y),
+            execute_x3_push_call_prefixes(self, params.y),
+            execute_x3_alu_n(self, params.y),
+            execute_x3_rst(self, params.y)
         )
     }
 }
