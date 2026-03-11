@@ -36,6 +36,16 @@ pub mod op_ed;
 
 pub mod op_index;
 
+#[derive(Debug, Clone, Copy)]
+pub struct OpParams {
+    pub opcode: u8,
+    pub x: u8,
+    pub y: u8,
+    pub z: u8,
+    pub p: u8,
+    pub q: u8,
+}
+
 /// Z80 CPU
 #[derive(Debug)]
 pub struct Z80<M: MemoryInterface, I: IoInterface> {
@@ -815,11 +825,13 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         let p = y >> 1;
         let q = y & 1;
 
+        let params = OpParams { opcode, x, y, z, p, q };
+
         let t_states = match x {
-            0 => self.execute_x0(opcode, y, z, p, q),
-            1 => self.execute_x1(y, z),
-            2 => self.execute_x2(y, z),
-            3 => self.execute_x3(opcode, y, z, p, q),
+            0 => self.execute_x0(params),
+            1 => self.execute_x1(params),
+            2 => self.execute_x2(params),
+            3 => self.execute_x3(params),
             _ => 4,
         };
 
