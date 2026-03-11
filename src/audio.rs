@@ -197,9 +197,35 @@ mod tests {
     use proptest::prelude::*;
 
     #[test]
+    fn test_create_audio_buffer() {
+        let shared_buf = create_audio_buffer();
+        let buf = shared_buf.lock().unwrap();
+
+        // capacity is BUFFER_SIZE * 4 (512 * 4 = 2048)
+        // internal buffer length is capacity * 2 for stereo (2048 * 2 = 4096)
+        assert_eq!(buf.buffer.len(), BUFFER_SIZE * 8);
+        assert_eq!(buf.available(), 0);
+        assert_eq!(buf.read_pos, 0);
+        assert_eq!(buf.write_pos, 0);
+    }
+
+    #[test]
     fn test_audio_buffer_new() {
         let buf = AudioBuffer::new(1024);
         assert_eq!(buf.available(), 0);
+    }
+
+    #[test]
+    fn test_create_audio_buffer() {
+        let shared_buf = create_audio_buffer();
+        let buf = shared_buf.lock().unwrap();
+
+        // BUFFER_SIZE is 512, capacity passed to AudioBuffer::new is BUFFER_SIZE * 4.
+        // Inside AudioBuffer::new, buffer length is capacity * 2.
+        assert_eq!(buf.buffer.len(), BUFFER_SIZE * 4 * 2);
+        assert_eq!(buf.available(), 0);
+        assert_eq!(buf.write_pos, 0);
+        assert_eq!(buf.read_pos, 0);
     }
 
     #[test]

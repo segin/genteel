@@ -82,7 +82,7 @@ fn reference_lddr(mem: &mut [u8], mut hl: u16, mut de: u16, mut bc: u16) -> (u16
     (hl, de, bc)
 }
 
-fn generate_ldir_params(rng: &mut Rng) -> (u16, u16, u16) {
+fn run_ldir_test_case(i: usize, rng: &mut Rng) {
     let src = rng.next_u16();
     let dst = rng.next_u16();
     // Weighted length distribution: heavy on small, some large, some 0
@@ -97,17 +97,31 @@ fn generate_ldir_params(rng: &mut Rng) -> (u16, u16, u16) {
         rng.next_u16()
     };
 
-    (src, dst, len as u16)
-}
+    let bc = len as u16;
 
-fn init_ldir_memory<M: MemoryInterface, I: IoInterface>(
-    cpu: &mut Z80<M, I>,
-    ref_mem: &mut [u8],
-    src: u16,
-    dst: u16,
-    bc: u16,
-    rng: &mut Rng,
-) {
+    // Setup Z80
+    // We put the LDIR instruction at some safe place, e.g., 0x0000,
+    // assuming src/dst don't overwrite it immediately.
+    // To be safe, we execute until PC indicates completion.
+
+    let mut cpu = create_z80(&[]);
+    // Put Opcode at 0x100 avoids conflict usually?
+    // Let's randomize PC placement too? No, keep simple.
+    let _code_base = 0x0000;
+    cpu.memory.write_byte(0 as u32, 0xED);
+    cpu.memory.write_byte(1 as u32, 0xB0); // LDIR
+    cpu.pc = 0;
+
+    cpu.set_hl(src);
+    cpu.set_de(dst);
+    cpu.set_bc(bc);
+
+    // Fill memory with random junk
+    // We can't fill 64k every time (too slow).
+    // Just fill the affected source range.
+    let mut ref_mem = snapshot_memory(&mut cpu);
+
+    // Fill source area in both
     let real_len = if bc == 0 { 0x10000 } else { bc as usize };
     // Limit fill to avoid timeout on huge BC=0 tests in loop
     // If BC=0 (64k), we only fill a subset or accept 0s.
@@ -129,9 +143,12 @@ fn init_ldir_memory<M: MemoryInterface, I: IoInterface>(
         cpu.memory.write_byte(s_addr as u32, val);
         ref_mem[s_addr] = val;
     }
-}
 
-fn run_ldir_emulator<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, bc: u16) -> bool {
+    // Run Reference
+    // Be careful with large BC in reference loop - it's fast in native code
+    let (exp_hl, exp_de, exp_bc) = reference_ldir(&mut ref_mem, src, dst, bc);
+
+    // Run Emulator
     // Step until PC moves past instruction
     // Safety Break
     let mut steps = 0;
@@ -147,7 +164,7 @@ fn run_ldir_emulator<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, bc
         // Let's check if code is intact.
         if cpu.memory.read_byte(0 as u32) != 0xED || cpu.memory.read_byte(1 as u32) != 0xB0 {
             // Code overwritten. Skip verification of this insane case.
-            return false;
+            break;
         }
 
         cpu.step();
@@ -159,19 +176,8 @@ fn run_ldir_emulator<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, bc
             panic!("LDIR infinite loop or too long? BC={}", bc);
         }
     }
-    true
-}
 
-fn validate_ldir_result<M: MemoryInterface, I: IoInterface>(
-    cpu: &mut Z80<M, I>,
-    ref_mem: &[u8],
-    exp_hl: u16,
-    exp_de: u16,
-    exp_bc: u16,
-    i: usize,
-    bc: u16,
-    rng: &mut Rng,
-) {
+    // Validation
     if cpu.memory.read_byte(0 as u32) == 0xED {
         // valid result check
         assert_eq!(cpu.hl(), exp_hl, "HL mismatch case #{}", i);
@@ -199,41 +205,60 @@ fn test_ldir_exhaustive() {
     let mut rng = Rng::new(0x12345678);
     // Run 5,000 randomized tests (heavy weight)
     for i in 0..5000 {
-        let (src, dst, bc) = generate_ldir_params(&mut rng);
+        run_ldir_test_case(i, &mut rng);
+    }
+}
 
-        // Setup Z80
-        // We put the LDIR instruction at some safe place, e.g., 0x0000,
-        // assuming src/dst don't overwrite it immediately.
-        // To be safe, we execute until PC indicates completion.
+fn run_lddr_test_case(i: usize, rng: &mut Rng) {
+    let src = rng.next_u16();
+    let dst = rng.next_u16();
+    let bc = (rng.next() % 0x100) as u16; // Limit size for speed, cover 256
 
-        let mut cpu = create_z80(&[]);
-        // Put Opcode at 0x100 avoids conflict usually?
-        // Let's randomize PC placement too? No, keep simple.
-        let _code_base = 0x0000;
-        cpu.memory.write_byte(0 as u32, 0xED);
-        cpu.memory.write_byte(1 as u32, 0xB0); // LDIR
-        cpu.pc = 0;
+    let mut cpu = create_z80(&[0xED, 0xB8]); // LDDR at 0x0000
+    cpu.set_hl(src);
+    cpu.set_de(dst);
+    cpu.set_bc(bc);
 
-        cpu.set_hl(src);
-        cpu.set_de(dst);
-        cpu.set_bc(bc);
+    let mut ref_mem = snapshot_memory(&mut cpu);
 
-        // Fill memory with random junk
-        // We can't fill 64k every time (too slow).
-        // Just fill the affected source range.
-        let mut ref_mem = snapshot_memory(&mut cpu);
+    // Fill some data
+    for k in 0..bc {
+        let addr = src.wrapping_sub(k);
+        let val = rng.next_u8();
+        cpu.memory.write_byte(addr as usize as u32, val);
+        ref_mem[addr as usize] = val;
+    }
 
-        init_ldir_memory(&mut cpu, &mut ref_mem, src, dst, bc, &mut rng);
+    let (exp_hl, exp_de, exp_bc) = reference_lddr(&mut ref_mem, src, dst, bc);
 
-        // Run Reference
-        // Be careful with large BC in reference loop - it's fast in native code
-        let (exp_hl, exp_de, exp_bc) = reference_ldir(&mut ref_mem, src, dst, bc);
+    // Run
+    loop {
+        if cpu.memory.read_byte(0 as u32) != 0xED || cpu.memory.read_byte(1 as u32) != 0xB8 {
+            break;
+        }
+        cpu.step();
+        if cpu.pc != 0 {
+            break;
+        }
+    }
 
-        // Run Emulator
-        let completed = run_ldir_emulator(&mut cpu, bc);
-
-        if completed {
-            validate_ldir_result(&mut cpu, &ref_mem, exp_hl, exp_de, exp_bc, i, bc, &mut rng);
+    // Validate
+    if cpu.memory.read_byte(0 as u32) == 0xED && cpu.memory.read_byte(1 as u32) == 0xB8 {
+        assert_eq!(cpu.hl(), exp_hl, "LDDR HL mismatch #{}", i);
+        assert_eq!(cpu.de(), exp_de);
+        assert_eq!(cpu.bc(), exp_bc);
+        // Check Dest region
+        if bc > 0 {
+            let check_addr = dst;
+            assert_eq!(
+                cpu.memory.read_byte(check_addr as usize as u32),
+                ref_mem[check_addr as usize]
+            );
+            let check_addr_end = dst.wrapping_sub(bc - 1);
+            assert_eq!(
+                cpu.memory.read_byte(check_addr_end as usize as u32),
+                ref_mem[check_addr_end as usize]
+            );
         }
     }
 }
@@ -242,56 +267,67 @@ fn test_ldir_exhaustive() {
 fn test_lddr_exhaustive() {
     let mut rng = Rng::new(0x87654321);
     for i in 0..2000 {
-        let src = rng.next_u16();
-        let dst = rng.next_u16();
-        let bc = (rng.next() % 0x100) as u16; // Limit size for speed, cover 256
+        run_lddr_test_case(i, &mut rng);
+    }
+}
 
-        let mut cpu = create_z80(&[0xED, 0xB8]); // LDDR at 0x0000
-        cpu.set_hl(src);
-        cpu.set_de(dst);
-        cpu.set_bc(bc);
+fn run_cpir_test_case(i: usize, rng: &mut Rng) {
+    let hl = rng.next_u16();
+    let bc = (rng.next() % 256) as u16 + 1; // 1..256
+    let target = rng.next_u8();
 
-        let mut ref_mem = snapshot_memory(&mut cpu);
+    let mut cpu = create_z80(&[0xED, 0xB1]);
+    cpu.set_hl(hl);
+    cpu.set_bc(bc);
+    cpu.a = target;
 
-        // Fill some data
-        for k in 0..bc {
-            let addr = src.wrapping_sub(k);
-            let val = rng.next_u8();
-            cpu.memory.write_byte(addr as usize as u32, val);
-            ref_mem[addr as usize] = val;
+    // Logic:
+    // Place target at random position? Or fill with noise.
+    // Let's decide if we want to Find it or Not.
+    let should_find = (rng.next() % 2) == 0;
+    let found_idx = if should_find {
+        rng.next() as u16 % bc
+    } else {
+        bc + 10 // Not in range
+    };
+
+    // Fill memory range hl..hl+bc
+    for k in 0..bc {
+        let addr = hl.wrapping_add(k);
+        let val = if k == found_idx {
+            target
+        } else {
+            target.wrapping_add(1)
+        };
+        cpu.memory.write_byte(addr as usize as u32, val);
+    }
+
+    // Run
+    loop {
+        // Guard against self-modification
+        if cpu.memory.read_byte(0 as u32) != 0xED || cpu.memory.read_byte(1 as u32) != 0xB1 {
+            break;
         }
-
-        let (exp_hl, exp_de, exp_bc) = reference_lddr(&mut ref_mem, src, dst, bc);
-
-        // Run
-        loop {
-            if cpu.memory.read_byte(0 as u32) != 0xED || cpu.memory.read_byte(1 as u32) != 0xB8 {
-                break;
-            }
-            cpu.step();
-            if cpu.pc != 0 {
-                break;
-            }
+        cpu.step();
+        if cpu.pc != 0 {
+            break;
         }
+    }
 
-        // Validate
-        if cpu.memory.read_byte(0 as u32) == 0xED && cpu.memory.read_byte(1 as u32) == 0xB8 {
-            assert_eq!(cpu.hl(), exp_hl, "LDDR HL mismatch #{}", i);
-            assert_eq!(cpu.de(), exp_de);
+    if cpu.memory.read_byte(0 as u32) == 0xED && cpu.memory.read_byte(1 as u32) == 0xB1 {
+        if should_find {
+            assert!(cpu.get_flag(flags::ZERO), "Should fulfill find #{}", i);
+            // Verify HL points to char AFTER found
+            let exp_hl = hl.wrapping_add(found_idx).wrapping_add(1);
+            assert_eq!(cpu.hl(), exp_hl);
+            // BC should be decremented by (index + 1)
+            let exp_bc = bc - (found_idx + 1);
             assert_eq!(cpu.bc(), exp_bc);
-            // Check Dest region
-            if bc > 0 {
-                let check_addr = dst;
-                assert_eq!(
-                    cpu.memory.read_byte(check_addr as usize as u32),
-                    ref_mem[check_addr as usize]
-                );
-                let check_addr_end = dst.wrapping_sub(bc - 1);
-                assert_eq!(
-                    cpu.memory.read_byte(check_addr_end as usize as u32),
-                    ref_mem[check_addr_end as usize]
-                );
-            }
+        } else {
+            assert!(!cpu.get_flag(flags::ZERO), "Should NOT find #{}", i);
+            assert_eq!(cpu.bc(), 0);
+            let exp_hl = hl.wrapping_add(bc);
+            assert_eq!(cpu.hl(), exp_hl);
         }
     }
 }
@@ -301,64 +337,7 @@ fn test_cpir_validation() {
     let mut rng = Rng::new(0xDEADBEEF);
     // 5000 small random scans
     for i in 0..5000 {
-        let hl = rng.next_u16();
-        let bc = (rng.next() % 256) as u16 + 1; // 1..256
-        let target = rng.next_u8();
-
-        let mut cpu = create_z80(&[0xED, 0xB1]);
-        cpu.set_hl(hl);
-        cpu.set_bc(bc);
-        cpu.a = target;
-
-        // Logic:
-        // Place target at random position? Or fill with noise.
-        // Let's decide if we want to Find it or Not.
-        let should_find = (rng.next() % 2) == 0;
-        let found_idx = if should_find {
-            rng.next() as u16 % bc
-        } else {
-            bc + 10 // Not in range
-        };
-
-        // Fill memory range hl..hl+bc
-        for k in 0..bc {
-            let addr = hl.wrapping_add(k);
-            let val = if k == found_idx {
-                target
-            } else {
-                target.wrapping_add(1)
-            };
-            cpu.memory.write_byte(addr as usize as u32, val);
-        }
-
-        // Run
-        loop {
-            // Guard against self-modification
-            if cpu.memory.read_byte(0 as u32) != 0xED || cpu.memory.read_byte(1 as u32) != 0xB1 {
-                break;
-            }
-            cpu.step();
-            if cpu.pc != 0 {
-                break;
-            }
-        }
-
-        if cpu.memory.read_byte(0 as u32) == 0xED && cpu.memory.read_byte(1 as u32) == 0xB1 {
-            if should_find {
-                assert!(cpu.get_flag(flags::ZERO), "Should fulfill find #{}", i);
-                // Verify HL points to char AFTER found
-                let exp_hl = hl.wrapping_add(found_idx).wrapping_add(1);
-                assert_eq!(cpu.hl(), exp_hl);
-                // BC should be decremented by (index + 1)
-                let exp_bc = bc - (found_idx + 1);
-                assert_eq!(cpu.bc(), exp_bc);
-            } else {
-                assert!(!cpu.get_flag(flags::ZERO), "Should NOT find #{}", i);
-                assert_eq!(cpu.bc(), 0);
-                let exp_hl = hl.wrapping_add(bc);
-                assert_eq!(cpu.hl(), exp_hl);
-            }
-        }
+        run_cpir_test_case(i, &mut rng);
     }
 }
 
