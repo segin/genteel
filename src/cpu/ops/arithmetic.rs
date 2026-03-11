@@ -926,10 +926,9 @@ mod tests {
     }
 
     #[test]
-    fn test_exec_divs_basic() {
+    fn test_exec_divs_positive_positive() {
         let (mut cpu, mut memory) = create_test_setup();
 
-        // Case 1: Positive / Positive
         // D0 = 200, D1 = 10
         cpu.d[0] = 200;
         cpu.d[1] = 10;
@@ -946,8 +945,12 @@ mod tests {
         assert!(!cpu.get_flag(flags::OVERFLOW));
         assert!(!cpu.get_flag(flags::CARRY));
         assert!(cycles > 0);
+    }
 
-        // Case 2: Positive / Negative
+    #[test]
+    fn test_exec_divs_positive_negative() {
+        let (mut cpu, mut memory) = create_test_setup();
+
         // D0 = 200, D1 = -10 (0xFFF6)
         cpu.d[0] = 200;
         cpu.d[1] = 0xFFF6;
@@ -963,8 +966,12 @@ mod tests {
         assert!(cpu.get_flag(flags::NEGATIVE));
         assert!(!cpu.get_flag(flags::OVERFLOW));
         assert!(!cpu.get_flag(flags::CARRY));
+    }
 
-        // Case 3: Negative / Positive
+    #[test]
+    fn test_exec_divs_negative_positive() {
+        let (mut cpu, mut memory) = create_test_setup();
+
         // D0 = -200 (0xFFFFFF38), D1 = 10
         cpu.d[0] = 0xFFFFFF38;
         cpu.d[1] = 10;
@@ -980,8 +987,12 @@ mod tests {
         assert!(cpu.get_flag(flags::NEGATIVE)); // Quotient is negative
         assert!(!cpu.get_flag(flags::OVERFLOW));
         assert!(!cpu.get_flag(flags::CARRY));
+    }
 
-        // Case 4: Negative / Negative
+    #[test]
+    fn test_exec_divs_negative_negative() {
+        let (mut cpu, mut memory) = create_test_setup();
+
         // D0 = -200 (0xFFFFFF38), D1 = -10 (0xFFF6)
         cpu.d[0] = 0xFFFFFF38;
         cpu.d[1] = 0xFFF6;
@@ -997,8 +1008,12 @@ mod tests {
         assert!(!cpu.get_flag(flags::NEGATIVE));
         assert!(!cpu.get_flag(flags::OVERFLOW));
         assert!(!cpu.get_flag(flags::CARRY));
+    }
 
-        // Case 5: Remainder Check
+    #[test]
+    fn test_exec_divs_remainder() {
+        let (mut cpu, mut memory) = create_test_setup();
+
         // D0 = 7, D1 = 2
         cpu.d[0] = 7;
         cpu.d[1] = 2;
@@ -1014,8 +1029,12 @@ mod tests {
         assert!(!cpu.get_flag(flags::NEGATIVE));
         assert!(!cpu.get_flag(flags::OVERFLOW));
         assert!(!cpu.get_flag(flags::CARRY));
+    }
 
-        // Case 6: Negative Remainder Check
+    #[test]
+    fn test_exec_divs_negative_remainder() {
+        let (mut cpu, mut memory) = create_test_setup();
+
         // D0 = -7 (0xFFFFFFF9), D1 = 2
         cpu.d[0] = 0xFFFFFFF9;
         cpu.d[1] = 2;
