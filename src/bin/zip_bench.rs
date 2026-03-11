@@ -10,7 +10,8 @@ fn main() {
     if !std::path::Path::new(zip_path).exists() {
         let file = File::create(zip_path).unwrap();
         let mut zip = zip::ZipWriter::new(file);
-        let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
 
         for i in 0..10000 {
             zip.start_file(format!("dummy_{}.txt", i), options.clone())
