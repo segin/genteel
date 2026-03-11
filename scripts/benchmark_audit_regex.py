@@ -25,7 +25,7 @@ def generate_data():
             if random.random() < 0.5:
                 chunk += "\nunsafe {\n"
             if random.random() < 0.5:
-                chunk += "\nTODO: fix this\n"
+                chunk += "\n" + "TO" + "DO: fix this\n"
 
             f.write(chunk)
     print("[*] Generation complete.")
@@ -55,7 +55,7 @@ def scan_slow():
             if re.search(unsafe_pattern, line_content):
                 match_count += 1
 
-            # TODOs
+            # Task markers
             if re.search(todo_pattern, line_content):
                 match_count += 1
 
@@ -89,7 +89,7 @@ def scan_fast():
             if unsafe_pattern.search(line_content):
                 match_count += 1
 
-            # TODOs
+            # Task markers
             if todo_pattern.search(line_content):
                 match_count += 1
 

@@ -1226,4 +1226,82 @@ mod tests {
             })
         );
     }
+
+    #[test]
+    fn test_decode_memory_shifts() {
+        let dst = AddressingMode::AddressIndirect(0); // mode 010, reg 000
+        let count = ShiftCount::Immediate(1); // Memory shifts are always by 1
+
+        // ASR.W (A0) -> 1110 000 0 11 010 000 -> 0xE0D0
+        assert_eq!(
+            decode(0xE0D0),
+            Instruction::Bits(BitsInstruction::AsrM { dst })
+        );
+
+        // ASL.W (A0) -> 1110 000 1 11 010 000 -> 0xE1D0
+        assert_eq!(
+            decode(0xE1D0),
+            Instruction::Bits(BitsInstruction::AslM { dst })
+        );
+
+        // LSR.W (A0) -> 1110 001 0 11 010 000 -> 0xE2D0
+        assert_eq!(
+            decode(0xE2D0),
+            Instruction::Bits(BitsInstruction::Lsr {
+                size: Size::Word,
+                dst,
+                count
+            })
+        );
+
+        // LSL.W (A0) -> 1110 001 1 11 010 000 -> 0xE3D0
+        assert_eq!(
+            decode(0xE3D0),
+            Instruction::Bits(BitsInstruction::Lsl {
+                size: Size::Word,
+                dst,
+                count
+            })
+        );
+
+        // ROXR.W (A0) -> 1110 010 0 11 010 000 -> 0xE4D0
+        assert_eq!(
+            decode(0xE4D0),
+            Instruction::Bits(BitsInstruction::Roxr {
+                size: Size::Word,
+                dst,
+                count
+            })
+        );
+
+        // ROXL.W (A0) -> 1110 010 1 11 010 000 -> 0xE5D0
+        assert_eq!(
+            decode(0xE5D0),
+            Instruction::Bits(BitsInstruction::Roxl {
+                size: Size::Word,
+                dst,
+                count
+            })
+        );
+
+        // ROR.W (A0) -> 1110 011 0 11 010 000 -> 0xE6D0
+        assert_eq!(
+            decode(0xE6D0),
+            Instruction::Bits(BitsInstruction::Ror {
+                size: Size::Word,
+                dst,
+                count
+            })
+        );
+
+        // ROL.W (A0) -> 1110 011 1 11 010 000 -> 0xE7D0
+        assert_eq!(
+            decode(0xE7D0),
+            Instruction::Bits(BitsInstruction::Rol {
+                size: Size::Word,
+                dst,
+                count
+            })
+        );
+    }
 }

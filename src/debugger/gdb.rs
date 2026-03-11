@@ -3,6 +3,7 @@
 //! Implements a GDB stub for debugging M68k code running in the emulator.
 //! Connect with: `m68k-elf-gdb -ex "target remote :1234"`
 
+use subtle::{Choice, ConstantTimeEq, ConditionallySelectable};
 use std::collections::HashSet;
 use std::io::{BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -36,43 +37,34 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
     let a_len = a_bytes.len();
     let b_len = b_bytes.len();
 
-    let mut result = 0usize;
+    // Lengths must be equal and within the maximum check length.
+    // Use u64 casts since subtle implements ConstantTimeEq for u64 but not for usize.
+    let mut is_equal = (a_len as u64).ct_eq(&(b_len as u64));
 
-    result |= a_len ^ b_len;
-    result |= (a_len > MAX_PASSWORD_CHECK_LEN) as usize;
-    result |= (b_len > MAX_PASSWORD_CHECK_LEN) as usize;
-
-    let a_safe: &[u8] = if a_len == 0 { &[0u8] } else { a_bytes };
-    let b_safe: &[u8] = if b_len == 0 { &[0u8] } else { b_bytes };
+    // Also check that both lengths are within bounds.
+    let a_len_ok = (a_len <= MAX_PASSWORD_CHECK_LEN) as u8;
+    let b_len_ok = (b_len <= MAX_PASSWORD_CHECK_LEN) as u8;
+    is_equal &= Choice::from(a_len_ok);
+    is_equal &= Choice::from(b_len_ok);
 
     for i in 0..MAX_PASSWORD_CHECK_LEN {
-        // Use bitwise masking to avoid variable-time operations like slice copying or branching.
-        // If i < len, mask is 0xFF (all 1s), so we use the byte.
-        // If i >= len, mask is 0x00, so we use 0.
-        // This relies on boolean to integer cast (true -> 1, false -> 0) and wrapping negation to produce 0 or !0
-        // (i < len) as u8 -> 1 or 0
-        // 0u8.wrapping_sub(1) -> 0xFF
-        // 0u8.wrapping_sub(0) -> 0x00
-        let a_mask = 0u8.wrapping_sub((i < a_len) as u8);
-        let b_mask = 0u8.wrapping_sub((i < b_len) as u8);
+        // Create a mask indicating if we are within the bounds of both strings.
+        // Boolean-to-integer casts are generally constant-time in Rust.
+        let within_bounds = (i < a_len && i < b_len) as u8;
 
-        // Safely index using bitwise logic to avoid bounds check branching.
-        // We use a safe slice that is at least length 1 (a_safe/b_safe).
-        // If i < len, index is i. If i >= len, index is 0.
-        // This strictly avoids unwrap_or, match, or any branches inside the loop.
-        let a_idx = i * (i < a_len) as usize;
-        let b_idx = i * (i < b_len) as usize;
+        // Retrieve bytes safely; if out of bounds, use a dummy value.
+        let a_byte = a_bytes.get(i).copied().unwrap_or(0);
+        let b_byte = b_bytes.get(i).copied().unwrap_or(0);
 
-        let a_val = a_safe[a_idx];
-        let b_val = b_safe[b_idx];
+        // Compare current bytes.
+        let bytes_match = a_byte.ct_eq(&b_byte);
 
-        let a_byte = a_val & a_mask;
-        let b_byte = b_val & b_mask;
-
-        result |= (a_byte ^ b_byte) as usize;
+        // Update the running equality check: if within bounds, we must match.
+        // If out of bounds, we ignore the comparison result (keep current is_equal).
+        is_equal &= Choice::conditional_select(&Choice::from(1u8), &bytes_match, Choice::from(within_bounds));
     }
 
-    result == 0
+    is_equal.unwrap_u8() == 1
 }
 
 /// GDB stop reasons
@@ -291,19 +283,27 @@ impl GdbServer {
 
         // Read until #
         let mut data = String::new();
+        let mut calculated_checksum = 0u8;
+        let mut oversized = false;
+
         loop {
             match reader.read(&mut buf) {
                 Ok(1) => {
                     if buf[0] == b'#' {
                         break;
                     }
-                    // Security: Prevent unbounded memory consumption by disconnecting clients that send oversized packets
+                    calculated_checksum = calculated_checksum.wrapping_add(buf[0]);
+
+                    // Security: Prevent unbounded memory consumption by ignoring oversized packets
+                    // but stay in sync with the protocol by continuing to read until the checksum.
                     if data.len() >= MAX_PACKET_SIZE {
-                        eprintln!("⚠️  SECURITY ALERT: GDB packet exceeded maximum size of {}. Disconnecting.", MAX_PACKET_SIZE);
-                        self.client = None;
-                        return None;
+                        if !oversized {
+                            eprintln!("⚠️  SECURITY ALERT: GDB packet exceeded maximum size of {}. Refusing.", MAX_PACKET_SIZE);
+                            oversized = true;
+                        }
+                    } else {
+                        data.push(buf[0] as char);
                     }
-                    data.push(buf[0] as char);
                 }
                 Ok(0) => {
                     self.client = None;
@@ -323,8 +323,6 @@ impl GdbServer {
         let received_checksum =
             u8::from_str_radix(std::str::from_utf8(&checksum_buf).unwrap_or("00"), 16).unwrap_or(0);
 
-        let calculated_checksum = data.bytes().fold(0u8, |acc, b| acc.wrapping_add(b));
-
         // Send ACK/NAK
         if !self.no_ack_mode {
             if let Some(ref mut c) = self.client {
@@ -339,7 +337,12 @@ impl GdbServer {
         }
 
         if received_checksum == calculated_checksum {
-            Some(data)
+            if oversized {
+                self.send_packet("E01").ok();
+                None
+            } else {
+                Some(data)
+            }
         } else {
             None
         }
@@ -819,9 +822,6 @@ impl GdbServer {
             return "E01".to_string();
         }
 
-        // Handle other monitor commands here using match
-        // match cmd.as_str() { ... }
-
         // Unknown monitor command.
         // We return "OK" to prevent the client from treating this as an error,
         // effectively ignoring unknown commands.
@@ -974,11 +974,17 @@ mod tests {
     fn test_gdb_server_new_bind_error() {
         // Bind a listener to a random port to keep it occupied
         let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind listener");
-        let port = listener.local_addr().expect("Failed to get local addr").port();
+        let port = listener
+            .local_addr()
+            .expect("Failed to get local addr")
+            .port();
 
         // Attempt to create a GdbServer on the same port, which should fail
         let result = GdbServer::new(port, None);
-        assert!(result.is_err(), "Expected GdbServer::new to fail when port is already in use");
+        assert!(
+            result.is_err(),
+            "Expected GdbServer::new to fail when port is already in use"
+        );
 
         let err = result.err().unwrap();
         assert_eq!(err.kind(), std::io::ErrorKind::AddrInUse);
@@ -1196,7 +1202,9 @@ mod tests {
         // write the ACK back.
         // Format of valid packet: $OK#9a
         let packet = b"$OK#9a";
-        client_stream.write_all(packet).expect("Failed to write packet");
+        client_stream
+            .write_all(packet)
+            .expect("Failed to write packet");
         client_stream.flush().expect("Failed to flush");
 
         // Forcefully close the client connection so the server's ACK write fails
@@ -1231,16 +1239,17 @@ mod tests {
             TcpStream::connect(format!("127.0.0.1:{}", port)).expect("Failed to connect");
         assert!(server.accept(), "Server should accept connection");
 
-        // Send a very large packet without '#'
+        // Send a very large but validly framed packet: $AAA...A#XX
         let large_size = 10000;
-        let mut large_packet = String::with_capacity(large_size + 1);
-        large_packet.push('$');
+        let mut data = String::with_capacity(large_size);
         for _ in 0..large_size {
-            large_packet.push('A');
+            data.push('A');
         }
+        let checksum = data.bytes().fold(0u8, |acc, b| acc.wrapping_add(b));
+        let packet = format!("${}#{:02x}", data, checksum);
 
         client_stream
-            .write_all(large_packet.as_bytes())
+            .write_all(packet.as_bytes())
             .expect("Failed to write to server");
         client_stream.flush().expect("Failed to flush");
 
@@ -1251,9 +1260,15 @@ mod tests {
             "Should not return a valid packet for oversized input"
         );
         assert!(
-            !server.is_connected(),
-            "Server should have disconnected the client after oversized packet"
+            server.is_connected(),
+            "Server should STAY connected after oversized packet"
         );
+
+        // Verify that the server sent "E01"
+        client_stream.set_nonblocking(false).unwrap();
+        let mut response = [0u8; 7]; // $E01#XX
+        client_stream.read_exact(&mut response).expect("Failed to read response from server");
+        assert_eq!(&response[0..4], b"$E01");
     }
 
     #[test]
