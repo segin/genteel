@@ -156,7 +156,7 @@ fn regression_dec_overflow() {
     assert!(c.get_flag(flags::PARITY)); // Overflow
 }
 
-// Edge case: SCF/CCF H flag behavior
+// Z80 Hardware Edge Case: SCF/CCF H flag behavior
 #[test]
 fn regression_scf_clears_h() {
     let mut c = create_z80(&[0x37]); // SCF
