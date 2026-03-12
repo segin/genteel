@@ -1409,12 +1409,11 @@ mod tests {
         // 2. Request Bus (Write 0x100 to 0xA11100)
         emulator.bus.borrow_mut().write_word(0xA11100, 0x0100);
         // 3. Load Code to Z80 RAM (0xA00000)
+        let mut bus = emulator.bus.borrow_mut();
         for (i, byte) in z80_code.iter().enumerate() {
-            emulator
-                .bus
-                .borrow_mut()
-                .write_byte(0xA00000 + i as u32, *byte);
+            bus.write_byte(0xA00000 + i as u32, *byte);
         }
+        drop(bus); // explicitly drop to allow subsequent borrows
         // Verify Z80 RAM at target address is 0 before execution
         assert_eq!(
             emulator.bus.borrow_mut().read_byte(0xA01FFD),
