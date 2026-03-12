@@ -349,7 +349,7 @@ fn regression_lddr_bc_zero() {
     assert_eq!(c.pc, 0x0000);
 }
 
-// Bug: ADD HL, SP affects only C and H flags
+// Hardware Bug: ADD HL, SP affects only C and H flags (Z80 quirk, not an emulator bug)
 #[test]
 fn regression_add_hl_sp_flags() {
     // Case 1: Flags set, should remain set
