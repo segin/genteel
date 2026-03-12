@@ -110,6 +110,13 @@ mod register_array {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 enum AdsrPhase { Attack, Decay, Sustain, Release }
 
+struct PhaseParams {
+    fnum: u32,
+    block: u8,
+    detune: u8,
+    multiple: u8,
+}
+
 struct EnvelopeParams {
     ar: u8,
     dr: u8,
@@ -154,14 +161,14 @@ impl FmOperator {
         }
     }
 
-    fn clock_phase(&mut self, fnum: u32, block: u8, detune: u8, multiple: u8) {
-        let base_inc = (fnum << block) >> 1;
-        let key_code = compute_key_code(fnum, block);
-        let dt_mag = detune & 0x03;
-        let dt_sign = detune & 0x04;
+    fn clock_phase(&mut self, params: &PhaseParams) {
+        let base_inc = (params.fnum << params.block) >> 1;
+        let key_code = compute_key_code(params.fnum, params.block);
+        let dt_mag = params.detune & 0x03;
+        let dt_sign = params.detune & 0x04;
         let dt_delta = if dt_mag == 0 { 0 } else { DETUNE_TABLE[key_code as usize][dt_mag as usize] as u32 };
         let detuned = if dt_sign != 0 { base_inc.wrapping_sub(dt_delta) } else { base_inc.wrapping_add(dt_delta) };
-        let increment = if multiple == 0 { detuned >> 1 } else { detuned.wrapping_mul(multiple as u32) };
+        let increment = if params.multiple == 0 { detuned >> 1 } else { detuned.wrapping_mul(params.multiple as u32) };
         self.phase_counter = (self.phase_counter.wrapping_add(increment)) & 0xFFFFF;
     }
 
@@ -239,7 +246,12 @@ impl FmChannel {
         let kc = compute_key_code(self.fnum as u32, self.block);
         for i in 0..4 {
             let off = op_offsets[i] + ch_off;
-            self.operators[i].clock_phase(self.fnum as u32, self.block, (regs[0x30+off]>>4)&7, regs[0x30+off]&0xF);
+            self.operators[i].clock_phase(&PhaseParams {
+                fnum: self.fnum as u32,
+                block: self.block,
+                detune: (regs[0x30+off]>>4)&7,
+                multiple: regs[0x30+off]&0xF,
+            });
             self.operators[i].clock_envelope(&EnvelopeParams {
                 ar: regs[0x50+off]&0x1F,
                 dr: regs[0x60+off]&0x1F,
