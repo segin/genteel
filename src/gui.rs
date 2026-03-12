@@ -340,69 +340,88 @@ impl Framework {
         if let Some(gilrs) = &mut self.gilrs {
             while let Some(gilrs::Event { event, .. }) = gilrs.next_event() {
                 match event {
-                    EventType::ButtonPressed(button, _) => match button {
-                        Button::DPadUp => state.up = true,
-                        Button::DPadDown => state.down = true,
-                        Button::DPadLeft => state.left = true,
-                        Button::DPadRight => state.right = true,
-                        Button::South => state.b = true,
-                        Button::East => state.c = true,
-                        Button::West => state.a = true,
-                        Button::North => state.x = true,
-                        Button::LeftTrigger => state.y = true,
-                        Button::RightTrigger => state.z = true,
-                        Button::Select => state.mode = true,
-                        Button::Start => state.start = true,
-                        _ => {}
-                    },
-                    EventType::ButtonReleased(button, _) => match button {
-                        Button::DPadUp => state.up = false,
-                        Button::DPadDown => state.down = false,
-                        Button::DPadLeft => state.left = false,
-                        Button::DPadRight => state.right = false,
-                        Button::South => state.b = false,
-                        Button::East => state.c = false,
-                        Button::West => state.a = false,
-                        Button::North => state.x = false,
-                        Button::LeftTrigger => state.y = false,
-                        Button::RightTrigger => state.z = false,
-                        Button::Select => state.mode = false,
-                        Button::Start => state.start = false,
-                        _ => {}
-                    },
+                    EventType::ButtonPressed(button, _) => {
+                        Self::handle_gamepad_button_pressed(button, state);
+                    }
+                    EventType::ButtonReleased(button, _) => {
+                        Self::handle_gamepad_button_released(button, state);
+                    }
                     EventType::AxisChanged(axis, value, _) => {
-                        let threshold = 0.5;
-                        match axis {
-                            Axis::LeftStickX => {
-                                if value > threshold {
-                                    state.right = true;
-                                    state.left = false;
-                                } else if value < -threshold {
-                                    state.left = true;
-                                    state.right = false;
-                                } else {
-                                    state.left = false;
-                                    state.right = false;
-                                }
-                            }
-                            Axis::LeftStickY => {
-                                if value > threshold {
-                                    state.up = true;
-                                    state.down = false;
-                                } else if value < -threshold {
-                                    state.down = true;
-                                    state.up = false;
-                                } else {
-                                    state.up = false;
-                                    state.down = false;
-                                }
-                            }
-                            _ => {}
-                        }
+                        Self::handle_gamepad_axis_changed(axis, value, state);
                     }
                     _ => {}
                 }
             }
+        }
+    }
+
+    #[cfg(feature = "gilrs")]
+    fn handle_gamepad_button_pressed(button: Button, state: &mut crate::io::ControllerState) {
+        match button {
+            Button::DPadUp => state.up = true,
+            Button::DPadDown => state.down = true,
+            Button::DPadLeft => state.left = true,
+            Button::DPadRight => state.right = true,
+            Button::South => state.b = true,
+            Button::East => state.c = true,
+            Button::West => state.a = true,
+            Button::North => state.x = true,
+            Button::LeftTrigger => state.y = true,
+            Button::RightTrigger => state.z = true,
+            Button::Select => state.mode = true,
+            Button::Start => state.start = true,
+            _ => {}
+        }
+    }
+
+    #[cfg(feature = "gilrs")]
+    fn handle_gamepad_button_released(button: Button, state: &mut crate::io::ControllerState) {
+        match button {
+            Button::DPadUp => state.up = false,
+            Button::DPadDown => state.down = false,
+            Button::DPadLeft => state.left = false,
+            Button::DPadRight => state.right = false,
+            Button::South => state.b = false,
+            Button::East => state.c = false,
+            Button::West => state.a = false,
+            Button::North => state.x = false,
+            Button::LeftTrigger => state.y = false,
+            Button::RightTrigger => state.z = false,
+            Button::Select => state.mode = false,
+            Button::Start => state.start = false,
+            _ => {}
+        }
+    }
+
+    #[cfg(feature = "gilrs")]
+    fn handle_gamepad_axis_changed(axis: Axis, value: f32, state: &mut crate::io::ControllerState) {
+        let threshold = 0.5;
+        match axis {
+            Axis::LeftStickX => {
+                if value > threshold {
+                    state.right = true;
+                    state.left = false;
+                } else if value < -threshold {
+                    state.left = true;
+                    state.right = false;
+                } else {
+                    state.left = false;
+                    state.right = false;
+                }
+            }
+            Axis::LeftStickY => {
+                if value > threshold {
+                    state.up = true;
+                    state.down = false;
+                } else if value < -threshold {
+                    state.down = true;
+                    state.up = false;
+                } else {
+                    state.up = false;
+                    state.down = false;
+                }
+            }
+            _ => {}
         }
     }
 
