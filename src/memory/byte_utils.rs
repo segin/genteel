@@ -190,7 +190,9 @@ mod tests {
 
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.to_string().contains("invalid length 3, expected an array of length 64"));
+        assert!(err
+            .to_string()
+            .contains("invalid length 3, expected an array of length 64"));
     }
 
     #[test]
@@ -202,6 +204,8 @@ mod tests {
 
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.to_string().contains("invalid type: string \"not an array\", expected an array of length 64"));
+        assert!(err
+            .to_string()
+            .contains("invalid type: string \"not an array\", expected an array of length 64"));
     }
 }
