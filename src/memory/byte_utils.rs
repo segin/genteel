@@ -137,6 +137,12 @@ mod tests {
         data: [u8; 64],
     }
 
+    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    struct BigArrayTestStruct33 {
+        #[serde(with = "big_array")]
+        data: [u8; 33],
+    }
+
     #[test]
     fn test_big_array_serialization_output() {
         let data = [42u8; 64];
@@ -182,6 +188,26 @@ mod tests {
     }
 
     #[test]
+    fn test_big_array_serialization_roundtrip_33() {
+        let mut data = [0u8; 33];
+        for i in 0..33 {
+            data[i] = (i * 2) as u8;
+        }
+
+        let test_struct = BigArrayTestStruct33 { data };
+
+        // Serialize
+        let serialized = serde_json::to_string(&test_struct).expect("Serialization failed");
+
+        // Deserialize
+        let deserialized: BigArrayTestStruct33 =
+            serde_json::from_str(&serialized).expect("Deserialization failed");
+
+        // Verify roundtrip
+        assert_eq!(test_struct, deserialized);
+    }
+
+    #[test]
     fn test_big_array_deserialization_error_too_short() {
         // Create an array that's too short (length 3 instead of 64)
         let json = r#"{"data":[1, 2, 3]}"#;
@@ -207,5 +233,110 @@ mod tests {
         assert!(err
             .to_string()
             .contains("invalid type: string \"not an array\", expected an array of length 64"));
+    }
+
+    // Mock components for testing serialization error paths
+    #[derive(Debug, PartialEq)]
+    struct MockError;
+
+    impl std::fmt::Display for MockError {
+        fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            write!(f, "MockError")
+        }
+    }
+    impl std::error::Error for MockError {}
+    impl serde::ser::Error for MockError {
+        fn custom<T: std::fmt::Display>(_msg: T) -> Self { MockError }
+    }
+
+    struct MockSerializer {
+        fail_tuple: bool,
+        fail_element: bool,
+    }
+
+    impl serde::Serializer for MockSerializer {
+        type Ok = ();
+        type Error = MockError;
+        type SerializeSeq = serde::ser::Impossible<(), MockError>;
+        type SerializeTuple = MockTupleSerializer;
+        type SerializeTupleStruct = serde::ser::Impossible<(), MockError>;
+        type SerializeTupleVariant = serde::ser::Impossible<(), MockError>;
+        type SerializeMap = serde::ser::Impossible<(), MockError>;
+        type SerializeStruct = serde::ser::Impossible<(), MockError>;
+        type SerializeStructVariant = serde::ser::Impossible<(), MockError>;
+
+        fn serialize_bool(self, _v: bool) -> Result<Self::Ok, Self::Error> { Err(MockError) }
+        fn serialize_i8(self, _v: i8) -> Result<Self::Ok, Self::Error> { Err(MockError) }
+        fn serialize_i16(self, _v: i16) -> Result<Self::Ok, Self::Error> { Err(MockError) }
+        fn serialize_i32(self, _v: i32) -> Result<Self::Ok, Self::Error> { Err(MockError) }
+        fn serialize_i64(self, _v: i64) -> Result<Self::Ok, Self::Error> { Err(MockError) }
+        fn serialize_u8(self, _v: u8) -> Result<Self::Ok, Self::Error> { Err(MockError) }
+        fn serialize_u16(self, _v: u16) -> Result<Self::Ok, Self::Error> { Err(MockError) }
+        fn serialize_u32(self, _v: u32) -> Result<Self::Ok, Self::Error> { Err(MockError) }
+        fn serialize_u64(self, _v: u64) -> Result<Self::Ok, Self::Error> { Err(MockError) }
+        fn serialize_f32(self, _v: f32) -> Result<Self::Ok, Self::Error> { Err(MockError) }
+        fn serialize_f64(self, _v: f64) -> Result<Self::Ok, Self::Error> { Err(MockError) }
+        fn serialize_char(self, _v: char) -> Result<Self::Ok, Self::Error> { Err(MockError) }
+        fn serialize_str(self, _v: &str) -> Result<Self::Ok, Self::Error> { Err(MockError) }
+        fn serialize_bytes(self, _v: &[u8]) -> Result<Self::Ok, Self::Error> { Err(MockError) }
+        fn serialize_none(self) -> Result<Self::Ok, Self::Error> { Err(MockError) }
+        fn serialize_some<T: ?Sized + Serialize>(self, _value: &T) -> Result<Self::Ok, Self::Error> { Err(MockError) }
+        fn serialize_unit(self) -> Result<Self::Ok, Self::Error> { Err(MockError) }
+        fn serialize_unit_struct(self, _name: &'static str) -> Result<Self::Ok, Self::Error> { Err(MockError) }
+        fn serialize_unit_variant(self, _name: &'static str, _variant_index: u32, _variant: &'static str) -> Result<Self::Ok, Self::Error> { Err(MockError) }
+        fn serialize_newtype_struct<T: ?Sized + Serialize>(self, _name: &'static str, _value: &T) -> Result<Self::Ok, Self::Error> { Err(MockError) }
+        fn serialize_newtype_variant<T: ?Sized + Serialize>(self, _name: &'static str, _variant_index: u32, _variant: &'static str, _value: &T) -> Result<Self::Ok, Self::Error> { Err(MockError) }
+        fn serialize_seq(self, _len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> { Err(MockError) }
+
+        fn serialize_tuple(self, _len: usize) -> Result<Self::SerializeTuple, Self::Error> {
+            if self.fail_tuple {
+                Err(MockError)
+            } else {
+                Ok(MockTupleSerializer { fail_element: self.fail_element })
+            }
+        }
+
+        fn serialize_tuple_struct(self, _name: &'static str, _len: usize) -> Result<Self::SerializeTupleStruct, Self::Error> { Err(MockError) }
+        fn serialize_tuple_variant(self, _name: &'static str, _variant_index: u32, _variant: &'static str, _len: usize) -> Result<Self::SerializeTupleVariant, Self::Error> { Err(MockError) }
+        fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> { Err(MockError) }
+        fn serialize_struct(self, _name: &'static str, _len: usize) -> Result<Self::SerializeStruct, Self::Error> { Err(MockError) }
+        fn serialize_struct_variant(self, _name: &'static str, _variant_index: u32, _variant: &'static str, _len: usize) -> Result<Self::SerializeStructVariant, Self::Error> { Err(MockError) }
+    }
+
+    struct MockTupleSerializer {
+        fail_element: bool,
+    }
+
+    impl serde::ser::SerializeTuple for MockTupleSerializer {
+        type Ok = ();
+        type Error = MockError;
+
+        fn serialize_element<T: ?Sized + Serialize>(&mut self, _value: &T) -> Result<(), Self::Error> {
+            if self.fail_element {
+                Err(MockError)
+            } else {
+                Ok(())
+            }
+        }
+
+        fn end(self) -> Result<Self::Ok, Self::Error> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_big_array_serialization_error_tuple() {
+        let data = [0u8; 64];
+        let serializer = MockSerializer { fail_tuple: true, fail_element: false };
+        let result = big_array::serialize(&data, serializer);
+        assert_eq!(result.unwrap_err(), MockError);
+    }
+
+    #[test]
+    fn test_big_array_serialization_error_element() {
+        let data = [0u8; 64];
+        let serializer = MockSerializer { fail_tuple: false, fail_element: true };
+        let result = big_array::serialize(&data, serializer);
+        assert_eq!(result.unwrap_err(), MockError);
     }
 }
