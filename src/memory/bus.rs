@@ -854,4 +854,26 @@ mod tests {
             .join()
             .unwrap();
     }
+
+    #[test]
+    fn test_clear_rom() {
+        let mut bus = Bus::new();
+        assert_eq!(bus.rom_size(), 0);
+
+        // Load dummy ROM
+        let data = vec![0x4E, 0x71, 0x00, 0x00]; // NOP
+        bus.load_rom(&data);
+
+        // Bus::load_rom pads to at least 512 bytes
+        assert!(bus.rom_size() >= 512);
+        assert_eq!(bus.rom[0], 0x4E);
+
+        // Clear ROM
+        bus.clear_rom();
+        assert_eq!(bus.rom_size(), 0);
+
+        // Clear again (idempotency/safety check)
+        bus.clear_rom();
+        assert_eq!(bus.rom_size(), 0);
+    }
 }

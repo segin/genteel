@@ -440,31 +440,52 @@ impl Emulator {
             return;
         }
 
-        match parts[0].to_uppercase().as_str() {
-            "SCREENSHOT" => {
-                if parts.len() > 1 {
-                    let raw_path = parts[1];
-                    // Security: Sanitize path to prevent arbitrary file writes
-                    // Only allow saving to current directory by using only the file name component
-                    let path = std::path::Path::new(raw_path)
-                        .file_name()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("screenshot.png");
-
-                    if path != raw_path {
-                        eprintln!(
-                            "Script Warning: Sanitized screenshot path '{}' to '{}'",
-                            raw_path, path
-                        );
-                    }
-
-                    if let Err(e) = self.save_screenshot(path) {
-                        eprintln!("Script Error: Failed to save screenshot to {}: {}", path, e);
-                    } else {
-                        println!("Script: Saved screenshot to {}", path);
-                    }
-                }
+        let cmd_upper = parts[0].to_uppercase();
+        match cmd_upper.as_str() {
+            "SCREENSHOT" => self.handle_screenshot_cmd(&parts),
+            "READ_BYTE" | "WRITE_BYTE" | "ASSERT_BYTE" => {
+                self.handle_byte_cmd(cmd_upper.as_str(), &parts)
             }
+            "READ_WORD" | "WRITE_WORD" | "ASSERT_WORD" => {
+                self.handle_word_cmd(cmd_upper.as_str(), &parts)
+            }
+            "READ_LONG" | "WRITE_LONG" | "ASSERT_LONG" => {
+                self.handle_long_cmd(cmd_upper.as_str(), &parts)
+            }
+            "LOG" => self.handle_log_cmd(&parts),
+            _ => {
+                eprintln!("Script Warning: Unknown command '{}'", parts[0]);
+            }
+        }
+    }
+
+    fn handle_screenshot_cmd(&self, parts: &[&str]) {
+        if parts.len() > 1 {
+            let raw_path = parts[1];
+            // Security: Sanitize path to prevent arbitrary file writes
+            // Only allow saving to current directory by using only the file name component
+            let path = std::path::Path::new(raw_path)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("screenshot.png");
+
+            if path != raw_path {
+                eprintln!(
+                    "Script Warning: Sanitized screenshot path '{}' to '{}'",
+                    raw_path, path
+                );
+            }
+
+            if let Err(e) = self.save_screenshot(path) {
+                eprintln!("Script Error: Failed to save screenshot to {}: {}", path, e);
+            } else {
+                println!("Script: Saved screenshot to {}", path);
+            }
+        }
+    }
+
+    fn handle_byte_cmd(&self, cmd: &str, parts: &[&str]) {
+        match cmd {
             "READ_BYTE" => {
                 if parts.len() > 1 {
                     if let Ok(addr) = u32::from_str_radix(parts[1].trim_start_matches("0x"), 16) {
@@ -499,6 +520,12 @@ impl Emulator {
                     }
                 }
             }
+            _ => {}
+        }
+    }
+
+    fn handle_word_cmd(&self, cmd: &str, parts: &[&str]) {
+        match cmd {
             "READ_WORD" => {
                 if parts.len() > 1 {
                     if let Ok(addr) = u32::from_str_radix(parts[1].trim_start_matches("0x"), 16) {
@@ -533,6 +560,12 @@ impl Emulator {
                     }
                 }
             }
+            _ => {}
+        }
+    }
+
+    fn handle_long_cmd(&self, cmd: &str, parts: &[&str]) {
+        match cmd {
             "READ_LONG" => {
                 if parts.len() > 1 {
                     if let Ok(addr) = u32::from_str_radix(parts[1].trim_start_matches("0x"), 16) {
@@ -567,17 +600,15 @@ impl Emulator {
                     }
                 }
             }
-            "LOG" => {
-                if parts.len() > 1 {
-                    println!("Script LOG: {}", parts[1..].join(" "));
-                }
-            }
-            _ => {
-                eprintln!("Script Warning: Unknown command '{}'", parts[0]);
-            }
+            _ => {}
         }
     }
 
+    fn handle_log_cmd(&self, parts: &[&str]) {
+        if parts.len() > 1 {
+            println!("Script LOG: {}", parts[1..].join(" "));
+        }
+    }
     pub fn step_frame_internal(&mut self) {
         self.internal_frame_count += 1;
         if self.debug {
@@ -1180,39 +1211,46 @@ impl Config {
     {
         let mut config = Config::default();
         config.gdb_password = std::env::var("GENTEEL_GDB_PASSWORD").ok();
-        let mut iter = args.into_iter().skip(1).peekable();
-        while let Some(arg) = iter.next() {
+        let mut iter = args.into_iter().skip(1);
+        let mut current_opt = iter.next();
+        while let Some(arg) = current_opt {
             match arg.as_str() {
                 "--help" | "-h" => {
                     config.show_help = true;
+                    current_opt = iter.next();
                 }
                 "--script" => {
                     config.script_path = iter.next();
+                    current_opt = iter.next();
                 }
                 "--record" => {
                     config.record_path = iter.next();
+                    current_opt = iter.next();
                 }
                 "--headless" => {
                     config.headless = true;
-                    if let Some(next) = iter.peek() {
+                    current_opt = iter.next();
+                    if let Some(ref next) = current_opt {
                         if !next.starts_with('-') {
                             if let Ok(n) = next.parse::<u32>() {
                                 config.headless_frames = Some(n);
-                                iter.next(); // consume
+                                current_opt = iter.next(); // consume
                             }
                         }
                     }
                 }
                 "--screenshot" => {
                     config.screenshot_path = iter.next();
+                    current_opt = iter.next();
                 }
                 "--gdb" => {
                     let mut port = debugger::DEFAULT_PORT;
-                    if let Some(next) = iter.peek() {
+                    current_opt = iter.next();
+                    if let Some(ref next) = current_opt {
                         if !next.starts_with('-') {
                             if let Ok(p) = next.parse() {
                                 port = p;
-                                iter.next(); // consume it
+                                current_opt = iter.next(); // consume it
                             }
                         }
                     }
@@ -1220,6 +1258,7 @@ impl Config {
                 }
                 "--dump-audio" => {
                     config.dump_audio_path = iter.next();
+                    current_opt = iter.next();
                 }
                 "--input-mapping" => {
                     if let Some(mapping_str) = iter.next() {
@@ -1232,9 +1271,11 @@ impl Config {
                             }
                         }
                     }
+                    current_opt = iter.next();
                 }
                 "--debug" => {
                     config.debug = true;
+                    current_opt = iter.next();
                 }
                 arg if !arg.starts_with('-') => {
                     if let Some(ref mut path) = config.rom_path {
@@ -1243,9 +1284,11 @@ impl Config {
                     } else {
                         config.rom_path = Some(arg.to_string());
                     }
+                    current_opt = iter.next();
                 }
                 _ => {
                     eprintln!("Unknown option: {}", arg);
+                    current_opt = iter.next();
                 }
             }
         }
@@ -1409,11 +1452,11 @@ mod tests {
         // 2. Request Bus (Write 0x100 to 0xA11100)
         emulator.bus.borrow_mut().write_word(0xA11100, 0x0100);
         // 3. Load Code to Z80 RAM (0xA00000)
-        for (i, byte) in z80_code.iter().enumerate() {
-            emulator
-                .bus
-                .borrow_mut()
-                .write_byte(0xA00000 + i as u32, *byte);
+        {
+            let mut bus = emulator.bus.borrow_mut();
+            for (i, byte) in z80_code.iter().enumerate() {
+                bus.write_byte(0xA00000 + i as u32, *byte);
+            }
         }
         // Verify Z80 RAM at target address is 0 before execution
         assert_eq!(
