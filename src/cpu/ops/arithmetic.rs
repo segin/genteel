@@ -1053,10 +1053,9 @@ mod tests {
     }
 
     #[test]
-    fn test_exec_divs_overflow() {
+    fn test_exec_divs_overflow_large_quotient() {
         let (mut cpu, mut memory) = create_test_setup();
 
-        // Case 1: Large Quotient Overflow
         // D0 = 0x00010000 (65536), D1 = 1
         // Quotient = 65536 > 32767 (signed 16-bit max)
         cpu.d[0] = 0x00010000;
@@ -1073,8 +1072,12 @@ mod tests {
         assert!(cpu.get_flag(flags::OVERFLOW));
         assert!(!cpu.get_flag(flags::CARRY));
         assert_eq!(cpu.d[0], 0x00010000);
+    }
 
-        // Case 2: Negative Overflow
+    #[test]
+    fn test_exec_divs_overflow_negative() {
+        let (mut cpu, mut memory) = create_test_setup();
+
         // D0 = 0x80000000 (Min i32, -2147483648), D1 = -1 (0xFFFF)
         // Quotient = 2147483648 > 32767
         cpu.d[0] = 0x80000000;
@@ -1145,10 +1148,9 @@ mod tests {
     }
 
     #[test]
-    fn test_exec_muls_negative() {
+    fn test_exec_muls_positive_negative() {
         let (mut cpu, mut memory) = create_test_setup();
 
-        // Case 1: Positive * Negative
         // D0 = 10, D1 = -5 (0xFFFB)
         cpu.d[0] = 10;
         cpu.d[1] = 0xFFFB;
@@ -1162,8 +1164,12 @@ mod tests {
         assert!(cpu.get_flag(flags::NEGATIVE));
         assert!(!cpu.get_flag(flags::OVERFLOW));
         assert!(!cpu.get_flag(flags::CARRY));
+    }
 
-        // Case 2: Negative * Negative
+    #[test]
+    fn test_exec_muls_negative_negative() {
+        let (mut cpu, mut memory) = create_test_setup();
+
         // D2 = -10 (0xFFF6), D3 = -5 (0xFFFB)
         cpu.d[2] = 0xFFF6;
         cpu.d[3] = 0xFFFB;
@@ -1427,10 +1433,9 @@ mod tests {
     }
 
     #[test]
-    fn test_exec_sub_zero_negative() {
+    fn test_exec_sub_zero() {
         let (mut cpu, mut memory) = create_test_setup();
 
-        // Case 1: Result is Zero
         cpu.d[0] = 42;
         cpu.d[1] = 42;
         exec_sub(
@@ -1442,8 +1447,12 @@ mod tests {
         );
         assert!(cpu.get_flag(flags::ZERO));
         assert!(!cpu.get_flag(flags::NEGATIVE));
+    }
 
-        // Case 2: Result is Negative
+    #[test]
+    fn test_exec_sub_negative() {
+        let (mut cpu, mut memory) = create_test_setup();
+
         cpu.d[0] = 10;
         cpu.d[1] = 20;
         exec_sub(
@@ -1524,17 +1533,20 @@ mod tests {
     }
 
     #[test]
-    fn test_exec_nbcd_z_flag() {
+    fn test_exec_nbcd_z_flag_cleared_on_non_zero() {
         let (mut cpu, mut memory) = create_test_setup();
 
-        // Case 1: Result Non-Zero, Z originally set -> Z cleared
         cpu.d[0] = 0x10;
         cpu.set_flag(flags::ZERO, true);
         exec_nbcd(&mut cpu, AddressingMode::DataRegister(0), &mut memory);
         assert_eq!(cpu.d[0] & 0xFF, 0x90);
         assert!(!cpu.get_flag(flags::ZERO));
+    }
 
-        // Case 2: Result Zero, Z originally clear -> Z remains clear
+    #[test]
+    fn test_exec_nbcd_z_flag_remains_clear_on_zero() {
+        let (mut cpu, mut memory) = create_test_setup();
+
         cpu.d[0] = 0x00;
         cpu.set_flag(flags::ZERO, false);
         cpu.set_flag(flags::EXTEND, false);
@@ -1544,7 +1556,7 @@ mod tests {
     }
 
     #[test]
-    fn test_exec_nbcd_non_bcd() {
+    fn test_exec_nbcd_non_bcd_1f() {
         let (mut cpu, mut memory) = create_test_setup();
 
         // D0 = 0x1F (non-BCD value)
@@ -1560,6 +1572,11 @@ mod tests {
         assert!(cpu.get_flag(flags::CARRY));
         assert!(cpu.get_flag(flags::EXTEND));
         assert!(!cpu.get_flag(flags::ZERO)); // Z should be cleared
+    }
+
+    #[test]
+    fn test_exec_nbcd_non_bcd_fa() {
+        let (mut cpu, mut memory) = create_test_setup();
 
         // Another non-BCD value, 0xFA
         cpu.d[0] = 0xFA;
