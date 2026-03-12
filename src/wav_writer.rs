@@ -219,7 +219,7 @@ mod tests {
     }
 
     #[test]
-    fn test_wav_writer_new_error() {
+    fn test_wav_writer_new_invalid_path() {
         // Test with an invalid path that should fail to create a file
         let invalid_path = "/this_directory_does_not_exist/test.wav";
 

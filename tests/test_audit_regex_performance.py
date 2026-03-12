@@ -29,7 +29,7 @@ def generate_data(filename, size_mb):
             if random.random() < 0.5:
                 chunk += "\nun" + "safe {\n"
             if random.random() < 0.5:
-                chunk += "\nTO" + "DO: fix this\n"
+                chunk += "\n" + "TO" + "DO: fix this\n"
 
             f.write(chunk)
     print("[*] Generation complete.")
@@ -52,7 +52,7 @@ def scan_slow(filename):
             if re.search(audit_tool.UNSAFE_PATTERN.pattern, line_content):
                 match_count += 1
 
-            # Technical Debt
+            # Task markers
             if re.search(audit_tool.TODO_PATTERN.pattern, line_content):
                 match_count += 1
 
@@ -78,7 +78,7 @@ def scan_fast(filename):
             if audit_tool.UNSAFE_PATTERN.search(line_content):
                 match_count += 1
 
-            # Technical Debt
+            # Task markers
             if audit_tool.TODO_PATTERN.search(line_content):
                 match_count += 1
 
