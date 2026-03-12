@@ -256,8 +256,11 @@ pub struct Framework {
     pub renderer: egui_wgpu::Renderer,
     pub gui_state: GuiState,
     pub tile_texture: Option<egui::TextureHandle>,
+    pub tile_texture_cache_hash: Option<u64>,
     pub plane_a_texture: Option<egui::TextureHandle>,
+    pub plane_a_texture_cache_hash: Option<u64>,
     pub plane_b_texture: Option<egui::TextureHandle>,
+    pub plane_b_texture_cache_hash: Option<u64>,
     pub pending_rom_path: Arc<Mutex<Option<PathBuf>>>,
     #[cfg(feature = "gilrs")]
     pub gilrs: Option<Gilrs>,
@@ -295,8 +298,11 @@ impl Framework {
             renderer,
             gui_state,
             tile_texture: None,
+            tile_texture_cache_hash: None,
             plane_a_texture: None,
+            plane_a_texture_cache_hash: None,
             plane_b_texture: None,
+            plane_b_texture_cache_hash: None,
             pending_rom_path: Arc::new(Mutex::new(None)),
             #[cfg(feature = "gilrs")]
             gilrs: init_gilrs(),
@@ -944,43 +950,58 @@ impl Framework {
             egui::Window::new("Tile Viewer")
                 .open(&mut open)
                 .show(&self.egui_ctx, |ui| {
-                    // Render tiles to a buffer
-                    let mut pixels = vec![0u8; 128 * 1024 * 4]; // RGBA
-                    for tile_idx in 0..2048 {
-                        let tile_x = (tile_idx % 16) * 8;
-                        let tile_y = (tile_idx / 16) * 8;
+                    use std::hash::{Hash, Hasher};
+                    use std::collections::hash_map::DefaultHasher;
 
-                        for y in 0..8 {
-                            let row_addr = tile_idx * 32 + y * 4;
-                            for x in 0..8 {
-                                let byte = debug_info.vram[row_addr + (x / 2)];
-                                let color_idx = if x % 2 == 0 { byte >> 4 } else { byte & 0x0F };
+                    let mut hasher = DefaultHasher::new();
+                    debug_info.vram.hash(&mut hasher);
+                    debug_info.cram.hash(&mut hasher);
+                    let state_hash = hasher.finish();
 
-                                // Use first palette (0-15)
-                                let color565 = debug_info.cram[color_idx as usize];
-                                let r = (((color565 >> 11) & 0x1F) << 3) as u8;
-                                let g = (((color565 >> 5) & 0x3F) << 2) as u8;
-                                let b = ((color565 & 0x1F) << 3) as u8;
+                    let needs_update = self.tile_texture.is_none() || self.tile_texture_cache_hash != Some(state_hash);
 
-                                let pixel_idx = ((tile_y + y) * 128 + (tile_x + x)) * 4;
-                                pixels[pixel_idx] = r;
-                                pixels[pixel_idx + 1] = g;
-                                pixels[pixel_idx + 2] = b;
-                                pixels[pixel_idx + 3] = 255;
+                    if needs_update {
+                        // Render tiles to a buffer
+                        let mut pixels = vec![0u8; 128 * 1024 * 4]; // RGBA
+                        for tile_idx in 0..2048 {
+                            let tile_x = (tile_idx % 16) * 8;
+                            let tile_y = (tile_idx / 16) * 8;
+
+                            for y in 0..8 {
+                                let row_addr = tile_idx * 32 + y * 4;
+                                for x in 0..8 {
+                                    let byte = debug_info.vram[row_addr + (x / 2)];
+                                    let color_idx = if x % 2 == 0 { byte >> 4 } else { byte & 0x0F };
+
+                                    // Use first palette (0-15)
+                                    let color565 = debug_info.cram[color_idx as usize];
+                                    let r = (((color565 >> 11) & 0x1F) << 3) as u8;
+                                    let g = (((color565 >> 5) & 0x3F) << 2) as u8;
+                                    let b = ((color565 & 0x1F) << 3) as u8;
+
+                                    let pixel_idx = ((tile_y + y) * 128 + (tile_x + x)) * 4;
+                                    pixels[pixel_idx] = r;
+                                    pixels[pixel_idx + 1] = g;
+                                    pixels[pixel_idx + 2] = b;
+                                    pixels[pixel_idx + 3] = 255;
+                                }
                             }
                         }
+
+                        let image = egui::ColorImage::from_rgba_unmultiplied([128, 1024], &pixels);
+                        let texture = self.tile_texture.get_or_insert_with(|| {
+                            ui.ctx()
+                                .load_texture("tile_viewer", egui::ColorImage::default(), Default::default())
+                        });
+                        texture.set(image, Default::default());
+                        self.tile_texture_cache_hash = Some(state_hash);
                     }
 
-                    let image = egui::ColorImage::from_rgba_unmultiplied([128, 1024], &pixels);
-                    let texture = self.tile_texture.get_or_insert_with(|| {
-                        ui.ctx()
-                            .load_texture("tile_viewer", egui::ColorImage::default(), Default::default())
-                    });
-                    texture.set(image, Default::default());
-
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        ui.image(&*texture);
-                    });
+                    if let Some(texture) = &self.tile_texture {
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            ui.image(&*texture);
+                        });
+                    }
                 });
             if !open {
                 self.gui_state.set_window_open("Tile Viewer", false);
@@ -1084,68 +1105,86 @@ impl Framework {
                     let render_plane = |ui: &mut egui::Ui,
                                         base: usize,
                                         texture_opt: &mut Option<egui::TextureHandle>,
+                                        cache_opt: &mut Option<u64>,
                                         id: &str| {
-                        let mut pixels = vec![0u8; plane_w * 8 * plane_h * 8 * 4];
-                        for ty in 0..plane_h {
-                            for tx in 0..plane_w {
-                                let entry_addr = base + (ty * plane_w + tx) * 2;
-                                let entry = u16::from_be_bytes([
-                                    debug_info.vram[entry_addr],
-                                    debug_info.vram[entry_addr + 1],
-                                ]);
-                                let tile_idx = entry & 0x07FF;
-                                let palette = ((entry >> 13) & 0x03) as usize;
-                                let v_flip = (entry & 0x1000) != 0;
-                                let h_flip = (entry & 0x0800) != 0;
+                        use std::hash::{Hash, Hasher};
+                        use std::collections::hash_map::DefaultHasher;
 
-                                for py in 0..8 {
-                                    let row_addr = tile_idx as usize * 32
-                                        + (if v_flip { 7 - py } else { py }) * 4;
-                                    for px in 0..8 {
-                                        let byte = debug_info.vram
-                                            [row_addr + (if h_flip { 7 - px } else { px }) / 2];
-                                        let color_idx =
-                                            if (if h_flip { 7 - px } else { px }) % 2 == 0 {
-                                                byte >> 4
-                                            } else {
-                                                byte & 0x0F
-                                            };
+                        let mut hasher = DefaultHasher::new();
+                        debug_info.vram.hash(&mut hasher);
+                        debug_info.cram.hash(&mut hasher);
+                        base.hash(&mut hasher);
+                        let state_hash = hasher.finish();
 
-                                        let color565 =
-                                            debug_info.cram[palette * 16 + color_idx as usize];
-                                        let r = (((color565 >> 11) & 0x1F) << 3) as u8;
-                                        let g = (((color565 >> 5) & 0x3F) << 2) as u8;
-                                        let b = ((color565 & 0x1F) << 3) as u8;
+                        let needs_update = texture_opt.is_none() || *cache_opt != Some(state_hash);
 
-                                        let pixel_idx =
-                                            ((ty * 8 + py) * plane_w * 8 + (tx * 8 + px)) * 4;
-                                        pixels[pixel_idx] = r;
-                                        pixels[pixel_idx + 1] = g;
-                                        pixels[pixel_idx + 2] = b;
-                                        pixels[pixel_idx + 3] = 255;
+                        if needs_update {
+                            let mut pixels = vec![0u8; plane_w * 8 * plane_h * 8 * 4];
+                            for ty in 0..plane_h {
+                                for tx in 0..plane_w {
+                                    let entry_addr = base + (ty * plane_w + tx) * 2;
+                                    let entry = u16::from_be_bytes([
+                                        debug_info.vram[entry_addr],
+                                        debug_info.vram[entry_addr + 1],
+                                    ]);
+                                    let tile_idx = entry & 0x07FF;
+                                    let palette = ((entry >> 13) & 0x03) as usize;
+                                    let v_flip = (entry & 0x1000) != 0;
+                                    let h_flip = (entry & 0x0800) != 0;
+
+                                    for py in 0..8 {
+                                        let row_addr = tile_idx as usize * 32
+                                            + (if v_flip { 7 - py } else { py }) * 4;
+                                        for px in 0..8 {
+                                            let byte = debug_info.vram
+                                                [row_addr + (if h_flip { 7 - px } else { px }) / 2];
+                                            let color_idx =
+                                                if (if h_flip { 7 - px } else { px }) % 2 == 0 {
+                                                    byte >> 4
+                                                } else {
+                                                    byte & 0x0F
+                                                };
+
+                                            let color565 =
+                                                debug_info.cram[palette * 16 + color_idx as usize];
+                                            let r = (((color565 >> 11) & 0x1F) << 3) as u8;
+                                            let g = (((color565 >> 5) & 0x3F) << 2) as u8;
+                                            let b = ((color565 & 0x1F) << 3) as u8;
+
+                                            let pixel_idx =
+                                                ((ty * 8 + py) * plane_w * 8 + (tx * 8 + px)) * 4;
+                                            pixels[pixel_idx] = r;
+                                            pixels[pixel_idx + 1] = g;
+                                            pixels[pixel_idx + 2] = b;
+                                            pixels[pixel_idx + 3] = 255;
+                                        }
                                     }
                                 }
                             }
+                            let image = egui::ColorImage::from_rgba_unmultiplied(
+                                [plane_w * 8, plane_h * 8],
+                                &pixels,
+                            );
+                            let texture = texture_opt.get_or_insert_with(|| {
+                                ui.ctx().load_texture(id, egui::ColorImage::default(), Default::default())
+                            });
+                            texture.set(image, Default::default());
+                            *cache_opt = Some(state_hash);
                         }
-                        let image = egui::ColorImage::from_rgba_unmultiplied(
-                            [plane_w * 8, plane_h * 8],
-                            &pixels,
-                        );
-                        let texture = texture_opt.get_or_insert_with(|| {
-                            ui.ctx().load_texture(id, egui::ColorImage::default(), Default::default())
-                        });
-                        texture.set(image, Default::default());
-                        egui::ScrollArea::both().id_source(id).show(ui, |ui| {
-                            ui.image(&*texture);
-                        });
+
+                        if let Some(texture) = texture_opt {
+                            egui::ScrollArea::both().id_source(id).show(ui, |ui| {
+                                ui.image(&*texture);
+                            });
+                        }
                     };
 
                     match self.gui_state.scroll_plane_tab {
                         PlaneTab::PlaneA => {
-                            render_plane(ui, plane_a_base, &mut self.plane_a_texture, "plane_a");
+                            render_plane(ui, plane_a_base, &mut self.plane_a_texture, &mut self.plane_a_texture_cache_hash, "plane_a");
                         }
                         PlaneTab::PlaneB => {
-                            render_plane(ui, plane_b_base, &mut self.plane_b_texture, "plane_b");
+                            render_plane(ui, plane_b_base, &mut self.plane_b_texture, &mut self.plane_b_texture_cache_hash, "plane_b");
                         }
                     }
                 });
