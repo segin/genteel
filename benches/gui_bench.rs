@@ -64,4 +64,45 @@ fn bench_vec_allocation(c: &mut Criterion) {
 }
 
 criterion_group!(benches, bench_vec_allocation);
-criterion_main!(benches);
+criterion_main!(benches, benches2);
+
+// New benchmark for image allocation optimization
+fn bench_image_allocation_optimization(c: &mut Criterion) {
+    let mut group = c.benchmark_group("image_allocation_opt");
+    let plane_w = 64;
+    let plane_h = 64;
+
+    group.bench_function("old_approach", |b| {
+        b.iter(|| {
+            let mut pixels = vec![0u8; plane_w * 8 * plane_h * 8 * 4];
+            for i in 0..(plane_w * 8 * plane_h * 8) {
+                let pixel_idx = i * 4;
+                pixels[pixel_idx] = 255;
+                pixels[pixel_idx + 1] = 0;
+                pixels[pixel_idx + 2] = 0;
+                pixels[pixel_idx + 3] = 255;
+            }
+            let image = egui::ColorImage::from_rgba_unmultiplied(
+                [plane_w * 8, plane_h * 8],
+                &pixels,
+            );
+            black_box(image);
+        });
+    });
+
+    group.bench_function("new_approach", |b| {
+        b.iter(|| {
+            let mut pixels = vec![egui::Color32::TRANSPARENT; plane_w * 8 * plane_h * 8];
+            for i in 0..(plane_w * 8 * plane_h * 8) {
+                pixels[i] = egui::Color32::from_rgb(255, 0, 0);
+            }
+            let image = egui::ColorImage {
+                size: [plane_w * 8, plane_h * 8],
+                pixels,
+            };
+            black_box(image);
+        });
+    });
+}
+
+criterion_group!(benches2, bench_image_allocation_optimization);
