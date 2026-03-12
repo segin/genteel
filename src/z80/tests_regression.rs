@@ -9,6 +9,8 @@ use crate::z80::test_utils::create_z80;
 // ============ Common emulator bugs ============
 
 // Bug: DAA not handling N flag correctly
+// Note: This is a comment documenting a test case for an edge case behavior (bug)
+// in the actual Z80 hardware, not a software bug in the emulator to fix.
 #[test]
 fn regression_daa_after_sub() {
     let mut c = create_z80(&[0x90, 0x27]); // SUB B; DAA
