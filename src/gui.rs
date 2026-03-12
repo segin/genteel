@@ -340,69 +340,88 @@ impl Framework {
         if let Some(gilrs) = &mut self.gilrs {
             while let Some(gilrs::Event { event, .. }) = gilrs.next_event() {
                 match event {
-                    EventType::ButtonPressed(button, _) => match button {
-                        Button::DPadUp => state.up = true,
-                        Button::DPadDown => state.down = true,
-                        Button::DPadLeft => state.left = true,
-                        Button::DPadRight => state.right = true,
-                        Button::South => state.b = true,
-                        Button::East => state.c = true,
-                        Button::West => state.a = true,
-                        Button::North => state.x = true,
-                        Button::LeftTrigger => state.y = true,
-                        Button::RightTrigger => state.z = true,
-                        Button::Select => state.mode = true,
-                        Button::Start => state.start = true,
-                        _ => {}
-                    },
-                    EventType::ButtonReleased(button, _) => match button {
-                        Button::DPadUp => state.up = false,
-                        Button::DPadDown => state.down = false,
-                        Button::DPadLeft => state.left = false,
-                        Button::DPadRight => state.right = false,
-                        Button::South => state.b = false,
-                        Button::East => state.c = false,
-                        Button::West => state.a = false,
-                        Button::North => state.x = false,
-                        Button::LeftTrigger => state.y = false,
-                        Button::RightTrigger => state.z = false,
-                        Button::Select => state.mode = false,
-                        Button::Start => state.start = false,
-                        _ => {}
-                    },
+                    EventType::ButtonPressed(button, _) => {
+                        Self::handle_gamepad_button_pressed(button, state);
+                    }
+                    EventType::ButtonReleased(button, _) => {
+                        Self::handle_gamepad_button_released(button, state);
+                    }
                     EventType::AxisChanged(axis, value, _) => {
-                        let threshold = 0.5;
-                        match axis {
-                            Axis::LeftStickX => {
-                                if value > threshold {
-                                    state.right = true;
-                                    state.left = false;
-                                } else if value < -threshold {
-                                    state.left = true;
-                                    state.right = false;
-                                } else {
-                                    state.left = false;
-                                    state.right = false;
-                                }
-                            }
-                            Axis::LeftStickY => {
-                                if value > threshold {
-                                    state.up = true;
-                                    state.down = false;
-                                } else if value < -threshold {
-                                    state.down = true;
-                                    state.up = false;
-                                } else {
-                                    state.up = false;
-                                    state.down = false;
-                                }
-                            }
-                            _ => {}
-                        }
+                        Self::handle_gamepad_axis_changed(axis, value, state);
                     }
                     _ => {}
                 }
             }
+        }
+    }
+
+    #[cfg(feature = "gilrs")]
+    fn handle_gamepad_button_pressed(button: Button, state: &mut crate::io::ControllerState) {
+        match button {
+            Button::DPadUp => state.up = true,
+            Button::DPadDown => state.down = true,
+            Button::DPadLeft => state.left = true,
+            Button::DPadRight => state.right = true,
+            Button::South => state.b = true,
+            Button::East => state.c = true,
+            Button::West => state.a = true,
+            Button::North => state.x = true,
+            Button::LeftTrigger => state.y = true,
+            Button::RightTrigger => state.z = true,
+            Button::Select => state.mode = true,
+            Button::Start => state.start = true,
+            _ => {}
+        }
+    }
+
+    #[cfg(feature = "gilrs")]
+    fn handle_gamepad_button_released(button: Button, state: &mut crate::io::ControllerState) {
+        match button {
+            Button::DPadUp => state.up = false,
+            Button::DPadDown => state.down = false,
+            Button::DPadLeft => state.left = false,
+            Button::DPadRight => state.right = false,
+            Button::South => state.b = false,
+            Button::East => state.c = false,
+            Button::West => state.a = false,
+            Button::North => state.x = false,
+            Button::LeftTrigger => state.y = false,
+            Button::RightTrigger => state.z = false,
+            Button::Select => state.mode = false,
+            Button::Start => state.start = false,
+            _ => {}
+        }
+    }
+
+    #[cfg(feature = "gilrs")]
+    fn handle_gamepad_axis_changed(axis: Axis, value: f32, state: &mut crate::io::ControllerState) {
+        let threshold = 0.5;
+        match axis {
+            Axis::LeftStickX => {
+                if value > threshold {
+                    state.right = true;
+                    state.left = false;
+                } else if value < -threshold {
+                    state.left = true;
+                    state.right = false;
+                } else {
+                    state.left = false;
+                    state.right = false;
+                }
+            }
+            Axis::LeftStickY => {
+                if value > threshold {
+                    state.up = true;
+                    state.down = false;
+                } else if value < -threshold {
+                    state.down = true;
+                    state.up = false;
+                } else {
+                    state.up = false;
+                    state.down = false;
+                }
+            }
+            _ => {}
         }
     }
 
@@ -564,7 +583,6 @@ impl Framework {
                 });
             });
         });
-
     }
 
     fn render_about_window(&mut self) {
@@ -604,7 +622,6 @@ impl Framework {
                     });
                 });
         }
-
     }
 
     fn render_performance_debug_window(&mut self, debug_info: &DebugInfo) {
@@ -665,7 +682,6 @@ impl Framework {
                 self.gui_state.set_window_open("Performance & Debug", false);
             }
         }
-
     }
 
     fn render_settings_window(&mut self) {
@@ -717,7 +733,6 @@ impl Framework {
                 self.gui_state.set_window_open("Settings", false);
             }
         }
-
     }
 
     fn render_execution_control_window(&mut self) {
@@ -748,7 +763,6 @@ impl Framework {
                 self.gui_state.set_window_open("Execution Control", false);
             }
         }
-
     }
 
     fn render_m68k_status_window(&mut self, debug_info: &DebugInfo) {
@@ -791,7 +805,6 @@ impl Framework {
                 self.gui_state.set_window_open("M68k Status", false);
             }
         }
-
     }
 
     fn render_z80_status_window(&mut self, debug_info: &DebugInfo) {
@@ -847,7 +860,6 @@ impl Framework {
                 self.gui_state.set_window_open("Z80 Status", false);
             }
         }
-
     }
 
     fn render_disassembly_window(&mut self, debug_info: &DebugInfo) {
@@ -896,7 +908,6 @@ impl Framework {
                 self.gui_state.set_window_open("Disassembly", false);
             }
         }
-
     }
 
     fn render_palette_viewer_window(&mut self, debug_info: &DebugInfo) {
@@ -935,7 +946,6 @@ impl Framework {
                 self.gui_state.set_window_open("Palette Viewer", false);
             }
         }
-
     }
 
     fn render_tile_viewer_window(&mut self, debug_info: &DebugInfo) {
@@ -945,7 +955,7 @@ impl Framework {
                 .open(&mut open)
                 .show(&self.egui_ctx, |ui| {
                     // Render tiles to a buffer
-                    let mut pixels = vec![egui::Color32::TRANSPARENT; 128 * 1024]; // RGBA
+                    let mut image = egui::ColorImage::new([128, 1024], egui::Color32::TRANSPARENT);
                     for tile_idx in 0..2048 {
                         let tile_x = (tile_idx % 16) * 8;
                         let tile_y = (tile_idx / 16) * 8;
@@ -963,18 +973,17 @@ impl Framework {
                                 let b = ((color565 & 0x1F) << 3) as u8;
 
                                 let pixel_idx = (tile_y + y) * 128 + (tile_x + x);
-                                pixels[pixel_idx] = egui::Color32::from_rgb(r, g, b);
+                                image.pixels[pixel_idx] = egui::Color32::from_rgb(r, g, b);
                             }
                         }
                     }
 
-                    let image = egui::ColorImage {
-                        size: [128, 1024],
-                        pixels,
-                    };
                     let texture = self.tile_texture.get_or_insert_with(|| {
-                        ui.ctx()
-                            .load_texture("tile_viewer", egui::ColorImage::default(), Default::default())
+                        ui.ctx().load_texture(
+                            "tile_viewer",
+                            egui::ColorImage::default(),
+                            Default::default(),
+                        )
                     });
                     texture.set(image, Default::default());
 
@@ -986,7 +995,6 @@ impl Framework {
                 self.gui_state.set_window_open("Tile Viewer", false);
             }
         }
-
     }
 
     fn render_sprite_viewer_window(&mut self, debug_info: &DebugInfo) {
@@ -1041,7 +1049,6 @@ impl Framework {
                 self.gui_state.set_window_open("Sprite Viewer", false);
             }
         }
-
     }
 
     fn render_scroll_plane_viewer_window(&mut self, debug_info: &DebugInfo) {
@@ -1085,7 +1092,7 @@ impl Framework {
                                         base: usize,
                                         texture_opt: &mut Option<egui::TextureHandle>,
                                         id: &str| {
-                        let mut pixels = vec![egui::Color32::TRANSPARENT; plane_w * 8 * plane_h * 8];
+                        let mut image = egui::ColorImage::new([plane_w * 8, plane_h * 8], egui::Color32::TRANSPARENT);
                         for ty in 0..plane_h {
                             for tx in 0..plane_w {
                                 let entry_addr = base + (ty * plane_w + tx) * 2;
@@ -1119,17 +1126,17 @@ impl Framework {
 
                                         let pixel_idx =
                                             (ty * 8 + py) * plane_w * 8 + (tx * 8 + px);
-                                        pixels[pixel_idx] = egui::Color32::from_rgb(r, g, b);
+                                        image.pixels[pixel_idx] = egui::Color32::from_rgb(r, g, b);
                                     }
                                 }
                             }
                         }
-                        let image = egui::ColorImage {
-                            size: [plane_w * 8, plane_h * 8],
-                            pixels,
-                        };
                         let texture = texture_opt.get_or_insert_with(|| {
-                            ui.ctx().load_texture(id, egui::ColorImage::default(), Default::default())
+                            ui.ctx().load_texture(
+                                id,
+                                egui::ColorImage::default(),
+                                Default::default(),
+                            )
                         });
                         texture.set(image, Default::default());
                         egui::ScrollArea::both().id_source(id).show(ui, |ui| {
@@ -1150,7 +1157,6 @@ impl Framework {
                 self.gui_state.set_window_open("Scroll Plane Viewer", false);
             }
         }
-
     }
 
     fn render_vdp_memory_hex_window(&mut self, debug_info: &DebugInfo) {
@@ -1179,8 +1185,9 @@ impl Framework {
 
                                             label_buffer.clear();
                                             for i in 0..16 {
-                                                label_buffer
-                                                    .push_str(HEX_LOOKUP[debug_info.vram[addr + i] as usize]);
+                                                label_buffer.push_str(
+                                                    HEX_LOOKUP[debug_info.vram[addr + i] as usize],
+                                                );
                                                 label_buffer.push(' ');
                                             }
                                             ui.label(
@@ -1246,7 +1253,6 @@ impl Framework {
                 self.gui_state.set_window_open("VDP Memory Hex", false);
             }
         }
-
     }
 
     fn render_memory_viewer_window(&mut self, debug_info: &DebugInfo) {
@@ -1275,8 +1281,9 @@ impl Framework {
 
                                             label_buffer.clear();
                                             for i in 0..16 {
-                                                label_buffer
-                                                    .push_str(HEX_LOOKUP[debug_info.wram[addr + i] as usize]);
+                                                label_buffer.push_str(
+                                                    HEX_LOOKUP[debug_info.wram[addr + i] as usize],
+                                                );
                                                 label_buffer.push(' ');
                                             }
                                             ui.label(
@@ -1309,7 +1316,8 @@ impl Framework {
                                             label_buffer.clear();
                                             for i in 0..16 {
                                                 label_buffer.push_str(
-                                                    HEX_LOOKUP[debug_info.z80_ram[addr + i] as usize],
+                                                    HEX_LOOKUP
+                                                        [debug_info.z80_ram[addr + i] as usize],
                                                 );
                                                 label_buffer.push(' ');
                                             }
@@ -1327,7 +1335,6 @@ impl Framework {
                 self.gui_state.set_window_open("Memory Viewer", false);
             }
         }
-
     }
 
     fn render_sound_chip_visualizer_window(&mut self, debug_info: &DebugInfo) {
@@ -1423,7 +1430,6 @@ impl Framework {
                     .set_window_open("Sound Chip Visualizer", false);
             }
         }
-
     }
 
     fn render_audio_channel_waveforms_window(&mut self, debug_info: &DebugInfo) {
@@ -1467,7 +1473,6 @@ impl Framework {
                     .set_window_open("Audio Channel Waveforms", false);
             }
         }
-
     }
 
     fn render_controller_viewer_window(&mut self, debug_info: &DebugInfo) {
@@ -1514,7 +1519,6 @@ impl Framework {
                 self.gui_state.set_window_open("Controller Viewer", false);
             }
         }
-
     }
 
     fn render_expansion_status_window(&mut self) {
@@ -1539,7 +1543,6 @@ impl Framework {
                 self.gui_state.set_window_open("Expansion Status", false);
             }
         }
-
     }
 
     fn render_state_browser_window(&mut self, debug_info: &DebugInfo) {
@@ -1664,7 +1667,11 @@ impl Framework {
 }
 
 #[cfg(feature = "gui")]
-fn collect_debug_info(emulator: &mut Emulator, force_red: bool, pixels_frame: &mut [u8]) -> DebugInfo {
+fn collect_debug_info(
+    emulator: &mut Emulator,
+    force_red: bool,
+    pixels_frame: &mut [u8],
+) -> DebugInfo {
     let mut bus = emulator.bus.borrow_mut();
     if force_red {
         bus.vdp.framebuffer.fill(0xF800); // Red in RGB565
@@ -1693,10 +1700,7 @@ fn collect_debug_info(emulator: &mut Emulator, force_red: bool, pixels_frame: &m
 
     let mut cram_raw = [0u16; 64];
     for i in 0..64 {
-        cram_raw[i] = u16::from_be_bytes([
-            bus.vdp.cram[i * 2],
-            bus.vdp.cram[i * 2 + 1],
-        ]);
+        cram_raw[i] = u16::from_be_bytes([bus.vdp.cram[i * 2], bus.vdp.cram[i * 2 + 1]]);
     }
 
     let mut wram = [0u8; 0x10000];
@@ -1777,9 +1781,7 @@ fn handle_keyboard_input(
             framework.handle_exit(emulator, record_path);
             return true;
         }
-        if let Some((button, _)) =
-            frontend::keycode_to_button(keycode, emulator.input_mapping)
-        {
+        if let Some((button, _)) = frontend::keycode_to_button(keycode, emulator.input_mapping) {
             input.p1.set_button(button, pressed);
             handled = true;
         }
@@ -2017,7 +2019,8 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                             emulator.audio_buffer.clear();
 
                             // Collect debug info and render
-                            let debug_info = collect_debug_info(&mut emulator, force_red, pixels.frame_mut());
+                            let debug_info =
+                                collect_debug_info(&mut emulator, force_red, pixels.frame_mut());
 
                             // Update egui
                             framework.prepare(window, &debug_info);
