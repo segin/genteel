@@ -130,9 +130,9 @@ impl MemoryInterface for Z80Bus {
         if let Ok(mut bus_guard) = self.bus.bus.try_borrow_mut() {
             Self::read_byte_from_bus(&mut bus_guard, address)
         } else if let Ok(_bus_guard) = self.bus.bus.try_borrow() {
-            // If we can only get a shared borrow, we can't call read_byte_from_bus 
+            // If we can only get a shared borrow, we can't call read_byte_from_bus
             // which requires &mut Bus. However, most Z80 reads are to RAM or FM
-            // which we can handle if we refactor. For now, let's use unsafe 
+            // which we can handle if we refactor. For now, let's use unsafe
             // as a last resort since we know we're on the same thread.
             unsafe {
                 let bus_ptr = self.bus.bus.as_ptr();

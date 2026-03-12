@@ -352,16 +352,15 @@ impl DataInstruction {
             DataInstruction::Move { size, src, dst } => {
                 src.extension_words(*size) + dst.extension_words(*size)
             }
-            DataInstruction::MoveA { size, src, .. } => {
-                src.extension_words(*size)
-            }
-            DataInstruction::MoveQ { .. } | DataInstruction::Swap { .. } | DataInstruction::Ext { .. } | DataInstruction::Exg { .. } => 0,
+            DataInstruction::MoveA { size, src, .. } => src.extension_words(*size),
+            DataInstruction::MoveQ { .. }
+            | DataInstruction::Swap { .. }
+            | DataInstruction::Ext { .. }
+            | DataInstruction::Exg { .. } => 0,
             DataInstruction::Lea { src, .. } | DataInstruction::Pea { src } => {
                 src.extension_words(Size::Long)
             }
-            DataInstruction::Clr { size, dst } => {
-                dst.extension_words(*size)
-            }
+            DataInstruction::Clr { size, dst } => dst.extension_words(*size),
             DataInstruction::Movep { .. } => {
                 1 // displacement
             }
@@ -495,28 +494,35 @@ pub enum ArithmeticInstruction {
 impl ArithmeticInstruction {
     pub fn extension_words(&self) -> u32 {
         match self {
-            ArithmeticInstruction::Add { size, src, dst, .. } | ArithmeticInstruction::Sub { size, src, dst, .. } => {
+            ArithmeticInstruction::Add { size, src, dst, .. }
+            | ArithmeticInstruction::Sub { size, src, dst, .. } => {
                 src.extension_words(*size) + dst.extension_words(*size)
             }
-            ArithmeticInstruction::AddA { size, src, .. } | ArithmeticInstruction::SubA { size, src, .. } | ArithmeticInstruction::CmpA { size, src, .. } => {
-                src.extension_words(*size)
-            }
-            ArithmeticInstruction::AddI { size, dst } | ArithmeticInstruction::SubI { size, dst } | ArithmeticInstruction::CmpI { size, dst } => {
+            ArithmeticInstruction::AddA { size, src, .. }
+            | ArithmeticInstruction::SubA { size, src, .. }
+            | ArithmeticInstruction::CmpA { size, src, .. } => src.extension_words(*size),
+            ArithmeticInstruction::AddI { size, dst }
+            | ArithmeticInstruction::SubI { size, dst }
+            | ArithmeticInstruction::CmpI { size, dst } => {
                 AddressingMode::Immediate.extension_words(*size) + dst.extension_words(*size)
             }
-            ArithmeticInstruction::AddQ { size, dst, .. } | ArithmeticInstruction::SubQ { size, dst, .. } | ArithmeticInstruction::Neg { size, dst } | ArithmeticInstruction::NegX { size, dst } | ArithmeticInstruction::Tst { size, dst } => {
-                dst.extension_words(*size)
-            }
-            ArithmeticInstruction::MulU { src, .. } | ArithmeticInstruction::MulS { src, .. } | ArithmeticInstruction::DivU { src, .. } | ArithmeticInstruction::DivS { src, .. } | ArithmeticInstruction::Chk { src, .. } => {
-                src.extension_words(Size::Word)
-            }
-            ArithmeticInstruction::Cmp { size, src, .. } => {
-                src.extension_words(*size)
-            }
-            ArithmeticInstruction::Abcd { .. } | ArithmeticInstruction::Sbcd { .. } | ArithmeticInstruction::AddX { .. } | ArithmeticInstruction::SubX { .. } | ArithmeticInstruction::CmpM { .. } => 0,
-            ArithmeticInstruction::Nbcd { dst } => {
-                dst.extension_words(Size::Byte)
-            }
+            ArithmeticInstruction::AddQ { size, dst, .. }
+            | ArithmeticInstruction::SubQ { size, dst, .. }
+            | ArithmeticInstruction::Neg { size, dst }
+            | ArithmeticInstruction::NegX { size, dst }
+            | ArithmeticInstruction::Tst { size, dst } => dst.extension_words(*size),
+            ArithmeticInstruction::MulU { src, .. }
+            | ArithmeticInstruction::MulS { src, .. }
+            | ArithmeticInstruction::DivU { src, .. }
+            | ArithmeticInstruction::DivS { src, .. }
+            | ArithmeticInstruction::Chk { src, .. } => src.extension_words(Size::Word),
+            ArithmeticInstruction::Cmp { size, src, .. } => src.extension_words(*size),
+            ArithmeticInstruction::Abcd { .. }
+            | ArithmeticInstruction::Sbcd { .. }
+            | ArithmeticInstruction::AddX { .. }
+            | ArithmeticInstruction::SubX { .. }
+            | ArithmeticInstruction::CmpM { .. } => 0,
+            ArithmeticInstruction::Nbcd { dst } => dst.extension_words(Size::Byte),
         }
     }
 }
@@ -626,25 +632,32 @@ pub enum BitsInstruction {
 impl BitsInstruction {
     pub fn extension_words(&self) -> u32 {
         match self {
-            BitsInstruction::And { size, src, dst, .. } | BitsInstruction::Or { size, src, dst, .. } => {
+            BitsInstruction::And { size, src, dst, .. }
+            | BitsInstruction::Or { size, src, dst, .. } => {
                 src.extension_words(*size) + dst.extension_words(*size)
             }
-            BitsInstruction::AndI { size, dst } | BitsInstruction::OrI { size, dst } | BitsInstruction::EorI { size, dst } => {
+            BitsInstruction::AndI { size, dst }
+            | BitsInstruction::OrI { size, dst }
+            | BitsInstruction::EorI { size, dst } => {
                 AddressingMode::Immediate.extension_words(*size) + dst.extension_words(*size)
             }
-            BitsInstruction::Eor { size, dst, .. } => {
-                dst.extension_words(*size)
-            }
-            BitsInstruction::Not { size, dst } => {
-                dst.extension_words(*size)
-            }
-            BitsInstruction::Lsl { size, dst, .. } | BitsInstruction::Lsr { size, dst, .. } | BitsInstruction::Asl { size, dst, .. } | BitsInstruction::Asr { size, dst, .. } | BitsInstruction::Rol { size, dst, .. } | BitsInstruction::Ror { size, dst, .. } | BitsInstruction::Roxl { size, dst, .. } | BitsInstruction::Roxr { size, dst, .. } => {
-                dst.extension_words(*size)
-            }
-            BitsInstruction::AslM { dst } | BitsInstruction::AsrM { dst } | BitsInstruction::Tas { dst } => {
-                dst.extension_words(Size::Byte)
-            }
-            BitsInstruction::Btst { bit, dst } | BitsInstruction::Bset { bit, dst } | BitsInstruction::Bclr { bit, dst } | BitsInstruction::Bchg { bit, dst } => {
+            BitsInstruction::Eor { size, dst, .. } => dst.extension_words(*size),
+            BitsInstruction::Not { size, dst } => dst.extension_words(*size),
+            BitsInstruction::Lsl { size, dst, .. }
+            | BitsInstruction::Lsr { size, dst, .. }
+            | BitsInstruction::Asl { size, dst, .. }
+            | BitsInstruction::Asr { size, dst, .. }
+            | BitsInstruction::Rol { size, dst, .. }
+            | BitsInstruction::Ror { size, dst, .. }
+            | BitsInstruction::Roxl { size, dst, .. }
+            | BitsInstruction::Roxr { size, dst, .. } => dst.extension_words(*size),
+            BitsInstruction::AslM { dst }
+            | BitsInstruction::AsrM { dst }
+            | BitsInstruction::Tas { dst } => dst.extension_words(Size::Byte),
+            BitsInstruction::Btst { bit, dst }
+            | BitsInstruction::Bset { bit, dst }
+            | BitsInstruction::Bclr { bit, dst }
+            | BitsInstruction::Bchg { bit, dst } => {
                 let bit_ext = if let BitSource::Immediate = bit { 1 } else { 0 };
                 bit_ext + dst.extension_words(Size::Byte)
             }
@@ -729,25 +742,36 @@ impl SystemInstruction {
     pub fn extension_words(&self) -> u32 {
         match self {
             SystemInstruction::Bra { displacement } | SystemInstruction::Bsr { displacement } => {
-                if *displacement == 0 { 1 } else { 0 }
+                if *displacement == 0 {
+                    1
+                } else {
+                    0
+                }
             }
             SystemInstruction::Bcc { displacement, .. } => {
-                if *displacement == 0 { 1 } else { 0 }
+                if *displacement == 0 {
+                    1
+                } else {
+                    0
+                }
             }
-            SystemInstruction::Scc { dst, .. } => {
-                dst.extension_words(Size::Byte)
-            }
-            SystemInstruction::DBcc { .. } | SystemInstruction::Link { .. } | SystemInstruction::Stop => 1,
+            SystemInstruction::Scc { dst, .. } => dst.extension_words(Size::Byte),
+            SystemInstruction::DBcc { .. }
+            | SystemInstruction::Link { .. }
+            | SystemInstruction::Stop => 1,
             SystemInstruction::Jmp { dst } | SystemInstruction::Jsr { dst } => {
                 dst.extension_words(Size::Long)
             }
             SystemInstruction::MoveToSr { src } | SystemInstruction::MoveToCcr { src } => {
                 src.extension_words(Size::Word)
             }
-            SystemInstruction::MoveFromSr { dst } => {
-                dst.extension_words(Size::Word)
-            }
-            SystemInstruction::AndiToCcr | SystemInstruction::AndiToSr | SystemInstruction::OriToCcr | SystemInstruction::OriToSr | SystemInstruction::EoriToCcr | SystemInstruction::EoriToSr => 1,
+            SystemInstruction::MoveFromSr { dst } => dst.extension_words(Size::Word),
+            SystemInstruction::AndiToCcr
+            | SystemInstruction::AndiToSr
+            | SystemInstruction::OriToCcr
+            | SystemInstruction::OriToSr
+            | SystemInstruction::EoriToCcr
+            | SystemInstruction::EoriToSr => 1,
             _ => 0,
         }
     }
