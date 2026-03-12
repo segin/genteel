@@ -26,6 +26,11 @@ fn write_op(memory: &mut Memory, opcodes: &[u16]) {
     }
 }
 
+fn push_rtr_frame(cpu: &mut Cpu, memory: &mut Memory, target_pc: u32, stacked_ccr_word: u16) {
+    cpu.push_long(target_pc, memory);
+    cpu.push_word(stacked_ccr_word, memory);
+}
+
 // ============================================================================
 // TRAPV Tests
 // ============================================================================
@@ -853,44 +858,29 @@ fn test_rte_supervisor() {
 // ============================================================================
 
 #[test]
-fn test_rtr() {
+fn test_rtr_restores_program_counter() {
     let (mut cpu, mut memory) = create_cpu();
-
-    // RTR Opcode
     write_op(&mut memory, &[0x4E77]);
 
-    // Setup Stack
-    // RTR pops Word (CCR), then Long (PC)
-    // We want to verify:
-    // 1. PC is restored
-    // 2. CCR is restored
-    // 3. SR high byte (System byte) is preserved (RTR only affects CCR)
-
     let target_pc = 0x2000;
-    let target_ccr = 0x001F; // All flags set
-
-    // Current SR: Supervisor set (from create_cpu) -> 0x2000
-    // We can set some other bits in the system byte to ensure they are preserved.
-    cpu.sr = 0xA700; // Trace (0x8000) + Supervisor (0x2000) + Int Mask 7 (0x0700)
-
-    // Push PC (Long)
-    cpu.push_long(target_pc, &mut memory);
-
-    // Push CCR (Word)
-    // The instruction pops a word, but only the low byte is CCR.
-    // The high byte of the popped word is discarded.
-    cpu.push_word(target_ccr | 0xFF00, &mut memory);
+    push_rtr_frame(&mut cpu, &mut memory, target_pc, 0x001F);
 
     cpu.step_instruction(&mut memory);
 
     assert_eq!(cpu.pc, target_pc);
+}
 
-    // Verify CCR parts (low byte of SR)
-    assert_eq!(cpu.sr & 0x00FF, target_ccr & 0x00FF);
+#[test]
+fn test_rtr_restores_condition_codes() {
+    let (mut cpu, mut memory) = create_cpu();
+    write_op(&mut memory, &[0x4E77]);
 
-    // Verify System parts (high byte of SR)
-    // Should remain 0xA7
-    assert_eq!(cpu.sr & 0xFF00, 0xA700);
+    cpu.sr = 0xA700;
+    push_rtr_frame(&mut cpu, &mut memory, 0x2000, 0xFF1F);
+
+    cpu.step_instruction(&mut memory);
+
+    assert_eq!(cpu.sr & 0x00FF, 0x001F);
 }
 
 #[test]
@@ -983,33 +973,19 @@ fn test_address_error_write_word() {
 }
 
 #[test]
-fn test_rtr_sr_preservation() {
+fn test_rtr_preserves_system_byte() {
     let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0x4E77]);
 
-    // Explicitly set SR to a known value to ensure we test preservation
     cpu.sr = 0x2700;
-
-    let target_pc = 0x2000;
-    // Push PC
-    cpu.a[7] = cpu.a[7].wrapping_sub(4);
-    memory.write_long(cpu.a[7], target_pc);
-
-    // Push CCR
-    let target_ccr = 0x001F;
-    cpu.a[7] = cpu.a[7].wrapping_sub(2);
-    memory.write_word(cpu.a[7], target_ccr);
+    push_rtr_frame(&mut cpu, &mut memory, 0x2000, 0x001F);
 
     let initial_sp = cpu.a[7];
 
     cpu.step_instruction(&mut memory);
 
-    assert_eq!(cpu.pc, target_pc);
-    // Verify high byte preserved (from 0x2700)
     assert_eq!(cpu.sr & 0xFF00, 0x2700);
-    // Verify low byte loaded
     assert_eq!(cpu.sr & 0x00FF, 0x1F);
-    // Verify SP
     assert_eq!(cpu.a[7], initial_sp + 6);
 }
 
@@ -1018,56 +994,41 @@ fn test_rtr_sr_preservation() {
 // ============================================================================
 
 #[test]
-fn test_move_usp() {
+fn test_move_address_register_to_usp() {
     let (mut cpu, mut memory) = create_cpu();
-
-    // Test 1: Write to USP (MOVE A1, USP)
-    // Base opcode for MOVE An, USP is 0x4E60
-    // +1 for A1 -> 0x4E61
     write_op(&mut memory, &[0x4E61]);
     cpu.a[1] = 0xDEADBEEF;
-    cpu.usp = 0; // Clear USP
+    cpu.usp = 0;
 
     cpu.step_instruction(&mut memory);
 
-    assert_eq!(cpu.usp, 0xDEADBEEF, "MOVE A1, USP should copy A1 to USP");
+    assert_eq!(cpu.usp, 0xDEADBEEF);
     assert_eq!(cpu.pc, 0x1002);
+}
 
-    // Test 2: Read from USP (MOVE USP, A2)
-    // Base opcode for MOVE USP, An is 0x4E68
-    // +2 for A2 -> 0x4E6A
-    cpu.pc = 0x1000;
-    cpu.invalidate_cache();
+#[test]
+fn test_move_usp_to_address_register() {
+    let (mut cpu, mut memory) = create_cpu();
     write_op(&mut memory, &[0x4E6A]);
-    cpu.a[2] = 0; // Clear A2
+    cpu.a[2] = 0;
     cpu.usp = 0xCAFEBABE;
 
     cpu.step_instruction(&mut memory);
 
-    assert_eq!(cpu.a[2], 0xCAFEBABE, "MOVE USP, A2 should copy USP to A2");
+    assert_eq!(cpu.a[2], 0xCAFEBABE);
     assert_eq!(cpu.pc, 0x1002);
+}
 
-    // Test 3: Privilege violation
-    cpu.pc = 0x1000;
-    cpu.invalidate_cache();
-    write_op(&mut memory, &[0x4E61]); // MOVE A1, USP
-
-    // Clear supervisor bit to enter User mode
+#[test]
+fn test_move_usp_user_mode_traps() {
+    let (mut cpu, mut memory) = create_cpu();
+    write_op(&mut memory, &[0x4E61]);
     cpu.sr &= !flags::SUPERVISOR;
-
-    // Setup exception vector 8 (Privilege Violation)
-    // Make sure we write to the correct location and SSP is valid so push doesn't fail
-    cpu.ssp = 0x8000; // Give SSP a valid value since it's used during exception
-    memory.write_long(32, 0x4000); // 8 * 4 = 32
+    cpu.ssp = 0x8000;
+    memory.write_long(32, 0x4000);
 
     cpu.step_instruction(&mut memory);
 
-    assert_eq!(
-        cpu.pc, 0x4000,
-        "MOVE USP in user mode should trap to vector 8"
-    );
-    assert!(
-        cpu.sr & flags::SUPERVISOR != 0,
-        "Exception should set supervisor bit"
-    );
+    assert_eq!(cpu.pc, 0x4000);
+    assert!(cpu.sr & flags::SUPERVISOR != 0);
 }

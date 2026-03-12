@@ -170,7 +170,7 @@ fn execute_ldir_loop<M: MemoryInterface, I: crate::memory::IoInterface>(
 }
 
 fn validate_ldir_result<M: MemoryInterface, I: crate::memory::IoInterface>(
-    cpu: &Z80<M, I>,
+    cpu: &mut Z80<M, I>,
     exp_hl: u16,
     exp_de: u16,
     exp_bc: u16,
@@ -233,7 +233,7 @@ fn run_ldir_test_case(i: usize, rng: &mut Rng) {
     execute_ldir_loop(&mut cpu, bc);
 
     // Validation
-    validate_ldir_result(&cpu, exp_hl, exp_de, exp_bc, &ref_mem, bc, i, rng);
+    validate_ldir_result(&mut cpu, exp_hl, exp_de, exp_bc, &ref_mem, bc, i, rng);
 }
 
 #[test]

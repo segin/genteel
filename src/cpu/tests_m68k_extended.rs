@@ -17,6 +17,23 @@ fn create_test_cpu() -> (Cpu, Memory) {
     (cpu, memory)
 }
 
+fn set_chk_vector(memory: &mut Memory, handler: u32) {
+    memory.write_long(0x18, handler);
+}
+
+fn write_chk_register_direct(memory: &mut Memory) {
+    memory.write_word(0x100, 0x4181);
+}
+
+fn write_chk_immediate(memory: &mut Memory, bound: u16) {
+    memory.write_word(0x100, 0x41BC);
+    memory.write_word(0x102, bound);
+}
+
+fn write_chk_address_indirect(memory: &mut Memory) {
+    memory.write_word(0x100, 0x4190);
+}
+
 // ============ CHK Tests ============
 
 #[test]
@@ -73,48 +90,58 @@ fn test_chk_exceeds_bound() {
 }
 
 #[test]
-fn test_chk_boundaries() {
+fn test_chk_accepts_zero_lower_boundary() {
     let (mut cpu, mut memory) = create_test_cpu();
-
-    // Set up CHK exception vector (vector 6 = address 0x18)
-    memory.write_long(0x18, 0x6000);
-
-    // CHK D1, D0 - opcode 4181
-    memory.write_word(0x100, 0x4181);
-
-    // Case 1: Value = 0 (Lower bound) -> Should NOT trap
+    set_chk_vector(&mut memory, 0x6000);
+    write_chk_register_direct(&mut memory);
     cpu.d[0] = 0;
     cpu.d[1] = 50;
-    cpu.pc = 0x100;
-    cpu.step_instruction(&mut memory);
-    assert_eq!(cpu.pc, 0x102, "Failed at 0 boundary");
-    assert!(!cpu.get_flag(flags::NEGATIVE));
 
-    // Case 2: Value = Bound (Upper bound) -> Should NOT trap
+    cpu.step_instruction(&mut memory);
+
+    assert_eq!(cpu.pc, 0x102);
+    assert!(!cpu.get_flag(flags::NEGATIVE));
+}
+
+#[test]
+fn test_chk_accepts_upper_boundary() {
+    let (mut cpu, mut memory) = create_test_cpu();
+    set_chk_vector(&mut memory, 0x6000);
+    write_chk_register_direct(&mut memory);
     cpu.d[0] = 50;
     cpu.d[1] = 50;
-    cpu.pc = 0x100;
-    cpu.step_instruction(&mut memory);
-    assert_eq!(cpu.pc, 0x102, "Failed at Upper boundary");
-    assert!(!cpu.get_flag(flags::NEGATIVE));
 
-    // Case 3: Value = Bound + 1 -> Should TRAP
+    cpu.step_instruction(&mut memory);
+
+    assert_eq!(cpu.pc, 0x102);
+    assert!(!cpu.get_flag(flags::NEGATIVE));
+}
+
+#[test]
+fn test_chk_traps_above_upper_boundary() {
+    let (mut cpu, mut memory) = create_test_cpu();
+    set_chk_vector(&mut memory, 0x6000);
+    write_chk_register_direct(&mut memory);
     cpu.d[0] = 51;
     cpu.d[1] = 50;
-    cpu.pc = 0x100;
+
     cpu.step_instruction(&mut memory);
-    assert_eq!(cpu.pc, 0x6000, "Failed at Upper + 1");
-    assert!(!cpu.get_flag(flags::NEGATIVE)); // N clear for > bound
 
-    // Restore PC and SP for next case
-    cpu.a[7] = 0x1000;
+    assert_eq!(cpu.pc, 0x6000);
+    assert!(!cpu.get_flag(flags::NEGATIVE));
+}
 
-    // Case 4: Value < 0 -> Should TRAP and set N
+#[test]
+fn test_chk_traps_negative_value() {
+    let (mut cpu, mut memory) = create_test_cpu();
+    set_chk_vector(&mut memory, 0x6000);
+    write_chk_register_direct(&mut memory);
     cpu.d[0] = 0xFFFF; // -1
     cpu.d[1] = 50;
-    cpu.pc = 0x100;
+
     cpu.step_instruction(&mut memory);
-    assert_eq!(cpu.pc, 0x6000, "Failed at Negative");
+
+    assert_eq!(cpu.pc, 0x6000);
     assert!(cpu.get_flag(flags::NEGATIVE));
 }
 
@@ -585,139 +612,154 @@ fn test_addx_subx_memory() {
 }
 
 #[test]
-fn test_chk_addressing_modes() {
+fn test_chk_immediate_in_bounds() {
     let (mut cpu, mut memory) = create_test_cpu();
-
-    // Set up exception vector 6 (CHK)
-    memory.write_long(0x18, 0x6000);
-
-    // Case 1: Immediate Addressing
-    // CHK #10, D0
-    // Opcode: 0100 000 1 10 111 100 = 0x41BC
-    memory.write_word(0x100, 0x41BC);
-    memory.write_word(0x102, 0x000A); // Bound = 10
-
-    // Subcase 1a: Value in bounds (5)
+    set_chk_vector(&mut memory, 0x6000);
+    write_chk_immediate(&mut memory, 0x000A);
     cpu.d[0] = 5;
-    cpu.pc = 0x100;
+
     cpu.step_instruction(&mut memory);
-    assert_eq!(cpu.pc, 0x104); // Next instruction (Instruction length 4 bytes)
-    assert!(!cpu.get_flag(flags::NEGATIVE));
 
-    // Subcase 1b: Value exceeds bounds (11)
-    cpu.d[0] = 11;
-    cpu.pc = 0x100;
-    cpu.step_instruction(&mut memory);
-    assert_eq!(cpu.pc, 0x6000); // Trap
-                                // N clear for > bound
-    assert!(!cpu.get_flag(flags::NEGATIVE));
-
-    // Restore stack pointer for next test
-    cpu.a[7] = 0x1000;
-
-    // Case 2: Address Register Indirect
-    // CHK (A0), D0
-    // Opcode: 0100 000 1 10 010 000 = 0x4190
-    memory.write_word(0x200, 0x4190);
-    cpu.a[0] = 0x3000;
-    memory.write_word(0x3000, 0x0014); // Bound = 20
-
-    // Subcase 2a: Value in bounds (20)
-    cpu.d[0] = 20;
-    cpu.pc = 0x200;
-    cpu.step_instruction(&mut memory);
-    assert_eq!(cpu.pc, 0x202); // Next instruction (2 bytes)
-    assert!(!cpu.get_flag(flags::NEGATIVE));
-
-    // Subcase 2b: Value exceeds bounds (21)
-    cpu.d[0] = 21;
-    cpu.pc = 0x200;
-    cpu.step_instruction(&mut memory);
-    assert_eq!(cpu.pc, 0x6000); // Trap
-                                // N clear for > bound
+    assert_eq!(cpu.pc, 0x104);
     assert!(!cpu.get_flag(flags::NEGATIVE));
 }
 
 #[test]
-fn test_chk_edge_cases() {
+fn test_chk_immediate_exceeds_bound() {
     let (mut cpu, mut memory) = create_test_cpu();
+    set_chk_vector(&mut memory, 0x6000);
+    write_chk_immediate(&mut memory, 0x000A);
+    cpu.d[0] = 11;
 
-    // Set up exception vector 6 (CHK)
-    memory.write_long(0x18, 0x6000);
-
-    // CHK D1, D0 (Register Direct)
-    // Opcode: 0x4181
-    memory.write_word(0x100, 0x4181);
-
-    // Case 1: Negative Upper Bound (-10)
-    // Any value >= 0 is > -10 (positive > negative), so Trap (N clear).
-    // Any value < 0 is < 0, so Trap (N set).
-    // Thus ALWAYS traps.
-    cpu.d[1] = 0xFFF6; // -10 (word)
-
-    // Subcase 1a: Value = 0 (Should trap because 0 > -10)
-    cpu.d[0] = 0;
-    cpu.pc = 0x100;
     cpu.step_instruction(&mut memory);
-    assert_eq!(cpu.pc, 0x6000, "Failed at Negative Bound with 0");
-    assert!(!cpu.get_flag(flags::NEGATIVE)); // N clear because val > bound
 
-    // Restore SP
-    cpu.a[7] = 0x1000;
+    assert_eq!(cpu.pc, 0x6000);
+    assert!(!cpu.get_flag(flags::NEGATIVE));
+}
 
-    // Subcase 1b: Value = -5 (Should trap because -5 < 0)
+#[test]
+fn test_chk_address_indirect_in_bounds() {
+    let (mut cpu, mut memory) = create_test_cpu();
+    set_chk_vector(&mut memory, 0x6000);
+    write_chk_address_indirect(&mut memory);
+    cpu.a[0] = 0x3000;
+    memory.write_word(0x3000, 0x0014);
+    cpu.d[0] = 20;
+
+    cpu.step_instruction(&mut memory);
+
+    assert_eq!(cpu.pc, 0x102);
+    assert!(!cpu.get_flag(flags::NEGATIVE));
+}
+
+#[test]
+fn test_chk_address_indirect_exceeds_bound() {
+    let (mut cpu, mut memory) = create_test_cpu();
+    set_chk_vector(&mut memory, 0x6000);
+    write_chk_address_indirect(&mut memory);
+    cpu.a[0] = 0x3000;
+    memory.write_word(0x3000, 0x0014);
+    cpu.d[0] = 21;
+
+    cpu.step_instruction(&mut memory);
+
+    assert_eq!(cpu.pc, 0x6000);
+    assert!(!cpu.get_flag(flags::NEGATIVE));
+}
+
+#[test]
+fn test_chk_negative_upper_bound_traps_zero() {
+    let (mut cpu, mut memory) = create_test_cpu();
+    set_chk_vector(&mut memory, 0x6000);
+    write_chk_register_direct(&mut memory);
+    cpu.d[1] = 0xFFF6; // -10
+    cpu.d[0] = 0;
+
+    cpu.step_instruction(&mut memory);
+
+    assert_eq!(cpu.pc, 0x6000);
+    assert!(!cpu.get_flag(flags::NEGATIVE));
+}
+
+#[test]
+fn test_chk_negative_upper_bound_traps_negative_value() {
+    let (mut cpu, mut memory) = create_test_cpu();
+    set_chk_vector(&mut memory, 0x6000);
+    write_chk_register_direct(&mut memory);
+    cpu.d[1] = 0xFFF6; // -10
     cpu.d[0] = 0xFFFB; // -5
-    cpu.pc = 0x100;
+
     cpu.step_instruction(&mut memory);
-    assert_eq!(cpu.pc, 0x6000, "Failed at Negative Bound with -5");
-    assert!(cpu.get_flag(flags::NEGATIVE)); // N set because val < 0
 
-    // Restore SP
-    cpu.a[7] = 0x1000;
+    assert_eq!(cpu.pc, 0x6000);
+    assert!(cpu.get_flag(flags::NEGATIVE));
+}
 
-    // Subcase 1c: Value = -20 (Should trap because -20 < 0)
+#[test]
+fn test_chk_negative_upper_bound_traps_more_negative_value() {
+    let (mut cpu, mut memory) = create_test_cpu();
+    set_chk_vector(&mut memory, 0x6000);
+    write_chk_register_direct(&mut memory);
+    cpu.d[1] = 0xFFF6; // -10
     cpu.d[0] = 0xFFEC; // -20
-    cpu.pc = 0x100;
+
     cpu.step_instruction(&mut memory);
-    assert_eq!(cpu.pc, 0x6000, "Failed at Negative Bound with -20");
-    assert!(cpu.get_flag(flags::NEGATIVE)); // N set because val < 0
 
-    // Restore SP
-    cpu.a[7] = 0x1000;
+    assert_eq!(cpu.pc, 0x6000);
+    assert!(cpu.get_flag(flags::NEGATIVE));
+}
 
-    // Case 2: Zero Upper Bound
+#[test]
+fn test_chk_zero_upper_bound_accepts_zero() {
+    let (mut cpu, mut memory) = create_test_cpu();
+    set_chk_vector(&mut memory, 0x6000);
+    write_chk_register_direct(&mut memory);
     cpu.d[1] = 0;
-
-    // Subcase 2a: Value = 0 (Pass)
     cpu.d[0] = 0;
-    cpu.pc = 0x100;
-    cpu.step_instruction(&mut memory);
-    assert_eq!(cpu.pc, 0x102, "Failed at Zero Bound with 0");
-    assert!(!cpu.get_flag(flags::NEGATIVE)); // N clear (val == 0 >= 0)
 
-    // Subcase 2b: Value = 1 (Trap)
+    cpu.step_instruction(&mut memory);
+
+    assert_eq!(cpu.pc, 0x102);
+    assert!(!cpu.get_flag(flags::NEGATIVE));
+}
+
+#[test]
+fn test_chk_zero_upper_bound_traps_positive_value() {
+    let (mut cpu, mut memory) = create_test_cpu();
+    set_chk_vector(&mut memory, 0x6000);
+    write_chk_register_direct(&mut memory);
+    cpu.d[1] = 0;
     cpu.d[0] = 1;
-    cpu.pc = 0x100;
+
     cpu.step_instruction(&mut memory);
-    assert_eq!(cpu.pc, 0x6000, "Failed at Zero Bound with 1");
-    assert!(!cpu.get_flag(flags::NEGATIVE)); // N clear because val > bound
 
-    // Restore SP
-    cpu.a[7] = 0x1000;
+    assert_eq!(cpu.pc, 0x6000);
+    assert!(!cpu.get_flag(flags::NEGATIVE));
+}
 
-    // Case 3: Max Positive Upper Bound (0x7FFF = 32767)
+#[test]
+fn test_chk_max_positive_upper_bound_accepts_bound() {
+    let (mut cpu, mut memory) = create_test_cpu();
+    set_chk_vector(&mut memory, 0x6000);
+    write_chk_register_direct(&mut memory);
     cpu.d[1] = 0x7FFF;
-
-    // Subcase 3a: Value = 0x7FFF (Pass)
     cpu.d[0] = 0x7FFF;
-    cpu.pc = 0x100;
-    cpu.step_instruction(&mut memory);
-    assert_eq!(cpu.pc, 0x102, "Failed at Max Bound with Max Val");
 
-    // Subcase 3b: Value = 0x8000 (-32768) (Trap because < 0)
-    cpu.d[0] = 0x8000;
-    cpu.pc = 0x100;
     cpu.step_instruction(&mut memory);
-    assert_eq!(cpu.pc, 0x6000, "Failed at Max Bound with Min Val");
-    assert!(cpu.get_flag(flags::NEGATIVE)); // N set because val < 0
+
+    assert_eq!(cpu.pc, 0x102);
+}
+
+#[test]
+fn test_chk_max_positive_upper_bound_traps_min_negative() {
+    let (mut cpu, mut memory) = create_test_cpu();
+    set_chk_vector(&mut memory, 0x6000);
+    write_chk_register_direct(&mut memory);
+    cpu.d[1] = 0x7FFF;
+    cpu.d[0] = 0x8000;
+
+    cpu.step_instruction(&mut memory);
+
+    assert_eq!(cpu.pc, 0x6000);
+    assert!(cpu.get_flag(flags::NEGATIVE));
 }
