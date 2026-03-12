@@ -47,14 +47,20 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
     is_equal &= Choice::from(a_len_ok);
     is_equal &= Choice::from(b_len_ok);
 
+    let a_safe: &[u8] = if a_len > 0 { a_bytes } else { &[0] };
+    let b_safe: &[u8] = if b_len > 0 { b_bytes } else { &[0] };
+
     for i in 0..MAX_PASSWORD_CHECK_LEN {
         // Create a mask indicating if we are within the bounds of both strings.
         // Boolean-to-integer casts are generally constant-time in Rust.
         let within_bounds = (i < a_len && i < b_len) as u8;
 
         // Retrieve bytes safely; if out of bounds, use a dummy value.
-        let a_byte = a_bytes.get(i).copied().unwrap_or(0);
-        let b_byte = b_bytes.get(i).copied().unwrap_or(0);
+        let a_idx = i * (i < a_len) as usize;
+        let b_idx = i * (i < b_len) as usize;
+
+        let a_byte = a_safe[a_idx];
+        let b_byte = b_safe[b_idx];
 
         // Compare current bytes.
         let bytes_match = a_byte.ct_eq(&b_byte);
