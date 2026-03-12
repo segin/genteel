@@ -106,7 +106,7 @@ def scan_text_patterns():
             continue
 
         # Skip this script and the benchmark script as they contain the patterns themselves
-        if f.endswith("audit_tool.py") or f.endswith("benchmark_regex.py"):
+        if f.endswith("audit_tool.py") or f.endswith("benchmark_audit_regex.py") or f.endswith("test_audit_regex_performance.py"):
             continue
 
         try:

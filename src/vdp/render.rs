@@ -145,94 +145,6 @@ pub trait RenderOps {
 }
 
 impl Vdp {
-    fn resolve_pixel_layer(bg_color_idx: u8, b: u8, a: u8, s: u8) -> (u8, u8, bool) {
-        let b_pri = (b & 0x80) != 0;
-        let a_pri = (a & 0x80) != 0;
-        let s_pri = (s & 0x80) != 0;
-
-        let b_col = b & 0x3F;
-        let a_col = a & 0x3F;
-        let s_col = s & 0x3F;
-
-        let b_trans = (b_col & 0x0F) == 0;
-        let a_trans = (a_col & 0x0F) == 0;
-        let s_trans = (s_col & 0x0F) == 0;
-
-        let any_high = b_pri || a_pri || s_pri;
-
-        let mut top_col = bg_color_idx;
-        let mut top_layer = 0;
-
-        if s_pri && !s_trans {
-            top_col = s_col;
-            top_layer = 3;
-        } else if a_pri && !a_trans {
-            top_col = a_col;
-            top_layer = 2;
-        } else if b_pri && !b_trans {
-            top_col = b_col;
-            top_layer = 1;
-        } else if !s_trans {
-            top_col = s_col;
-            top_layer = 3;
-        } else if !a_trans {
-            top_col = a_col;
-            top_layer = 2;
-        } else if !b_trans {
-            top_col = b_col;
-            top_layer = 1;
-        }
-
-        (top_col, top_layer, any_high)
-    }
-
-    fn get_underlying_color(bg_color_idx: u8, b: u8, a: u8) -> u8 {
-        let b_pri = (b & 0x80) != 0;
-        let a_pri = (a & 0x80) != 0;
-
-        let b_col = b & 0x3F;
-        let a_col = a & 0x3F;
-
-        let b_trans = (b_col & 0x0F) == 0;
-        let a_trans = (a_col & 0x0F) == 0;
-
-        if a_pri && !a_trans {
-            a_col
-        } else if b_pri && !b_trans {
-            b_col
-        } else if !a_trans {
-            a_col
-        } else if !b_trans {
-            b_col
-        } else {
-            bg_color_idx
-        }
-    }
-
-    fn apply_shadow_highlight(color: u16, state: u8) -> u16 {
-        match state {
-            0 => {
-                let r = ((color >> 11) & 0x1E) >> 1;
-                let g = ((color >> 6) & 0x1E) >> 1;
-                let b = ((color >> 1) & 0x1E) >> 1;
-                (r << 11) | (g << 6) | (b << 1)
-            }
-            2 => {
-                let r = (color >> 11) & 0x1E;
-                let g = (color >> 6) & 0x1E;
-                let b = (color >> 1) & 0x1E;
-                let r2 = r + 0x10;
-                let r_final = if r2 > 0x1E { 0x1E } else { r2 };
-                let g2 = g + 0x10;
-                let g_final = if g2 > 0x1E { 0x1E } else { g2 };
-                let b2 = b + 0x10;
-                let b_final = if b2 > 0x1E { 0x1E } else { b2 };
-                (r_final << 11) | (g_final << 6) | (b_final << 1)
-            }
-            _ => color,
-        }
-    }
-
     #[allow(clippy::too_many_arguments)]
     fn composite_line(
         &mut self,
@@ -256,34 +168,175 @@ impl Vdp {
             let a = buf_a[x];
             let s = buf_s[x];
 
-            let (mut top_col, top_layer, any_high) =
-                Self::resolve_pixel_layer(bg_color_idx, b, a, s);
+            let b_pri = (b & 0x80) != 0;
+            let a_pri = (a & 0x80) != 0;
+            let s_pri = (s & 0x80) != 0;
+
+            let b_col = b & 0x3F;
+            let a_col = a & 0x3F;
+            let s_col = s & 0x3F;
+
+            let b_trans = (b_col & 0x0F) == 0;
+            let a_trans = (a_col & 0x0F) == 0;
+            let s_trans = (s_col & 0x0F) == 0;
+
+            let any_high = b_pri || a_pri || s_pri;
+
+            let (mut top_col, top_layer) = self.determine_top_layer(
+                bg_color_idx,
+                s_pri,
+                s_trans,
+                s_col,
+                a_pri,
+                a_trans,
+                a_col,
+                b_pri,
+                b_trans,
+                b_col,
+            );
 
             if !sh_enabled {
                 self.framebuffer[line_offset + x] = self.cram_cache[top_col as usize];
             } else {
-                let s_col = s & 0x3F;
                 let mut state = if any_high { 1 } else { 0 };
 
-                if top_layer == 3 {
-                    if s_col == 0x3E {
-                        top_col = Self::get_underlying_color(bg_color_idx, b, a);
-                        if state < 2 {
-                            state += 1;
-                        }
-                    } else if s_col == 0x3F {
-                        top_col = Self::get_underlying_color(bg_color_idx, b, a);
-                        if state > 0 {
-                            state -= 1;
-                        }
-                    } else if (s_col & 0x0F) == 0x0E {
-                        state = 1;
-                    }
-                }
+                let (new_top_col, new_state) = self.apply_shadow_highlight(
+                    top_layer,
+                    s_col,
+                    bg_color_idx,
+                    top_col,
+                    a_pri,
+                    a_trans,
+                    a_col,
+                    b_pri,
+                    b_trans,
+                    b_col,
+                    state,
+                );
+                top_col = new_top_col;
+                state = new_state;
 
                 let color = self.cram_cache[top_col as usize];
-                self.framebuffer[line_offset + x] = Self::apply_shadow_highlight(color, state);
+                let final_color = self.apply_color_transform(color, state);
+                self.framebuffer[line_offset + x] = final_color;
             }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn determine_top_layer(
+        &self,
+        bg_color_idx: u8,
+        s_pri: bool,
+        s_trans: bool,
+        s_col: u8,
+        a_pri: bool,
+        a_trans: bool,
+        a_col: u8,
+        b_pri: bool,
+        b_trans: bool,
+        b_col: u8,
+    ) -> (u8, u8) {
+        let mut top_col = bg_color_idx;
+        let mut top_layer = 0; // 0=BG, 1=B, 2=A, 3=S
+
+        if s_pri && !s_trans {
+            top_col = s_col;
+            top_layer = 3;
+        } else if a_pri && !a_trans {
+            top_col = a_col;
+            top_layer = 2;
+        } else if b_pri && !b_trans {
+            top_col = b_col;
+            top_layer = 1;
+        } else if !s_trans {
+            top_col = s_col;
+            top_layer = 3;
+        } else if !a_trans {
+            top_col = a_col;
+            top_layer = 2;
+        } else if !b_trans {
+            top_col = b_col;
+            top_layer = 1;
+        }
+
+        (top_col, top_layer)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn apply_shadow_highlight(
+        &self,
+        top_layer: u8,
+        s_col: u8,
+        bg_color_idx: u8,
+        mut top_col: u8,
+        a_pri: bool,
+        a_trans: bool,
+        a_col: u8,
+        b_pri: bool,
+        b_trans: bool,
+        b_col: u8,
+        mut state: u8,
+    ) -> (u8, u8) {
+        if top_layer == 3 {
+            if s_col == 0x3E {
+                top_col = bg_color_idx;
+                if a_pri && !a_trans {
+                    top_col = a_col;
+                } else if b_pri && !b_trans {
+                    top_col = b_col;
+                } else if !a_trans {
+                    top_col = a_col;
+                } else if !b_trans {
+                    top_col = b_col;
+                }
+                if state < 2 {
+                    state += 1;
+                }
+            } else if s_col == 0x3F {
+                top_col = bg_color_idx;
+                if a_pri && !a_trans {
+                    top_col = a_col;
+                } else if b_pri && !b_trans {
+                    top_col = b_col;
+                } else if !a_trans {
+                    top_col = a_col;
+                } else if !b_trans {
+                    top_col = b_col;
+                }
+                if state > 0 {
+                    state -= 1;
+                }
+            } else if (s_col & 0x0F) == 0x0E {
+                state = 1;
+            }
+        }
+        (top_col, state)
+    }
+
+    fn apply_color_transform(&self, color: u16, state: u8) -> u16 {
+        match state {
+            0 => {
+                // Shadow (halve brightness)
+                let r = ((color >> 11) & 0x1E) >> 1;
+                let g = ((color >> 6) & 0x1E) >> 1;
+                let b = ((color >> 1) & 0x1E) >> 1;
+                (r << 11) | (g << 6) | (b << 1)
+            }
+            2 => {
+                // Highlight (double brightness + offset)
+                let r = (color >> 11) & 0x1E;
+                let g = (color >> 6) & 0x1E;
+                let b = (color >> 1) & 0x1E;
+                let r2 = r + 0x10;
+                let r_final = if r2 > 0x1E { 0x1E } else { r2 };
+                let g2 = g + 0x10;
+                let g_final = if g2 > 0x1E { 0x1E } else { g2 };
+                let b2 = b + 0x10;
+                let b_final = if b2 > 0x1E { 0x1E } else { b2 };
+                (r_final << 11) | (g_final << 6) | (b_final << 1)
+            }
+            _ => color,
         }
     }
 }
