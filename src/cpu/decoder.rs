@@ -1303,5 +1303,108 @@ mod tests {
                 count
             })
         );
+
+        // Invalid memory shift (Mode 7 Reg 5 is invalid and from_mode_reg returns None)
+        // 1110 000 0 11 111 101 -> 0xE0FD
+        assert_eq!(
+            decode(0xE0FD),
+            Instruction::System(SystemInstruction::Unimplemented { opcode: 0xE0FD })
+        );
+    }
+
+    #[test]
+    fn test_memory_shift_asl_asr() {
+        // Test ASR with AddressPreDecrement
+        // ASR.W -(A1) -> 1110 000 0 11 100 001 -> 0xE0E1
+        let dst_asr = AddressingMode::AddressPreDecrement(1);
+        assert_eq!(
+            decode(0xE0E1),
+            Instruction::Bits(BitsInstruction::AsrM { dst: dst_asr })
+        );
+
+        // Test ASL with AddressPostIncrement
+        // ASL.W (A2)+ -> 1110 000 1 11 011 010 -> 0xE1DA
+        let dst_asl = AddressingMode::AddressPostIncrement(2);
+        assert_eq!(
+            decode(0xE1DA),
+            Instruction::Bits(BitsInstruction::AslM { dst: dst_asl })
+        );
+    }
+
+    #[test]
+    fn test_memory_shift_wildcard() {
+        let count = ShiftCount::Immediate(1);
+
+        // Test LSR with AddressIndirectDisplacement
+        // LSR.W d16(A1) -> 1110 001 0 11 101 001 -> 0xE2E9
+        let dst_lsr = AddressingMode::AddressDisplacement(1);
+        assert_eq!(
+            decode(0xE2E9),
+            Instruction::Bits(BitsInstruction::Lsr {
+                size: Size::Word,
+                dst: dst_lsr,
+                count
+            })
+        );
+
+        // Test LSL with AddressIndirectIndex
+        // LSL.W d8(A2,Xi) -> 1110 001 1 11 110 010 -> 0xE3F2
+        let dst_lsl = AddressingMode::AddressIndex(2);
+        assert_eq!(
+            decode(0xE3F2),
+            Instruction::Bits(BitsInstruction::Lsl {
+                size: Size::Word,
+                dst: dst_lsl,
+                count
+            })
+        );
+
+        // Test ROXR with AbsoluteShort
+        // ROXR.W (xxx).W -> 1110 010 0 11 111 000 -> 0xE4F8
+        let dst_roxr = AddressingMode::AbsoluteShort;
+        assert_eq!(
+            decode(0xE4F8),
+            Instruction::Bits(BitsInstruction::Roxr {
+                size: Size::Word,
+                dst: dst_roxr,
+                count
+            })
+        );
+
+        // Test ROXL with AbsoluteLong
+        // ROXL.W (xxx).L -> 1110 010 1 11 111 001 -> 0xE5F9
+        let dst_roxl = AddressingMode::AbsoluteLong;
+        assert_eq!(
+            decode(0xE5F9),
+            Instruction::Bits(BitsInstruction::Roxl {
+                size: Size::Word,
+                dst: dst_roxl,
+                count
+            })
+        );
+
+        // Test ROR with AddressIndirect
+        // ROR.W (A3) -> 1110 011 0 11 010 011 -> 0xE6D3
+        let dst_ror = AddressingMode::AddressIndirect(3);
+        assert_eq!(
+            decode(0xE6D3),
+            Instruction::Bits(BitsInstruction::Ror {
+                size: Size::Word,
+                dst: dst_ror,
+                count
+            })
+        );
+
+        // Test ROL with AddressPostIncrement
+        // ROL.W (A4)+ -> 1110 011 1 11 011 100 -> 0xE7DC
+        let dst_rol = AddressingMode::AddressPostIncrement(4);
+        assert_eq!(
+            decode(0xE7DC),
+            Instruction::Bits(BitsInstruction::Rol {
+                size: Size::Word,
+                dst: dst_rol,
+                count
+            })
+        );
     }
 }
