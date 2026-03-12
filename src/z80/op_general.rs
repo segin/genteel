@@ -5,14 +5,14 @@ use crate::z80::op_index::IndexOps;
 use crate::z80::{flags, OpParams, Z80};
 
 pub trait GeneralOps {
-    fn execute_x0(&mut self, params: &OpParams) -> u8;
-    fn execute_x1(&mut self, params: &OpParams) -> u8;
-    fn execute_x2(&mut self, params: &OpParams) -> u8;
-    fn execute_x3(&mut self, params: &OpParams) -> u8;
+    fn execute_x0(&mut self, params: OpParams) -> u8;
+    fn execute_x1(&mut self, params: OpParams) -> u8;
+    fn execute_x2(&mut self, params: OpParams) -> u8;
+    fn execute_x3(&mut self, params: OpParams) -> u8;
 }
 
 impl<M: MemoryInterface, I: IoInterface> GeneralOps for Z80<M, I> {
-    fn execute_x0(&mut self, params: &OpParams) -> u8 {
+    fn execute_x0(&mut self, params: OpParams) -> u8 {
         dispatch_z!(
             params.z,
             execute_x0_control_misc(self, params.y),
@@ -26,7 +26,7 @@ impl<M: MemoryInterface, I: IoInterface> GeneralOps for Z80<M, I> {
         )
     }
 
-    fn execute_x1(&mut self, params: &OpParams) -> u8 {
+    fn execute_x1(&mut self, params: OpParams) -> u8 {
         if params.y == 6 && params.z == 6 {
             // HALT
             self.halted = true;
@@ -43,7 +43,7 @@ impl<M: MemoryInterface, I: IoInterface> GeneralOps for Z80<M, I> {
         }
     }
 
-    fn execute_x2(&mut self, params: &OpParams) -> u8 {
+    fn execute_x2(&mut self, params: OpParams) -> u8 {
         // ALU operations
         let val = self.get_reg(params.z);
         match params.y {
@@ -64,7 +64,7 @@ impl<M: MemoryInterface, I: IoInterface> GeneralOps for Z80<M, I> {
         }
     }
 
-    fn execute_x3(&mut self, params: &OpParams) -> u8 {
+    fn execute_x3(&mut self, params: OpParams) -> u8 {
         dispatch_z!(
             params.z,
             execute_x3_ret_cc(self, params.y),

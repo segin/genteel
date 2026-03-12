@@ -37,6 +37,7 @@ pub mod op_ed;
 pub mod op_index;
 
 /// Decoded parameters for a Z80 instruction opcode
+#[derive(Clone, Copy)]
 pub struct OpParams {
     pub opcode: u8,
     pub x: u8,
@@ -829,10 +830,10 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         };
 
         let t_states = match op_params.x {
-            0 => self.execute_x0(&op_params),
-            1 => self.execute_x1(&op_params),
-            2 => self.execute_x2(&op_params),
-            3 => self.execute_x3(&op_params),
+            0 => self.execute_x0(op_params),
+            1 => self.execute_x1(op_params),
+            2 => self.execute_x2(op_params),
+            3 => self.execute_x3(op_params),
             _ => 4,
         };
 
