@@ -138,6 +138,30 @@ mod tests {
     }
 
     #[test]
+    fn test_big_array_serialization_output() {
+        let data = [42u8; 64];
+        let test_struct = BigArrayTestStruct { data };
+
+        let serialized = serde_json::to_string(&test_struct).expect("Serialization failed");
+
+        // Construct the expected JSON string manually
+        let array_str = vec!["42"; 64].join(",");
+        let expected_json = format!("{{\"data\":[{}]}}", array_str);
+        assert_eq!(serialized, expected_json);
+    }
+
+    #[test]
+    fn test_big_array_deserialization_success() {
+        let array_str = vec!["42"; 64].join(",");
+        let json = format!("{{\"data\":[{}]}}", array_str);
+
+        let deserialized: BigArrayTestStruct = serde_json::from_str(&json).expect("Deserialization failed");
+
+        let expected_data = [42u8; 64];
+        assert_eq!(deserialized.data, expected_data);
+    }
+
+    #[test]
     fn test_big_array_serialization_roundtrip() {
         let mut data = [0u8; 64];
         for i in 0..64 {
