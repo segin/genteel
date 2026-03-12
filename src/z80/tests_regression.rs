@@ -214,7 +214,7 @@ fn regression_ccf_copies_c_to_h() {
     assert!(c.get_flag(flags::PARITY)); // Preserved
 }
 
-// Bug: NEG with A=0x80 causes overflow
+// Z80 hardware bug: NEG with A=0x80 causes overflow
 #[test]
 fn regression_neg_80() {
     let mut c = create_z80(&[0xED, 0x44]);
