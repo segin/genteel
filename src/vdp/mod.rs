@@ -205,6 +205,8 @@ pub struct Vdp {
     pub h_counter: u16,
     pub v_counter: u16,
     pub line_counter: u16,
+    #[serde(skip, default)]
+    pub hint_pending: bool,
     pub last_data_write: u16,
     pub v30_offset: u16,
     pub is_pal: bool,
@@ -238,6 +240,7 @@ impl Vdp {
             h_counter: 0,
             v_counter: 0,
             line_counter: 0,
+            hint_pending: false,
             last_data_write: 0,
             v30_offset: 0,
             is_pal: false,
@@ -270,6 +273,10 @@ impl Vdp {
         self.fifo_full = false;
         self.bypass_fifo = false;
         self.mclk_line_clocks = 0;
+        self.v_counter = 0;
+        self.h_counter = 0;
+        self.line_counter = 0;
+        self.hint_pending = false;
         self.reconstruct_cram_cache();
     }
 
@@ -588,8 +595,8 @@ impl Vdp {
         (self.status & STATUS_VINT_PENDING) != 0 && self.vint_enabled()
     }
 
-    pub fn hblank_pending(&self) -> bool {
-        self.hint_enabled()
+    pub fn hint_pending(&self) -> bool {
+        self.hint_pending && self.hint_enabled()
     }
 
     pub fn read_hv_counter(&self) -> u16 {
@@ -730,6 +737,7 @@ impl Vdp {
             self.v_counter = (self.v_counter + 1) % 262; // NTSC: 262 lines
 
             let active_lines = self.screen_height();
+            self.hint_pending = false;
 
             // Handle VBlank status flag based on V counter
             if self.v_counter == active_lines {
@@ -737,6 +745,17 @@ impl Vdp {
                 self.status |= STATUS_VINT_PENDING;
             } else if self.v_counter == 0 {
                 self.status &= !STATUS_VBLANK;
+            }
+
+            if self.v_counter < active_lines {
+                if self.line_counter == 0 {
+                    self.line_counter = self.registers[REG_H_INT_COUNTER] as u16;
+                    self.hint_pending = true;
+                } else {
+                    self.line_counter -= 1;
+                }
+            } else {
+                self.line_counter = self.registers[REG_H_INT_COUNTER] as u16;
             }
 
             let next_line_curr_slot = if is_h40 {
