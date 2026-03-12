@@ -1903,20 +1903,20 @@ fn process_redraw(
     // Sync emulator state back to GUI
     framework.gui_state.paused = emulator.paused;
 
-    frame_count += 1;
-    fps_count += 1;
+    *frame_count += 1;
+    *fps_count += 1;
     // Update FPS in title bar every second
     if fps_timer.elapsed() >= std::time::Duration::from_secs(1) {
         window.set_title(&format!(
             "Genteel - Sega Genesis Emulator | FPS: {}",
             fps_count
         ));
-        fps_count = 0;
-        fps_timer = std::time::Instant::now();
+        *fps_count = 0;
+        *fps_timer = std::time::Instant::now();
     }
     // Debug: Print every 60 frames
-    if emulator.debug && frame_count % 60 == 1 {
-        emulator.log_debug(frame_count);
+    if emulator.debug && *frame_count % 60 == 1 {
+        emulator.log_debug(*frame_count);
     }
     // Run one frame of emulation
     emulator.step_frame(Some(&input));
@@ -2002,8 +2002,8 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
     let mut input = crate::input::FrameInput::default();
     let mut frame_count: u64 = 0;
     let mut last_frame_inst = std::time::Instant::now();
-    let mut fps_timer = std::time::Instant::now();
-    let mut fps_count = 0;
+    let mut *fps_timer = std::time::Instant::now();
+        *fps_count = 0;
     let frame_duration = std::time::Duration::from_nanos(16_666_667); // 60.0 fps
     println!("Starting event loop...");
     event_loop
@@ -2042,12 +2042,12 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                         }
                         WindowEvent::RedrawRequested => {
                             process_redraw(
-                                framework,
-                                emulator,
-                                input,
+                                &mut framework,
+                                &mut emulator,
+                                &mut input,
                                 window,
-                                pixels,
-                                audio_buffer,
+                                &mut pixels,
+                                &audio_buffer,
                                 &mut frame_count,
                                 &mut fps_count,
                                 &mut fps_timer,
