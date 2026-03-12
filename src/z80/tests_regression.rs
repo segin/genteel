@@ -122,7 +122,7 @@ fn regression_push_pop_af_all_bits() {
     }
 }
 
-// Hardware Bug: EX (SP), HL not swapping correctly
+// Z80 Hardware Edge Case: EX (SP), HL not swapping correctly
 #[test]
 fn regression_ex_sp_hl() {
     let mut c = create_z80(&[0xE3]);
