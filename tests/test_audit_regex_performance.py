@@ -29,7 +29,7 @@ def generate_data(filename, size_mb):
             if random.random() < 0.5:
                 chunk += "\nun" + "safe {\n"
             if random.random() < 0.5:
-                chunk += "\nTO" + "DO: fix this\n"
+                chunk += "\n" + "TO" + "DO: fix this\n"
 
             f.write(chunk)
     print("[*] Generation complete.")
