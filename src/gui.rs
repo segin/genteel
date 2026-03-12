@@ -936,7 +936,7 @@ impl Framework {
                 .open(&mut open)
                 .show(&self.egui_ctx, |ui| {
                     // Render tiles to a buffer
-                    let mut pixels = vec![0u8; 128 * 1024 * 4]; // RGBA
+                    let mut image = egui::ColorImage::new([128, 1024], egui::Color32::TRANSPARENT);
                     for tile_idx in 0..2048 {
                         let tile_x = (tile_idx % 16) * 8;
                         let tile_y = (tile_idx / 16) * 8;
@@ -953,16 +953,12 @@ impl Framework {
                                 let g = (((color565 >> 5) & 0x3F) << 2) as u8;
                                 let b = ((color565 & 0x1F) << 3) as u8;
 
-                                let pixel_idx = ((tile_y + y) * 128 + (tile_x + x)) * 4;
-                                pixels[pixel_idx] = r;
-                                pixels[pixel_idx + 1] = g;
-                                pixels[pixel_idx + 2] = b;
-                                pixels[pixel_idx + 3] = 255;
+                                let pixel_idx = (tile_y + y) * 128 + (tile_x + x);
+                                image.pixels[pixel_idx] = egui::Color32::from_rgb(r, g, b);
                             }
                         }
                     }
 
-                    let image = egui::ColorImage::from_rgba_unmultiplied([128, 1024], &pixels);
                     let texture = self.tile_texture.get_or_insert_with(|| {
                         ui.ctx().load_texture(
                             "tile_viewer",
@@ -1077,7 +1073,7 @@ impl Framework {
                                         base: usize,
                                         texture_opt: &mut Option<egui::TextureHandle>,
                                         id: &str| {
-                        let mut pixels = vec![0u8; plane_w * 8 * plane_h * 8 * 4];
+                        let mut image = egui::ColorImage::new([plane_w * 8, plane_h * 8], egui::Color32::TRANSPARENT);
                         for ty in 0..plane_h {
                             for tx in 0..plane_w {
                                 let entry_addr = base + (ty * plane_w + tx) * 2;
@@ -1110,19 +1106,12 @@ impl Framework {
                                         let b = ((color565 & 0x1F) << 3) as u8;
 
                                         let pixel_idx =
-                                            ((ty * 8 + py) * plane_w * 8 + (tx * 8 + px)) * 4;
-                                        pixels[pixel_idx] = r;
-                                        pixels[pixel_idx + 1] = g;
-                                        pixels[pixel_idx + 2] = b;
-                                        pixels[pixel_idx + 3] = 255;
+                                            (ty * 8 + py) * plane_w * 8 + (tx * 8 + px);
+                                        image.pixels[pixel_idx] = egui::Color32::from_rgb(r, g, b);
                                     }
                                 }
                             }
                         }
-                        let image = egui::ColorImage::from_rgba_unmultiplied(
-                            [plane_w * 8, plane_h * 8],
-                            &pixels,
-                        );
                         let texture = texture_opt.get_or_insert_with(|| {
                             ui.ctx().load_texture(
                                 id,
