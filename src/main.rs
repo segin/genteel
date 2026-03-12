@@ -440,31 +440,52 @@ impl Emulator {
             return;
         }
 
-        match parts[0].to_uppercase().as_str() {
-            "SCREENSHOT" => {
-                if parts.len() > 1 {
-                    let raw_path = parts[1];
-                    // Security: Sanitize path to prevent arbitrary file writes
-                    // Only allow saving to current directory by using only the file name component
-                    let path = std::path::Path::new(raw_path)
-                        .file_name()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("screenshot.png");
-
-                    if path != raw_path {
-                        eprintln!(
-                            "Script Warning: Sanitized screenshot path '{}' to '{}'",
-                            raw_path, path
-                        );
-                    }
-
-                    if let Err(e) = self.save_screenshot(path) {
-                        eprintln!("Script Error: Failed to save screenshot to {}: {}", path, e);
-                    } else {
-                        println!("Script: Saved screenshot to {}", path);
-                    }
-                }
+        let cmd_upper = parts[0].to_uppercase();
+        match cmd_upper.as_str() {
+            "SCREENSHOT" => self.handle_screenshot_cmd(&parts),
+            "READ_BYTE" | "WRITE_BYTE" | "ASSERT_BYTE" => {
+                self.handle_byte_cmd(cmd_upper.as_str(), &parts)
             }
+            "READ_WORD" | "WRITE_WORD" | "ASSERT_WORD" => {
+                self.handle_word_cmd(cmd_upper.as_str(), &parts)
+            }
+            "READ_LONG" | "WRITE_LONG" | "ASSERT_LONG" => {
+                self.handle_long_cmd(cmd_upper.as_str(), &parts)
+            }
+            "LOG" => self.handle_log_cmd(&parts),
+            _ => {
+                eprintln!("Script Warning: Unknown command '{}'", parts[0]);
+            }
+        }
+    }
+
+    fn handle_screenshot_cmd(&self, parts: &[&str]) {
+        if parts.len() > 1 {
+            let raw_path = parts[1];
+            // Security: Sanitize path to prevent arbitrary file writes
+            // Only allow saving to current directory by using only the file name component
+            let path = std::path::Path::new(raw_path)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("screenshot.png");
+
+            if path != raw_path {
+                eprintln!(
+                    "Script Warning: Sanitized screenshot path '{}' to '{}'",
+                    raw_path, path
+                );
+            }
+
+            if let Err(e) = self.save_screenshot(path) {
+                eprintln!("Script Error: Failed to save screenshot to {}: {}", path, e);
+            } else {
+                println!("Script: Saved screenshot to {}", path);
+            }
+        }
+    }
+
+    fn handle_byte_cmd(&self, cmd: &str, parts: &[&str]) {
+        match cmd {
             "READ_BYTE" => {
                 if parts.len() > 1 {
                     if let Ok(addr) = u32::from_str_radix(parts[1].trim_start_matches("0x"), 16) {
@@ -499,6 +520,12 @@ impl Emulator {
                     }
                 }
             }
+            _ => {}
+        }
+    }
+
+    fn handle_word_cmd(&self, cmd: &str, parts: &[&str]) {
+        match cmd {
             "READ_WORD" => {
                 if parts.len() > 1 {
                     if let Ok(addr) = u32::from_str_radix(parts[1].trim_start_matches("0x"), 16) {
@@ -533,6 +560,12 @@ impl Emulator {
                     }
                 }
             }
+            _ => {}
+        }
+    }
+
+    fn handle_long_cmd(&self, cmd: &str, parts: &[&str]) {
+        match cmd {
             "READ_LONG" => {
                 if parts.len() > 1 {
                     if let Ok(addr) = u32::from_str_radix(parts[1].trim_start_matches("0x"), 16) {
@@ -567,17 +600,15 @@ impl Emulator {
                     }
                 }
             }
-            "LOG" => {
-                if parts.len() > 1 {
-                    println!("Script LOG: {}", parts[1..].join(" "));
-                }
-            }
-            _ => {
-                eprintln!("Script Warning: Unknown command '{}'", parts[0]);
-            }
+            _ => {}
         }
     }
 
+    fn handle_log_cmd(&self, parts: &[&str]) {
+        if parts.len() > 1 {
+            println!("Script LOG: {}", parts[1..].join(" "));
+        }
+    }
     pub fn step_frame_internal(&mut self) {
         self.internal_frame_count += 1;
         if self.debug {
