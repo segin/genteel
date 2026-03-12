@@ -3,9 +3,9 @@
 //! Provides cross-platform windowing, input handling, and rendering
 //! for the Genesis emulator using pure Rust libraries.
 
-#[cfg(any(feature = "gui", feature = "test_headless"))]
-use winit::keyboard::{KeyCode, Key};
 use std::path::PathBuf;
+#[cfg(any(feature = "gui", feature = "test_headless"))]
+use winit::keyboard::{Key, KeyCode};
 
 /// Genesis display dimensions
 pub const GENESIS_WIDTH: u32 = 320;
@@ -56,7 +56,7 @@ pub struct DebugInfo {
     pub current_rom_path: Option<PathBuf>,
 }
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// Key mapping for player 1 (Physical KeyCode)
 #[cfg(any(feature = "gui", feature = "test_headless"))]
