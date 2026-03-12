@@ -136,7 +136,7 @@ fn regression_ex_sp_hl() {
     assert_eq!(c.memory.read_byte(0x1001 as u32), 0x12);
 }
 
-// Hardware edge case: INC/DEC not affecting V flag correctly
+// Hardware Bug: INC/DEC not affecting V flag correctly
 // Confirmed fixed: implementation correctly sets P/V flag on overflow.
 #[test]
 fn regression_inc_overflow() {
