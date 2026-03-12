@@ -84,7 +84,7 @@ fn regression_jr_positive_overflow() {
     assert_eq!(c.pc, 0x8000);
 }
 
-// Hardware Bug: LD (HL), H/L uses new value after HL is modified
+// Z80 Hardware Edge Case: LD (HL), H/L uses new value after HL is modified
 #[test]
 fn regression_ld_hl_h() {
     let mut c = create_z80(&[0x74]); // LD (HL), H
