@@ -8,7 +8,7 @@ use crate::z80::test_utils::create_z80;
 
 // ============ Common emulator bugs ============
 
-// Bug: DAA not handling N flag correctly
+// Z80 Hardware Edge Case: DAA not handling N flag correctly
 #[test]
 fn regression_daa_after_sub() {
     let mut c = create_z80(&[0x90, 0x27]); // SUB B; DAA
@@ -19,7 +19,7 @@ fn regression_daa_after_sub() {
     assert_eq!(c.a, 0x25);
 }
 
-// Z80 hardware edge case: DJNZ not decrementing B before the test
+// Z80 Hardware Edge Case: DJNZ not decrementing B before the test
 #[test]
 fn regression_djnz_decrements_first() {
     // Case 1: B=1 -> B=0, Jump NOT taken
@@ -49,7 +49,7 @@ fn regression_djnz_wrap() {
     assert_eq!(c.pc, 7); // Taken (2 + 5)
 }
 
-// Bug: JR displacement is signed
+// Z80 Hardware Edge Case: JR displacement is signed
 #[test]
 fn regression_jr_negative() {
     let mut c = create_z80(&[0x00, 0x00, 0x18, 0xFC]); // JR -4
@@ -212,7 +212,7 @@ fn regression_ccf_copies_c_to_h() {
     assert!(c.get_flag(flags::PARITY)); // Preserved
 }
 
-// Bug: NEG with A=0x80 causes overflow
+// Z80 Hardware Edge Case: NEG with A=0x80 causes overflow
 #[test]
 fn regression_neg_80() {
     let mut c = create_z80(&[0xED, 0x44]);
@@ -347,7 +347,7 @@ fn regression_lddr_bc_zero() {
     assert_eq!(c.pc, 0x0000);
 }
 
-// Bug: ADD HL, SP affects only C and H flags
+// Z80 Hardware Edge Case: ADD HL, SP affects only C and H flags
 #[test]
 fn regression_add_hl_sp_flags() {
     // Case 1: Flags set, should remain set
@@ -492,7 +492,7 @@ fn regression_bit_h_flag() {
     );
 }
 
-// Bug: RLC/RRC/RL/RR should affect all flags correctly
+// Z80 Hardware Edge Case: RLC/RRC/RL/RR should affect all flags correctly
 #[test]
 fn regression_rlc_flags() {
     let mut c = create_z80(&[0xCB, 0x07]); // RLC A
@@ -598,7 +598,7 @@ fn regression_srl_flags() {
     assert!(!c.get_flag(flags::ADD_SUB)); // N=0
 }
 
-// Bug: SBC HL, BC with no carry shouldn't borrow
+// Z80 Hardware Edge Case: SBC HL, BC with no carry shouldn't borrow
 #[test]
 fn regression_sbc_hl_no_carry() {
     let mut c = create_z80(&[0xED, 0x42]);
