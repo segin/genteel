@@ -40,3 +40,7 @@ proptest = "1.0"
 [[bench]]
 name = "gui_bench"
 harness = false
+
+[[bench]]
+name = "gui_texture_clone"
+harness = false
