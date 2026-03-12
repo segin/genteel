@@ -39,7 +39,7 @@ fn regression_djnz_decrements_first() {
     assert_eq!(cycles, 13);
 }
 
-// Note: DJNZ wrapping behavior (decrement then test) is a hardware edge case, not an emulator bug.
+// Z80 Hardware Edge Case: DJNZ wrapping behavior (decrement then test)
 #[test]
 fn regression_djnz_wrap() {
     let mut c = create_z80(&[0x10, 0x05]);
