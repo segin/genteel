@@ -564,7 +564,6 @@ impl Framework {
                 });
             });
         });
-
     }
 
     fn render_about_window(&mut self) {
@@ -604,7 +603,6 @@ impl Framework {
                     });
                 });
         }
-
     }
 
     fn render_performance_debug_window(&mut self, debug_info: &DebugInfo) {
@@ -665,7 +663,6 @@ impl Framework {
                 self.gui_state.set_window_open("Performance & Debug", false);
             }
         }
-
     }
 
     fn render_settings_window(&mut self) {
@@ -717,7 +714,6 @@ impl Framework {
                 self.gui_state.set_window_open("Settings", false);
             }
         }
-
     }
 
     fn render_execution_control_window(&mut self) {
@@ -748,7 +744,6 @@ impl Framework {
                 self.gui_state.set_window_open("Execution Control", false);
             }
         }
-
     }
 
     fn render_m68k_status_window(&mut self, debug_info: &DebugInfo) {
@@ -791,7 +786,6 @@ impl Framework {
                 self.gui_state.set_window_open("M68k Status", false);
             }
         }
-
     }
 
     fn render_z80_status_window(&mut self, debug_info: &DebugInfo) {
@@ -847,7 +841,6 @@ impl Framework {
                 self.gui_state.set_window_open("Z80 Status", false);
             }
         }
-
     }
 
     fn render_disassembly_window(&mut self, debug_info: &DebugInfo) {
@@ -896,7 +889,6 @@ impl Framework {
                 self.gui_state.set_window_open("Disassembly", false);
             }
         }
-
     }
 
     fn render_palette_viewer_window(&mut self, debug_info: &DebugInfo) {
@@ -935,7 +927,6 @@ impl Framework {
                 self.gui_state.set_window_open("Palette Viewer", false);
             }
         }
-
     }
 
     fn render_tile_viewer_window(&mut self, debug_info: &DebugInfo) {
@@ -973,8 +964,11 @@ impl Framework {
 
                     let image = egui::ColorImage::from_rgba_unmultiplied([128, 1024], &pixels);
                     let texture = self.tile_texture.get_or_insert_with(|| {
-                        ui.ctx()
-                            .load_texture("tile_viewer", egui::ColorImage::default(), Default::default())
+                        ui.ctx().load_texture(
+                            "tile_viewer",
+                            egui::ColorImage::default(),
+                            Default::default(),
+                        )
                     });
                     texture.set(image, Default::default());
 
@@ -986,7 +980,6 @@ impl Framework {
                 self.gui_state.set_window_open("Tile Viewer", false);
             }
         }
-
     }
 
     fn render_sprite_viewer_window(&mut self, debug_info: &DebugInfo) {
@@ -1041,7 +1034,6 @@ impl Framework {
                 self.gui_state.set_window_open("Sprite Viewer", false);
             }
         }
-
     }
 
     fn render_scroll_plane_viewer_window(&mut self, debug_info: &DebugInfo) {
@@ -1132,7 +1124,11 @@ impl Framework {
                             &pixels,
                         );
                         let texture = texture_opt.get_or_insert_with(|| {
-                            ui.ctx().load_texture(id, egui::ColorImage::default(), Default::default())
+                            ui.ctx().load_texture(
+                                id,
+                                egui::ColorImage::default(),
+                                Default::default(),
+                            )
                         });
                         texture.set(image, Default::default());
                         egui::ScrollArea::both().id_source(id).show(ui, |ui| {
@@ -1153,7 +1149,6 @@ impl Framework {
                 self.gui_state.set_window_open("Scroll Plane Viewer", false);
             }
         }
-
     }
 
     fn render_vdp_memory_hex_window(&mut self, debug_info: &DebugInfo) {
@@ -1182,8 +1177,9 @@ impl Framework {
 
                                             label_buffer.clear();
                                             for i in 0..16 {
-                                                label_buffer
-                                                    .push_str(HEX_LOOKUP[debug_info.vram[addr + i] as usize]);
+                                                label_buffer.push_str(
+                                                    HEX_LOOKUP[debug_info.vram[addr + i] as usize],
+                                                );
                                                 label_buffer.push(' ');
                                             }
                                             ui.label(
@@ -1249,7 +1245,6 @@ impl Framework {
                 self.gui_state.set_window_open("VDP Memory Hex", false);
             }
         }
-
     }
 
     fn render_memory_viewer_window(&mut self, debug_info: &DebugInfo) {
@@ -1278,8 +1273,9 @@ impl Framework {
 
                                             label_buffer.clear();
                                             for i in 0..16 {
-                                                label_buffer
-                                                    .push_str(HEX_LOOKUP[debug_info.wram[addr + i] as usize]);
+                                                label_buffer.push_str(
+                                                    HEX_LOOKUP[debug_info.wram[addr + i] as usize],
+                                                );
                                                 label_buffer.push(' ');
                                             }
                                             ui.label(
@@ -1312,7 +1308,8 @@ impl Framework {
                                             label_buffer.clear();
                                             for i in 0..16 {
                                                 label_buffer.push_str(
-                                                    HEX_LOOKUP[debug_info.z80_ram[addr + i] as usize],
+                                                    HEX_LOOKUP
+                                                        [debug_info.z80_ram[addr + i] as usize],
                                                 );
                                                 label_buffer.push(' ');
                                             }
@@ -1330,7 +1327,6 @@ impl Framework {
                 self.gui_state.set_window_open("Memory Viewer", false);
             }
         }
-
     }
 
     fn render_sound_chip_visualizer_window(&mut self, debug_info: &DebugInfo) {
@@ -1426,7 +1422,6 @@ impl Framework {
                     .set_window_open("Sound Chip Visualizer", false);
             }
         }
-
     }
 
     fn render_audio_channel_waveforms_window(&mut self, debug_info: &DebugInfo) {
@@ -1470,7 +1465,6 @@ impl Framework {
                     .set_window_open("Audio Channel Waveforms", false);
             }
         }
-
     }
 
     fn render_controller_viewer_window(&mut self, debug_info: &DebugInfo) {
@@ -1517,7 +1511,6 @@ impl Framework {
                 self.gui_state.set_window_open("Controller Viewer", false);
             }
         }
-
     }
 
     fn render_expansion_status_window(&mut self) {
@@ -1542,7 +1535,6 @@ impl Framework {
                 self.gui_state.set_window_open("Expansion Status", false);
             }
         }
-
     }
 
     fn render_state_browser_window(&mut self, debug_info: &DebugInfo) {
@@ -1667,7 +1659,11 @@ impl Framework {
 }
 
 #[cfg(feature = "gui")]
-fn collect_debug_info(emulator: &mut Emulator, force_red: bool, pixels_frame: &mut [u8]) -> DebugInfo {
+fn collect_debug_info(
+    emulator: &mut Emulator,
+    force_red: bool,
+    pixels_frame: &mut [u8],
+) -> DebugInfo {
     let mut bus = emulator.bus.borrow_mut();
     if force_red {
         bus.vdp.framebuffer.fill(0xF800); // Red in RGB565
@@ -1696,10 +1692,7 @@ fn collect_debug_info(emulator: &mut Emulator, force_red: bool, pixels_frame: &m
 
     let mut cram_raw = [0u16; 64];
     for i in 0..64 {
-        cram_raw[i] = u16::from_be_bytes([
-            bus.vdp.cram[i * 2],
-            bus.vdp.cram[i * 2 + 1],
-        ]);
+        cram_raw[i] = u16::from_be_bytes([bus.vdp.cram[i * 2], bus.vdp.cram[i * 2 + 1]]);
     }
 
     let mut wram = [0u8; 0x10000];
@@ -1780,9 +1773,7 @@ fn handle_keyboard_input(
             framework.handle_exit(emulator, record_path);
             return true;
         }
-        if let Some((button, _)) =
-            frontend::keycode_to_button(keycode, emulator.input_mapping)
-        {
+        if let Some((button, _)) = frontend::keycode_to_button(keycode, emulator.input_mapping) {
             input.p1.set_button(button, pressed);
             handled = true;
         }
@@ -1806,6 +1797,150 @@ fn handle_keyboard_input(
         }
     }
     false
+}
+
+#[cfg(feature = "gui")]
+#[allow(clippy::too_many_arguments)]
+fn process_redraw(
+    framework: &mut Framework,
+    emulator: &mut Emulator,
+    input: &mut crate::input::FrameInput,
+    window: &winit::window::Window,
+    pixels: &mut pixels::Pixels,
+    audio_buffer: &std::sync::Arc<std::sync::Mutex<crate::audio::AudioBuffer>>,
+    frame_count: &mut u64,
+    fps_count: &mut u64,
+    fps_timer: &mut std::time::Instant,
+    target: &winit::event_loop::EventLoopWindowTarget<()>,
+) {
+    // Poll gamepads
+    #[cfg(feature = "gilrs")]
+    framework.poll_gamepads(&mut input.p1);
+
+    // Check for pick ROM request
+    if framework.gui_state.pick_rom_requested {
+        framework.pick_rom();
+        framework.gui_state.pick_rom_requested = false;
+    }
+
+    // Check for pending ROM load
+    let pending = {
+        match framework.pending_rom_path.lock() {
+            Ok(mut lock) => lock.take(),
+            Err(_) => {
+                eprintln!("Failed to acquire pending_rom_path lock");
+                None
+            }
+        }
+    };
+    if let Some(path) = pending {
+        println!("Loading ROM: {:?}", path);
+        // Security: Whitelist the directory containing the ROM
+        if let Ok(canonical) = path.canonicalize() {
+            if let Some(parent) = canonical.parent() {
+                let _ = emulator.add_allowed_path(parent);
+            }
+        }
+        if let Err(e) = emulator.load_rom(path.to_str().unwrap_or("")) {
+            eprintln!("Failed to load ROM: {}", e);
+        } else {
+            // Update recent ROMs
+            let mut recent = framework.gui_state.recent_roms.clone();
+            recent.retain(|p| p != &path);
+            recent.insert(0, path.clone());
+            recent.truncate(10);
+            framework.gui_state.recent_roms = recent;
+            framework.gui_state.save();
+
+            // Auto-Load if enabled
+            if framework.gui_state.auto_save_load {
+                let auto_path = path.with_extension("auto");
+                if auto_path.exists() {
+                    emulator.load_state_from_path(auto_path);
+                }
+            }
+        }
+    }
+    if framework.gui_state.reset_requested {
+        println!("Hard resetting emulator");
+        emulator.hard_reset();
+        framework.gui_state.reset_requested = false;
+    }
+    if framework.gui_state.close_requested {
+        println!("Closing ROM");
+        if framework.gui_state.auto_save_load {
+            if let Some(path) = &emulator.current_rom_path {
+                emulator.save_state_to_path(path.with_extension("auto"));
+            }
+        }
+        emulator.close_rom();
+        framework.gui_state.save();
+        framework.gui_state.close_requested = false;
+    }
+    if let Some(slot) = framework.gui_state.save_requested {
+        emulator.save_state(slot);
+        framework.gui_state.save_requested = None;
+    }
+    if let Some(slot) = framework.gui_state.load_requested {
+        emulator.load_state(slot);
+        framework.gui_state.load_requested = None;
+    }
+    if let Some(slot) = framework.gui_state.delete_state_requested {
+        emulator.delete_state(slot);
+        framework.gui_state.delete_state_requested = None;
+    }
+
+    // Sync settings from GUI
+    emulator.input_mapping = framework.gui_state.input_mapping;
+    let force_red = framework.gui_state.force_red;
+    emulator.paused = framework.gui_state.paused;
+    emulator.single_step = framework.gui_state.single_step;
+    framework.gui_state.single_step = false; // Reset GUI state
+
+    // Poll GDB (can override GUI state)
+    emulator.poll_gdb();
+
+    // Sync emulator state back to GUI
+    framework.gui_state.paused = emulator.paused;
+
+    frame_count += 1;
+    fps_count += 1;
+    // Update FPS in title bar every second
+    if fps_timer.elapsed() >= std::time::Duration::from_secs(1) {
+        window.set_title(&format!(
+            "Genteel - Sega Genesis Emulator | FPS: {}",
+            fps_count
+        ));
+        fps_count = 0;
+        fps_timer = std::time::Instant::now();
+    }
+    // Debug: Print every 60 frames
+    if emulator.debug && frame_count % 60 == 1 {
+        emulator.log_debug(frame_count);
+    }
+    // Run one frame of emulation
+    emulator.step_frame(Some(&input));
+    // Process audio
+    if let Ok(mut buf) = audio_buffer.lock() {
+        buf.push(&emulator.audio_buffer);
+    }
+    emulator.audio_buffer.clear();
+
+    // Collect debug info and render
+    let debug_info = collect_debug_info(&mut emulator, force_red, pixels.frame_mut());
+
+    // Update egui
+    framework.prepare(window, &debug_info);
+    if let Err(e) = pixels.render_with(|encoder, render_target, context| {
+        // Render the board
+        context.scaling_renderer.render(encoder, render_target);
+        // Render GUI
+        framework.render(encoder, render_target, &context.device, &context.queue);
+        Ok(())
+    }) {
+        eprintln!("Render error: {}", e);
+        target.exit();
+    }
 }
 
 #[cfg(feature = "gui")]
@@ -1906,139 +2041,18 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                             framework.scale_factor(scale_factor as f32);
                         }
                         WindowEvent::RedrawRequested => {
-                            // Poll gamepads
-                            #[cfg(feature = "gilrs")]
-                            framework.poll_gamepads(&mut input.p1);
-
-                            // Check for pick ROM request
-                            if framework.gui_state.pick_rom_requested {
-                                framework.pick_rom();
-                                framework.gui_state.pick_rom_requested = false;
-                            }
-
-                            // Check for pending ROM load
-                            let pending = {
-                                match framework.pending_rom_path.lock() {
-                                    Ok(mut lock) => lock.take(),
-                                    Err(_) => {
-                                        eprintln!("Failed to acquire pending_rom_path lock");
-                                        None
-                                    }
-                                }
-                            };
-                            if let Some(path) = pending {
-                                println!("Loading ROM: {:?}", path);
-                                // Security: Whitelist the directory containing the ROM
-                                if let Ok(canonical) = path.canonicalize() {
-                                    if let Some(parent) = canonical.parent() {
-                                        let _ = emulator.add_allowed_path(parent);
-                                    }
-                                }
-                                if let Err(e) = emulator.load_rom(path.to_str().unwrap_or("")) {
-                                    eprintln!("Failed to load ROM: {}", e);
-                                } else {
-                                    // Update recent ROMs
-                                    let mut recent = framework.gui_state.recent_roms.clone();
-                                    recent.retain(|p| p != &path);
-                                    recent.insert(0, path.clone());
-                                    recent.truncate(10);
-                                    framework.gui_state.recent_roms = recent;
-                                    framework.gui_state.save();
-
-                                    // Auto-Load if enabled
-                                    if framework.gui_state.auto_save_load {
-                                        let auto_path = path.with_extension("auto");
-                                        if auto_path.exists() {
-                                            emulator.load_state_from_path(auto_path);
-                                        }
-                                    }
-                                }
-                            }
-                            if framework.gui_state.reset_requested {
-                                println!("Hard resetting emulator");
-                                emulator.hard_reset();
-                                framework.gui_state.reset_requested = false;
-                            }
-                            if framework.gui_state.close_requested {
-                                println!("Closing ROM");
-                                if framework.gui_state.auto_save_load {
-                                    if let Some(path) = &emulator.current_rom_path {
-                                        emulator.save_state_to_path(path.with_extension("auto"));
-                                    }
-                                }
-                                emulator.close_rom();
-                                framework.gui_state.save();
-                                framework.gui_state.close_requested = false;
-                            }
-                            if let Some(slot) = framework.gui_state.save_requested {
-                                emulator.save_state(slot);
-                                framework.gui_state.save_requested = None;
-                            }
-                            if let Some(slot) = framework.gui_state.load_requested {
-                                emulator.load_state(slot);
-                                framework.gui_state.load_requested = None;
-                            }
-                            if let Some(slot) = framework.gui_state.delete_state_requested {
-                                emulator.delete_state(slot);
-                                framework.gui_state.delete_state_requested = None;
-                            }
-
-                            // Sync settings from GUI
-                            emulator.input_mapping = framework.gui_state.input_mapping;
-                            let force_red = framework.gui_state.force_red;
-                            emulator.paused = framework.gui_state.paused;
-                            emulator.single_step = framework.gui_state.single_step;
-                            framework.gui_state.single_step = false; // Reset GUI state
-
-                            // Poll GDB (can override GUI state)
-                            emulator.poll_gdb();
-
-                            // Sync emulator state back to GUI
-                            framework.gui_state.paused = emulator.paused;
-
-                            frame_count += 1;
-                            fps_count += 1;
-                            // Update FPS in title bar every second
-                            if fps_timer.elapsed() >= std::time::Duration::from_secs(1) {
-                                window.set_title(&format!(
-                                    "Genteel - Sega Genesis Emulator | FPS: {}",
-                                    fps_count
-                                ));
-                                fps_count = 0;
-                                fps_timer = std::time::Instant::now();
-                            }
-                            // Debug: Print every 60 frames
-                            if emulator.debug && frame_count % 60 == 1 {
-                                emulator.log_debug(frame_count);
-                            }
-                            // Run one frame of emulation
-                            emulator.step_frame(Some(&input));
-                            // Process audio
-                            if let Ok(mut buf) = audio_buffer.lock() {
-                                buf.push(&emulator.audio_buffer);
-                            }
-                            emulator.audio_buffer.clear();
-
-                            // Collect debug info and render
-                            let debug_info = collect_debug_info(&mut emulator, force_red, pixels.frame_mut());
-
-                            // Update egui
-                            framework.prepare(window, &debug_info);
-                            if let Err(e) = pixels.render_with(|encoder, render_target, context| {
-                                // Render the board
-                                context.scaling_renderer.render(encoder, render_target);
-                                // Render GUI
-                                framework.render(
-                                    encoder,
-                                    render_target,
-                                    &context.device,
-                                    &context.queue,
-                                );
-                                Ok(())
-                            }) {
-                                eprintln!("Render error: {}", e);
-                                target.exit();
-                            }
+                            process_redraw(
+                                framework,
+                                emulator,
+                                input,
+                                window,
+                                pixels,
+                                audio_buffer,
+                                &mut frame_count,
+                                &mut fps_count,
+                                &mut fps_timer,
+                                target,
+                            );
                         }
                         _ => {}
                     }
