@@ -1180,39 +1180,46 @@ impl Config {
     {
         let mut config = Config::default();
         config.gdb_password = std::env::var("GENTEEL_GDB_PASSWORD").ok();
-        let mut iter = args.into_iter().skip(1).peekable();
-        while let Some(arg) = iter.next() {
+        let mut iter = args.into_iter().skip(1);
+        let mut current_opt = iter.next();
+        while let Some(arg) = current_opt {
             match arg.as_str() {
                 "--help" | "-h" => {
                     config.show_help = true;
+                    current_opt = iter.next();
                 }
                 "--script" => {
                     config.script_path = iter.next();
+                    current_opt = iter.next();
                 }
                 "--record" => {
                     config.record_path = iter.next();
+                    current_opt = iter.next();
                 }
                 "--headless" => {
                     config.headless = true;
-                    if let Some(next) = iter.peek() {
+                    current_opt = iter.next();
+                    if let Some(ref next) = current_opt {
                         if !next.starts_with('-') {
                             if let Ok(n) = next.parse::<u32>() {
                                 config.headless_frames = Some(n);
-                                iter.next(); // consume
+                                current_opt = iter.next(); // consume
                             }
                         }
                     }
                 }
                 "--screenshot" => {
                     config.screenshot_path = iter.next();
+                    current_opt = iter.next();
                 }
                 "--gdb" => {
                     let mut port = debugger::DEFAULT_PORT;
-                    if let Some(next) = iter.peek() {
+                    current_opt = iter.next();
+                    if let Some(ref next) = current_opt {
                         if !next.starts_with('-') {
                             if let Ok(p) = next.parse() {
                                 port = p;
-                                iter.next(); // consume it
+                                current_opt = iter.next(); // consume it
                             }
                         }
                     }
@@ -1220,6 +1227,7 @@ impl Config {
                 }
                 "--dump-audio" => {
                     config.dump_audio_path = iter.next();
+                    current_opt = iter.next();
                 }
                 "--input-mapping" => {
                     if let Some(mapping_str) = iter.next() {
@@ -1232,9 +1240,11 @@ impl Config {
                             }
                         }
                     }
+                    current_opt = iter.next();
                 }
                 "--debug" => {
                     config.debug = true;
+                    current_opt = iter.next();
                 }
                 arg if !arg.starts_with('-') => {
                     if let Some(ref mut path) = config.rom_path {
@@ -1243,9 +1253,11 @@ impl Config {
                     } else {
                         config.rom_path = Some(arg.to_string());
                     }
+                    current_opt = iter.next();
                 }
                 _ => {
                     eprintln!("Unknown option: {}", arg);
+                    current_opt = iter.next();
                 }
             }
         }
