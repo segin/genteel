@@ -1,12 +1,12 @@
 #![allow(unused_imports)]
 //! Z80 Regression Test Suite
 //!
-//! Known edge cases and common emulator bugs.
+//! Known edge cases and common emulator edge cases.
 
 use super::*;
 use crate::z80::test_utils::create_z80;
 
-// ============ Common emulator bugs ============
+// ============ Common emulator edge cases ============
 
 // Z80 Hardware Edge Case: DAA not handling N flag correctly
 #[test]
