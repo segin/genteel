@@ -194,8 +194,8 @@ fn calculate_shift_left(
     mask: u32,
     arithmetic: bool,
 ) -> (u32, bool, bool) {
-    let mut result = val;
-    let mut carry = false;
+    let result;
+    let carry;
     let mut overflow = false;
 
     if count_val >= size_bits {
@@ -234,8 +234,8 @@ fn calculate_shift_right(
     sign_bit: u32,
     arithmetic: bool,
 ) -> (u32, bool, bool) {
-    let mut result = val;
-    let mut carry = false;
+    let result;
+    let carry;
 
     if count_val >= size_bits {
         if arithmetic && (val & sign_bit) != 0 {
