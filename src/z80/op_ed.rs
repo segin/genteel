@@ -1,5 +1,5 @@
 use crate::memory::{IoInterface, MemoryInterface};
-use crate::z80::{flags, Z80};
+use crate::z80::{flags, OpParams, Z80};
 
 pub trait EdOps {
     fn execute_ed_prefix(&mut self) -> u8;
@@ -8,36 +8,39 @@ pub trait EdOps {
 impl<M: MemoryInterface, I: IoInterface> EdOps for Z80<M, I> {
     fn execute_ed_prefix(&mut self) -> u8 {
         let opcode = self.fetch_byte();
-        let x = (opcode >> 6) & 0x03;
-        let y = (opcode >> 3) & 0x07;
-        let z = opcode & 0x07;
-        let p = (y >> 1) & 0x03;
-        let q = y & 0x01;
+        let params = OpParams {
+            opcode,
+            x: (opcode >> 6) & 0x03,
+            y: (opcode >> 3) & 0x07,
+            z: opcode & 0x07,
+            p: ((opcode >> 3) & 0x07) >> 1,
+            q: ((opcode >> 3) & 0x07) & 1,
+        };
 
-        match x {
+        match params.x {
             1 => dispatch_z!(
-                z,
-                execute_ed_in_r_c(self, y),
-                execute_ed_out_c_r(self, y),
-                execute_ed_sbc_adc_hl(self, p, q),
-                execute_ed_ld_rp_nn(self, p, q),
+                params.z,
+                execute_ed_in_r_c(self, &params),
+                execute_ed_out_c_r(self, &params),
+                execute_ed_sbc_adc_hl(self, &params),
+                execute_ed_ld_rp_nn(self, &params),
                 execute_ed_neg(self),
-                execute_ed_retn_reti(self, q),
-                execute_ed_im(self, y),
-                execute_ed_misc(self, y)
+                execute_ed_retn_reti(self, &params),
+                execute_ed_im(self, &params),
+                execute_ed_misc(self, &params)
             ),
-            2 => execute_ed_block(self, y, z),
+            2 => execute_ed_block(self, &params),
             _ => 8, // NONI / NOP
         }
     }
 }
 
-fn execute_ed_in_r_c<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y: u8) -> u8 {
+fn execute_ed_in_r_c<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, params: &OpParams) -> u8 {
     // IN r, (C)
     let port = cpu.bc();
     let val = cpu.read_port(port);
-    if y != 6 {
-        cpu.set_reg(y, val);
+    if params.y != 6 {
+        cpu.set_reg(params.y, val);
     }
     cpu.set_sz_flags(val);
     cpu.set_parity_flag(val);
@@ -46,10 +49,10 @@ fn execute_ed_in_r_c<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y:
     12
 }
 
-fn execute_ed_out_c_r<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y: u8) -> u8 {
+fn execute_ed_out_c_r<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, params: &OpParams) -> u8 {
     // OUT (C), r
     let port = cpu.bc();
-    let val = if y == 6 { 0 } else { cpu.get_reg(y) };
+    let val = if params.y == 6 { 0 } else { cpu.get_reg(params.y) };
     cpu.write_port(port, val);
     12
 }
@@ -62,8 +65,8 @@ fn execute_ed_neg<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>) -> u8
     8
 }
 
-fn execute_ed_retn_reti<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, q: u8) -> u8 {
-    if q == 0 {
+fn execute_ed_retn_reti<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, params: &OpParams) -> u8 {
+    if params.q == 0 {
         // RETN
         cpu.iff1 = cpu.iff2;
         cpu.pc = cpu.pop();
@@ -75,9 +78,9 @@ fn execute_ed_retn_reti<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>,
     }
 }
 
-fn execute_ed_im<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y: u8) -> u8 {
-    // IM y
-    cpu.im = match y & 0x03 {
+fn execute_ed_im<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, params: &OpParams) -> u8 {
+    // IM params.y
+    cpu.im = match params.y & 0x03 {
         0 | 1 => 0,
         2 => 1,
         3 => 2,
@@ -86,15 +89,15 @@ fn execute_ed_im<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y: u8)
     8
 }
 
-fn execute_ed_block<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y: u8, z: u8) -> u8 {
+fn execute_ed_block<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, params: &OpParams) -> u8 {
     // Block instructions
-    if y >= 4 {
+    if params.y >= 4 {
         dispatch_z!(
-            z,
-            execute_ldi_ldd(cpu, y),
-            execute_cpi_cpd(cpu, y),
-            execute_ini_ind(cpu, y),
-            execute_outi_outd(cpu, y),
+            params.z,
+            execute_ldi_ldd(cpu, params),
+            execute_cpi_cpd(cpu, params),
+            execute_ini_ind(cpu, params),
+            execute_outi_outd(cpu, params),
             8, // 4
             8, // 5
             8, // 6
@@ -107,13 +110,12 @@ fn execute_ed_block<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y: 
 
 fn execute_ed_sbc_adc_hl<M: MemoryInterface, I: IoInterface>(
     cpu: &mut Z80<M, I>,
-    p: u8,
-    q: u8,
+    params: &OpParams,
 ) -> u8 {
-    if q == 0 {
+    if params.q == 0 {
         // SBC HL, rp
         let hl = cpu.hl() as u32;
-        let rp = cpu.get_rp(p) as u32;
+        let rp = cpu.get_rp(params.p) as u32;
         let c = if cpu.get_flag(flags::CARRY) { 1u32 } else { 0 };
         let result = hl.wrapping_sub(rp).wrapping_sub(c);
 
@@ -138,7 +140,7 @@ fn execute_ed_sbc_adc_hl<M: MemoryInterface, I: IoInterface>(
     } else {
         // ADC HL, rp
         let hl = cpu.hl() as u32;
-        let rp = cpu.get_rp(p) as u32;
+        let rp = cpu.get_rp(params.p) as u32;
         let c = if cpu.get_flag(flags::CARRY) { 1u32 } else { 0 };
         let result = hl + rp + c;
 
@@ -164,24 +166,23 @@ fn execute_ed_sbc_adc_hl<M: MemoryInterface, I: IoInterface>(
 
 fn execute_ed_ld_rp_nn<M: MemoryInterface, I: IoInterface>(
     cpu: &mut Z80<M, I>,
-    p: u8,
-    q: u8,
+    params: &OpParams,
 ) -> u8 {
     let nn = cpu.fetch_word();
-    if q == 0 {
+    if params.q == 0 {
         // LD (nn), rp
-        cpu.write_word(nn, cpu.get_rp(p));
+        cpu.write_word(nn, cpu.get_rp(params.p));
     } else {
         // LD rp, (nn)
         let val = cpu.read_word(nn);
-        cpu.set_rp(p, val);
+        cpu.set_rp(params.p, val);
     }
     cpu.memptr = nn.wrapping_add(1);
     20
 }
 
-fn execute_ed_misc<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y: u8) -> u8 {
-    match y {
+fn execute_ed_misc<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, params: &OpParams) -> u8 {
+    match params.y {
         0 => {
             // LD I, A
             cpu.i = cpu.a;
@@ -240,7 +241,7 @@ fn execute_ed_misc<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y: u
     }
 }
 
-fn execute_ldi_ldd<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y: u8) -> u8 {
+fn execute_ldi_ldd<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, params: &OpParams) -> u8 {
     let hl = cpu.hl();
     let de = cpu.de();
     let val = cpu.read_byte(hl);
@@ -249,7 +250,7 @@ fn execute_ldi_ldd<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y: u
     let bc = cpu.bc().wrapping_sub(1);
     cpu.set_bc(bc);
 
-    let (new_hl, new_de) = if (y & 1) == 0 {
+    let (new_hl, new_de) = if (params.y & 1) == 0 {
         (hl.wrapping_add(1), de.wrapping_add(1)) // LDI
     } else {
         (hl.wrapping_sub(1), de.wrapping_sub(1)) // LDD
@@ -266,7 +267,7 @@ fn execute_ldi_ldd<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y: u
     cpu.set_flag(flags::ADD_SUB, false);
 
     // LDIR/LDDR
-    if y >= 6 && bc != 0 {
+    if params.y >= 6 && bc != 0 {
         cpu.pc = cpu.pc.wrapping_sub(2);
         cpu.memptr = cpu.pc.wrapping_add(1);
         21
@@ -275,7 +276,7 @@ fn execute_ldi_ldd<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y: u
     }
 }
 
-fn execute_cpi_cpd<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y: u8) -> u8 {
+fn execute_cpi_cpd<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, params: &OpParams) -> u8 {
     let hl = cpu.hl();
     let val = cpu.read_byte(hl);
     let result = cpu.a.wrapping_sub(val);
@@ -283,7 +284,7 @@ fn execute_cpi_cpd<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y: u
     let bc = cpu.bc().wrapping_sub(1);
     cpu.set_bc(bc);
 
-    let new_hl = if (y & 1) == 0 {
+    let new_hl = if (params.y & 1) == 0 {
         hl.wrapping_add(1) // CPI
     } else {
         hl.wrapping_sub(1) // CPD
@@ -309,7 +310,7 @@ fn execute_cpi_cpd<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y: u
     cpu.memptr = cpu.memptr.wrapping_add(1);
 
     // CPIR/CPDR
-    if y >= 6 && bc != 0 && result != 0 {
+    if params.y >= 6 && bc != 0 && result != 0 {
         cpu.pc = cpu.pc.wrapping_sub(2);
         cpu.memptr = cpu.pc.wrapping_add(1);
         21
@@ -318,8 +319,8 @@ fn execute_cpi_cpd<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y: u
     }
 }
 
-fn execute_ini_ind<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y: u8) -> u8 {
-    // INI (y=4), IND (y=5), INIR (y=6), INDR (y=7)
+fn execute_ini_ind<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, params: &OpParams) -> u8 {
+    // INI (params.y=4), IND (params.y=5), INIR (params.y=6), INDR (params.y=7)
 
     let port = cpu.bc();
     let hl = cpu.hl();
@@ -330,7 +331,7 @@ fn execute_ini_ind<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y: u
     let b = cpu.b.wrapping_sub(1);
     cpu.b = b;
 
-    let new_hl = if (y & 1) == 0 {
+    let new_hl = if (params.y & 1) == 0 {
         hl.wrapping_add(1)
     } else {
         hl.wrapping_sub(1)
@@ -343,8 +344,8 @@ fn execute_ini_ind<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y: u
     cpu.set_flag(flags::ZERO, b == 0);
     cpu.set_flag(flags::ADD_SUB, true);
 
-    // Repeat logic for INIR/INDR (y>=6)
-    if y >= 6 && b != 0 {
+    // Repeat logic for INIR/INDR (params.y>=6)
+    if params.y >= 6 && b != 0 {
         cpu.pc = cpu.pc.wrapping_sub(2);
         21
     } else {
@@ -352,8 +353,8 @@ fn execute_ini_ind<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y: u
     }
 }
 
-fn execute_outi_outd<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y: u8) -> u8 {
-    // OUTI (y=4), OUTD (y=5), OTIR (y=6), OTDR (y=7)
+fn execute_outi_outd<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, params: &OpParams) -> u8 {
+    // OUTI (params.y=4), OUTD (params.y=5), OTIR (params.y=6), OTDR (params.y=7)
 
     let hl = cpu.hl();
     let val = cpu.read_byte(hl);
@@ -364,7 +365,7 @@ fn execute_outi_outd<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y:
     let b = cpu.b.wrapping_sub(1);
     cpu.b = b;
 
-    let new_hl = if (y & 1) == 0 {
+    let new_hl = if (params.y & 1) == 0 {
         hl.wrapping_add(1)
     } else {
         hl.wrapping_sub(1)
@@ -374,7 +375,7 @@ fn execute_outi_outd<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y:
     cpu.set_flag(flags::ZERO, b == 0);
     cpu.set_flag(flags::ADD_SUB, true);
 
-    if y >= 6 && b != 0 {
+    if params.y >= 6 && b != 0 {
         cpu.pc = cpu.pc.wrapping_sub(2);
         21
     } else {
