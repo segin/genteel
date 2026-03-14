@@ -1329,6 +1329,22 @@ mod tests {
             decode(0xE1DA),
             Instruction::Bits(BitsInstruction::AslM { dst: dst_asl })
         );
+
+        // Test ASR with AddressDisplacement
+        // ASR.W d16(A3) -> 1110 000 0 11 101 011 -> 0xE0EB
+        let dst_asr_disp = AddressingMode::AddressDisplacement(3);
+        assert_eq!(
+            decode(0xE0EB),
+            Instruction::Bits(BitsInstruction::AsrM { dst: dst_asr_disp })
+        );
+
+        // Test ASL with AddressIndex
+        // ASL.W d8(A4,Xi) -> 1110 000 1 11 110 100 -> 0xE1F4
+        let dst_asl_idx = AddressingMode::AddressIndex(4);
+        assert_eq!(
+            decode(0xE1F4),
+            Instruction::Bits(BitsInstruction::AslM { dst: dst_asl_idx })
+        );
     }
 
     #[test]
@@ -1400,6 +1416,77 @@ mod tests {
         let dst_rol = AddressingMode::AddressPostIncrement(4);
         assert_eq!(
             decode(0xE7DC),
+            Instruction::Bits(BitsInstruction::Rol {
+                size: Size::Word,
+                dst: dst_rol,
+                count
+            })
+        );
+    }
+
+    #[test]
+    fn test_memory_shift_missing() {
+        let count = ShiftCount::Immediate(1);
+
+        // Test LSR.W -(A0) -> 1110 001 0 11 100 000 -> 0xE2E0
+        let dst_lsr = AddressingMode::AddressPreDecrement(0);
+        assert_eq!(
+            decode(0xE2E0),
+            Instruction::Bits(BitsInstruction::Lsr {
+                size: Size::Word,
+                dst: dst_lsr,
+                count
+            })
+        );
+
+        // Test LSL.W d16(A0) -> 1110 001 1 11 101 000 -> 0xE3E8
+        let dst_lsl = AddressingMode::AddressDisplacement(0);
+        assert_eq!(
+            decode(0xE3E8),
+            Instruction::Bits(BitsInstruction::Lsl {
+                size: Size::Word,
+                dst: dst_lsl,
+                count
+            })
+        );
+
+        // Test ROXR.W d8(A0, Xi) -> 1110 010 0 11 110 000 -> 0xE4F0
+        let dst_roxr = AddressingMode::AddressIndex(0);
+        assert_eq!(
+            decode(0xE4F0),
+            Instruction::Bits(BitsInstruction::Roxr {
+                size: Size::Word,
+                dst: dst_roxr,
+                count
+            })
+        );
+
+        // Test ROXL.W (xxx).W -> 1110 010 1 11 111 000 -> 0xE5F8
+        let dst_roxl = AddressingMode::AbsoluteShort;
+        assert_eq!(
+            decode(0xE5F8),
+            Instruction::Bits(BitsInstruction::Roxl {
+                size: Size::Word,
+                dst: dst_roxl,
+                count
+            })
+        );
+
+        // Test ROR.W (xxx).L -> 1110 011 0 11 111 001 -> 0xE6F9
+        let dst_ror = AddressingMode::AbsoluteLong;
+        assert_eq!(
+            decode(0xE6F9),
+            Instruction::Bits(BitsInstruction::Ror {
+                size: Size::Word,
+                dst: dst_ror,
+                count
+            })
+        );
+
+        // Test ROL.W -(A0) -> 1110 011 1 11 100 000 -> 0xE7E0
+        let dst_rol = AddressingMode::AddressPreDecrement(0);
+        assert_eq!(
+            decode(0xE7E0),
             Instruction::Bits(BitsInstruction::Rol {
                 size: Size::Word,
                 dst: dst_rol,
