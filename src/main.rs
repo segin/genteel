@@ -1454,8 +1454,9 @@ mod tests {
         // 3. Load Code to Z80 RAM (0xA00000)
         {
             let mut bus = emulator.bus.borrow_mut();
-            for (i, byte) in z80_code.iter().enumerate() {
-                bus.write_byte(0xA00000 + i as u32, *byte);
+            #[allow(clippy::needless_range_loop)]
+            for i in 0..z80_code.len() {
+                bus.write_byte(0xA00000 + i as u32, z80_code[i]);
             }
         }
         // Verify Z80 RAM at target address is 0 before execution
