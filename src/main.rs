@@ -612,7 +612,6 @@ impl Emulator {
     pub fn step_frame_internal(&mut self) {
         self.internal_frame_count += 1;
         if self.debug {
-            #[cfg(feature = "gui")]
             self.log_debug(self.internal_frame_count);
         }
         // Genesis timing constants (NTSC):
@@ -926,7 +925,6 @@ impl Emulator {
 
             // Log every 600 frames (approx 10 seconds)
             if self.debug && current % 600 == 0 {
-                #[cfg(feature = "gui")]
                 self.log_debug(current as u64);
             }
         }
@@ -1095,7 +1093,6 @@ impl Emulator {
         }
         Ok(())
     }
-    #[allow(dead_code)]
     pub(crate) fn log_debug(&self, frame_count: u64) {
         let bus = self.bus.borrow();
         let disp_en = if bus.vdp.display_enabled() {
