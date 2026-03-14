@@ -1407,4 +1407,35 @@ mod tests {
             })
         );
     }
+
+    #[test]
+    fn test_missing_memory_shift_operations() {
+        // ASR.W d16(A1) -> 1110 000 0 11 101 001 -> 0xE0E9
+        let dst_asr_disp = AddressingMode::AddressDisplacement(1);
+        assert_eq!(
+            decode(0xE0E9),
+            Instruction::Bits(BitsInstruction::AsrM { dst: dst_asr_disp })
+        );
+
+        // ASL.W d8(A2,Xi) -> 1110 000 1 11 110 010 -> 0xE1F2
+        let dst_asl_idx = AddressingMode::AddressIndex(2);
+        assert_eq!(
+            decode(0xE1F2),
+            Instruction::Bits(BitsInstruction::AslM { dst: dst_asl_idx })
+        );
+
+        // ASR.W (xxx).W -> 1110 000 0 11 111 000 -> 0xE0F8
+        let dst_asr_abs_short = AddressingMode::AbsoluteShort;
+        assert_eq!(
+            decode(0xE0F8),
+            Instruction::Bits(BitsInstruction::AsrM { dst: dst_asr_abs_short })
+        );
+
+        // ASL.W (xxx).L -> 1110 000 1 11 111 001 -> 0xE1F9
+        let dst_asl_abs_long = AddressingMode::AbsoluteLong;
+        assert_eq!(
+            decode(0xE1F9),
+            Instruction::Bits(BitsInstruction::AslM { dst: dst_asl_abs_long })
+        );
+    }
 }
