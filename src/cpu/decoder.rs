@@ -1332,6 +1332,24 @@ mod tests {
     }
 
     #[test]
+    fn test_decode_memory_shifts_invalid() {
+        // Invalid memory shift (Mode 7 Reg 5 is invalid and from_mode_reg returns None)
+        // 1110 000 0 11 111 101 -> 0xE0FD
+        // Should return Instruction::System(SystemInstruction::Unimplemented { opcode: 0xE0FD })
+        assert_eq!(
+            decode(0xE0FD),
+            Instruction::System(SystemInstruction::Unimplemented { opcode: 0xE0FD })
+        );
+
+        // Mode 7 Reg 6 (110)
+        // 1110 000 0 11 111 110 -> 0xE0FE
+        assert_eq!(
+            decode(0xE0FE),
+            Instruction::System(SystemInstruction::Unimplemented { opcode: 0xE0FE })
+        );
+    }
+
+    #[test]
     fn test_memory_shift_wildcard() {
         let count = ShiftCount::Immediate(1);
 
