@@ -40,6 +40,9 @@ pub const SLOT_NAMES: [&str; 10] = [
 
 pub const SLOT_EXTS: [&str; 10] = ["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9"];
 
+/// Maximum GUI configuration size in bytes (1MB) to prevent OOM
+const MAX_GUI_CONFIG_SIZE: u64 = 1024 * 1024;
+
 pub const HEX_LOOKUP: [&str; 256] = [
     "00", "01", "02", "03", "04", "05", "06", "07", "08", "09", "0A", "0B", "0C", "0D", "0E", "0F",
     "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "1A", "1B", "1C", "1D", "1E", "1F",
@@ -127,10 +130,23 @@ impl GuiState {
     }
 
     pub fn load_or_default(input_mapping: InputMapping) -> Self {
-        if let Ok(content) = std::fs::read_to_string("gui_config.json") {
-            if let Ok(mut state) = serde_json::from_str::<Self>(&content) {
-                state.register_default_windows();
-                return state;
+        if let Ok(file) = std::fs::File::open("gui_config.json") {
+            if let Ok(metadata) = file.metadata() {
+                if metadata.len() <= MAX_GUI_CONFIG_SIZE {
+                    use std::io::Read;
+                    let mut content = String::new();
+                    if file
+                        .take(MAX_GUI_CONFIG_SIZE + 1)
+                        .read_to_string(&mut content)
+                        .is_ok()
+                        && content.len() as u64 <= MAX_GUI_CONFIG_SIZE
+                    {
+                        if let Ok(mut state) = serde_json::from_str::<Self>(&content) {
+                            state.register_default_windows();
+                            return state;
+                        }
+                    }
+                }
             }
         }
         Self::new(input_mapping)
