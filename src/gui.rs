@@ -272,6 +272,7 @@ pub struct Framework {
     pub renderer: egui_wgpu::Renderer,
     pub gui_state: GuiState,
     pub tile_texture: Option<egui::TextureHandle>,
+    pub tile_viewer_image: std::sync::Arc<egui::ColorImage>,
     pub plane_a_texture: Option<egui::TextureHandle>,
     pub plane_b_texture: Option<egui::TextureHandle>,
     pub pending_rom_path: Arc<Mutex<Option<PathBuf>>>,
@@ -311,6 +312,7 @@ impl Framework {
             renderer,
             gui_state,
             tile_texture: None,
+            tile_viewer_image: std::sync::Arc::new(egui::ColorImage::new([128, 1024], egui::Color32::TRANSPARENT)),
             plane_a_texture: None,
             plane_b_texture: None,
             pending_rom_path: Arc::new(Mutex::new(None)),
@@ -971,7 +973,7 @@ impl Framework {
                 .open(&mut open)
                 .show(&self.egui_ctx, |ui| {
                     // Render tiles to a buffer
-                    let mut image = egui::ColorImage::new([128, 1024], egui::Color32::TRANSPARENT);
+                    let image = std::sync::Arc::make_mut(&mut self.tile_viewer_image);
                     for tile_idx in 0..2048 {
                         let tile_x = (tile_idx % 16) * 8;
                         let tile_y = (tile_idx / 16) * 8;
@@ -1001,7 +1003,7 @@ impl Framework {
                             Default::default(),
                         )
                     });
-                    texture.set(image, Default::default());
+                    texture.set(self.tile_viewer_image.clone(), Default::default());
 
                     egui::ScrollArea::vertical().show(ui, |ui| {
                         ui.image(&*texture);
