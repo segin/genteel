@@ -371,11 +371,7 @@ fn render_sprite_scanline(
         // Prefetch the 4 bytes (8 pixels) for this row.
         // row_addr is guaranteed to be 4-byte aligned (32*k + 4*j).
         // We already checked row_addr + 4 <= 0x10000.
-        let patterns: [u8; 4] = unsafe {
-            vram.get_unchecked(row_addr..row_addr + 4)
-                .try_into()
-                .unwrap_unchecked()
-        };
+        let patterns: [u8; 4] = vram[row_addr..row_addr + 4].try_into().unwrap();
 
         let base_screen_x = attr.h_pos.wrapping_add(tile_h_offset * 8);
 
