@@ -44,6 +44,18 @@ struct Z80Change {
     new_req: bool,
     new_rst: bool,
 }
+struct SystemContext<'a> {
+    cpu: &'a mut Cpu,
+    bus: &'a mut Bus,
+    z80: &'a mut Z80<Z80Bus, Z80Bus>,
+    z80_cycle_debt: &'a mut f32,
+    z80_last_bus_req: &'a mut bool,
+    z80_last_reset: &'a mut bool,
+    z80_trace_count: &'a mut u32,
+    internal_frame_count: u64,
+    debug: bool,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct CpuBatchResult {
     cycles: u32,
@@ -740,22 +752,13 @@ impl Emulator {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn run_cpu_batch_static(
-        cpu: &mut Cpu,
-        bus: &mut Bus,
+        ctx: &mut SystemContext,
         max_cycles: u32,
-        z80: &mut Z80<Z80Bus, Z80Bus>,
-        z80_cycle_debt: &mut f32,
         line: u16,
         active_lines: u16,
-        internal_frame_count: u64,
-        z80_last_bus_req: &mut bool,
-        z80_last_reset: &mut bool,
-        z80_trace_count: &mut u32,
-        debug: bool,
     ) -> CpuBatchResult {
-        let (initial_req, initial_rst) = (bus.z80_bus_request, bus.z80_reset);
+        let (initial_req, initial_rst) = (ctx.bus.z80_bus_request, ctx.bus.z80_reset);
         let mut pending_cycles = 0;
         loop {
             if pending_cycles >= max_cycles {
@@ -765,16 +768,16 @@ impl Emulator {
                 };
             }
             let m68k_cycles = {
-                let cycles = if bus.dma_active() {
+                let cycles = if ctx.bus.dma_active() {
                     2 // Yield 2 cycles to let the bus step during DMA
                 } else {
-                    cpu.step_instruction(bus)
+                    ctx.cpu.step_instruction(ctx.bus)
                 };
 
                 // Real Genesis uses level-triggered interrupts. If the game reads the VDP status
                 // or disables V-Int, the VDP drops the IRQ line. We must cancel it on the CPU.
-                if cpu.pending_interrupt == 6 && !bus.vdp.vblank_pending() {
-                    cpu.cancel_interrupt(6);
+                if ctx.cpu.pending_interrupt == 6 && !ctx.bus.vdp.vblank_pending() {
+                    ctx.cpu.cancel_interrupt(6);
                 }
 
                 cycles
@@ -782,21 +785,21 @@ impl Emulator {
 
             let trigger_vint = line == active_lines && pending_cycles < 10;
             Self::sync_components(
-                bus,
+                ctx.bus,
                 m68k_cycles,
-                z80,
-                z80_cycle_debt,
+                ctx.z80,
+                ctx.z80_cycle_debt,
                 trigger_vint,
-                internal_frame_count,
-                z80_last_bus_req,
-                z80_last_reset,
-                z80_trace_count,
-                cpu.pc,
-                debug,
+                ctx.internal_frame_count,
+                ctx.z80_last_bus_req,
+                ctx.z80_last_reset,
+                ctx.z80_trace_count,
+                ctx.cpu.pc,
+                ctx.debug,
             );
 
             // Check for Z80 state change
-            let (req, rst) = (bus.z80_bus_request, bus.z80_reset);
+            let (req, rst) = (ctx.bus.z80_bus_request, ctx.bus.z80_reset);
 
             if req != initial_req || rst != initial_rst {
                 return CpuBatchResult {
@@ -820,20 +823,21 @@ impl Emulator {
         while cycles_scanline < CYCLES_PER_LINE {
             let remaining = CYCLES_PER_LINE - cycles_scanline;
             let limit = std::cmp::min(remaining, BATCH_SIZE);
-            let result = Self::run_cpu_batch_static(
-                &mut self.cpu,
-                &mut *bus,
-                limit,
-                &mut self.z80,
-                z80_cycle_debt,
-                line,
-                active_lines,
-                self.internal_frame_count,
-                &mut self.z80_last_bus_req,
-                &mut self.z80_last_reset,
-                &mut self.z80_trace_count,
-                self.debug,
-            );
+            let result = {
+                let mut ctx = SystemContext {
+                    cpu: &mut self.cpu,
+                    bus: &mut *bus,
+                    z80: &mut self.z80,
+                    z80_cycle_debt: &mut *z80_cycle_debt,
+                    z80_last_bus_req: &mut self.z80_last_bus_req,
+                    z80_last_reset: &mut self.z80_last_reset,
+                    z80_trace_count: &mut self.z80_trace_count,
+                    internal_frame_count: self.internal_frame_count,
+                    debug: self.debug,
+                };
+
+                Self::run_cpu_batch_static(&mut ctx, limit, line, active_lines)
+            };
 
             cycles_scanline += result.cycles;
 
