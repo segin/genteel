@@ -103,15 +103,24 @@ impl AudioBuffer {
 
     /// Pop samples from the buffer into destination
     pub fn pop(&mut self, dest: &mut [i16]) {
-        for sample in dest.iter_mut() {
-            if self.available > 0 {
-                *sample = self.buffer[self.read_pos];
-                self.read_pos = (self.read_pos + 1) % self.buffer.len();
-                self.available -= 1;
-            } else {
-                // Underrun - output silence
-                *sample = 0;
+        let samples_to_read = std::cmp::min(dest.len(), self.available);
+
+        if samples_to_read > 0 {
+            let first_chunk_len = std::cmp::min(samples_to_read, self.buffer.len() - self.read_pos);
+            dest[..first_chunk_len].copy_from_slice(&self.buffer[self.read_pos..self.read_pos + first_chunk_len]);
+
+            let second_chunk_len = samples_to_read - first_chunk_len;
+            if second_chunk_len > 0 {
+                dest[first_chunk_len..samples_to_read].copy_from_slice(&self.buffer[..second_chunk_len]);
             }
+
+            self.read_pos = (self.read_pos + samples_to_read) % self.buffer.len();
+            self.available -= samples_to_read;
+        }
+
+        if samples_to_read < dest.len() {
+            // Underrun - output silence for the remainder
+            dest[samples_to_read..].fill(0);
         }
     }
 
