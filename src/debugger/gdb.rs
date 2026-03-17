@@ -1276,10 +1276,24 @@ mod tests {
 
         // Verify that the server sent "E01"
         client_stream.set_nonblocking(false).unwrap();
+
+        // Wait and read the first byte to handle the ACK '+'
+        let mut first_byte = [0u8; 1];
+        client_stream.read_exact(&mut first_byte).expect("Failed to read ACK");
+
         let mut response = [0u8; 7]; // $E01#XX
-        client_stream
-            .read_exact(&mut response)
-            .expect("Failed to read response from server");
+
+        if first_byte[0] == b'+' {
+            client_stream
+                .read_exact(&mut response)
+                .expect("Failed to read response from server");
+        } else {
+            response[0] = first_byte[0];
+            client_stream
+                .read_exact(&mut response[1..7])
+                .expect("Failed to read response from server");
+        }
+
         assert_eq!(&response[0..4], b"$E01");
     }
 
@@ -1602,6 +1616,24 @@ mod tests {
 
         let max_pass_c = "b".repeat(MAX_PASSWORD_CHECK_LEN);
         assert!(!constant_time_eq(&max_pass_a, &max_pass_c));
+    }
+
+    #[test]
+    fn test_port() {
+        // Create a server on port 0, which lets the OS assign a random free port.
+        let server = GdbServer::new(0, None).expect("Failed to create GDB server");
+        let assigned_port = server.port();
+
+        // The OS should assign a valid port > 0
+        assert!(assigned_port > 0, "Expected assigned port to be greater than 0");
+
+        // We can also verify that the local_addr matches
+        let local_addr_port = server
+            .listener
+            .local_addr()
+            .expect("Failed to get local addr")
+            .port();
+        assert_eq!(assigned_port, local_addr_port);
     }
 
     #[test]
