@@ -258,6 +258,7 @@ pub struct Framework {
     pub tile_texture: Option<egui::TextureHandle>,
     pub plane_a_texture: Option<egui::TextureHandle>,
     pub plane_b_texture: Option<egui::TextureHandle>,
+    pub scroll_plane_image: std::sync::Arc<egui::ColorImage>,
     pub pending_rom_path: Arc<Mutex<Option<PathBuf>>>,
     #[cfg(feature = "gilrs")]
     pub gilrs: Option<Gilrs>,
@@ -297,6 +298,7 @@ impl Framework {
             tile_texture: None,
             plane_a_texture: None,
             plane_b_texture: None,
+            scroll_plane_image: std::sync::Arc::new(egui::ColorImage::default()),
             pending_rom_path: Arc::new(Mutex::new(None)),
             #[cfg(feature = "gilrs")]
             gilrs: init_gilrs(),
@@ -1091,8 +1093,16 @@ impl Framework {
                     let render_plane = |ui: &mut egui::Ui,
                                         base: usize,
                                         texture_opt: &mut Option<egui::TextureHandle>,
+                                        image_buf: &mut std::sync::Arc<egui::ColorImage>,
                                         id: &str| {
-                        let mut image = egui::ColorImage::new([plane_w * 8, plane_h * 8], egui::Color32::TRANSPARENT);
+                        let required_size = [plane_w * 8, plane_h * 8];
+                        let image = std::sync::Arc::make_mut(image_buf);
+                        if image.size != required_size {
+                            *image = egui::ColorImage::new(required_size, egui::Color32::TRANSPARENT);
+                        } else {
+                            image.pixels.fill(egui::Color32::TRANSPARENT);
+                        }
+
                         for ty in 0..plane_h {
                             for tx in 0..plane_w {
                                 let entry_addr = base + (ty * plane_w + tx) * 2;
@@ -1138,7 +1148,7 @@ impl Framework {
                                 Default::default(),
                             )
                         });
-                        texture.set(image, Default::default());
+                        texture.set(egui::ImageData::Color(std::sync::Arc::clone(image_buf)), Default::default());
                         egui::ScrollArea::both().id_source(id).show(ui, |ui| {
                             ui.image(&*texture);
                         });
@@ -1146,10 +1156,10 @@ impl Framework {
 
                     match self.gui_state.scroll_plane_tab {
                         PlaneTab::PlaneA => {
-                            render_plane(ui, plane_a_base, &mut self.plane_a_texture, "plane_a");
+                            render_plane(ui, plane_a_base, &mut self.plane_a_texture, &mut self.scroll_plane_image, "plane_a");
                         }
                         PlaneTab::PlaneB => {
-                            render_plane(ui, plane_b_base, &mut self.plane_b_texture, "plane_b");
+                            render_plane(ui, plane_b_base, &mut self.plane_b_texture, &mut self.scroll_plane_image, "plane_b");
                         }
                     }
                 });

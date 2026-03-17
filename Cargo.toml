@@ -44,3 +44,7 @@ harness = false
 [[bench]]
 name = "gui_texture_clone"
 harness = false
+[[bin]]
+name = "bench_gui"
+path = "src/benches_gui.rs"
+required-features = ["gui"]
