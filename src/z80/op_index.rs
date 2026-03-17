@@ -1,6 +1,6 @@
 use crate::memory::{IoInterface, MemoryInterface};
 use crate::z80::op_cb::CbOps;
-use crate::z80::{flags, Z80};
+use crate::z80::{flags, OpParams, Z80};
 
 pub trait IndexOps {
     fn execute_dd_prefix(&mut self) -> u8;
@@ -95,10 +95,10 @@ fn calc_index_addr<M: MemoryInterface, I: IoInterface>(
 
 fn execute_index_alu<M: MemoryInterface, I: IoInterface>(
     cpu: &mut Z80<M, I>,
-    op_index: u8,
+    params: &OpParams,
     val: u8,
 ) {
-    match op_index {
+    match params.y {
         0 => cpu.add_a(val, false),
         1 => cpu.add_a(val, true),
         2 => cpu.sub_a(val, false, true),
@@ -113,10 +113,10 @@ fn execute_index_alu<M: MemoryInterface, I: IoInterface>(
 
 fn execute_index_add_16<M: MemoryInterface, I: IoInterface>(
     cpu: &mut Z80<M, I>,
-    opcode: u8,
+    params: &OpParams,
     is_ix: bool,
 ) -> u8 {
-    match opcode {
+    match params.opcode {
         0x09 => {
             let val = cpu.bc();
             add_index(cpu, val, is_ix);
@@ -142,10 +142,10 @@ fn execute_index_add_16<M: MemoryInterface, I: IoInterface>(
 
 fn execute_index_load_store_16<M: MemoryInterface, I: IoInterface>(
     cpu: &mut Z80<M, I>,
-    opcode: u8,
+    params: &OpParams,
     is_ix: bool,
 ) -> u8 {
-    match opcode {
+    match params.opcode {
         0x21 => {
             let val = cpu.fetch_word();
             set_index_val(cpu, val, is_ix);
@@ -169,10 +169,10 @@ fn execute_index_load_store_16<M: MemoryInterface, I: IoInterface>(
 
 fn execute_index_inc_dec_16<M: MemoryInterface, I: IoInterface>(
     cpu: &mut Z80<M, I>,
-    opcode: u8,
+    params: &OpParams,
     is_ix: bool,
 ) -> u8 {
-    match opcode {
+    match params.opcode {
         0x23 => {
             let val = get_index_val(cpu, is_ix);
             set_index_val(cpu, val.wrapping_add(1), is_ix);
@@ -189,10 +189,10 @@ fn execute_index_inc_dec_16<M: MemoryInterface, I: IoInterface>(
 
 fn execute_index_8bit_halves<M: MemoryInterface, I: IoInterface>(
     cpu: &mut Z80<M, I>,
-    opcode: u8,
+    params: &OpParams,
     is_ix: bool,
 ) -> u8 {
-    match opcode {
+    match params.opcode {
         0x24 => {
             let val = get_index_h(cpu, is_ix);
             let res = cpu.inc(val);
@@ -233,12 +233,12 @@ fn execute_index_8bit_halves<M: MemoryInterface, I: IoInterface>(
 
 fn execute_index_mem_8bit<M: MemoryInterface, I: IoInterface>(
     cpu: &mut Z80<M, I>,
-    opcode: u8,
+    params: &OpParams,
     is_ix: bool,
 ) -> u8 {
     let d = cpu.fetch_byte() as i8;
     let addr = calc_index_addr(cpu, d, is_ix);
-    match opcode {
+    match params.opcode {
         0x34 => {
             let val = cpu.read_byte(addr);
             let result = cpu.inc(val);
@@ -262,37 +262,37 @@ fn execute_index_mem_8bit<M: MemoryInterface, I: IoInterface>(
 
 fn execute_index_alu_mem<M: MemoryInterface, I: IoInterface>(
     cpu: &mut Z80<M, I>,
-    opcode: u8,
+    params: &OpParams,
     is_ix: bool,
 ) -> u8 {
     let d = cpu.fetch_byte() as i8;
     let addr = calc_index_addr(cpu, d, is_ix);
     let val = cpu.read_byte(addr);
-    execute_index_alu(cpu, (opcode >> 3) & 0x07, val);
+    execute_index_alu(cpu, params, val);
     19
 }
 
 fn execute_index_load_r_mem<M: MemoryInterface, I: IoInterface>(
     cpu: &mut Z80<M, I>,
-    opcode: u8,
+    params: &OpParams,
     is_ix: bool,
 ) -> u8 {
     let d = cpu.fetch_byte() as i8;
     let addr = calc_index_addr(cpu, d, is_ix);
     let val = cpu.read_byte(addr);
-    let r = (opcode >> 3) & 0x07;
+    let r = params.y;
     cpu.set_reg(r, val);
     19
 }
 
 fn execute_index_load_mem_r<M: MemoryInterface, I: IoInterface>(
     cpu: &mut Z80<M, I>,
-    opcode: u8,
+    params: &OpParams,
     is_ix: bool,
 ) -> u8 {
     let d = cpu.fetch_byte() as i8;
     let addr = calc_index_addr(cpu, d, is_ix);
-    let r = opcode & 0x07;
+    let r = params.z;
     let val = cpu.get_reg(r);
     cpu.write_byte(addr, val);
     19
@@ -300,10 +300,10 @@ fn execute_index_load_mem_r<M: MemoryInterface, I: IoInterface>(
 
 fn execute_index_stack_control<M: MemoryInterface, I: IoInterface>(
     cpu: &mut Z80<M, I>,
-    opcode: u8,
+    params: &OpParams,
     is_ix: bool,
 ) -> u8 {
-    match opcode {
+    match params.opcode {
         0xE1 => {
             let val = cpu.pop();
             set_index_val(cpu, val, is_ix);
@@ -338,12 +338,12 @@ fn execute_index_stack_control<M: MemoryInterface, I: IoInterface>(
 
 fn execute_index_undoc_load<M: MemoryInterface, I: IoInterface>(
     cpu: &mut Z80<M, I>,
-    opcode: u8,
+    params: &OpParams,
     is_ix: bool,
 ) -> u8 {
     // Opcode 0x76 (HALT) is handled by caller
-    let r_src = opcode & 0x07;
-    let r_dest = (opcode >> 3) & 0x07;
+    let r_src = params.z;
+    let r_dest = params.y;
     let val = get_index_byte(cpu, r_src, is_ix);
     set_index_byte(cpu, r_dest, val, is_ix);
     8
@@ -351,11 +351,11 @@ fn execute_index_undoc_load<M: MemoryInterface, I: IoInterface>(
 
 fn execute_index_undoc_alu<M: MemoryInterface, I: IoInterface>(
     cpu: &mut Z80<M, I>,
-    opcode: u8,
+    params: &OpParams,
     is_ix: bool,
 ) -> u8 {
-    let val = get_index_byte(cpu, opcode & 0x07, is_ix);
-    execute_index_alu(cpu, (opcode >> 3) & 0x07, val);
+    let val = get_index_byte(cpu, params.z, is_ix);
+    execute_index_alu(cpu, params, val);
     8
 }
 
@@ -364,25 +364,33 @@ fn execute_index_prefix<M: MemoryInterface, I: IoInterface>(
     is_ix: bool,
 ) -> u8 {
     let opcode = cpu.fetch_byte();
+    let params = OpParams {
+        opcode,
+        x: (opcode >> 6) & 0x03,
+        y: (opcode >> 3) & 0x07,
+        z: opcode & 0x07,
+        p: ((opcode >> 3) & 0x07) >> 1,
+        q: ((opcode >> 3) & 0x07) & 1,
+    };
 
-    match opcode {
-        0x09 | 0x19 | 0x29 | 0x39 => execute_index_add_16(cpu, opcode, is_ix),
-        0x21 | 0x22 | 0x2A => execute_index_load_store_16(cpu, opcode, is_ix),
-        0x23 | 0x2B => execute_index_inc_dec_16(cpu, opcode, is_ix),
-        0x24 | 0x25 | 0x26 | 0x2C | 0x2D | 0x2E => execute_index_8bit_halves(cpu, opcode, is_ix),
-        0x34..=0x36 => execute_index_mem_8bit(cpu, opcode, is_ix),
+    match params.opcode {
+        0x09 | 0x19 | 0x29 | 0x39 => execute_index_add_16(cpu, &params, is_ix),
+        0x21 | 0x22 | 0x2A => execute_index_load_store_16(cpu, &params, is_ix),
+        0x23 | 0x2B => execute_index_inc_dec_16(cpu, &params, is_ix),
+        0x24 | 0x25 | 0x26 | 0x2C | 0x2D | 0x2E => execute_index_8bit_halves(cpu, &params, is_ix),
+        0x34..=0x36 => execute_index_mem_8bit(cpu, &params, is_ix),
 
         // Specific ALU ops
         0x86 | 0x8E | 0x96 | 0x9E | 0xA6 | 0xAE | 0xB6 | 0xBE => {
-            execute_index_alu_mem(cpu, opcode, is_ix)
+            execute_index_alu_mem(cpu, &params, is_ix)
         }
 
         // LD r, (IX/IY+d)
         0x46 | 0x4E | 0x56 | 0x5E | 0x66 | 0x6E | 0x7E => {
-            execute_index_load_r_mem(cpu, opcode, is_ix)
+            execute_index_load_r_mem(cpu, &params, is_ix)
         }
         // LD (IX/IY+d), r
-        0x70..=0x75 | 0x77 => execute_index_load_mem_r(cpu, opcode, is_ix),
+        0x70..=0x75 | 0x77 => execute_index_load_mem_r(cpu, &params, is_ix),
 
         0x76 => {
             cpu.halted = true;
@@ -391,13 +399,13 @@ fn execute_index_prefix<M: MemoryInterface, I: IoInterface>(
 
         // Generic Undocumented (using index halves)
         // Note: 0x76 HALT is handled above, and specific LDs are also handled above.
-        0x40..=0x7F => execute_index_undoc_load(cpu, opcode, is_ix),
+        0x40..=0x7F => execute_index_undoc_load(cpu, &params, is_ix),
 
         // Generic Undocumented ALU
         // Note: Specific ALU ops (IX+d) are handled above.
-        0x80..=0xBF => execute_index_undoc_alu(cpu, opcode, is_ix),
+        0x80..=0xBF => execute_index_undoc_alu(cpu, &params, is_ix),
 
-        0xE1 | 0xE3 | 0xE5 | 0xE9 | 0xF9 => execute_index_stack_control(cpu, opcode, is_ix),
+        0xE1 | 0xE3 | 0xE5 | 0xE9 | 0xF9 => execute_index_stack_control(cpu, &params, is_ix),
 
         0xCB => {
             let d = cpu.fetch_byte() as i8;
