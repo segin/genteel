@@ -968,11 +968,14 @@ mod tests_regression;
 // #[cfg(test)]
 // mod tests_undoc;
 
-// #[cfg(test)]
-// mod tests_exhaustive;
+#[cfg(test)]
+mod tests_exhaustive;
 
 #[cfg(test)]
 mod tests_block;
+
+#[cfg(test)]
+mod tests_daa;
 
 // #[cfg(test)]
 // mod tests_halfcarry;

@@ -260,4 +260,25 @@ mod tests {
         let expected_data_size = 20u32;
         assert_eq!(&buffer[40..44], &expected_data_size.to_le_bytes());
     }
+
+    #[test]
+    fn test_wav_writer_channels() {
+        let mut buffer = Vec::new();
+
+        // Test with 1 channel
+        {
+            let writer = Cursor::new(&mut buffer);
+            let wav_mono = WavWriter::new_with_writer(writer, 44100, 1).unwrap();
+            assert_eq!(wav_mono.channels(), 1);
+        }
+
+        buffer.clear();
+
+        // Test with 2 channels
+        {
+            let writer = Cursor::new(&mut buffer);
+            let wav_stereo = WavWriter::new_with_writer(writer, 44100, 2).unwrap();
+            assert_eq!(wav_stereo.channels(), 2);
+        }
+    }
 }

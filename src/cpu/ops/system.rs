@@ -347,6 +347,44 @@ mod tests {
     }
 
     #[test]
+    fn test_exec_bra_short_forward() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        cpu.pc = 0x1002; // PC after instruction word
+        let cycles = exec_bra(&mut cpu, 0x06, &mut memory);
+        assert_eq!(cycles, 10);
+        assert_eq!(cpu.pc, 0x1008);
+    }
+
+    #[test]
+    fn test_exec_bra_short_backward() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        cpu.pc = 0x1002; // PC after instruction word
+        let cycles = exec_bra(&mut cpu, -2, &mut memory); // 0xFE
+        assert_eq!(cycles, 10);
+        assert_eq!(cpu.pc, 0x1000);
+    }
+
+    #[test]
+    fn test_exec_bra_word_forward() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        cpu.pc = 0x1002;
+        memory.write_word(0x1002, 0x0100);
+        let cycles = exec_bra(&mut cpu, 0, &mut memory);
+        assert_eq!(cycles, 10);
+        assert_eq!(cpu.pc, 0x1102);
+    }
+
+    #[test]
+    fn test_exec_bra_word_backward() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        cpu.pc = 0x1102;
+        memory.write_word(0x1102, -0x100i16 as u16); // -256
+        let cycles = exec_bra(&mut cpu, 0, &mut memory);
+        assert_eq!(cycles, 10);
+        assert_eq!(cpu.pc, 0x1002);
+    }
+
+    #[test]
     fn test_exec_trap_user_to_supervisor() {
         let (mut cpu, mut memory) = create_test_cpu();
 
