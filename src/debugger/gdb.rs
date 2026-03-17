@@ -56,6 +56,8 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
         let within_bounds = (i < a_len && i < b_len) as u8;
 
         // Retrieve bytes safely; if out of bounds, use a dummy value.
+        // We use branchless operations to avoid timing attacks.
+        // `unwrap_or(0)` is NOT constant-time and should be avoided.
         let a_idx = i * (i < a_len) as usize;
         let b_idx = i * (i < b_len) as usize;
 
