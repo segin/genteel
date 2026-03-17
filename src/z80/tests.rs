@@ -42,6 +42,43 @@ fn test_hl_pair() {
     assert_eq!(z80.hl(), 0xBEEF);
 }
 
+#[test]
+fn test_set_rp() {
+    let mut z80 = create_z80(&[]);
+
+    // Test index 0 -> BC
+    z80.set_rp(0, 0x1234);
+    assert_eq!(z80.bc(), 0x1234);
+
+    // Test index 1 -> DE
+    z80.set_rp(1, 0x5678);
+    assert_eq!(z80.de(), 0x5678);
+
+    // Test index 2 -> HL
+    z80.set_rp(2, 0x9ABC);
+    assert_eq!(z80.hl(), 0x9ABC);
+
+    // Test index 3 -> SP
+    z80.set_rp(3, 0xDEF0);
+    assert_eq!(z80.sp, 0xDEF0);
+
+    // Test out of bounds index (should do nothing)
+    z80.set_bc(0);
+    z80.set_de(0);
+    z80.set_hl(0);
+    z80.sp = 0;
+
+    // Attempt invalid indices
+    z80.set_rp(4, 0xFFFF);
+    z80.set_rp(5, 0xFFFF);
+    z80.set_rp(255, 0xFFFF);
+
+    assert_eq!(z80.bc(), 0);
+    assert_eq!(z80.de(), 0);
+    assert_eq!(z80.hl(), 0);
+    assert_eq!(z80.sp, 0);
+}
+
 // ==================== NOP Tests ====================
 
 #[test]
