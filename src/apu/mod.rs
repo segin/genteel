@@ -152,6 +152,25 @@ mod tests {
     }
 
     #[test]
+    fn test_write_fm_data() {
+        let mut apu = Apu::new();
+
+        // Write to Bank0, Register 0x24 (Timer A High)
+        apu.write_fm_addr(Bank::Bank0, 0x24);
+        apu.write_fm_data(Bank::Bank0, 0xAA);
+        assert_eq!(apu.fm.registers[0][0x24], 0xAA);
+        assert!((apu.read_fm_status() & 0x80) != 0); // Busy flag should be set
+
+        apu.tick_cycles(32); // clear busy
+
+        // Write to Bank1, Register 0x24
+        apu.write_fm_addr(Bank::Bank1, 0x24);
+        apu.write_fm_data(Bank::Bank1, 0xBB);
+        assert_eq!(apu.fm.registers[1][0x24], 0xBB);
+        assert!((apu.read_fm_status() & 0x80) != 0); // Busy flag should be set
+    }
+
+    #[test]
     fn test_read_fm_status() {
         let mut apu = Apu::new();
         // Initial status should be 0
