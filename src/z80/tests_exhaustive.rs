@@ -192,6 +192,7 @@ fn ref_sbc(val1: u8, val2: u8, carry_in: bool) -> (u8, u8) {
 }
 
 fn ref_logic(op: u8, val1: u8, val2: u8) -> (u8, u8) {
+    assert!(op < 3, "Invalid logic op: {}", op);
     let (res, h) = match op {
         0 => (val1 & val2, true),
         1 => (val1 ^ val2, false),
