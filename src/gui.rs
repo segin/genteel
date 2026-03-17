@@ -1110,7 +1110,10 @@ impl Framework {
                                         base: usize,
                                         texture_opt: &mut Option<egui::TextureHandle>,
                                         id: &str| {
-                        let mut image = egui::ColorImage::new([plane_w * 8, plane_h * 8], egui::Color32::TRANSPARENT);
+                        let mut image = egui::ColorImage::new(
+                            [plane_w * 8, plane_h * 8],
+                            egui::Color32::TRANSPARENT,
+                        );
                         for ty in 0..plane_h {
                             for tx in 0..plane_w {
                                 let entry_addr = base + (ty * plane_w + tx) * 2;
@@ -1142,8 +1145,7 @@ impl Framework {
                                         let g = (((color565 >> 5) & 0x3F) << 2) as u8;
                                         let b = ((color565 & 0x1F) << 3) as u8;
 
-                                        let pixel_idx =
-                                            (ty * 8 + py) * plane_w * 8 + (tx * 8 + px);
+                                        let pixel_idx = (ty * 8 + py) * plane_w * 8 + (tx * 8 + px);
                                         image.pixels[pixel_idx] = egui::Color32::from_rgb(r, g, b);
                                     }
                                 }
