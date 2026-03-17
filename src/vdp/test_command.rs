@@ -122,3 +122,20 @@ fn test_dma_pending_flag() {
 
     assert!(vdp.command.dma_pending);
 }
+
+#[test]
+fn test_mode1_getter() {
+    let mut vdp = Vdp::new();
+
+    // Test initial state (should be 0)
+    assert_eq!(vdp.mode1(), 0);
+
+    // Set REG_MODE1 (register 0) to 0x14 using write_control
+    // 0x8000 | (0 << 8) | 0x14 = 0x8014
+    vdp.write_control(0x8014);
+    assert_eq!(vdp.mode1(), 0x14);
+
+    // Test direct register modification
+    vdp.registers[0] = 0x55;
+    assert_eq!(vdp.mode1(), 0x55);
+}
