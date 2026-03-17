@@ -1,4 +1,3 @@
-#![allow(unused_imports)]
 //! Z80 DAA (Decimal Adjust Accumulator) Tests
 //!
 //! DAA is one of the most complex Z80 instructions to implement correctly.
