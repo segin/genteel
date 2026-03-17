@@ -122,3 +122,31 @@ fn test_dma_pending_flag() {
 
     assert!(vdp.command.dma_pending);
 }
+
+#[test]
+fn test_is_control_pending() {
+    let mut vdp = Vdp::new();
+
+    // Initially, no control word should be pending
+    assert!(!vdp.is_control_pending());
+
+    // Step 1: Write first word of VRAM write command (0x4000)
+    vdp.write_control(0x4000);
+
+    // Control word should now be pending
+    assert!(vdp.is_control_pending());
+
+    // Step 2: Write second word (0x0000)
+    vdp.write_control(0x0000);
+
+    // Command is complete, so pending should be false again
+    assert!(!vdp.is_control_pending());
+
+    // Step 3: Write first word again to set pending state
+    vdp.write_control(0x4000);
+    assert!(vdp.is_control_pending());
+
+    // Reading the status register should clear the pending flag
+    vdp.read_status();
+    assert!(!vdp.is_control_pending());
+}
