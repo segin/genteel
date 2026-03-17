@@ -465,6 +465,67 @@ mod tests {
         assert_eq!(output, [132, 130, 132, 255]);
     }
 
+    #[test]
+    fn test_rgb565_to_rgba8_edge_cases() {
+        // Test empty input/output
+        let empty_input: [u16; 0] = [];
+        let mut empty_output: [u8; 0] = [];
+        rgb565_to_rgba8(&empty_input, &mut empty_output); // Should not panic
+
+        // Mismatched lengths: Output too small (should process as much as it can)
+        let input = [0xFFFF, 0xFFFF];
+        let mut short_output = [0u8; 4]; // Only room for 1 pixel
+        rgb565_to_rgba8(&input, &mut short_output);
+        assert_eq!(short_output, [255, 255, 255, 255]); // First pixel processed correctly
+
+        // Mismatched lengths: Output too large (should leave remainder untouched)
+        let input_short = [0x0000]; // 1 pixel (black)
+        let mut long_output = [255u8; 8]; // Room for 2 pixels, initialized to white
+        rgb565_to_rgba8(&input_short, &mut long_output);
+        // First pixel is black, second pixel remains white
+        assert_eq!(long_output, [0, 0, 0, 255, 255, 255, 255, 255]);
+
+        // Partial chunks at the end of output should be ignored safely
+        let input_partial = [0xFFFF, 0xFFFF];
+        let mut partial_output = [0u8; 7]; // Room for 1 pixel + 3 bytes
+        rgb565_to_rgba8(&input_partial, &mut partial_output);
+        // First pixel processed, remaining 3 bytes untouched
+        assert_eq!(partial_output, [255, 255, 255, 255, 0, 0, 0]);
+
+        // Test near-zero edge case (LSB set)
+        // R:1, G:0, B:0 -> 0x0800 (00001 000000 00000)
+        let mut output = [0u8; 4];
+        rgb565_to_rgba8(&[0x0800], &mut output);
+        // r: (1 << 3) | (1 >> 2) = 8 | 0 = 8
+        assert_eq!(output, [8, 0, 0, 255]);
+
+        // R:0, G:1, B:0 -> 0x0020 (00000 000001 00000)
+        rgb565_to_rgba8(&[0x0020], &mut output);
+        // g: (1 << 2) | (1 >> 4) = 4 | 0 = 4
+        assert_eq!(output, [0, 4, 0, 255]);
+
+        // R:0, G:0, B:1 -> 0x0001 (00000 000000 00001)
+        rgb565_to_rgba8(&[0x0001], &mut output);
+        // b: (1 << 3) | (1 >> 2) = 8 | 0 = 8
+        assert_eq!(output, [0, 0, 8, 255]);
+
+        // Test max-1 edge case (MSB cleared)
+        // R:30, G:63, B:31 -> 0xF7FF (11110 111111 11111)
+        rgb565_to_rgba8(&[0xF7FF], &mut output);
+        // r: (30 << 3) | (30 >> 2) = 240 | 7 = 247
+        assert_eq!(output, [247, 255, 255, 255]);
+
+        // R:31, G:62, B:31 -> 0xFFDF (11111 111110 11111)
+        rgb565_to_rgba8(&[0xFFDF], &mut output);
+        // g: (62 << 2) | (62 >> 4) = 248 | 3 = 251
+        assert_eq!(output, [255, 251, 255, 255]);
+
+        // R:31, G:63, B:30 -> 0xFFFE (11111 111111 11110)
+        rgb565_to_rgba8(&[0xFFFE], &mut output);
+        // b: (30 << 3) | (30 >> 2) = 240 | 7 = 247
+        assert_eq!(output, [255, 255, 247, 255]);
+    }
+
     #[cfg(any(feature = "gui", feature = "test_headless"))]
     #[test]
     fn test_keycode_to_button_exhaustive_table() {
