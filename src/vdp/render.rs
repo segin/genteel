@@ -144,6 +144,19 @@ pub trait RenderOps {
     fn get_cram_raw(&self) -> [u16; 64];
 }
 
+struct PixelLayerData {
+    bg_color_idx: u8,
+    s_pri: bool,
+    s_trans: bool,
+    s_col: u8,
+    a_pri: bool,
+    a_trans: bool,
+    a_col: u8,
+    b_pri: bool,
+    b_trans: bool,
+    b_col: u8,
+}
+
 impl Vdp {
     #[allow(clippy::too_many_arguments)]
     fn composite_line(
@@ -182,7 +195,7 @@ impl Vdp {
 
             let any_high = b_pri || a_pri || s_pri;
 
-            let (mut top_col, top_layer) = self.determine_top_layer(
+            let px = PixelLayerData {
                 bg_color_idx,
                 s_pri,
                 s_trans,
@@ -193,26 +206,17 @@ impl Vdp {
                 b_pri,
                 b_trans,
                 b_col,
-            );
+            };
+
+            let (mut top_col, top_layer) = self.determine_top_layer(&px);
 
             if !sh_enabled {
                 self.framebuffer[line_offset + x] = self.cram_cache[top_col as usize];
             } else {
                 let mut state = if any_high { 1 } else { 0 };
 
-                let (new_top_col, new_state) = self.apply_shadow_highlight(
-                    top_layer,
-                    s_col,
-                    bg_color_idx,
-                    top_col,
-                    a_pri,
-                    a_trans,
-                    a_col,
-                    b_pri,
-                    b_trans,
-                    b_col,
-                    state,
-                );
+                let (new_top_col, new_state) =
+                    self.apply_shadow_highlight(top_layer, top_col, state, &px);
                 top_col = new_top_col;
                 state = new_state;
 
@@ -223,91 +227,70 @@ impl Vdp {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn determine_top_layer(
-        &self,
-        bg_color_idx: u8,
-        s_pri: bool,
-        s_trans: bool,
-        s_col: u8,
-        a_pri: bool,
-        a_trans: bool,
-        a_col: u8,
-        b_pri: bool,
-        b_trans: bool,
-        b_col: u8,
-    ) -> (u8, u8) {
-        let mut top_col = bg_color_idx;
+    fn determine_top_layer(&self, px: &PixelLayerData) -> (u8, u8) {
+        let mut top_col = px.bg_color_idx;
         let mut top_layer = 0; // 0=BG, 1=B, 2=A, 3=S
 
-        if s_pri && !s_trans {
-            top_col = s_col;
+        if px.s_pri && !px.s_trans {
+            top_col = px.s_col;
             top_layer = 3;
-        } else if a_pri && !a_trans {
-            top_col = a_col;
+        } else if px.a_pri && !px.a_trans {
+            top_col = px.a_col;
             top_layer = 2;
-        } else if b_pri && !b_trans {
-            top_col = b_col;
+        } else if px.b_pri && !px.b_trans {
+            top_col = px.b_col;
             top_layer = 1;
-        } else if !s_trans {
-            top_col = s_col;
+        } else if !px.s_trans {
+            top_col = px.s_col;
             top_layer = 3;
-        } else if !a_trans {
-            top_col = a_col;
+        } else if !px.a_trans {
+            top_col = px.a_col;
             top_layer = 2;
-        } else if !b_trans {
-            top_col = b_col;
+        } else if !px.b_trans {
+            top_col = px.b_col;
             top_layer = 1;
         }
 
         (top_col, top_layer)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn apply_shadow_highlight(
         &self,
         top_layer: u8,
-        s_col: u8,
-        bg_color_idx: u8,
         mut top_col: u8,
-        a_pri: bool,
-        a_trans: bool,
-        a_col: u8,
-        b_pri: bool,
-        b_trans: bool,
-        b_col: u8,
         mut state: u8,
+        px: &PixelLayerData,
     ) -> (u8, u8) {
         if top_layer == 3 {
-            if s_col == 0x3E {
-                top_col = bg_color_idx;
-                if a_pri && !a_trans {
-                    top_col = a_col;
-                } else if b_pri && !b_trans {
-                    top_col = b_col;
-                } else if !a_trans {
-                    top_col = a_col;
-                } else if !b_trans {
-                    top_col = b_col;
+            if px.s_col == 0x3E {
+                top_col = px.bg_color_idx;
+                if px.a_pri && !px.a_trans {
+                    top_col = px.a_col;
+                } else if px.b_pri && !px.b_trans {
+                    top_col = px.b_col;
+                } else if !px.a_trans {
+                    top_col = px.a_col;
+                } else if !px.b_trans {
+                    top_col = px.b_col;
                 }
                 if state < 2 {
                     state += 1;
                 }
-            } else if s_col == 0x3F {
-                top_col = bg_color_idx;
-                if a_pri && !a_trans {
-                    top_col = a_col;
-                } else if b_pri && !b_trans {
-                    top_col = b_col;
-                } else if !a_trans {
-                    top_col = a_col;
-                } else if !b_trans {
-                    top_col = b_col;
+            } else if px.s_col == 0x3F {
+                top_col = px.bg_color_idx;
+                if px.a_pri && !px.a_trans {
+                    top_col = px.a_col;
+                } else if px.b_pri && !px.b_trans {
+                    top_col = px.b_col;
+                } else if !px.a_trans {
+                    top_col = px.a_col;
+                } else if !px.b_trans {
+                    top_col = px.b_col;
                 }
                 if state > 0 {
                     state -= 1;
                 }
-            } else if (s_col & 0x0F) == 0x0E {
+            } else if (px.s_col & 0x0F) == 0x0E {
                 state = 1;
             }
         }
