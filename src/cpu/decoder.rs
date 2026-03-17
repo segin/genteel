@@ -846,6 +846,49 @@ fn make_shift_instruction(
     }
 }
 
+fn decode_memory_shift(
+    opcode: u16,
+    op_type: u8,
+    direction: bool,
+) -> Option<Instruction> {
+    let ea_mode = ((opcode >> 3) & 0x07) as u8;
+    let ea_reg = (opcode & 0x07) as u8;
+    if let Some(dst) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
+        // Memory shifts are always by 1.
+        match (op_type, direction) {
+            (0b00, true) => Some(Instruction::Bits(BitsInstruction::AslM { dst })),
+            (0b00, false) => Some(Instruction::Bits(BitsInstruction::AsrM { dst })),
+            _ => {
+                let count = ShiftCount::Immediate(1);
+                Some(make_shift_instruction(
+                    op_type, direction, Size::Word, dst, count,
+                ))
+            }
+        }
+    } else {
+        None
+    }
+}
+
+fn decode_register_shift(
+    reg: u8,
+    op_type: u8,
+    direction: bool,
+    size: Size,
+    ir: bool,
+    count_or_reg: u8,
+) -> Instruction {
+    let count = if ir {
+        ShiftCount::Register(count_or_reg)
+    } else {
+        let imm = if count_or_reg == 0 { 8 } else { count_or_reg };
+        ShiftCount::Immediate(imm)
+    };
+    let dst = AddressingMode::DataRegister(reg);
+
+    make_shift_instruction(op_type, direction, size, dst, count)
+}
+
 fn decode_shifts(opcode: u16) -> Instruction {
     // ASL, ASR, LSL, LSR, ROL, ROR, ROXL, ROXR
 
@@ -856,36 +899,15 @@ fn decode_shifts(opcode: u16) -> Instruction {
     let op_type = ((opcode >> 3) & 0x03) as u8;
     let reg = (opcode & 0x07) as u8;
 
-    // Memory shifts (size = 0b11)
     if size_bits == 0b11 {
-        // For memory shifts, the type is encoded in bits 10-9 (part of what is count/reg in register shifts)
+        // Memory shifts
         let op_type = ((opcode >> 9) & 0x03) as u8;
-        let ea_mode = ((opcode >> 3) & 0x07) as u8;
-        let ea_reg = (opcode & 0x07) as u8;
-        if let Some(dst) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
-            // Memory shifts are always by 1.
-            match (op_type, direction) {
-                (0b00, true) => return Instruction::Bits(BitsInstruction::AslM { dst }),
-                (0b00, false) => return Instruction::Bits(BitsInstruction::AsrM { dst }),
-                _ => {
-                    let count = ShiftCount::Immediate(1);
-                    return make_shift_instruction(op_type, direction, Size::Word, dst, count);
-                }
-            }
+        if let Some(instr) = decode_memory_shift(opcode, op_type, direction) {
+            return instr;
         }
-    }
-
-    // Register shifts
-    if let Some(size) = Size::from_bits(size_bits) {
-        let count = if ir {
-            ShiftCount::Register(count_or_reg)
-        } else {
-            let imm = if count_or_reg == 0 { 8 } else { count_or_reg };
-            ShiftCount::Immediate(imm)
-        };
-        let dst = AddressingMode::DataRegister(reg);
-
-        return make_shift_instruction(op_type, direction, size, dst, count);
+    } else if let Some(size) = Size::from_bits(size_bits) {
+        // Register shifts
+        return decode_register_shift(reg, op_type, direction, size, ir, count_or_reg);
     }
 
     Instruction::System(SystemInstruction::Unimplemented { opcode })
