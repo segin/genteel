@@ -40,6 +40,9 @@ pub const SLOT_NAMES: [&str; 10] = [
 
 pub const SLOT_EXTS: [&str; 10] = ["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9"];
 
+/// Maximum GUI configuration size in bytes (1MB) to prevent OOM
+const MAX_GUI_CONFIG_SIZE: u64 = 1024 * 1024;
+
 pub const HEX_LOOKUP: [&str; 256] = [
     "00", "01", "02", "03", "04", "05", "06", "07", "08", "09", "0A", "0B", "0C", "0D", "0E", "0F",
     "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "1A", "1B", "1C", "1D", "1E", "1F",
@@ -127,10 +130,23 @@ impl GuiState {
     }
 
     pub fn load_or_default(input_mapping: InputMapping) -> Self {
-        if let Ok(content) = std::fs::read_to_string("gui_config.json") {
-            if let Ok(mut state) = serde_json::from_str::<Self>(&content) {
-                state.register_default_windows();
-                return state;
+        if let Ok(file) = std::fs::File::open("gui_config.json") {
+            if let Ok(metadata) = file.metadata() {
+                if metadata.len() <= MAX_GUI_CONFIG_SIZE {
+                    use std::io::Read;
+                    let mut content = String::new();
+                    if file
+                        .take(MAX_GUI_CONFIG_SIZE + 1)
+                        .read_to_string(&mut content)
+                        .is_ok()
+                        && content.len() as u64 <= MAX_GUI_CONFIG_SIZE
+                    {
+                        if let Ok(mut state) = serde_json::from_str::<Self>(&content) {
+                            state.register_default_windows();
+                            return state;
+                        }
+                    }
+                }
             }
         }
         Self::new(input_mapping)
@@ -215,7 +231,7 @@ pub struct DebugInfo {
     pub z80_memptr: u16,
     pub z80_iff1: bool,
     pub z80_im: u8,
-    pub z80_disasm: Vec<(u16, String)>,
+    pub z80_disasm: [(u16, u8); 10],
     pub frame_count: u64,
     pub vdp_status: u16,
     pub vdp_registers: [u8; 24],
@@ -256,6 +272,7 @@ pub struct Framework {
     pub renderer: egui_wgpu::Renderer,
     pub gui_state: GuiState,
     pub tile_texture: Option<egui::TextureHandle>,
+    pub tile_viewer_image: std::sync::Arc<egui::ColorImage>,
     pub plane_a_texture: Option<egui::TextureHandle>,
     pub plane_b_texture: Option<egui::TextureHandle>,
     pub pending_rom_path: Arc<Mutex<Option<PathBuf>>>,
@@ -295,6 +312,7 @@ impl Framework {
             renderer,
             gui_state,
             tile_texture: None,
+            tile_viewer_image: std::sync::Arc::new(egui::ColorImage::new([128, 1024], egui::Color32::TRANSPARENT)),
             plane_a_texture: None,
             plane_b_texture: None,
             pending_rom_path: Arc::new(Mutex::new(None)),
@@ -891,14 +909,14 @@ impl Framework {
                         .id_source("z80_disasm")
                         .show(ui, |ui| {
                             let mut label_buffer = String::with_capacity(64);
-                            for (addr, text) in &debug_info.z80_disasm {
+                            for (addr, byte) in &debug_info.z80_disasm {
                                 label_buffer.clear();
                                 let is_current = *addr == debug_info.z80_pc;
                                 if is_current {
-                                    let _ = write!(&mut label_buffer, "-> {:04X}: {}", addr, text);
+                                    let _ = write!(&mut label_buffer, "-> {:04X}: {:02X}", addr, byte);
                                     ui.colored_label(egui::Color32::YELLOW, label_buffer.as_str());
                                 } else {
-                                    let _ = write!(&mut label_buffer, "   {:04X}: {}", addr, text);
+                                    let _ = write!(&mut label_buffer, "   {:04X}: {:02X}", addr, byte);
                                     ui.label(label_buffer.as_str());
                                 }
                             }
@@ -955,7 +973,7 @@ impl Framework {
                 .open(&mut open)
                 .show(&self.egui_ctx, |ui| {
                     // Render tiles to a buffer
-                    let mut image = egui::ColorImage::new([128, 1024], egui::Color32::TRANSPARENT);
+                    let image = std::sync::Arc::make_mut(&mut self.tile_viewer_image);
                     for tile_idx in 0..2048 {
                         let tile_x = (tile_idx % 16) * 8;
                         let tile_y = (tile_idx / 16) * 8;
@@ -985,7 +1003,7 @@ impl Framework {
                             Default::default(),
                         )
                     });
-                    texture.set(image, Default::default());
+                    texture.set(self.tile_viewer_image.clone(), Default::default());
 
                     egui::ScrollArea::vertical().show(ui, |ui| {
                         ui.image(&*texture);
@@ -1688,11 +1706,11 @@ fn collect_debug_info(
         disasm
     };
     let z80_disasm = {
-        let mut disasm = Vec::new();
+        let mut disasm = [(0u16, 0u8); 10];
         let mut addr = emulator.z80.pc;
-        for _ in 0..10 {
+        for i in 0..10 {
             let byte = bus.read_byte(0xA00000 + addr as u32);
-            disasm.push((addr, format!("{:02X}", byte)));
+            disasm[i] = (addr, byte);
             addr += 1;
         }
         disasm

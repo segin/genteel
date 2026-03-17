@@ -25,6 +25,9 @@ pub mod z80;
 
 pub const SLOT_EXTS: [&str; 10] = ["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9"];
 
+/// Maximum save state size in bytes (25MB) to prevent OOM
+const MAX_STATE_SIZE: u64 = 25 * 1024 * 1024;
+
 use crate::vdp::RenderOps;
 use apu::Apu;
 use cpu::Cpu;
@@ -242,36 +245,59 @@ impl Emulator {
     }
 
     pub fn load_state_from_path(&mut self, state_path: std::path::PathBuf) {
-        if let Ok(json) = std::fs::read_to_string(&state_path) {
-            match serde_json::from_str::<Self>(&json) {
-                Ok(new_emulator) => {
-                    // 1. Preserve critical session state
-                    let gdb = self.gdb.take();
-                    let allowed_paths = self.allowed_paths.clone();
-                    let current_rom_path = self.current_rom_path.clone();
-                    let sample_rate = self.bus.borrow().sample_rate;
+        let Ok(file) = std::fs::File::open(&state_path) else {
+            return;
+        };
 
-                    // 2. Load ROM data into the new emulator's bus
-                    if let Some(ref rom_path) = current_rom_path {
-                        if let Ok(data) = std::fs::read(rom_path) {
-                            let mut bus = new_emulator.bus.borrow_mut();
-                            bus.load_rom(&data);
-                        }
-                    }
-
-                    // 3. Apply the new state
-                    *self = new_emulator;
-
-                    // 4. Restore critical session state
-                    self.gdb = gdb;
-                    self.allowed_paths = allowed_paths;
-                    self.current_rom_path = current_rom_path;
-                    self.bus.borrow_mut().sample_rate = sample_rate;
-
-                    println!("Loaded state from {:?}", state_path);
-                }
-                Err(e) => eprintln!("Failed to parse save state: {}", e),
+        // 1. Check metadata size
+        if let Ok(metadata) = file.metadata() {
+            if metadata.len() > MAX_STATE_SIZE {
+                eprintln!("Save state too large: {} bytes", metadata.len());
+                return;
             }
+        }
+
+        // 2. Read with limit to prevent OOM
+        use std::io::Read;
+        let mut json = String::new();
+        if let Err(e) = file.take(MAX_STATE_SIZE + 1).read_to_string(&mut json) {
+            eprintln!("Failed to read save state: {}", e);
+            return;
+        }
+
+        if json.len() as u64 > MAX_STATE_SIZE {
+            eprintln!("Save state exceeds size limit");
+            return;
+        }
+
+        match serde_json::from_str::<Self>(&json) {
+            Ok(new_emulator) => {
+                // 1. Preserve critical session state
+                let gdb = self.gdb.take();
+                let allowed_paths = self.allowed_paths.clone();
+                let current_rom_path = self.current_rom_path.clone();
+                let sample_rate = self.bus.borrow().sample_rate;
+
+                // 2. Load ROM data into the new emulator's bus
+                if let Some(ref rom_path) = current_rom_path {
+                    if let Ok(data) = std::fs::read(rom_path) {
+                        let mut bus = new_emulator.bus.borrow_mut();
+                        bus.load_rom(&data);
+                    }
+                }
+
+                // 3. Apply the new state
+                *self = new_emulator;
+
+                // 4. Restore critical session state
+                self.gdb = gdb;
+                self.allowed_paths = allowed_paths;
+                self.current_rom_path = current_rom_path;
+                self.bus.borrow_mut().sample_rate = sample_rate;
+
+                println!("Loaded state from {:?}", state_path);
+            }
+            Err(e) => eprintln!("Failed to parse save state: {}", e),
         }
     }
 
@@ -612,7 +638,6 @@ impl Emulator {
     pub fn step_frame_internal(&mut self) {
         self.internal_frame_count += 1;
         if self.debug {
-            #[cfg(feature = "gui")]
             self.log_debug(self.internal_frame_count);
         }
         // Genesis timing constants (NTSC):
@@ -926,7 +951,6 @@ impl Emulator {
 
             // Log every 600 frames (approx 10 seconds)
             if self.debug && current % 600 == 0 {
-                #[cfg(feature = "gui")]
                 self.log_debug(current as u64);
             }
         }
@@ -1095,7 +1119,6 @@ impl Emulator {
         }
         Ok(())
     }
-    #[allow(dead_code)]
     pub(crate) fn log_debug(&self, frame_count: u64) {
         let bus = self.bus.borrow();
         let disp_en = if bus.vdp.display_enabled() {
@@ -1454,8 +1477,9 @@ mod tests {
         // 3. Load Code to Z80 RAM (0xA00000)
         {
             let mut bus = emulator.bus.borrow_mut();
-            for (i, byte) in z80_code.iter().enumerate() {
-                bus.write_byte(0xA00000 + i as u32, *byte);
+            #[allow(clippy::needless_range_loop)]
+            for i in 0..z80_code.len() {
+                bus.write_byte(0xA00000 + i as u32, z80_code[i]);
             }
         }
         // Verify Z80 RAM at target address is 0 before execution
@@ -1653,6 +1677,29 @@ mod tests {
                 sanitized_path
             );
         }
+    }
+
+    #[test]
+    fn test_large_state_prevention() {
+        let path = std::path::PathBuf::from("test_large.state");
+        // Create a file larger than MAX_STATE_SIZE (25MB + 1 byte)
+        // Using valid UTF-8 data (spaces) to exercise the size check specifically.
+        let mut file = std::fs::File::create(&path).unwrap();
+        let chunk = vec![b' '; 1024 * 1024]; // 1MB chunk
+        for _ in 0..25 {
+            std::io::Write::write_all(&mut file, &chunk).unwrap();
+        }
+        std::io::Write::write_all(&mut file, &[b' ']).unwrap(); // last byte
+        drop(file);
+
+        let mut emulator = Emulator::new();
+        let old_frame_count = emulator.internal_frame_count;
+        // Attempt to load - should fail and not change state
+        emulator.load_state_from_path(path.clone());
+        assert_eq!(emulator.internal_frame_count, old_frame_count);
+
+        // Cleanup
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

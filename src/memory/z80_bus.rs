@@ -127,32 +127,11 @@ impl Z80Bus {
 
 impl MemoryInterface for Z80Bus {
     fn read_byte(&mut self, address: u32) -> u8 {
-        if let Ok(mut bus_guard) = self.bus.bus.try_borrow_mut() {
-            Self::read_byte_from_bus(&mut bus_guard, address)
-        } else if let Ok(_bus_guard) = self.bus.bus.try_borrow() {
-            // If we can only get a shared borrow, we can't call read_byte_from_bus
-            // which requires &mut Bus. However, most Z80 reads are to RAM or FM
-            // which we can handle if we refactor. For now, let's use unsafe
-            // as a last resort since we know we're on the same thread.
-            unsafe {
-                let bus_ptr = self.bus.bus.as_ptr();
-                Self::read_byte_from_bus(&mut *bus_ptr, address)
-            }
-        } else {
-            0xFF
-        }
+        Self::read_byte_from_bus(&mut self.bus.bus.borrow_mut(), address)
     }
 
     fn write_byte(&mut self, address: u32, value: u8) {
-        if let Ok(mut bus_guard) = self.bus.bus.try_borrow_mut() {
-            Self::write_byte_to_bus(&mut bus_guard, address, value)
-        } else {
-            // Fallback to direct access if already borrowed (same thread)
-            unsafe {
-                let bus_ptr = self.bus.bus.as_ptr();
-                Self::write_byte_to_bus(&mut *bus_ptr, address, value)
-            }
-        }
+        Self::write_byte_to_bus(&mut self.bus.bus.borrow_mut(), address, value)
     }
 
     fn read_word(&mut self, address: u32) -> u16 {

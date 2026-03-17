@@ -37,15 +37,24 @@ def generate_data(filename, size_mb):
 def scan_slow(filename):
     print("[*] Running slow scan (re.search inside loop)...")
 
+    # In slow scan, we recreate the old uncompiled dictionary behavior
+    slow_secret_patterns = {
+        "Generic Secret": r"(?i)secret\s*[:=]\s*['\"]",
+        "API Key": r"(?i)api[_-]?key\s*[:=]\s*['\"]",
+        "Password": r"(?i)password\s*[:=]\s*['\"]",
+        "AWS Key": r"AKIA[0-9A-Z]{16}",
+        "Private Key": r"-----BEGIN .* PRIVATE " + r"KEY-----",
+        "Generic Token": r"token\s*=\s*['\"][a-zA-Z0-9]{20,}['\"]"
+    }
+
     match_count = 0
     start_time = time.time()
 
     with open(filename, 'r', encoding='utf-8', errors='ignore') as fp:
         for i, line_content in enumerate(fp):
             # Secrets
-            for name, pattern in audit_tool.SECRET_PATTERNS.items():
-                # Use .pattern to get the raw string from compiled regex
-                if re.search(pattern.pattern, line_content):
+            for name, pattern in slow_secret_patterns.items():
+                if re.search(pattern, line_content):
                     match_count += 1
 
             # Unsafe
@@ -70,9 +79,8 @@ def scan_fast(filename):
     with open(filename, 'r', encoding='utf-8', errors='ignore') as fp:
         for i, line_content in enumerate(fp):
             # Secrets
-            for name, pattern in audit_tool.SECRET_PATTERNS.items():
-                if pattern.search(line_content):
-                    match_count += 1
+            for match in audit_tool.SECRET_PATTERN_COMBINED.finditer(line_content):
+                match_count += 1
 
             # Unsafe
             if audit_tool.UNSAFE_PATTERN.search(line_content):

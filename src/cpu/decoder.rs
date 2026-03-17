@@ -1354,6 +1354,24 @@ mod tests {
     }
 
     #[test]
+    fn test_decode_memory_shifts_invalid() {
+        // Invalid memory shift (Mode 7 Reg 5 is invalid and from_mode_reg returns None)
+        // 1110 000 0 11 111 101 -> 0xE0FD
+        // Should return Instruction::System(SystemInstruction::Unimplemented { opcode: 0xE0FD })
+        assert_eq!(
+            decode(0xE0FD),
+            Instruction::System(SystemInstruction::Unimplemented { opcode: 0xE0FD })
+        );
+
+        // Mode 7 Reg 6 (110)
+        // 1110 000 0 11 111 110 -> 0xE0FE
+        assert_eq!(
+            decode(0xE0FE),
+            Instruction::System(SystemInstruction::Unimplemented { opcode: 0xE0FE })
+        );
+    }
+
+    #[test]
     fn test_memory_shift_wildcard() {
         let count = ShiftCount::Immediate(1);
 
@@ -1427,6 +1445,37 @@ mod tests {
                 dst: dst_rol,
                 count
             })
+        );
+    }
+
+    #[test]
+    fn test_missing_memory_shift_operations() {
+        // ASR.W d16(A1) -> 1110 000 0 11 101 001 -> 0xE0E9
+        let dst_asr_disp = AddressingMode::AddressDisplacement(1);
+        assert_eq!(
+            decode(0xE0E9),
+            Instruction::Bits(BitsInstruction::AsrM { dst: dst_asr_disp })
+        );
+
+        // ASL.W d8(A2,Xi) -> 1110 000 1 11 110 010 -> 0xE1F2
+        let dst_asl_idx = AddressingMode::AddressIndex(2);
+        assert_eq!(
+            decode(0xE1F2),
+            Instruction::Bits(BitsInstruction::AslM { dst: dst_asl_idx })
+        );
+
+        // ASR.W (xxx).W -> 1110 000 0 11 111 000 -> 0xE0F8
+        let dst_asr_abs_short = AddressingMode::AbsoluteShort;
+        assert_eq!(
+            decode(0xE0F8),
+            Instruction::Bits(BitsInstruction::AsrM { dst: dst_asr_abs_short })
+        );
+
+        // ASL.W (xxx).L -> 1110 000 1 11 111 001 -> 0xE1F9
+        let dst_asl_abs_long = AddressingMode::AbsoluteLong;
+        assert_eq!(
+            decode(0xE1F9),
+            Instruction::Bits(BitsInstruction::AslM { dst: dst_asl_abs_long })
         );
     }
 }

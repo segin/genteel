@@ -55,15 +55,15 @@ findings = []
 
 # Pre-compiled regex patterns at global scope for performance.
 # Note: String concatenation is used for some patterns (e.g., Private Key) to prevent this script from detecting itself as a false positive.
-SECRET_PATTERNS = {
-    "Generic Secret": re.compile(r"(?i)secret\s*[:=]\s*['\"]"),
-    "API Key": re.compile(r"(?i)api[_-]?key\s*[:=]\s*['\"]"),
-    "Password": re.compile(r"(?i)password\s*[:=]\s*['\"]"),
-    "AWS Key": re.compile(r"AKIA[0-9A-Z]{16}"),
+SECRET_PATTERN_COMBINED = re.compile(
+    r"(?i)(?P<Generic_Secret>secret\s*[:=]\s*['\"])|"
+    r"(?P<API_Key>api[_-]?key\s*[:=]\s*['\"])|"
+    r"(?P<Password>password\s*[:=]\s*['\"])|"
+    r"(?P<AWS_Key>AKIA[0-9A-Z]{16})|"
     # Split string to avoid self-flagging (the pattern itself matches the source code string otherwise)
-    "Private Key": re.compile(r"-----BEGIN .* PRIVATE " + r"KEY-----"),
-    "Generic Token": re.compile(r"token\s*=\s*['\"][a-zA-Z0-9]{20,}['\"]")
-}
+    r"(?P<Private_Key>-----BEGIN .* PRIVATE " + r"KEY-----)|"
+    r"(?P<Generic_Token>token\s*=\s*['\"][a-zA-Z0-9]{20,}['\"])"
+)
 
 TODO_PATTERN = re.compile(r"(TODO|FIXME|XXX):")
 UNSAFE_PATTERN = re.compile(r"unsafe\s*\{")
@@ -113,15 +113,15 @@ def scan_text_patterns():
             with open(f, 'r', encoding='utf-8', errors='ignore') as fp:
                 for i, line_content in enumerate(fp):
                     # Secrets
-                    for name, compiled_pattern in SECRET_PATTERNS.items():
-                        if compiled_pattern.search(line_content):
-                            add_finding(
-                                title=f"Potential Secret: {name}",
-                                severity="Critical",
-                                description=f"Found pattern matching {name}",
-                                file_path=f,
-                                line_number=i+1
-                            )
+                    for match in SECRET_PATTERN_COMBINED.finditer(line_content):
+                        name = match.lastgroup.replace("_", " ")
+                        add_finding(
+                            title=f"Potential Secret: {name}",
+                            severity="Critical",
+                            description=f"Found pattern matching {name}",
+                            file_path=f,
+                            line_number=i+1
+                        )
                     
                     # Technical Debt
                     if TODO_PATTERN.search(line_content):
