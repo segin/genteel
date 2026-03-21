@@ -4,17 +4,8 @@
 
 #![cfg(test)]
 
-use crate::cpu::Cpu;
-use crate::memory::{Memory, MemoryInterface};
-
-fn create_cpu() -> (Cpu, Memory) {
-    let mut memory = Memory::new(0x10000);
-    // Initial SP and PC
-    memory.write_long(0, 0x1000); // SP
-    memory.write_long(4, 0x100); // PC
-    let cpu = Cpu::new(&mut memory);
-    (cpu, memory)
-}
+use crate::cpu::test_utils::create_test_cpu as create_cpu;
+use crate::memory::MemoryInterface;
 
 #[test]
 fn test_smc_overwrite_instruction() {

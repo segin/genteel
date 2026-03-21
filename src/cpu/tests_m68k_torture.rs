@@ -6,25 +6,8 @@
 #![cfg(test)]
 
 use crate::cpu::flags;
-use crate::cpu::Cpu;
-use crate::memory::{Memory, MemoryInterface};
-
-fn create_test_cpu() -> (Cpu, Memory) {
-    let mut memory = Memory::new(0x100000);
-    let mut cpu = Cpu::new(&mut memory);
-    cpu.pc = 0x1000;
-    cpu.a[7] = 0x8000; // Stack
-    cpu.sr |= flags::SUPERVISOR; // Supervisor mode
-    (cpu, memory)
-}
-
-fn write_program(memory: &mut Memory, opcodes: &[u16]) {
-    let mut addr = 0x1000u32;
-    for &opcode in opcodes {
-        memory.write_word(addr, opcode);
-        addr += 2;
-    }
-}
+use crate::cpu::test_utils::{create_cpu as create_test_cpu, write_op as write_program};
+use crate::memory::MemoryInterface;
 
 // ============================================================================
 // DIVS/DIVU Edge Cases (Items 1-4)
