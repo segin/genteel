@@ -171,3 +171,23 @@ fn test_vdp_mode2_getter() {
     // mode2() should return the value of register 1
     assert_eq!(vdp.mode2(), 0xCD);
 }
+
+#[test]
+fn test_is_control_pending() {
+    let mut vdp = Vdp::new();
+
+    // Initially, no control word is pending
+    assert!(!vdp.is_control_pending());
+
+    // Write the first word of a VRAM Write command
+    vdp.write_control(0x4000);
+
+    // After the first word, a control word should be pending
+    assert!(vdp.is_control_pending());
+
+    // Write the second word to complete the command
+    vdp.write_control(0x0000);
+
+    // After the second word, the command is complete and pending is cleared
+    assert!(!vdp.is_control_pending());
+}
