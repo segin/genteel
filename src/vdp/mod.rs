@@ -882,3 +882,6 @@ mod tests_draw_row_refactor;
 
 #[cfg(test)]
 mod tests_decode_plane_size;
+
+#[cfg(test)]
+mod tests_getters;
