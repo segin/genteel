@@ -171,6 +171,31 @@ mod tests {
     }
 
     #[test]
+    fn test_apu_write_fm_data_delegation_side_effects() {
+        let mut apu = Apu::new();
+
+        // 1. Test DAC Enable (Bank0, Register 0x2B)
+        apu.write_fm_addr(Bank::Bank0, 0x2B);
+        apu.write_fm_data(Bank::Bank0, 0x80); // Enable DAC
+        assert_eq!(apu.fm.registers[0][0x2B], 0x80);
+        assert!((apu.read_fm_status() & 0x80) != 0); // Busy flag set
+        apu.tick_cycles(32); // clear busy
+
+        // 2. Test DAC Value (Bank0, Register 0x2A)
+        apu.write_fm_addr(Bank::Bank0, 0x2A);
+        apu.write_fm_data(Bank::Bank0, 0xFF); // Set DAC value to maximum
+        assert_eq!(apu.fm.registers[0][0x2A], 0xFF);
+        assert!((apu.read_fm_status() & 0x80) != 0); // Busy flag set
+        apu.tick_cycles(32); // clear busy
+
+        // 3. Test Panning Update (Bank1, Register 0xB6)
+        apu.write_fm_addr(Bank::Bank1, 0xB6);
+        apu.write_fm_data(Bank::Bank1, 0xC0); // Left and Right panning
+        assert_eq!(apu.fm.registers[1][0xB6], 0xC0);
+        assert!((apu.read_fm_status() & 0x80) != 0); // Busy flag set
+    }
+
+    #[test]
     fn test_read_fm_status() {
         let mut apu = Apu::new();
         // Initial status should be 0
