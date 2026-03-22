@@ -1,4 +1,3 @@
-#![allow(unused_imports)]
 //! Z80 Interrupt Handling Tests
 //!
 //! Tests for interrupt-related instructions and behavior:

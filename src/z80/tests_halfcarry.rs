@@ -1,4 +1,3 @@
-#![allow(unused_imports)]
 //! Z80 Half-Carry Flag Tests
 //!
 //! The Half-Carry (H) flag indicates carry from bit 3 to bit 4.
