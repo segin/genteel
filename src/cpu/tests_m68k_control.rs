@@ -8,6 +8,7 @@
 use crate::cpu::flags;
 use crate::cpu::test_utils::{create_cpu, write_op};
 use crate::memory::MemoryInterface;
+use crate::{Cpu, Memory};
 
 fn push_rtr_frame(cpu: &mut Cpu, memory: &mut Memory, target_pc: u32, stacked_ccr_word: u16) {
     cpu.push_long(target_pc, memory);
