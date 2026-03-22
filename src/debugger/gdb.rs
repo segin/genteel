@@ -922,6 +922,21 @@ mod tests {
     }
 
     #[test]
+    fn test_port_getter_success() {
+        let server = create_test_server();
+        let port = server.port();
+        assert!(port > 0, "Port should be greater than 0");
+    }
+
+    #[test]
+    #[should_panic(expected = "Failed to get local addr")]
+    fn test_port_getter_error() {
+        let mut server = create_test_server();
+        server.listener = GdbListener::MockError;
+        server.port();
+    }
+
+    #[test]
     fn test_constant_time_eq() {
         assert!(constant_time_eq("secret", "secret"));
         assert!(!constant_time_eq("secret", "secreT"));
