@@ -800,17 +800,17 @@ impl Emulator {
 
             let trigger_vint = line == active_lines && pending_cycles < 10;
             Self::sync_components(
-                &mut ctx,
-
-
-
+                ctx.bus,
+                m68k_cycles,
+                ctx.z80,
+                ctx.z80_cycle_debt,
                 trigger_vint,
-
-
-
-
-
-
+                ctx.internal_frame_count,
+                ctx.z80_last_bus_req,
+                ctx.z80_last_reset,
+                ctx.z80_trace_count,
+                ctx.cpu.pc,
+                ctx.debug,
             );
 
             // Check for Z80 state change
@@ -820,7 +820,7 @@ impl Emulator {
                 return CpuBatchResult {
                     cycles: pending_cycles, // cycles accumulated *before* this instruction
                     z80_change: Some(Z80Change {
-                        instruction_cycles:
+                        instruction_cycles: m68k_cycles,
                         new_req: req,
                         new_rst: rst,
                     }),
