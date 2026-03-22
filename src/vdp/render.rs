@@ -370,7 +370,7 @@ fn render_sprite_scanline(
 
         // Prefetch the 4 bytes (8 pixels) for this row.
         // row_addr is guaranteed to be 4-byte aligned (32*k + 4*j).
-        // We already checked row_addr + 4 <= 0x10000.
+        // We already checked row_addr + 4 <= 0x10000. Using unwrap() increases safety and eliminates the unsafe block.
         let patterns: [u8; 4] = vram[row_addr..row_addr + 4].try_into().unwrap();
 
         let base_screen_x = attr.h_pos.wrapping_add(tile_h_offset * 8);
@@ -390,6 +390,7 @@ fn render_sprite_scanline(
                 };
 
                 if color_idx != 0 {
+                    // Note: The unsafe block using unwrap_unchecked() was removed from this file.
                     let addr = ((attr.palette as u8) << 4) | (color_idx as u8);
                     let pri_mask = if attr.priority { 0x80 } else { 0x00 };
                     // Only write if not already occupied by a higher-priority sprite (in this case we draw in reverse order, so we overwrite, wait actually sprite 0 is highest priority.
