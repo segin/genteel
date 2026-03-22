@@ -17,7 +17,6 @@ use winit::{
     keyboard::{KeyCode, PhysicalKey},
     window::WindowBuilder,
 };
-
 #[cfg(feature = "gilrs")]
 pub fn init_gilrs_with_builder<F, R, E>(builder: F) -> Option<R>
 where
@@ -213,7 +212,7 @@ pub struct DebugInfo {
     pub m68k_sr: u16,
     pub m68k_usp: u32,
     pub m68k_ssp: u32,
-    pub m68k_disasm: Vec<(u32, String)>,
+    pub m68k_disasm: Vec<(u32, std::borrow::Cow<'static, str>)>,
     pub z80_pc: u16,
     pub z80_a: u8,
     pub z80_f: u8,
@@ -231,7 +230,7 @@ pub struct DebugInfo {
     pub z80_memptr: u16,
     pub z80_iff1: bool,
     pub z80_im: u8,
-    pub z80_disasm: [(u16, u8); 10],
+    pub z80_disasm: Vec<(u16, std::borrow::Cow<'static, str>)>,
     pub frame_count: u64,
     pub vdp_status: u16,
     pub vdp_registers: [u8; 24],
@@ -273,6 +272,8 @@ pub struct Framework {
     pub gui_state: GuiState,
     pub tile_texture: Option<egui::TextureHandle>,
     pub tile_viewer_image: std::sync::Arc<egui::ColorImage>,
+    pub plane_a_viewer_image: std::sync::Arc<egui::ColorImage>,
+    pub plane_b_viewer_image: std::sync::Arc<egui::ColorImage>,
     pub plane_a_texture: Option<egui::TextureHandle>,
     pub plane_b_texture: Option<egui::TextureHandle>,
     pub pending_rom_path: Arc<Mutex<Option<PathBuf>>>,
@@ -294,7 +295,7 @@ impl Framework {
         let egui_state = egui_winit::State::new(
             egui_ctx.clone(),
             egui::viewport::ViewportId::ROOT,
-            &event_loop,
+            event_loop,
             Some(scale_factor),
             None,
         );
@@ -313,6 +314,8 @@ impl Framework {
             gui_state,
             tile_texture: None,
             tile_viewer_image: std::sync::Arc::new(egui::ColorImage::new([128, 1024], egui::Color32::TRANSPARENT)),
+            plane_a_viewer_image: std::sync::Arc::new(egui::ColorImage::new([0, 0], egui::Color32::TRANSPARENT)),
+            plane_b_viewer_image: std::sync::Arc::new(egui::ColorImage::new([0, 0], egui::Color32::TRANSPARENT)),
             plane_a_texture: None,
             plane_b_texture: None,
             pending_rom_path: Arc::new(Mutex::new(None)),
@@ -340,8 +343,8 @@ impl Framework {
         let pending = self.pending_rom_path.clone();
         std::thread::spawn(move || {
             let file = rfd::FileDialog::new()
-                .add_filter("Genesis ROMs", &["bin", "md", "gen", "zip"])
-                .add_filter("All Files", &["*"])
+                .add_filter("Genesis ROMs", &["bin", "md", "gen", "zip"][..])
+                .add_filter("All Files", &["*"][..])
                 .pick_file();
             if let Some(path) = file {
                 if let Ok(mut lock) = pending.lock() {
@@ -909,14 +912,14 @@ impl Framework {
                         .id_source("z80_disasm")
                         .show(ui, |ui| {
                             let mut label_buffer = String::with_capacity(64);
-                            for (addr, byte) in &debug_info.z80_disasm {
+                            for (addr, text) in &debug_info.z80_disasm {
                                 label_buffer.clear();
                                 let is_current = *addr == debug_info.z80_pc;
                                 if is_current {
-                                    let _ = write!(&mut label_buffer, "-> {:04X}: {:02X}", addr, byte);
+                                    let _ = write!(&mut label_buffer, "-> {:04X}: {}", addr, text);
                                     ui.colored_label(egui::Color32::YELLOW, label_buffer.as_str());
                                 } else {
-                                    let _ = write!(&mut label_buffer, "   {:04X}: {:02X}", addr, byte);
+                                    let _ = write!(&mut label_buffer, "   {:04X}: {}", addr, text);
                                     ui.label(label_buffer.as_str());
                                 }
                             }
@@ -1026,7 +1029,7 @@ impl Framework {
                     let max_sprites = if h40 { 80 } else { 64 };
 
                     let iter = crate::vdp::SpriteIterator {
-                        vram: &debug_info.vram,
+                        vram: &debug_info.vram[..],
                         next_idx: 0,
                         count: 0,
                         max_sprites,
@@ -1109,11 +1112,16 @@ impl Framework {
                     let render_plane = |ui: &mut egui::Ui,
                                         base: usize,
                                         texture_opt: &mut Option<egui::TextureHandle>,
+                                        image_arc: &mut std::sync::Arc<egui::ColorImage>,
                                         id: &str| {
-                        let mut image = egui::ColorImage::new(
-                            [plane_w * 8, plane_h * 8],
-                            egui::Color32::TRANSPARENT,
-                        );
+                        let image = std::sync::Arc::make_mut(image_arc);
+                        let expected_size = [plane_w * 8, plane_h * 8];
+                        if image.size != expected_size {
+                            *image = egui::ColorImage::new(expected_size, egui::Color32::TRANSPARENT);
+                        } else {
+                            image.pixels.fill(egui::Color32::TRANSPARENT);
+                        }
+
                         for ty in 0..plane_h {
                             for tx in 0..plane_w {
                                 let entry_addr = base + (ty * plane_w + tx) * 2;
@@ -1158,7 +1166,7 @@ impl Framework {
                                 Default::default(),
                             )
                         });
-                        texture.set(image, Default::default());
+                        texture.set(image_arc.clone(), Default::default());
                         egui::ScrollArea::both().id_source(id).show(ui, |ui| {
                             ui.image(&*texture);
                         });
@@ -1166,10 +1174,22 @@ impl Framework {
 
                     match self.gui_state.scroll_plane_tab {
                         PlaneTab::PlaneA => {
-                            render_plane(ui, plane_a_base, &mut self.plane_a_texture, "plane_a");
+                            render_plane(
+                                ui,
+                                plane_a_base,
+                                &mut self.plane_a_texture,
+                                &mut self.plane_a_viewer_image,
+                                "plane_a",
+                            );
                         }
                         PlaneTab::PlaneB => {
-                            render_plane(ui, plane_b_base, &mut self.plane_b_texture, "plane_b");
+                            render_plane(
+                                ui,
+                                plane_b_base,
+                                &mut self.plane_b_texture,
+                                &mut self.plane_b_viewer_image,
+                                "plane_b",
+                            );
                         }
                     }
                 });
@@ -1645,16 +1665,17 @@ impl Framework {
             .update_buffers(device, queue, encoder, &paint_jobs, &self.screen_descriptor);
         // Render GUI
         {
-            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("egui"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            let attachments = [Some(wgpu::RenderPassColorAttachment {
                     view: render_target,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
                     },
-                })],
+                })];
+            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("egui"),
+                color_attachments: &attachments[..],
                 depth_stencil_attachment: None,
                 occlusion_query_set: None,
                 timestamp_writes: None,
@@ -1697,22 +1718,26 @@ fn collect_debug_info(
         bus.vdp.framebuffer.fill(0xF800); // Red in RGB565
     }
     let m68k_disasm = {
-        let mut disasm = Vec::new();
+        let mut disasm = Vec::with_capacity(10);
         let mut addr = emulator.cpu.pc;
+        let mut buffer = String::with_capacity(32);
         for _ in 0..10 {
             let opcode = bus.read_word(addr);
             let instr = crate::cpu::decode(opcode);
-            disasm.push((addr, format!("{:?}", instr)));
+            buffer.clear();
+            use std::fmt::Write;
+            let _ = write!(&mut buffer, "{:?}", instr);
+            disasm.push((addr, std::borrow::Cow::Owned(buffer.clone())));
             addr += instr.length_words() * 2;
         }
         disasm
     };
     let z80_disasm = {
-        let mut disasm = [(0u16, 0u8); 10];
+        let mut disasm = Vec::with_capacity(10);
         let mut addr = emulator.z80.pc;
-        for i in 0..10 {
+        for _ in 0..10 {
             let byte = bus.read_byte(0xA00000 + addr as u32);
-            disasm[i] = (addr, byte);
+            disasm.push((addr, std::borrow::Cow::Borrowed(HEX_LOOKUP[byte as usize])));
             addr += 1;
         }
         disasm

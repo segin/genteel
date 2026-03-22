@@ -112,7 +112,7 @@ impl Debuggable for Apu {
     }
 
     fn write_state(&mut self, state: &Value) {
-        if let Ok(new_apu) = serde_json::from_value(state.clone()) {
+        if let Ok(new_apu) = Apu::deserialize(state) {
             *self = new_apu;
         }
     }
@@ -149,6 +149,35 @@ mod tests {
         apu.write_fm_addr(Bank::Bank0, 0x28);
         apu.write_fm_data(Bank::Bank0, 0xF0);
         assert_eq!(apu.fm.registers[0][0x28], 0xF0);
+    }
+
+    #[test]
+    fn test_write_fm_addr() {
+        let mut apu = Apu::new();
+
+        // Write address to Bank0, and check if data written goes to this address
+        apu.write_fm_addr(Bank::Bank0, 0x22);
+        apu.write_fm_data(Bank::Bank0, 0x11);
+        assert_eq!(apu.fm.registers[0][0x22], 0x11);
+
+        // Change address in Bank0, write data, check new address is used
+        apu.write_fm_addr(Bank::Bank0, 0x27);
+        apu.write_fm_data(Bank::Bank0, 0x33);
+        assert_eq!(apu.fm.registers[0][0x27], 0x33);
+
+        // Verify that Bank1 operates independently
+        apu.write_fm_addr(Bank::Bank1, 0x28);
+        apu.write_fm_data(Bank::Bank1, 0x44);
+        assert_eq!(apu.fm.registers[1][0x28], 0x44);
+
+        // Change address in Bank1
+        apu.write_fm_addr(Bank::Bank1, 0x2B);
+        apu.write_fm_data(Bank::Bank1, 0x55);
+        assert_eq!(apu.fm.registers[1][0x2B], 0x55);
+
+        // Ensure Bank0 address wasn't affected by Bank1 address writes
+        apu.write_fm_data(Bank::Bank0, 0x66);
+        assert_eq!(apu.fm.registers[0][0x27], 0x66); // The last address set for Bank0 was 0x27
     }
 
     #[test]
@@ -220,5 +249,45 @@ mod tests {
         // tick_cycles(200) should be enough (200 * 7 = 1400 master clocks)
         apu.tick_cycles(200);
         assert!((apu.read_fm_status() & 0x02) != 0);
+    }
+}
+
+#[cfg(test)]
+mod tests_generate_sample {
+    use super::*;
+    use ym2612::Bank;
+
+    #[test]
+    fn test_generate_sample() {
+        let mut apu = Apu::new();
+
+        // At start, the buffer is full of 0s.
+        // generate_sample should return Some((0,0)).
+        let sample = apu.generate_sample();
+        assert_eq!(sample, Some((0, 0)));
+
+        // Setup FM DAC to generate sound (delta != 0)
+        apu.write_fm_addr(Bank::Bank0, 0x2B);
+        apu.write_fm_data(Bank::Bank0, 0x80); // Enable DAC
+        apu.write_fm_addr(Bank::Bank0, 0x2A);
+        apu.write_fm_data(Bank::Bank0, 0xFF); // Write a high DAC value
+
+        // Setup PSG tone to generate sound
+        apu.write_psg(0x8A); // Ch0 freq low
+        apu.write_psg(0x00); // Ch0 freq high
+        apu.write_psg(0x90); // Ch0 vol max
+
+        let mut has_non_zero = false;
+        // Tick enough cycles to produce changes and flush out the zeros
+        for _ in 0..2000 {
+            apu.tick_cycles(1);
+            if let Some((l, r)) = apu.generate_sample() {
+                if l != 0 || r != 0 {
+                    has_non_zero = true;
+                }
+            }
+        }
+
+        assert!(has_non_zero, "Expected non-zero audio samples after setting up APU channels");
     }
 }

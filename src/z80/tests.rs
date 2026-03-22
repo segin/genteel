@@ -1,4 +1,3 @@
-#![allow(unused_imports)]
 //! Comprehensive unit tests for Z80 CPU
 
 use super::*;
@@ -16,11 +15,27 @@ fn test_af_pair() {
 }
 
 #[test]
+fn test_af_getter() {
+    let mut z80 = create_z80(&[]);
+    z80.a = 0x12;
+    z80.f = 0x34;
+    assert_eq!(z80.af(), 0x1234);
+}
+
+#[test]
 fn test_bc_pair() {
     let mut z80 = create_z80(&[]);
     z80.set_bc(0xABCD);
     assert_eq!(z80.b, 0xAB);
     assert_eq!(z80.c, 0xCD);
+    assert_eq!(z80.bc(), 0xABCD);
+}
+
+#[test]
+fn test_bc_getter() {
+    let mut z80 = create_z80(&[]);
+    z80.b = 0xAB;
+    z80.c = 0xCD;
     assert_eq!(z80.bc(), 0xABCD);
 }
 
@@ -34,12 +49,48 @@ fn test_de_pair() {
 }
 
 #[test]
+fn test_de_getter() {
+    let mut z80 = create_z80(&[]);
+    z80.d = 0x56;
+    z80.e = 0x78;
+    assert_eq!(z80.de(), 0x5678);
+}
+
+#[test]
 fn test_hl_pair() {
     let mut z80 = create_z80(&[]);
     z80.set_hl(0xBEEF);
     assert_eq!(z80.h, 0xBE);
     assert_eq!(z80.l, 0xEF);
     assert_eq!(z80.hl(), 0xBEEF);
+}
+
+#[test]
+fn test_hl_getter() {
+    let mut z80 = create_z80(&[]);
+    z80.h = 0xBE;
+    z80.l = 0xEF;
+    assert_eq!(z80.hl(), 0xBEEF);
+}
+
+#[test]
+fn test_get_rp() {
+    let mut z80 = create_z80(&[]);
+
+    z80.set_bc(0x1234);
+    assert_eq!(z80.get_rp(0), 0x1234);
+
+    z80.set_de(0x5678);
+    assert_eq!(z80.get_rp(1), 0x5678);
+
+    z80.set_hl(0x9ABC);
+    assert_eq!(z80.get_rp(2), 0x9ABC);
+
+    z80.sp = 0xDEF0;
+    assert_eq!(z80.get_rp(3), 0xDEF0);
+
+    // Attempt invalid indices
+    assert_eq!(z80.get_rp(4), 0);
 }
 
 #[test]
@@ -77,6 +128,114 @@ fn test_set_rp() {
     assert_eq!(z80.de(), 0);
     assert_eq!(z80.hl(), 0);
     assert_eq!(z80.sp, 0);
+}
+
+// ==================== Flag Helpers Tests ====================
+
+#[test]
+fn test_get_flag() {
+    let mut z80 = create_z80(&[]);
+
+    // No flags set
+    z80.f = 0x00;
+    assert!(!z80.get_flag(flags::CARRY));
+    assert!(!z80.get_flag(flags::ADD_SUB));
+    assert!(!z80.get_flag(flags::PARITY));
+    assert!(!z80.get_flag(flags::X_FLAG));
+    assert!(!z80.get_flag(flags::HALF_CARRY));
+    assert!(!z80.get_flag(flags::Y_FLAG));
+    assert!(!z80.get_flag(flags::ZERO));
+    assert!(!z80.get_flag(flags::SIGN));
+
+    // All flags set
+    z80.f = 0xFF;
+    assert!(z80.get_flag(flags::CARRY));
+    assert!(z80.get_flag(flags::ADD_SUB));
+    assert!(z80.get_flag(flags::PARITY));
+    assert!(z80.get_flag(flags::X_FLAG));
+    assert!(z80.get_flag(flags::HALF_CARRY));
+    assert!(z80.get_flag(flags::Y_FLAG));
+    assert!(z80.get_flag(flags::ZERO));
+    assert!(z80.get_flag(flags::SIGN));
+
+    // Specific flag set
+    z80.f = flags::ZERO;
+    assert!(z80.get_flag(flags::ZERO));
+    assert!(!z80.get_flag(flags::CARRY)); // And others are not
+}
+
+#[test]
+fn test_set_flag() {
+    let mut z80 = create_z80(&[]);
+
+    // Test setting flags individually
+    z80.f = 0x00;
+
+    z80.set_flag(flags::CARRY, true);
+    assert_eq!(z80.f, flags::CARRY);
+
+    z80.set_flag(flags::ZERO, true);
+    assert_eq!(z80.f, flags::CARRY | flags::ZERO);
+
+    // Test clearing flags individually
+    z80.set_flag(flags::CARRY, false);
+    assert_eq!(z80.f, flags::ZERO);
+
+    z80.set_flag(flags::ZERO, false);
+    assert_eq!(z80.f, 0x00);
+
+    // Test setting an already set flag
+    z80.f = flags::SIGN;
+    z80.set_flag(flags::SIGN, true);
+    assert_eq!(z80.f, flags::SIGN);
+
+    // Test clearing an already cleared flag
+    z80.f = 0x00;
+    z80.set_flag(flags::PARITY, false);
+    assert_eq!(z80.f, 0x00);
+}
+
+#[test]
+fn test_get_rp2() {
+    let mut z80 = create_z80(&[]);
+
+    z80.set_bc(0x1234);
+    assert_eq!(z80.get_rp2(0), 0x1234);
+
+    z80.set_de(0x5678);
+    assert_eq!(z80.get_rp2(1), 0x5678);
+
+    z80.set_hl(0x9ABC);
+    assert_eq!(z80.get_rp2(2), 0x9ABC);
+
+    z80.set_af(0xDEF0);
+    assert_eq!(z80.get_rp2(3), 0xDEF0);
+
+    // Attempt invalid indices
+    assert_eq!(z80.get_rp2(4), 0);
+}
+
+#[test]
+fn test_set_rp2() {
+    let mut z80 = create_z80(&[]);
+
+    z80.set_rp2(0, 0x1234);
+    assert_eq!(z80.bc(), 0x1234);
+
+    z80.set_rp2(1, 0x5678);
+    assert_eq!(z80.de(), 0x5678);
+
+    z80.set_rp2(2, 0x9ABC);
+    assert_eq!(z80.hl(), 0x9ABC);
+
+    z80.set_rp2(3, 0xDEF0);
+    assert_eq!(z80.af(), 0xDEF0);
+
+    // Attempt invalid indices
+    z80.set_bc(0);
+    z80.set_rp2(4, 0xFFFF);
+    assert_eq!(z80.bc(), 0);
+}
 }
 
 // ==================== NOP Tests ====================
@@ -605,4 +764,87 @@ fn test_debug_state_fallback() {
     assert_eq!(z80.a, 0xAA);
     assert_eq!(z80.pc, 0x1234);
     assert_eq!(z80.cycles, 100);
+}
+
+#[test]
+fn test_check_condition() {
+    let mut z80 = create_z80(&[]);
+
+    // Helper to check a specific condition code with a specific flag state
+    let mut check = |cc: u8, flag: u8, flag_val: bool, expected: bool| {
+        z80.set_flag(flag, flag_val);
+        assert_eq!(
+            z80.check_condition(cc),
+            expected,
+            "cc: {}, flag: {}, flag_val: {}, expected: {}",
+            cc, flag, flag_val, expected
+        );
+    };
+
+    // 0 => !self.get_flag(flags::ZERO),   // NZ
+    check(0, flags::ZERO, false, true);
+    check(0, flags::ZERO, true, false);
+
+    // 1 => self.get_flag(flags::ZERO),    // Z
+    check(1, flags::ZERO, false, false);
+    check(1, flags::ZERO, true, true);
+
+    // 2 => !self.get_flag(flags::CARRY),  // NC
+    check(2, flags::CARRY, false, true);
+    check(2, flags::CARRY, true, false);
+
+    // 3 => self.get_flag(flags::CARRY),   // C
+    check(3, flags::CARRY, false, false);
+    check(3, flags::CARRY, true, true);
+
+    // 4 => !self.get_flag(flags::PARITY), // PO
+    check(4, flags::PARITY, false, true);
+    check(4, flags::PARITY, true, false);
+
+    // 5 => self.get_flag(flags::PARITY),  // PE
+    check(5, flags::PARITY, false, false);
+    check(5, flags::PARITY, true, true);
+
+    // 6 => !self.get_flag(flags::SIGN),   // P
+    check(6, flags::SIGN, false, true);
+    check(6, flags::SIGN, true, false);
+
+    // 7 => self.get_flag(flags::SIGN),    // M
+    check(7, flags::SIGN, false, false);
+    check(7, flags::SIGN, true, true);
+
+    // Invalid conditions
+    assert_eq!(z80.check_condition(8), false);
+    assert_eq!(z80.check_condition(255), false);
+}
+
+#[test]
+fn test_trigger_nmi() {
+    let mut z80 = create_z80(&[]);
+
+    // Setup initial state
+    z80.halted = true;
+    z80.iff1 = true;
+    z80.iff2 = false;
+    z80.pc = 0x1234;
+    z80.sp = 0x2000;
+
+    // Trigger NMI
+    let cycles = z80.trigger_nmi();
+
+    // Assert cycles
+    assert_eq!(cycles, 11);
+
+    // Assert state changes
+    assert_eq!(z80.halted, false);
+    assert_eq!(z80.iff2, true); // Copies iff1
+    assert_eq!(z80.iff1, false); // Disabled
+    assert_eq!(z80.pc, 0x0066); // NMI vector
+    assert_eq!(z80.sp, 0x1FFE); // Stack pointer decremented by 2
+
+    // Verify PC was pushed
+    let popped_pc = z80.pop();
+    assert_eq!(popped_pc, 0x1234);
+    assert_eq!(z80.sp, 0x2000);
+}
 }
