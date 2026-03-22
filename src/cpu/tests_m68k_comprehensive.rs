@@ -1,6 +1,7 @@
 //! Comprehensive M68k CPU Tests
 //!
 //! Contains 100+ unit and property-based tests covering the M68k instruction set.
+use crate::Cpu;
 
 use crate::cpu::flags;
 use crate::cpu::test_utils::create_test_cpu;

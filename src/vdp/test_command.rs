@@ -162,20 +162,8 @@ fn test_vdp_mode2_getter() {
 }
 
 #[test]
-fn test_vdp_mode2_getter() {
+fn test_vdp_is_control_pending() {
     let mut vdp = Vdp::new();
-
-    // Set register 1 (REG_MODE2) to a known value
-    vdp.registers[1] = 0xCD;
-
-    // mode2() should return the value of register 1
-    assert_eq!(vdp.mode2(), 0xCD);
-}
-
-#[test]
-fn test_is_control_pending() {
-    let mut vdp = Vdp::new();
-
     // Initially, no control word is pending
     assert!(!vdp.is_control_pending());
 
