@@ -691,14 +691,24 @@ impl Emulator {
             bus.vdp.render_line(line);
         }
     }
+    #[allow(clippy::too_many_arguments)]
     fn sync_components(
-        ctx: &mut SystemContext,
+        bus: &mut Bus,
         m68k_cycles: u32,
+        z80: &mut Z80<Z80Bus, Z80Bus>,
+        z80_cycle_debt: &mut f32,
         trigger_vint: bool,
+        internal_frame_count: u64,
+        z80_last_bus_req: &mut bool,
+        z80_last_reset: &mut bool,
+        z80_trace_count: &mut u32,
+        cpu_pc: u32,
+        debug: bool,
     ) {
         let mclk = m68k_cycles * 7;
 
         // 1. Tick the Bus (VDP, etc)
+        bus.tick(mclk);
 
         // 2. Z80 State and Timing
         let (z80_can_run, z80_is_reset, cycles_per_sample) = {
