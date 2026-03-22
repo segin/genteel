@@ -112,7 +112,7 @@ impl Debuggable for Apu {
     }
 
     fn write_state(&mut self, state: &Value) {
-        if let Ok(new_apu) = serde_json::from_value(state.clone()) {
+        if let Ok(new_apu) = Apu::deserialize(state) {
             *self = new_apu;
         }
     }
@@ -149,6 +149,25 @@ mod tests {
         apu.write_fm_addr(Bank::Bank0, 0x28);
         apu.write_fm_data(Bank::Bank0, 0xF0);
         assert_eq!(apu.fm.registers[0][0x28], 0xF0);
+    }
+
+    #[test]
+    fn test_write_fm_data() {
+        let mut apu = Apu::new();
+
+        // Write to Bank0, Register 0x24 (Timer A High)
+        apu.write_fm_addr(Bank::Bank0, 0x24);
+        apu.write_fm_data(Bank::Bank0, 0xAA);
+        assert_eq!(apu.fm.registers[0][0x24], 0xAA);
+        assert!((apu.read_fm_status() & 0x80) != 0); // Busy flag should be set
+
+        apu.tick_cycles(32); // clear busy
+
+        // Write to Bank1, Register 0x24
+        apu.write_fm_addr(Bank::Bank1, 0x24);
+        apu.write_fm_data(Bank::Bank1, 0xBB);
+        assert_eq!(apu.fm.registers[1][0x24], 0xBB);
+        assert!((apu.read_fm_status() & 0x80) != 0); // Busy flag should be set
     }
 
     #[test]

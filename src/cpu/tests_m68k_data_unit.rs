@@ -5,18 +5,8 @@
 use crate::cpu::decoder::{AddressingMode, Size};
 use crate::cpu::flags;
 use crate::cpu::ops::data::exec_move;
-#[cfg(test)]
-use crate::cpu::Cpu;
-use crate::memory::{Memory, MemoryInterface};
-
-fn create_cpu() -> (Cpu, Memory) {
-    let mut memory = Memory::new(0x10000);
-    let mut cpu = Cpu::new(&mut memory);
-    cpu.pc = 0x1000;
-    cpu.a[7] = 0x8000;
-    cpu.sr = 0x2700; // Supervisor mode
-    (cpu, memory)
-}
+use crate::cpu::test_utils::create_cpu;
+use crate::memory::MemoryInterface;
 
 #[test]
 fn test_move_data_register_byte() {
