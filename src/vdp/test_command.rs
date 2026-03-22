@@ -122,3 +122,25 @@ fn test_dma_pending_flag() {
 
     assert!(vdp.command.dma_pending);
 }
+
+#[test]
+fn test_vdp_mode1_getter() {
+    let mut vdp = Vdp::new();
+
+    // Set register 0 (REG_MODE1) to a known value
+    vdp.registers[0] = 0xAB;
+
+    // mode1() should return the value of register 0
+    assert_eq!(vdp.mode1(), 0xAB);
+}
+
+#[test]
+fn test_vdp_mode2_getter() {
+    let mut vdp = Vdp::new();
+
+    // Set register 1 (REG_MODE2) to a known value
+    vdp.registers[1] = 0xCD;
+
+    // mode2() should return the value of register 1
+    assert_eq!(vdp.mode2(), 0xCD);
+}

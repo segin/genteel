@@ -66,11 +66,11 @@ def scan_slow():
 
 def scan_fast():
     print("[*] Running fast scan (pre-compiled regex)...")
-    secret_patterns = {
-        "AWS Key": re.compile(r"AK" + r"IA[0-9A-Z]{16}"),
-        "Private Key": re.compile(r"-----BEGIN .* PRIVATE" + r" KEY-----"),
-        "Generic Token": re.compile(r"token\s*=\s*['\"][a-zA-Z0-9]{20,}['\"]"),
-    }
+    secret_pattern_combined = re.compile(
+        r"(?P<AWS_Key>AK" + r"IA[0-9A-Z]{16})|"
+        r"(?P<Private_Key>-----BEGIN .* PRIVATE" + r" KEY-----)|"
+        r"(?P<Generic_Token>token\s*=\s*['\"][a-zA-Z0-9]{20,}['\"])"
+    )
 
     unsafe_pattern = re.compile(r"un" + r"safe\s*\{")
     todo_pattern = re.compile(r"(" + r"TO" + r"DO|" + r"FIX" + r"ME|" + r"X" + r"XX):")
@@ -81,9 +81,8 @@ def scan_fast():
     with open(FILENAME, 'r', encoding='utf-8', errors='ignore') as fp:
         for i, line_content in enumerate(fp):
             # Secrets
-            for name, pattern in secret_patterns.items():
-                if pattern.search(line_content):
-                    match_count += 1
+            for match in secret_pattern_combined.finditer(line_content):
+                match_count += 1
 
             # Unsafe
             if unsafe_pattern.search(line_content):

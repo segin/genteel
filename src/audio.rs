@@ -103,15 +103,24 @@ impl AudioBuffer {
 
     /// Pop samples from the buffer into destination
     pub fn pop(&mut self, dest: &mut [i16]) {
-        for sample in dest.iter_mut() {
-            if self.available > 0 {
-                *sample = self.buffer[self.read_pos];
-                self.read_pos = (self.read_pos + 1) % self.buffer.len();
-                self.available -= 1;
-            } else {
-                // Underrun - output silence
-                *sample = 0;
+        let samples_to_read = std::cmp::min(dest.len(), self.available);
+
+        if samples_to_read > 0 {
+            let first_chunk_len = std::cmp::min(samples_to_read, self.buffer.len() - self.read_pos);
+            dest[..first_chunk_len].copy_from_slice(&self.buffer[self.read_pos..self.read_pos + first_chunk_len]);
+
+            let second_chunk_len = samples_to_read - first_chunk_len;
+            if second_chunk_len > 0 {
+                dest[first_chunk_len..samples_to_read].copy_from_slice(&self.buffer[..second_chunk_len]);
             }
+
+            self.read_pos = (self.read_pos + samples_to_read) % self.buffer.len();
+            self.available -= samples_to_read;
+        }
+
+        if samples_to_read < dest.len() {
+            // Underrun - output silence for the remainder
+            dest[samples_to_read..].fill(0);
         }
     }
 
@@ -340,6 +349,52 @@ mod tests {
 
         assert_eq!(out2[0], 30);
         assert_eq!(buf.buffer[0], 30);
+    }
+
+    #[test]
+    fn test_audio_buffer_clear_edge_cases() {
+        let mut buf = AudioBuffer::new(2); // total capacity is 4 (stereo)
+
+        // Edge Case 1: Completely full buffer
+        buf.push(&[1i16, 2, 3, 4]);
+        assert_eq!(buf.available(), 4);
+        assert_eq!(buf.write_pos, 0); // wrapped around
+        assert_eq!(buf.read_pos, 0);
+
+        buf.clear();
+        assert_eq!(buf.available(), 0);
+        assert_eq!(buf.write_pos, 0);
+        assert_eq!(buf.read_pos, 0);
+
+        // Edge Case 2: Wrap-around state (read_pos > write_pos)
+        // Push 3 samples
+        buf.push(&[10i16, 20, 30]);
+        assert_eq!(buf.available(), 3);
+        assert_eq!(buf.write_pos, 3);
+
+        // Pop 2 samples (read_pos moves to 2)
+        let mut out = [0i16; 2];
+        buf.pop(&mut out);
+        assert_eq!(buf.available(), 1);
+        assert_eq!(buf.read_pos, 2);
+
+        // Push 2 more samples (write_pos wraps to 1)
+        buf.push(&[40i16, 50]);
+        assert_eq!(buf.available(), 3);
+        assert_eq!(buf.write_pos, 1);
+        assert_eq!(buf.read_pos, 2);
+
+        // Clear in wrap-around state
+        buf.clear();
+        assert_eq!(buf.available(), 0);
+        assert_eq!(buf.write_pos, 0);
+        assert_eq!(buf.read_pos, 0);
+
+        // Verify buffer works normally after wrap-around clear
+        buf.push(&[100i16]);
+        let mut out2 = [0i16; 1];
+        buf.pop(&mut out2);
+        assert_eq!(out2[0], 100);
     }
 
     #[test]
