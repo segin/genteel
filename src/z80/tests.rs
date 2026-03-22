@@ -236,6 +236,7 @@ fn test_set_rp2() {
     z80.set_rp2(4, 0xFFFF);
     assert_eq!(z80.bc(), 0);
 }
+}
 
 // ==================== NOP Tests ====================
 
