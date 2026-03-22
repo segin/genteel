@@ -236,7 +236,6 @@ fn test_set_rp2() {
     z80.set_rp2(4, 0xFFFF);
     assert_eq!(z80.bc(), 0);
 }
-}
 
 // ==================== NOP Tests ====================
 
@@ -770,52 +769,36 @@ fn test_debug_state_fallback() {
 fn test_check_condition() {
     let mut z80 = create_z80(&[]);
 
-    // Helper to check a specific condition code with a specific flag state
-    let mut check = |cc: u8, flag: u8, flag_val: bool, expected: bool| {
-        z80.set_flag(flag, flag_val);
-        assert_eq!(
-            z80.check_condition(cc),
-            expected,
-            "cc: {}, flag: {}, flag_val: {}, expected: {}",
-            cc, flag, flag_val, expected
-        );
-    };
+    // Test exhaustively across all 256 possible flag combinations
+    for f_val in 0..=255u8 {
+        z80.f = f_val;
 
-    // 0 => !self.get_flag(flags::ZERO),   // NZ
-    check(0, flags::ZERO, false, true);
-    check(0, flags::ZERO, true, false);
+        let zero = (f_val & flags::ZERO) != 0;
+        let carry = (f_val & flags::CARRY) != 0;
+        let parity = (f_val & flags::PARITY) != 0;
+        let sign = (f_val & flags::SIGN) != 0;
 
-    // 1 => self.get_flag(flags::ZERO),    // Z
-    check(1, flags::ZERO, false, false);
-    check(1, flags::ZERO, true, true);
+        // 0 => !self.get_flag(flags::ZERO),   // NZ
+        assert_eq!(z80.check_condition(0), !zero, "cc: 0 (NZ), f: {f_val:#04X}");
+        // 1 => self.get_flag(flags::ZERO),    // Z
+        assert_eq!(z80.check_condition(1), zero, "cc: 1 (Z), f: {f_val:#04X}");
+        // 2 => !self.get_flag(flags::CARRY),  // NC
+        assert_eq!(z80.check_condition(2), !carry, "cc: 2 (NC), f: {f_val:#04X}");
+        // 3 => self.get_flag(flags::CARRY),   // C
+        assert_eq!(z80.check_condition(3), carry, "cc: 3 (C), f: {f_val:#04X}");
+        // 4 => !self.get_flag(flags::PARITY), // PO
+        assert_eq!(z80.check_condition(4), !parity, "cc: 4 (PO), f: {f_val:#04X}");
+        // 5 => self.get_flag(flags::PARITY),  // PE
+        assert_eq!(z80.check_condition(5), parity, "cc: 5 (PE), f: {f_val:#04X}");
+        // 6 => !self.get_flag(flags::SIGN),   // P
+        assert_eq!(z80.check_condition(6), !sign, "cc: 6 (P), f: {f_val:#04X}");
+        // 7 => self.get_flag(flags::SIGN),    // M
+        assert_eq!(z80.check_condition(7), sign, "cc: 7 (M), f: {f_val:#04X}");
 
-    // 2 => !self.get_flag(flags::CARRY),  // NC
-    check(2, flags::CARRY, false, true);
-    check(2, flags::CARRY, true, false);
-
-    // 3 => self.get_flag(flags::CARRY),   // C
-    check(3, flags::CARRY, false, false);
-    check(3, flags::CARRY, true, true);
-
-    // 4 => !self.get_flag(flags::PARITY), // PO
-    check(4, flags::PARITY, false, true);
-    check(4, flags::PARITY, true, false);
-
-    // 5 => self.get_flag(flags::PARITY),  // PE
-    check(5, flags::PARITY, false, false);
-    check(5, flags::PARITY, true, true);
-
-    // 6 => !self.get_flag(flags::SIGN),   // P
-    check(6, flags::SIGN, false, true);
-    check(6, flags::SIGN, true, false);
-
-    // 7 => self.get_flag(flags::SIGN),    // M
-    check(7, flags::SIGN, false, false);
-    check(7, flags::SIGN, true, true);
-
-    // Invalid conditions
-    assert_eq!(z80.check_condition(8), false);
-    assert_eq!(z80.check_condition(255), false);
+        // Invalid conditions should always return false
+        assert_eq!(z80.check_condition(8), false, "cc: 8, f: {f_val:#04X}");
+        assert_eq!(z80.check_condition(255), false, "cc: 255, f: {f_val:#04X}");
+    }
 }
 
 #[test]
@@ -846,5 +829,4 @@ fn test_trigger_nmi() {
     let popped_pc = z80.pop();
     assert_eq!(popped_pc, 0x1234);
     assert_eq!(z80.sp, 0x2000);
-}
 }
