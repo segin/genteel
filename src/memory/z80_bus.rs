@@ -297,4 +297,52 @@ mod tests {
             assert_eq!(bus.z80_bank_bit, 0);
         }
     }
+
+    #[test]
+    fn test_set_bank_edge_cases() {
+        let mut z80_bus = create_test_z80_bus();
+
+        // 1. Ignored upper bits (only LSB matters)
+        z80_bus.set_bank(0xFF); // LSB is 1
+        {
+            let bus = z80_bus.bus.bus.borrow();
+            assert_eq!(bus.z80_bank_addr, 1 << 15);
+            assert_eq!(bus.z80_bank_bit, 1);
+        }
+
+        z80_bus.set_bank(0xFE); // LSB is 0
+        {
+            let bus = z80_bus.bus.bus.borrow();
+            assert_eq!(bus.z80_bank_addr, 1 << 15);
+            assert_eq!(bus.z80_bank_bit, 2);
+        }
+
+        z80_bus.reset_bank();
+
+        // 2. Full 9-bit write
+        // We will write 1, 0, 1, 0, 1, 0, 1, 0, 1
+        // This corresponds to binary: 101010101 -> 0x155
+        let bits = [1, 0, 1, 0, 1, 0, 1, 0, 1];
+        for b in bits {
+            z80_bus.set_bank(b);
+        }
+
+        {
+            let bus = z80_bus.bus.bus.borrow();
+            assert_eq!(bus.z80_bank_addr, 0x155 << 15);
+            assert_eq!(bus.z80_bank_bit, 0); // 9 writes means it wraps around to 0
+        }
+
+        // 3. Wraparound behavior
+        // Write a 10th bit (0)
+        z80_bus.set_bank(0);
+        {
+            let bus = z80_bus.bus.bus.borrow();
+            // Bit 15 should now be 0, all other bits remain the same
+            // Original: 101010101 -> 0x155
+            // New:      101010100 -> 0x154
+            assert_eq!(bus.z80_bank_addr, 0x154 << 15);
+            assert_eq!(bus.z80_bank_bit, 1);
+        }
+    }
 }
