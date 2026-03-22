@@ -95,10 +95,3 @@
 +                    if ctx.bus.audio_buffer.len() < 32768 {
 +                        ctx.bus.audio_buffer.push(l);
 +                        ctx.bus.audio_buffer.push(r);
-                     }
-                 }
--                bus.audio_accumulator -= cycles_per_sample;
-+                ctx.bus.audio_accumulator -= cycles_per_sample;
-             }
-         }
-     }
