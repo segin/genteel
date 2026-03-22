@@ -251,3 +251,43 @@ mod tests {
         assert!((apu.read_fm_status() & 0x02) != 0);
     }
 }
+
+#[cfg(test)]
+mod tests_generate_sample {
+    use super::*;
+    use ym2612::Bank;
+
+    #[test]
+    fn test_generate_sample() {
+        let mut apu = Apu::new();
+
+        // At start, the buffer is full of 0s.
+        // generate_sample should return Some((0,0)).
+        let sample = apu.generate_sample();
+        assert_eq!(sample, Some((0, 0)));
+
+        // Setup FM DAC to generate sound (delta != 0)
+        apu.write_fm_addr(Bank::Bank0, 0x2B);
+        apu.write_fm_data(Bank::Bank0, 0x80); // Enable DAC
+        apu.write_fm_addr(Bank::Bank0, 0x2A);
+        apu.write_fm_data(Bank::Bank0, 0xFF); // Write a high DAC value
+
+        // Setup PSG tone to generate sound
+        apu.write_psg(0x8A); // Ch0 freq low
+        apu.write_psg(0x00); // Ch0 freq high
+        apu.write_psg(0x90); // Ch0 vol max
+
+        let mut has_non_zero = false;
+        // Tick enough cycles to produce changes and flush out the zeros
+        for _ in 0..2000 {
+            apu.tick_cycles(1);
+            if let Some((l, r)) = apu.generate_sample() {
+                if l != 0 || r != 0 {
+                    has_non_zero = true;
+                }
+            }
+        }
+
+        assert!(has_non_zero, "Expected non-zero audio samples after setting up APU channels");
+    }
+}
