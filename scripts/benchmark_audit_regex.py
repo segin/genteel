@@ -47,8 +47,11 @@ def scan_slow():
     with open(FILENAME, 'r', encoding='utf-8', errors='ignore') as fp:
         for i, line_content in enumerate(fp):
             # Secrets
+            found_secrets = set()
             for match in secret_pattern_combined.finditer(line_content):
-                match_count += 1
+                if match.lastgroup:
+                    found_secrets.add(match.lastgroup)
+            match_count += len(found_secrets)
 
             # Unsafe
             if unsafe_pattern.search(line_content):

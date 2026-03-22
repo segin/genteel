@@ -16,12 +16,20 @@ use serde::{Deserialize, Serialize};
 pub struct Z80Bus {
     /// Reference to the main Genesis bus.
     bus: SharedBus,
+
+    /// Optional raw pointer to a borrowed bus to avoid RefCell double borrows
+    /// during active emulation cycles where the caller already holds a borrow.
+    #[serde(skip)]
+    borrowed_bus: Option<std::ptr::NonNull<Bus>>,
 }
 
 impl Z80Bus {
     /// Create a new Z80 bus adapter
     pub fn new(bus: SharedBus) -> Self {
-        Self { bus }
+        Self {
+            bus,
+            borrowed_bus: None,
+        }
     }
 }
 
@@ -29,21 +37,44 @@ impl Default for Z80Bus {
     fn default() -> Self {
         Self {
             bus: SharedBus::default(),
+            borrowed_bus: None,
         }
     }
 }
 
 impl Z80Bus {
+    /// Temporarily bind an already-borrowed Bus reference to this adapter.
+    /// This avoids RefCell double borrows during synchronization.
+    /// SAFETY: The caller must ensure the Bus reference remains valid for the duration of the bind.
+    pub unsafe fn bind_bus(&mut self, bus: &mut Bus) {
+        self.borrowed_bus = Some(std::ptr::NonNull::from(bus));
+    }
+
+    /// Unbind the borrowed Bus reference.
+    pub fn unbind_bus(&mut self) {
+        self.borrowed_bus = None;
+    }
+
     /// The value written becomes the upper bits of the 68k address
     pub fn set_bank(&mut self, value: u8) {
-        self.bus.bus.borrow_mut().write_byte(0xA06000, value);
+        if let Some(mut bus) = self.borrowed_bus {
+            unsafe { bus.as_mut().write_byte(0xA06000, value) };
+        } else {
+            self.bus.bus.borrow_mut().write_byte(0xA06000, value);
+        }
     }
 
     /// Reset bank register to 0
     pub fn reset_bank(&mut self) {
-        let mut bus = self.bus.bus.borrow_mut();
-        bus.z80_bank_addr = 0;
-        bus.z80_bank_bit = 0;
+        if let Some(mut bus) = self.borrowed_bus {
+            let bus_ref = unsafe { bus.as_mut() };
+            bus_ref.z80_bank_addr = 0;
+            bus_ref.z80_bank_bit = 0;
+        } else {
+            let mut bus = self.bus.bus.borrow_mut();
+            bus.z80_bank_addr = 0;
+            bus.z80_bank_bit = 0;
+        }
     }
 
     /// Internal helper to read byte from Bus (deduplicated logic)
@@ -127,11 +158,19 @@ impl Z80Bus {
 
 impl MemoryInterface for Z80Bus {
     fn read_byte(&mut self, address: u32) -> u8 {
-        Self::read_byte_from_bus(&mut self.bus.bus.borrow_mut(), address)
+        if let Some(mut bus) = self.borrowed_bus {
+            unsafe { Self::read_byte_from_bus(bus.as_mut(), address) }
+        } else {
+            Self::read_byte_from_bus(&mut self.bus.bus.borrow_mut(), address)
+        }
     }
 
     fn write_byte(&mut self, address: u32, value: u8) {
-        Self::write_byte_to_bus(&mut self.bus.bus.borrow_mut(), address, value)
+        if let Some(mut bus) = self.borrowed_bus {
+            unsafe { Self::write_byte_to_bus(bus.as_mut(), address, value) }
+        } else {
+            Self::write_byte_to_bus(&mut self.bus.bus.borrow_mut(), address, value)
+        }
     }
 
     fn read_word(&mut self, address: u32) -> u16 {
@@ -295,6 +334,54 @@ mod tests {
             let bus = z80_bus.bus.bus.borrow();
             assert_eq!(bus.z80_bank_addr, 0);
             assert_eq!(bus.z80_bank_bit, 0);
+        }
+    }
+
+    #[test]
+    fn test_set_bank_edge_cases() {
+        let mut z80_bus = create_test_z80_bus();
+
+        // 1. Ignored upper bits (only LSB matters)
+        z80_bus.set_bank(0xFF); // LSB is 1
+        {
+            let bus = z80_bus.bus.bus.borrow();
+            assert_eq!(bus.z80_bank_addr, 1 << 15);
+            assert_eq!(bus.z80_bank_bit, 1);
+        }
+
+        z80_bus.set_bank(0xFE); // LSB is 0
+        {
+            let bus = z80_bus.bus.bus.borrow();
+            assert_eq!(bus.z80_bank_addr, 1 << 15);
+            assert_eq!(bus.z80_bank_bit, 2);
+        }
+
+        z80_bus.reset_bank();
+
+        // 2. Full 9-bit write
+        // We will write 1, 0, 1, 0, 1, 0, 1, 0, 1
+        // This corresponds to binary: 101010101 -> 0x155
+        let bits = [1, 0, 1, 0, 1, 0, 1, 0, 1];
+        for b in bits {
+            z80_bus.set_bank(b);
+        }
+
+        {
+            let bus = z80_bus.bus.bus.borrow();
+            assert_eq!(bus.z80_bank_addr, 0x155 << 15);
+            assert_eq!(bus.z80_bank_bit, 0); // 9 writes means it wraps around to 0
+        }
+
+        // 3. Wraparound behavior
+        // Write a 10th bit (0)
+        z80_bus.set_bank(0);
+        {
+            let bus = z80_bus.bus.bus.borrow();
+            // Bit 15 should now be 0, all other bits remain the same
+            // Original: 101010101 -> 0x155
+            // New:      101010100 -> 0x154
+            assert_eq!(bus.z80_bank_addr, 0x154 << 15);
+            assert_eq!(bus.z80_bank_bit, 1);
         }
     }
 }

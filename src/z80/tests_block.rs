@@ -1,11 +1,10 @@
-#![allow(unused_imports)]
 //! Z80 Block Operation Tests
 //!
 //! Exhaustive property-based tests for block transfer and search operations.
 //! Includes massive randomization of state to cover edge cases, overlaps, and wrapping.
 
 use super::*;
-use crate::memory::{IoInterface, Memory, MemoryInterface};
+use crate::memory::MemoryInterface;
 
 // Simple deterministic RNG to avoid dependencies
 struct Rng {

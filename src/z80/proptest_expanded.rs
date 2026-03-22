@@ -1,4 +1,3 @@
-#![allow(unused_imports)]
 //! Expanded property-based tests for Z80 CPU - Massive test coverage
 
 use super::test_utils::{TestIo, CombinedBus};

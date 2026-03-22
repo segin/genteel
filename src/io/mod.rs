@@ -407,7 +407,7 @@ impl Debuggable for Io {
     }
 
     fn write_state(&mut self, state: &Value) {
-        if let Ok(new_io) = serde_json::from_value(state.clone()) {
+        if let Ok(new_io) = Io::deserialize(state) {
             *self = new_io;
         }
     }
@@ -891,6 +891,11 @@ mod tests {
         state.set_button("select", true);
         state.set_button("", true);
         state.set_button("unknown", true);
+        state.set_button("   ", true);
+        state.set_button("12345", true);
+        state.set_button("long_invalid_string_name_that_should_be_ignored", true);
+        state.set_button("a ", true); // Valid letter but with trailing space
+        state.set_button(" a", true); // Valid letter but with leading space
 
         // Ensure no buttons are set
         assert_eq!(state.to_button_string(), "............");

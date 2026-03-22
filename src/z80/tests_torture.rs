@@ -1,4 +1,3 @@
-#![allow(unused_imports)]
 //! Z80 Torture Tests - Extreme Architectural Nuances
 //!
 //! These tests verify undocumented and cycle-accurate behaviors:

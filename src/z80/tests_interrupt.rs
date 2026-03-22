@@ -1,4 +1,3 @@
-#![allow(unused_imports)]
 //! Z80 Interrupt Handling Tests
 //!
 //! Tests for interrupt-related instructions and behavior:
@@ -304,4 +303,56 @@ fn halt_pc_stops() {
     assert_eq!(c.pc, 1);
     c.step(&mut bus);
     assert_eq!(c.pc, 1); // PC doesn't advance during HALT
+}
+
+// ============ NMI (Non-Maskable Interrupt) ============
+
+#[test]
+fn nmi_clears_halt() {
+    let mut c = create_z80(&[]);
+    c.halted = true;
+    c.trigger_nmi();
+    assert!(!c.halted);
+}
+
+#[test]
+fn nmi_saves_iff1_to_iff2_and_clears_iff1() {
+    let mut c = create_z80(&[]);
+    c.iff1 = true;
+    c.iff2 = false;
+    c.trigger_nmi();
+    assert!(!c.iff1);
+    assert!(c.iff2);
+
+    let mut c2 = create_z80(&[]);
+    c2.iff1 = false;
+    c2.iff2 = true;
+    c2.trigger_nmi();
+    assert!(!c2.iff1);
+    assert!(!c2.iff2);
+}
+
+#[test]
+fn nmi_pushes_pc_and_jumps_to_0066() {
+    let mut c = create_z80(&[]);
+    c.pc = 0x1234;
+    c.sp = 0x2000;
+
+    let cycles = c.trigger_nmi();
+
+    // Check cycle count
+    assert_eq!(cycles, 11);
+
+    // Check PC and SP
+    assert_eq!(c.pc, 0x0066);
+    assert_eq!(c.sp, 0x1FFE);
+
+    // Check pushed value on stack
+    // SP is decremented by 2, then written.
+    // write_word writes low byte first at SP, high byte at SP+1
+    let low = c.read_byte(0x1FFE) as u16;
+    let high = c.read_byte(0x1FFF) as u16;
+    let pushed_pc = (high << 8) | low;
+
+    assert_eq!(pushed_pc, 0x1234);
 }
