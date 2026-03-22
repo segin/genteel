@@ -64,6 +64,21 @@ fn test_vdp_vint_enabled_getter() {
 }
 
 #[test]
+fn test_vdp_mode1_getter() {
+    let mut vdp = Vdp::new();
+
+    // Test default
+    assert_eq!(vdp.mode1(), 0x00);
+
+    // Test set value
+    vdp.registers[REG_MODE1] = 0x42;
+    assert_eq!(vdp.mode1(), 0x42);
+
+    vdp.registers[REG_MODE1] = 0xFF;
+    assert_eq!(vdp.mode1(), 0xFF);
+}
+
+#[test]
 fn test_vdp_hint_enabled_getter() {
     let mut vdp = Vdp::new();
 
