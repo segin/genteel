@@ -43,6 +43,26 @@ fn test_hl_pair() {
 }
 
 #[test]
+fn test_get_rp() {
+    let mut z80 = create_z80(&[]);
+
+    z80.set_bc(0x1234);
+    assert_eq!(z80.get_rp(0), 0x1234);
+
+    z80.set_de(0x5678);
+    assert_eq!(z80.get_rp(1), 0x5678);
+
+    z80.set_hl(0x9ABC);
+    assert_eq!(z80.get_rp(2), 0x9ABC);
+
+    z80.sp = 0xDEF0;
+    assert_eq!(z80.get_rp(3), 0xDEF0);
+
+    // Attempt invalid indices
+    assert_eq!(z80.get_rp(4), 0);
+}
+
+#[test]
 fn test_set_rp() {
     let mut z80 = create_z80(&[]);
 
@@ -77,6 +97,48 @@ fn test_set_rp() {
     assert_eq!(z80.de(), 0);
     assert_eq!(z80.hl(), 0);
     assert_eq!(z80.sp, 0);
+}
+
+#[test]
+fn test_get_rp2() {
+    let mut z80 = create_z80(&[]);
+
+    z80.set_bc(0x1234);
+    assert_eq!(z80.get_rp2(0), 0x1234);
+
+    z80.set_de(0x5678);
+    assert_eq!(z80.get_rp2(1), 0x5678);
+
+    z80.set_hl(0x9ABC);
+    assert_eq!(z80.get_rp2(2), 0x9ABC);
+
+    z80.set_af(0xDEF0);
+    assert_eq!(z80.get_rp2(3), 0xDEF0);
+
+    // Attempt invalid indices
+    assert_eq!(z80.get_rp2(4), 0);
+}
+
+#[test]
+fn test_set_rp2() {
+    let mut z80 = create_z80(&[]);
+
+    z80.set_rp2(0, 0x1234);
+    assert_eq!(z80.bc(), 0x1234);
+
+    z80.set_rp2(1, 0x5678);
+    assert_eq!(z80.de(), 0x5678);
+
+    z80.set_rp2(2, 0x9ABC);
+    assert_eq!(z80.hl(), 0x9ABC);
+
+    z80.set_rp2(3, 0xDEF0);
+    assert_eq!(z80.af(), 0xDEF0);
+
+    // Attempt invalid indices
+    z80.set_bc(0);
+    z80.set_rp2(4, 0xFFFF);
+    assert_eq!(z80.bc(), 0);
 }
 
 // ==================== NOP Tests ====================
