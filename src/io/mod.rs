@@ -848,4 +848,51 @@ mod tests {
             "Io state should not change when given invalid JSON"
         );
     }
+
+    #[test]
+    fn test_controller_set_button_comprehensive() {
+        let mut state = ControllerState::new();
+
+        // 1. Verify all valid button names
+        let buttons: [(&str, fn(&ControllerState) -> bool); 12] = [
+            ("up", |s| s.up),
+            ("down", |s| s.down),
+            ("left", |s| s.left),
+            ("right", |s| s.right),
+            ("a", |s| s.a),
+            ("b", |s| s.b),
+            ("c", |s| s.c),
+            ("start", |s| s.start),
+            ("x", |s| s.x),
+            ("y", |s| s.y),
+            ("z", |s| s.z),
+            ("mode", |s| s.mode),
+        ];
+
+        for (name, check) in buttons {
+            state.clear();
+            state.set_button(name, true);
+            assert!(check(&state), "Button {} should be pressed", name);
+            state.set_button(name, false);
+            assert!(!check(&state), "Button {} should be released", name);
+        }
+
+        // 2. Verify case insensitivity
+        state.clear();
+        state.set_button("UP", true);
+        assert!(state.up);
+        state.set_button("Down", true);
+        assert!(state.down);
+        state.set_button("StArT", true);
+        assert!(state.start);
+
+        // 3. Verify invalid button names
+        state.clear();
+        state.set_button("select", true);
+        state.set_button("", true);
+        state.set_button("unknown", true);
+
+        // Ensure no buttons are set
+        assert_eq!(state.to_button_string(), "............");
+    }
 }

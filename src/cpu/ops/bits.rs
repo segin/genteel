@@ -187,6 +187,92 @@ pub fn exec_not<M: MemoryInterface>(
     4 + cycles
 }
 
+fn calculate_shift_left(
+    val: u32,
+    count_val: u32,
+    size_bits: u32,
+    mask: u32,
+    arithmetic: bool,
+) -> (u32, bool, bool) {
+    let result;
+    let carry;
+    let mut overflow = false;
+
+    if count_val >= size_bits {
+        result = 0;
+        carry = if count_val == size_bits {
+            (val & 1) != 0
+        } else {
+            false
+        };
+        if arithmetic {
+            // For ASL, overflow occurs if the result is not the same as the original value multiplied by 2^n
+            // which for large shifts means we lost non-zero bits.
+            overflow = val != 0;
+        }
+    } else {
+        carry = ((val >> (size_bits - count_val)) & 1) != 0;
+        result = (val << count_val) & mask;
+        if arithmetic {
+            // Check if the bits that passed through the MSB were all consistent
+            // This means bits [size-1 .. size-1-count] must be all 0s or all 1s.
+            // Mask for these bits:
+            let check_mask = mask & (!0u32 << (size_bits - count_val - 1));
+            let masked = val & check_mask;
+            overflow = (masked != 0) && (masked != check_mask);
+        }
+    }
+
+    (result, carry, overflow)
+}
+
+fn calculate_shift_right(
+    val: u32,
+    count_val: u32,
+    size_bits: u32,
+    mask: u32,
+    sign_bit: u32,
+    arithmetic: bool,
+) -> (u32, bool, bool) {
+    let result;
+    let carry;
+
+    if count_val >= size_bits {
+        if arithmetic && (val & sign_bit) != 0 {
+            result = mask; // Sign extended -1
+            carry = true; // Last bit shifted out was sign bit (1)
+        } else {
+            result = 0;
+            carry = if arithmetic {
+                false // Sign bit was 0
+            } else {
+                // Logical: Last bit out depends on count
+                if count_val == size_bits {
+                    (val & sign_bit) != 0
+                } else {
+                    false
+                }
+            };
+        }
+    } else {
+        carry = ((val >> (count_val - 1)) & 1) != 0;
+        if arithmetic {
+            let shifted = val >> count_val;
+            if (val & sign_bit) != 0 {
+                // Sign extend
+                let sign_mask = mask & (!0u32 << (size_bits - count_val));
+                result = shifted | sign_mask;
+            } else {
+                result = shifted;
+            }
+        } else {
+            result = val >> count_val;
+        }
+    }
+
+    (result, carry, false) // Right shift never overflows
+}
+
 pub fn exec_shift<M: MemoryInterface>(
     cpu: &mut Cpu,
     size: Size,
@@ -217,64 +303,15 @@ pub fn exec_shift<M: MemoryInterface>(
 
     if count_val > 0 {
         if left {
-            if count_val >= size_bits {
-                result = 0;
-                carry = if count_val == size_bits {
-                    (val & 1) != 0
-                } else {
-                    false
-                };
-                if arithmetic {
-                    // For ASL, overflow occurs if the result is not the same as the original value multiplied by 2^n
-                    // which for large shifts means we lost non-zero bits.
-                    overflow = val != 0;
-                }
-            } else {
-                carry = ((val >> (size_bits - count_val)) & 1) != 0;
-                result = (val << count_val) & mask;
-                if arithmetic {
-                    // Check if the bits that passed through the MSB were all consistent
-                    // This means bits [size-1 .. size-1-count] must be all 0s or all 1s.
-                    // Mask for these bits:
-                    let check_mask = mask & (!0u32 << (size_bits - count_val - 1));
-                    let masked = val & check_mask;
-                    overflow = (masked != 0) && (masked != check_mask);
-                }
-            }
+            let res = calculate_shift_left(val, count_val, size_bits, mask, arithmetic);
+            result = res.0;
+            carry = res.1;
+            overflow = res.2;
         } else {
-            // Right shift
-            if count_val >= size_bits {
-                if arithmetic && (val & sign_bit) != 0 {
-                    result = mask; // Sign extended -1
-                    carry = true; // Last bit shifted out was sign bit (1)
-                } else {
-                    result = 0;
-                    carry = if arithmetic {
-                        false // Sign bit was 0
-                    } else {
-                        // Logical: Last bit out depends on count
-                        if count_val == size_bits {
-                            (val & sign_bit) != 0
-                        } else {
-                            false
-                        }
-                    };
-                }
-            } else {
-                carry = ((val >> (count_val - 1)) & 1) != 0;
-                if arithmetic {
-                    let shifted = val >> count_val;
-                    if (val & sign_bit) != 0 {
-                        // Sign extend
-                        let sign_mask = mask & (!0u32 << (size_bits - count_val));
-                        result = shifted | sign_mask;
-                    } else {
-                        result = shifted;
-                    }
-                } else {
-                    result = val >> count_val;
-                }
-            }
+            let res = calculate_shift_right(val, count_val, size_bits, mask, sign_bit, arithmetic);
+            result = res.0;
+            carry = res.1;
+            overflow = res.2;
         }
     }
 
