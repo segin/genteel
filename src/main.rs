@@ -761,6 +761,7 @@ impl Emulator {
             // Unbind to return to SharedBus mode
             ctx.z80.memory.unbind_bus();
             ctx.z80.io.unbind_bus();
+
         }
 
         // 4. Update APU and generate audio samples

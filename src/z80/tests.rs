@@ -197,6 +197,7 @@ fn test_set_flag() {
         flags::SIGN,
     ];
 
+
     // Test setting flags individually
     for &flag in &all_flags {
         z80.f = 0x00;

@@ -72,6 +72,7 @@ impl Z80Bus {
         } else {
             let mut bus = self.bus.bus.borrow_mut();
             bus.z80_bank_addr = 0;
+
         }
     }
 
