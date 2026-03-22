@@ -368,9 +368,10 @@ impl Bus {
                 }
             }
             0xA06000..=0xA060FF => {
-                let mut bank_reg = self.z80_bank_addr >> 15;
-                bank_reg = (bank_reg >> 1) | ((value as u32 & 1) << 8);
-                self.z80_bank_addr = bank_reg << 15;
+                let current_reg = self.z80_bank_addr >> 15;
+                let new_reg = (current_reg >> 1) | ((value as u32 & 1) << 8);
+                // Clear the top bits and assign to the 9-bit register (max 0x1FF)
+                self.z80_bank_addr = (new_reg & 0x1FF) << 15;
             }
             _ => {}
         }
