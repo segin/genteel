@@ -6,25 +6,8 @@
 #![cfg(test)]
 
 use crate::cpu::flags;
-use crate::cpu::Cpu;
-use crate::memory::{Memory, MemoryInterface};
-
-fn create_cpu() -> (Cpu, Memory) {
-    let mut memory = Memory::new(0x100000);
-    let mut cpu = Cpu::new(&mut memory);
-    cpu.pc = 0x1000;
-    cpu.a[7] = 0x8000;
-    cpu.sr |= flags::SUPERVISOR;
-    (cpu, memory)
-}
-
-fn write_op(memory: &mut Memory, opcodes: &[u16]) {
-    let mut addr = 0x1000u32;
-    for &op in opcodes {
-        memory.write_word(addr, op);
-        addr += 2;
-    }
-}
+use crate::cpu::test_utils::{create_cpu, write_op};
+use crate::memory::MemoryInterface;
 
 fn push_rtr_frame(cpu: &mut Cpu, memory: &mut Memory, target_pc: u32, stacked_ccr_word: u16) {
     cpu.push_long(target_pc, memory);
