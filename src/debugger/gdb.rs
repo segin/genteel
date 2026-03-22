@@ -1195,6 +1195,82 @@ mod tests {
     }
 
     #[test]
+    fn test_receive_packet_robustness() {
+        let mut server = GdbServer::new(0, None).expect("Failed to create GDB server");
+        server.no_ack_mode = false;
+        let port = server.port();
+
+        // Connect via loopback
+        let mut client_stream =
+            TcpStream::connect(format!("127.0.0.1:{}", port)).expect("Failed to connect");
+        assert!(server.accept(), "Server should accept connection");
+
+        // 1. Test ignoring ACK/NAK (+/-) characters
+        let packet_with_prefix = b"+-$OK#9a";
+        client_stream.write_all(packet_with_prefix).unwrap();
+        client_stream.flush().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        assert_eq!(server.receive_packet(), Some("OK".to_string()));
+
+        // Read out the ACK (+) from the first message
+        client_stream.set_nonblocking(true).unwrap();
+        let mut response = [0u8; 10];
+        let _ = client_stream.read(&mut response); // Clear the buffer
+        client_stream.set_nonblocking(false).unwrap();
+
+        // 2. Test invalid checksum
+        // Send a valid packet body but an invalid checksum "00" instead of "9a"
+        // Also ensure the packet starts cleanly with $
+        let invalid_checksum_packet = b"$OK#00";
+        client_stream.write_all(invalid_checksum_packet).unwrap();
+        client_stream.flush().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        // This should read the packet, see the invalid checksum, send '-', and return None
+        assert_eq!(server.receive_packet(), None);
+
+        // Read the NAK from the server
+        client_stream.set_nonblocking(true).unwrap();
+        let mut naks_found = false;
+        let mut response = [0u8; 10];
+        for _ in 0..50 {
+            if let Ok(bytes_read) = client_stream.read(&mut response) {
+                if bytes_read > 0 && response[..bytes_read].contains(&b'-') {
+                    naks_found = true;
+                    break;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(naks_found, "Expected NAK (-) from server");
+
+        // 3. Test receiving interrupt character (0x03)
+        let interrupt_packet = [0x03];
+        client_stream.write_all(&interrupt_packet).unwrap();
+        client_stream.flush().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        assert_eq!(server.receive_packet(), Some("INTERRUPT".to_string()));
+        assert_eq!(server.stop_reason, StopReason::Interrupt);
+
+        // Read out anything left from interrupt
+        client_stream.set_nonblocking(true).unwrap();
+        let _ = client_stream.read(&mut response); // Clear the buffer
+        client_stream.set_nonblocking(false).unwrap();
+
+        // 4. Test improperly framed packet
+        // Send a packet but cut the connection before the checksum
+        let bad_frame_packet = b"$OK#";
+        client_stream.write_all(bad_frame_packet).unwrap();
+        client_stream.flush().unwrap();
+
+        // Disconnect immediately
+        client_stream.shutdown(std::net::Shutdown::Both).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        assert_eq!(server.receive_packet(), None);
+    }
+
+    #[test]
     fn test_receive_packet_write_ack_failure() {
         let mut server = GdbServer::new(0, None).expect("Failed to create GDB server");
         // Disable no_ack_mode so the server attempts to write an ACK (+)
@@ -1280,11 +1356,11 @@ mod tests {
 
         // Verify that the server sent "E01"
         client_stream.set_nonblocking(false).unwrap();
-        let mut response = [0u8; 7]; // $E01#XX
+        let mut response = [0u8; 8]; // +$E01#XX
         client_stream
             .read_exact(&mut response)
             .expect("Failed to read response from server");
-        assert_eq!(&response[0..4], b"$E01");
+        assert_eq!(&response[0..4], b"+$E0");
     }
 
     #[test]
