@@ -3,7 +3,7 @@
 //! Contains 100+ unit and property-based tests covering the M68k instruction set.
 
 use crate::cpu::flags;
-use crate::cpu::test_utils::create_test_cpu;
+use crate::cpu::{test_utils::create_test_cpu, Cpu};
 use crate::memory::{Memory, MemoryInterface};
 use proptest::prelude::*;
 

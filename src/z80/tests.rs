@@ -7,7 +7,7 @@ use crate::z80::test_utils::create_z80;
 
 #[test]
 fn test_af_pair() {
-    let mut z80 = create_z80(&[]);
+    let mut z80 = create_z80(&[][..]);
     z80.set_af(0x1234);
     assert_eq!(z80.a, 0x12);
     assert_eq!(z80.f, 0x34);
@@ -16,7 +16,7 @@ fn test_af_pair() {
 
 #[test]
 fn test_af_getter() {
-    let mut z80 = create_z80(&[]);
+    let mut z80 = create_z80(&[][..]);
     z80.a = 0x12;
     z80.f = 0x34;
     assert_eq!(z80.af(), 0x1234);
@@ -24,7 +24,7 @@ fn test_af_getter() {
 
 #[test]
 fn test_bc_pair() {
-    let mut z80 = create_z80(&[]);
+    let mut z80 = create_z80(&[][..]);
     z80.set_bc(0xABCD);
     assert_eq!(z80.b, 0xAB);
     assert_eq!(z80.c, 0xCD);
@@ -33,7 +33,7 @@ fn test_bc_pair() {
 
 #[test]
 fn test_bc_getter() {
-    let mut z80 = create_z80(&[]);
+    let mut z80 = create_z80(&[][..]);
     z80.b = 0xAB;
     z80.c = 0xCD;
     assert_eq!(z80.bc(), 0xABCD);
@@ -41,7 +41,7 @@ fn test_bc_getter() {
 
 #[test]
 fn test_de_pair() {
-    let mut z80 = create_z80(&[]);
+    let mut z80 = create_z80(&[][..]);
     z80.set_de(0x5678);
     assert_eq!(z80.d, 0x56);
     assert_eq!(z80.e, 0x78);
@@ -50,7 +50,7 @@ fn test_de_pair() {
 
 #[test]
 fn test_de_getter() {
-    let mut z80 = create_z80(&[]);
+    let mut z80 = create_z80(&[][..]);
     z80.d = 0x56;
     z80.e = 0x78;
     assert_eq!(z80.de(), 0x5678);
@@ -58,7 +58,7 @@ fn test_de_getter() {
 
 #[test]
 fn test_hl_pair() {
-    let mut z80 = create_z80(&[]);
+    let mut z80 = create_z80(&[][..]);
     z80.set_hl(0xBEEF);
     assert_eq!(z80.h, 0xBE);
     assert_eq!(z80.l, 0xEF);
@@ -67,7 +67,7 @@ fn test_hl_pair() {
 
 #[test]
 fn test_hl_getter() {
-    let mut z80 = create_z80(&[]);
+    let mut z80 = create_z80(&[][..]);
     z80.h = 0xBE;
     z80.l = 0xEF;
     assert_eq!(z80.hl(), 0xBEEF);
@@ -75,7 +75,7 @@ fn test_hl_getter() {
 
 #[test]
 fn test_get_rp() {
-    let mut z80 = create_z80(&[]);
+    let mut z80 = create_z80(&[][..]);
 
     z80.set_bc(0x1234);
     assert_eq!(z80.get_rp(0), 0x1234);
@@ -95,7 +95,7 @@ fn test_get_rp() {
 
 #[test]
 fn test_set_rp() {
-    let mut z80 = create_z80(&[]);
+    let mut z80 = create_z80(&[][..]);
 
     // Test index 0 -> BC
     z80.set_rp(0, 0x1234);
@@ -134,7 +134,7 @@ fn test_set_rp() {
 
 #[test]
 fn test_get_flag() {
-    let mut z80 = create_z80(&[]);
+    let mut z80 = create_z80(&[][..]);
 
     // No flags set
     z80.f = 0x00;
@@ -166,7 +166,7 @@ fn test_get_flag() {
 
 #[test]
 fn test_set_flag() {
-    let mut z80 = create_z80(&[]);
+    let mut z80 = create_z80(&[][..]);
 
     // Test setting flags individually
     z80.f = 0x00;
@@ -197,7 +197,7 @@ fn test_set_flag() {
 
 #[test]
 fn test_get_rp2() {
-    let mut z80 = create_z80(&[]);
+    let mut z80 = create_z80(&[][..]);
 
     z80.set_bc(0x1234);
     assert_eq!(z80.get_rp2(0), 0x1234);
@@ -217,7 +217,7 @@ fn test_get_rp2() {
 
 #[test]
 fn test_set_rp2() {
-    let mut z80 = create_z80(&[]);
+    let mut z80 = create_z80(&[][..]);
 
     z80.set_rp2(0, 0x1234);
     assert_eq!(z80.bc(), 0x1234);
@@ -236,13 +236,12 @@ fn test_set_rp2() {
     z80.set_rp2(4, 0xFFFF);
     assert_eq!(z80.bc(), 0);
 }
-}
 
 // ==================== NOP Tests ====================
 
 #[test]
 fn test_nop() {
-    let mut z80 = create_z80(&[0x00]);
+    let mut z80 = create_z80(&[0x00][..]);
     let cycles = z80.step();
     assert_eq!(z80.pc, 1);
     assert_eq!(cycles, 4);
@@ -250,7 +249,7 @@ fn test_nop() {
 
 #[test]
 fn test_nop_no_side_effects() {
-    let mut z80 = create_z80(&[0x00]);
+    let mut z80 = create_z80(&[0x00][..]);
     z80.a = 0x42;
     z80.set_bc(0x1234);
     z80.step();
@@ -262,7 +261,7 @@ fn test_nop_no_side_effects() {
 
 #[test]
 fn test_ld_bc_nn() {
-    let mut z80 = create_z80(&[0x01, 0x34, 0x12]);
+    let mut z80 = create_z80(&[0x01, 0x34, 0x12][..]);
     z80.step();
     assert_eq!(z80.bc(), 0x1234);
     assert_eq!(z80.pc, 3);
@@ -270,7 +269,7 @@ fn test_ld_bc_nn() {
 
 #[test]
 fn test_ld_de_nn() {
-    let mut z80 = create_z80(&[0x11, 0xCD, 0xAB]);
+    let mut z80 = create_z80(&[0x11, 0xCD, 0xAB][..]);
     z80.step();
     assert_eq!(z80.de(), 0xABCD);
     assert_eq!(z80.pc, 3);
@@ -278,7 +277,7 @@ fn test_ld_de_nn() {
 
 #[test]
 fn test_ld_hl_nn() {
-    let mut z80 = create_z80(&[0x21, 0xEF, 0xBE]);
+    let mut z80 = create_z80(&[0x21, 0xEF, 0xBE][..]);
     z80.step();
     assert_eq!(z80.hl(), 0xBEEF);
     assert_eq!(z80.pc, 3);
@@ -286,7 +285,7 @@ fn test_ld_hl_nn() {
 
 #[test]
 fn test_ld_sp_nn() {
-    let mut z80 = create_z80(&[0x31, 0x00, 0x80]);
+    let mut z80 = create_z80(&[0x31, 0x00, 0x80][..]);
     z80.step();
     assert_eq!(z80.sp, 0x8000);
     assert_eq!(z80.pc, 3);
@@ -296,7 +295,7 @@ fn test_ld_sp_nn() {
 
 #[test]
 fn test_inc_bc() {
-    let mut z80 = create_z80(&[0x03]);
+    let mut z80 = create_z80(&[0x03][..]);
     z80.set_bc(0x00FF);
     z80.step();
     assert_eq!(z80.bc(), 0x0100);
@@ -304,7 +303,7 @@ fn test_inc_bc() {
 
 #[test]
 fn test_inc_bc_wrap() {
-    let mut z80 = create_z80(&[0x03]);
+    let mut z80 = create_z80(&[0x03][..]);
     z80.set_bc(0xFFFF);
     z80.step();
     assert_eq!(z80.bc(), 0x0000);
@@ -312,7 +311,7 @@ fn test_inc_bc_wrap() {
 
 #[test]
 fn test_dec_bc() {
-    let mut z80 = create_z80(&[0x0B]);
+    let mut z80 = create_z80(&[0x0B][..]);
     z80.set_bc(0x0100);
     z80.step();
     assert_eq!(z80.bc(), 0x00FF);
@@ -320,7 +319,7 @@ fn test_dec_bc() {
 
 #[test]
 fn test_dec_bc_wrap() {
-    let mut z80 = create_z80(&[0x0B]);
+    let mut z80 = create_z80(&[0x0B][..]);
     z80.set_bc(0x0000);
     z80.step();
     assert_eq!(z80.bc(), 0xFFFF);
@@ -330,7 +329,7 @@ fn test_dec_bc_wrap() {
 
 #[test]
 fn test_inc_b() {
-    let mut z80 = create_z80(&[0x04]);
+    let mut z80 = create_z80(&[0x04][..]);
     z80.b = 0x7F;
     z80.step();
     assert_eq!(z80.b, 0x80);
@@ -340,7 +339,7 @@ fn test_inc_b() {
 
 #[test]
 fn test_dec_b() {
-    let mut z80 = create_z80(&[0x05]);
+    let mut z80 = create_z80(&[0x05][..]);
     z80.b = 0x80;
     z80.step();
     assert_eq!(z80.b, 0x7F);
@@ -349,7 +348,7 @@ fn test_dec_b() {
 
 #[test]
 fn test_inc_a_zero() {
-    let mut z80 = create_z80(&[0x3C]);
+    let mut z80 = create_z80(&[0x3C][..]);
     z80.a = 0xFF;
     z80.step();
     assert_eq!(z80.a, 0x00);
@@ -360,7 +359,7 @@ fn test_inc_a_zero() {
 
 #[test]
 fn test_ld_b_c() {
-    let mut z80 = create_z80(&[0x41]);
+    let mut z80 = create_z80(&[0x41][..]);
     z80.c = 0x55;
     z80.step();
     assert_eq!(z80.b, 0x55);
@@ -368,7 +367,7 @@ fn test_ld_b_c() {
 
 #[test]
 fn test_ld_a_b() {
-    let mut z80 = create_z80(&[0x78]);
+    let mut z80 = create_z80(&[0x78][..]);
     z80.b = 0x42;
     z80.step();
     assert_eq!(z80.a, 0x42);
@@ -376,7 +375,7 @@ fn test_ld_a_b() {
 
 #[test]
 fn test_ld_hl_indirect() {
-    let mut z80 = create_z80(&[0x36, 0xAB]);
+    let mut z80 = create_z80(&[0x36, 0xAB][..]);
     z80.set_hl(0x0100);
     z80.step();
     assert_eq!(z80.memory.read_byte(0x0100 as u32), 0xAB);
@@ -386,7 +385,7 @@ fn test_ld_hl_indirect() {
 
 #[test]
 fn test_add_a_b() {
-    let mut z80 = create_z80(&[0x80]);
+    let mut z80 = create_z80(&[0x80][..]);
     z80.a = 0x10;
     z80.b = 0x20;
     z80.step();
@@ -397,7 +396,7 @@ fn test_add_a_b() {
 
 #[test]
 fn test_add_a_overflow() {
-    let mut z80 = create_z80(&[0x80]);
+    let mut z80 = create_z80(&[0x80][..]);
     z80.a = 0x7F;
     z80.b = 0x01;
     z80.step();
@@ -408,7 +407,7 @@ fn test_add_a_overflow() {
 
 #[test]
 fn test_sub_a_b() {
-    let mut z80 = create_z80(&[0x90]);
+    let mut z80 = create_z80(&[0x90][..]);
     z80.a = 0x30;
     z80.b = 0x10;
     z80.step();
@@ -418,7 +417,7 @@ fn test_sub_a_b() {
 
 #[test]
 fn test_and_a() {
-    let mut z80 = create_z80(&[0xA0]);
+    let mut z80 = create_z80(&[0xA0][..]);
     z80.a = 0xF0;
     z80.b = 0x0F;
     z80.step();
@@ -428,7 +427,7 @@ fn test_and_a() {
 
 #[test]
 fn test_or_a() {
-    let mut z80 = create_z80(&[0xB0]);
+    let mut z80 = create_z80(&[0xB0][..]);
     z80.a = 0xF0;
     z80.b = 0x0F;
     z80.step();
@@ -437,7 +436,7 @@ fn test_or_a() {
 
 #[test]
 fn test_xor_a() {
-    let mut z80 = create_z80(&[0xA8]);
+    let mut z80 = create_z80(&[0xA8][..]);
     z80.a = 0xFF;
     z80.b = 0xFF;
     z80.step();
@@ -447,7 +446,7 @@ fn test_xor_a() {
 
 #[test]
 fn test_cp() {
-    let mut z80 = create_z80(&[0xB8]);
+    let mut z80 = create_z80(&[0xB8][..]);
     z80.a = 0x10;
     z80.b = 0x10;
     z80.step();
@@ -459,7 +458,7 @@ fn test_cp() {
 
 #[test]
 fn test_rlca() {
-    let mut z80 = create_z80(&[0x07]);
+    let mut z80 = create_z80(&[0x07][..]);
     z80.a = 0x85;
     z80.step();
     assert_eq!(z80.a, 0x0B);
@@ -468,7 +467,7 @@ fn test_rlca() {
 
 #[test]
 fn test_rrca() {
-    let mut z80 = create_z80(&[0x0F]);
+    let mut z80 = create_z80(&[0x0F][..]);
     z80.a = 0x81;
     z80.step();
     assert_eq!(z80.a, 0xC0);
@@ -479,21 +478,21 @@ fn test_rrca() {
 
 #[test]
 fn test_jp_nn() {
-    let mut z80 = create_z80(&[0xC3, 0x00, 0x10]);
+    let mut z80 = create_z80(&[0xC3, 0x00, 0x10][..]);
     z80.step();
     assert_eq!(z80.pc, 0x1000);
 }
 
 #[test]
 fn test_jr_d() {
-    let mut z80 = create_z80(&[0x18, 0x05]);
+    let mut z80 = create_z80(&[0x18, 0x05][..]);
     z80.step();
     assert_eq!(z80.pc, 7); // 2 + 5
 }
 
 #[test]
 fn test_jr_d_negative() {
-    let mut z80 = create_z80(&[0x00, 0x00, 0x00, 0x00, 0x18, 0xFB]); // JR -5
+    let mut z80 = create_z80(&[0x00, 0x00, 0x00, 0x00, 0x18, 0xFB][..]); // JR -5
     z80.pc = 4;
     z80.step();
     assert_eq!(z80.pc, 1); // 6 - 5
@@ -501,7 +500,7 @@ fn test_jr_d_negative() {
 
 #[test]
 fn test_call_nn() {
-    let mut z80 = create_z80(&[0xCD, 0x00, 0x10]);
+    let mut z80 = create_z80(&[0xCD, 0x00, 0x10][..]);
     z80.sp = 0x2000;
     z80.step();
     assert_eq!(z80.pc, 0x1000);
@@ -510,7 +509,7 @@ fn test_call_nn() {
 
 #[test]
 fn test_ret() {
-    let mut z80 = create_z80(&[0xC9]);
+    let mut z80 = create_z80(&[0xC9][..]);
     z80.sp = 0x1FFE;
     z80.memory.write_byte(0x1FFE as u32, 0x34);
     z80.memory.write_byte(0x1FFF as u32, 0x12);
@@ -523,7 +522,7 @@ fn test_ret() {
 
 #[test]
 fn test_push_bc() {
-    let mut z80 = create_z80(&[0xC5]);
+    let mut z80 = create_z80(&[0xC5][..]);
     z80.sp = 0x2000;
     z80.set_bc(0x1234);
     z80.step();
@@ -534,7 +533,7 @@ fn test_push_bc() {
 
 #[test]
 fn test_pop_bc() {
-    let mut z80 = create_z80(&[0xC1]);
+    let mut z80 = create_z80(&[0xC1][..]);
     z80.sp = 0x1FFE;
     z80.memory.write_byte(0x1FFE as u32, 0xCD);
     z80.memory.write_byte(0x1FFF as u32, 0xAB);
@@ -547,7 +546,7 @@ fn test_pop_bc() {
 
 #[test]
 fn test_cb_rlc_b() {
-    let mut z80 = create_z80(&[0xCB, 0x00]);
+    let mut z80 = create_z80(&[0xCB, 0x00][..]);
     z80.b = 0x85;
     z80.step();
     assert_eq!(z80.b, 0x0B);
@@ -556,7 +555,7 @@ fn test_cb_rlc_b() {
 
 #[test]
 fn test_cb_bit_7_a() {
-    let mut z80 = create_z80(&[0xCB, 0x7F]);
+    let mut z80 = create_z80(&[0xCB, 0x7F][..]);
     z80.a = 0x80;
     z80.step();
     assert!(!z80.get_flag(flags::ZERO));
@@ -564,7 +563,7 @@ fn test_cb_bit_7_a() {
 
 #[test]
 fn test_cb_set_3_b() {
-    let mut z80 = create_z80(&[0xCB, 0xD8]);
+    let mut z80 = create_z80(&[0xCB, 0xD8][..]);
     z80.b = 0x00;
     z80.step();
     assert_eq!(z80.b, 0x08);
@@ -572,7 +571,7 @@ fn test_cb_set_3_b() {
 
 #[test]
 fn test_cb_res_7_a() {
-    let mut z80 = create_z80(&[0xCB, 0xBF]);
+    let mut z80 = create_z80(&[0xCB, 0xBF][..]);
     z80.a = 0xFF;
     z80.step();
     assert_eq!(z80.a, 0x7F);
@@ -582,21 +581,21 @@ fn test_cb_res_7_a() {
 
 #[test]
 fn test_ld_ix_nn() {
-    let mut z80 = create_z80(&[0xDD, 0x21, 0x34, 0x12]);
+    let mut z80 = create_z80(&[0xDD, 0x21, 0x34, 0x12][..]);
     z80.step();
     assert_eq!(z80.ix, 0x1234);
 }
 
 #[test]
 fn test_ld_iy_nn() {
-    let mut z80 = create_z80(&[0xFD, 0x21, 0xCD, 0xAB]);
+    let mut z80 = create_z80(&[0xFD, 0x21, 0xCD, 0xAB][..]);
     z80.step();
     assert_eq!(z80.iy, 0xABCD);
 }
 
 #[test]
 fn test_ld_ix_d_n() {
-    let mut z80 = create_z80(&[0xDD, 0x36, 0x05, 0x42]);
+    let mut z80 = create_z80(&[0xDD, 0x36, 0x05, 0x42][..]);
     z80.ix = 0x1000;
     z80.step();
     assert_eq!(z80.memory.read_byte(0x1005 as u32), 0x42);
@@ -606,7 +605,7 @@ fn test_ld_ix_d_n() {
 
 #[test]
 fn test_ed_neg() {
-    let mut z80 = create_z80(&[0xED, 0x44]);
+    let mut z80 = create_z80(&[0xED, 0x44][..]);
     z80.a = 0x01;
     z80.step();
     assert_eq!(z80.a, 0xFF);
@@ -614,7 +613,7 @@ fn test_ed_neg() {
 
 #[test]
 fn test_ed_ldi() {
-    let mut z80 = create_z80(&[0xED, 0xA0]);
+    let mut z80 = create_z80(&[0xED, 0xA0][..]);
     z80.set_hl(0x1000);
     z80.set_de(0x2000);
     z80.set_bc(0x0010);
@@ -630,7 +629,7 @@ fn test_ed_ldi() {
 
 #[test]
 fn test_halt() {
-    let mut z80 = create_z80(&[0x76]);
+    let mut z80 = create_z80(&[0x76][..]);
     z80.step();
     assert!(z80.halted);
 }
@@ -639,7 +638,7 @@ fn test_halt() {
 
 #[test]
 fn test_ex_af_af_prime() {
-    let mut z80 = create_z80(&[0x08]);
+    let mut z80 = create_z80(&[0x08][..]);
     z80.a = 0x12;
     z80.f = 0x34;
     z80.a_prime = 0xAB;
@@ -653,7 +652,7 @@ fn test_ex_af_af_prime() {
 
 #[test]
 fn test_exx() {
-    let mut z80 = create_z80(&[0xD9]);
+    let mut z80 = create_z80(&[0xD9][..]);
     z80.set_bc(0x1111);
     z80.set_de(0x2222);
     z80.set_hl(0x3333);
@@ -667,7 +666,7 @@ fn test_exx() {
 
 #[test]
 fn test_ex_de_hl() {
-    let mut z80 = create_z80(&[0xEB]);
+    let mut z80 = create_z80(&[0xEB][..]);
     z80.set_de(0x1234);
     z80.set_hl(0xABCD);
     z80.step();
@@ -679,7 +678,7 @@ fn test_ex_de_hl() {
 fn test_debug_state() {
     use crate::debugger::Debuggable;
     use serde_json::json;
-    let mut z80 = create_z80(&[]);
+    let mut z80 = create_z80(&[][..]);
 
     // Set some initial state
     z80.a = 0xAA;
@@ -748,7 +747,7 @@ fn test_debug_state() {
 fn test_debug_state_fallback() {
     use crate::debugger::Debuggable;
     use serde_json::json;
-    let mut z80 = create_z80(&[]);
+    let mut z80 = create_z80(&[][..]);
 
     // Set some initial state
     z80.a = 0xAA;
@@ -768,7 +767,7 @@ fn test_debug_state_fallback() {
 
 #[test]
 fn test_check_condition() {
-    let mut z80 = create_z80(&[]);
+    let mut z80 = create_z80(&[][..]);
 
     // Helper to check a specific condition code with a specific flag state
     let mut check = |cc: u8, flag: u8, flag_val: bool, expected: bool| {
@@ -820,7 +819,7 @@ fn test_check_condition() {
 
 #[test]
 fn test_trigger_nmi() {
-    let mut z80 = create_z80(&[]);
+    let mut z80 = create_z80(&[][..]);
 
     // Setup initial state
     z80.halted = true;
@@ -846,5 +845,4 @@ fn test_trigger_nmi() {
     let popped_pc = z80.pop();
     assert_eq!(popped_pc, 0x1234);
     assert_eq!(z80.sp, 0x2000);
-}
 }

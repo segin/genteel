@@ -744,10 +744,21 @@ impl Emulator {
         if z80_can_run {
             const Z80_CYCLES_PER_M68K_CYCLE: f32 = 3579545.0 / 7670453.0;
             *z80_cycle_debt += m68k_cycles as f32 * Z80_CYCLES_PER_M68K_CYCLE;
+
+            // Bind the bus to avoid RefCell double borrow
+            unsafe {
+                z80.memory.bind_bus(bus);
+                z80.io.bind_bus(bus);
+            }
+
             while *z80_cycle_debt >= 1.0 {
                 let cycles = z80.step();
                 *z80_cycle_debt -= cycles as f32;
             }
+
+            // Unbind to return to SharedBus mode
+            z80.memory.unbind_bus();
+            z80.io.unbind_bus();
         }
 
         // 4. Update APU and generate audio samples
