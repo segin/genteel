@@ -782,3 +782,4 @@ fn test_trigger_nmi() {
     assert_eq!(popped_pc, 0x1234);
     assert_eq!(z80.sp, 0x2000);
 }
+}
