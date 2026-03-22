@@ -16,11 +16,27 @@ fn test_af_pair() {
 }
 
 #[test]
+fn test_af_getter() {
+    let mut z80 = create_z80(&[]);
+    z80.a = 0x12;
+    z80.f = 0x34;
+    assert_eq!(z80.af(), 0x1234);
+}
+
+#[test]
 fn test_bc_pair() {
     let mut z80 = create_z80(&[]);
     z80.set_bc(0xABCD);
     assert_eq!(z80.b, 0xAB);
     assert_eq!(z80.c, 0xCD);
+    assert_eq!(z80.bc(), 0xABCD);
+}
+
+#[test]
+fn test_bc_getter() {
+    let mut z80 = create_z80(&[]);
+    z80.b = 0xAB;
+    z80.c = 0xCD;
     assert_eq!(z80.bc(), 0xABCD);
 }
 
@@ -34,12 +50,48 @@ fn test_de_pair() {
 }
 
 #[test]
+fn test_de_getter() {
+    let mut z80 = create_z80(&[]);
+    z80.d = 0x56;
+    z80.e = 0x78;
+    assert_eq!(z80.de(), 0x5678);
+}
+
+#[test]
 fn test_hl_pair() {
     let mut z80 = create_z80(&[]);
     z80.set_hl(0xBEEF);
     assert_eq!(z80.h, 0xBE);
     assert_eq!(z80.l, 0xEF);
     assert_eq!(z80.hl(), 0xBEEF);
+}
+
+#[test]
+fn test_hl_getter() {
+    let mut z80 = create_z80(&[]);
+    z80.h = 0xBE;
+    z80.l = 0xEF;
+    assert_eq!(z80.hl(), 0xBEEF);
+}
+
+#[test]
+fn test_get_rp() {
+    let mut z80 = create_z80(&[]);
+
+    z80.set_bc(0x1234);
+    assert_eq!(z80.get_rp(0), 0x1234);
+
+    z80.set_de(0x5678);
+    assert_eq!(z80.get_rp(1), 0x5678);
+
+    z80.set_hl(0x9ABC);
+    assert_eq!(z80.get_rp(2), 0x9ABC);
+
+    z80.sp = 0xDEF0;
+    assert_eq!(z80.get_rp(3), 0xDEF0);
+
+    // Attempt invalid indices
+    assert_eq!(z80.get_rp(4), 0);
 }
 
 #[test]
@@ -77,6 +129,48 @@ fn test_set_rp() {
     assert_eq!(z80.de(), 0);
     assert_eq!(z80.hl(), 0);
     assert_eq!(z80.sp, 0);
+}
+
+#[test]
+fn test_get_rp2() {
+    let mut z80 = create_z80(&[]);
+
+    z80.set_bc(0x1234);
+    assert_eq!(z80.get_rp2(0), 0x1234);
+
+    z80.set_de(0x5678);
+    assert_eq!(z80.get_rp2(1), 0x5678);
+
+    z80.set_hl(0x9ABC);
+    assert_eq!(z80.get_rp2(2), 0x9ABC);
+
+    z80.set_af(0xDEF0);
+    assert_eq!(z80.get_rp2(3), 0xDEF0);
+
+    // Attempt invalid indices
+    assert_eq!(z80.get_rp2(4), 0);
+}
+
+#[test]
+fn test_set_rp2() {
+    let mut z80 = create_z80(&[]);
+
+    z80.set_rp2(0, 0x1234);
+    assert_eq!(z80.bc(), 0x1234);
+
+    z80.set_rp2(1, 0x5678);
+    assert_eq!(z80.de(), 0x5678);
+
+    z80.set_rp2(2, 0x9ABC);
+    assert_eq!(z80.hl(), 0x9ABC);
+
+    z80.set_rp2(3, 0xDEF0);
+    assert_eq!(z80.af(), 0xDEF0);
+
+    // Attempt invalid indices
+    z80.set_bc(0);
+    z80.set_rp2(4, 0xFFFF);
+    assert_eq!(z80.bc(), 0);
 }
 
 // ==================== NOP Tests ====================
@@ -657,4 +751,35 @@ fn test_check_condition() {
     // Invalid conditions
     assert_eq!(z80.check_condition(8), false);
     assert_eq!(z80.check_condition(255), false);
+}
+
+#[test]
+fn test_trigger_nmi() {
+    let mut z80 = create_z80(&[]);
+
+    // Setup initial state
+    z80.halted = true;
+    z80.iff1 = true;
+    z80.iff2 = false;
+    z80.pc = 0x1234;
+    z80.sp = 0x2000;
+
+    // Trigger NMI
+    let cycles = z80.trigger_nmi();
+
+    // Assert cycles
+    assert_eq!(cycles, 11);
+
+    // Assert state changes
+    assert_eq!(z80.halted, false);
+    assert_eq!(z80.iff2, true); // Copies iff1
+    assert_eq!(z80.iff1, false); // Disabled
+    assert_eq!(z80.pc, 0x0066); // NMI vector
+    assert_eq!(z80.sp, 0x1FFE); // Stack pointer decremented by 2
+
+    // Verify PC was pushed
+    let popped_pc = z80.pop();
+    assert_eq!(popped_pc, 0x1234);
+    assert_eq!(z80.sp, 0x2000);
+}
 }
