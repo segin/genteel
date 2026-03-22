@@ -702,6 +702,58 @@ fn test_debug_state_fallback() {
 }
 
 #[test]
+fn test_check_condition() {
+    let mut z80 = create_z80(&[]);
+
+    // Helper to check a specific condition code with a specific flag state
+    let mut check = |cc: u8, flag: u8, flag_val: bool, expected: bool| {
+        z80.set_flag(flag, flag_val);
+        assert_eq!(
+            z80.check_condition(cc),
+            expected,
+            "cc: {}, flag: {}, flag_val: {}, expected: {}",
+            cc, flag, flag_val, expected
+        );
+    };
+
+    // 0 => !self.get_flag(flags::ZERO),   // NZ
+    check(0, flags::ZERO, false, true);
+    check(0, flags::ZERO, true, false);
+
+    // 1 => self.get_flag(flags::ZERO),    // Z
+    check(1, flags::ZERO, false, false);
+    check(1, flags::ZERO, true, true);
+
+    // 2 => !self.get_flag(flags::CARRY),  // NC
+    check(2, flags::CARRY, false, true);
+    check(2, flags::CARRY, true, false);
+
+    // 3 => self.get_flag(flags::CARRY),   // C
+    check(3, flags::CARRY, false, false);
+    check(3, flags::CARRY, true, true);
+
+    // 4 => !self.get_flag(flags::PARITY), // PO
+    check(4, flags::PARITY, false, true);
+    check(4, flags::PARITY, true, false);
+
+    // 5 => self.get_flag(flags::PARITY),  // PE
+    check(5, flags::PARITY, false, false);
+    check(5, flags::PARITY, true, true);
+
+    // 6 => !self.get_flag(flags::SIGN),   // P
+    check(6, flags::SIGN, false, true);
+    check(6, flags::SIGN, true, false);
+
+    // 7 => self.get_flag(flags::SIGN),    // M
+    check(7, flags::SIGN, false, false);
+    check(7, flags::SIGN, true, true);
+
+    // Invalid conditions
+    assert_eq!(z80.check_condition(8), false);
+    assert_eq!(z80.check_condition(255), false);
+}
+
+#[test]
 fn test_trigger_nmi() {
     let mut z80 = create_z80(&[]);
 
