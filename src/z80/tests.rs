@@ -136,7 +136,7 @@ fn test_set_rp() {
 fn test_get_flag() {
     let mut z80 = create_z80(&[][..]);
 
-    // No flags set
+    // Test with no flags set
     z80.f = 0x00;
     assert!(!z80.get_flag(flags::CARRY));
     assert!(!z80.get_flag(flags::ADD_SUB));
@@ -147,7 +147,7 @@ fn test_get_flag() {
     assert!(!z80.get_flag(flags::ZERO));
     assert!(!z80.get_flag(flags::SIGN));
 
-    // All flags set
+    // Test with all flags set
     z80.f = 0xFF;
     assert!(z80.get_flag(flags::CARRY));
     assert!(z80.get_flag(flags::ADD_SUB));
@@ -158,41 +158,72 @@ fn test_get_flag() {
     assert!(z80.get_flag(flags::ZERO));
     assert!(z80.get_flag(flags::SIGN));
 
-    // Specific flag set
-    z80.f = flags::ZERO;
-    assert!(z80.get_flag(flags::ZERO));
-    assert!(!z80.get_flag(flags::CARRY)); // And others are not
+    // Test specific flags one by one
+    let all_flags = [
+        flags::CARRY,
+        flags::ADD_SUB,
+        flags::PARITY,
+        flags::X_FLAG,
+        flags::HALF_CARRY,
+        flags::Y_FLAG,
+        flags::ZERO,
+        flags::SIGN,
+    ];
+
+    for &flag in &all_flags {
+        z80.f = flag;
+        assert!(z80.get_flag(flag));
+        // Verify other flags are not affected
+        for &other_flag in &all_flags {
+            if flag != other_flag {
+                assert!(!z80.get_flag(other_flag));
+            }
+        }
+    }
 }
 
 #[test]
 fn test_set_flag() {
     let mut z80 = create_z80(&[][..]);
 
+    let all_flags = [
+        flags::CARRY,
+        flags::ADD_SUB,
+        flags::PARITY,
+        flags::X_FLAG,
+        flags::HALF_CARRY,
+        flags::Y_FLAG,
+        flags::ZERO,
+        flags::SIGN,
+    ];
+
     // Test setting flags individually
-    z80.f = 0x00;
-
-    z80.set_flag(flags::CARRY, true);
-    assert_eq!(z80.f, flags::CARRY);
-
-    z80.set_flag(flags::ZERO, true);
-    assert_eq!(z80.f, flags::CARRY | flags::ZERO);
+    for &flag in &all_flags {
+        z80.f = 0x00;
+        z80.set_flag(flag, true);
+        assert_eq!(z80.f, flag);
+    }
 
     // Test clearing flags individually
-    z80.set_flag(flags::CARRY, false);
-    assert_eq!(z80.f, flags::ZERO);
-
-    z80.set_flag(flags::ZERO, false);
-    assert_eq!(z80.f, 0x00);
+    for &flag in &all_flags {
+        z80.f = 0xFF;
+        z80.set_flag(flag, false);
+        assert_eq!(z80.f, !flag);
+    }
 
     // Test setting an already set flag
-    z80.f = flags::SIGN;
-    z80.set_flag(flags::SIGN, true);
-    assert_eq!(z80.f, flags::SIGN);
+    for &flag in &all_flags {
+        z80.f = flag;
+        z80.set_flag(flag, true);
+        assert_eq!(z80.f, flag);
+    }
 
     // Test clearing an already cleared flag
-    z80.f = 0x00;
-    z80.set_flag(flags::PARITY, false);
-    assert_eq!(z80.f, 0x00);
+    for &flag in &all_flags {
+        z80.f = !flag;
+        z80.set_flag(flag, false);
+        assert_eq!(z80.f, !flag);
+    }
 }
 
 #[test]
