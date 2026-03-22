@@ -6,6 +6,7 @@ use crate::cpu::flags;
 use crate::cpu::test_utils::create_test_cpu;
 use crate::memory::{Memory, MemoryInterface};
 use proptest::prelude::*;
+use crate::cpu::Cpu;
 
 // === Test Utilities ===
 
