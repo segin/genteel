@@ -32,14 +32,14 @@ def generate_data():
 
 def scan_slow():
     print("[*] Running slow scan (re.search inside loop)...")
-    secret_patterns = {
-        "AWS Key": r"AK" + r"IA[0-9A-Z]{16}",
-        "Private Key": r"-----BEGIN .* PRIVATE" + r" KEY-----",
-        "Generic Token": r"token\s*=\s*['\"][a-zA-Z0-9]{20,}['\"]",
-    }
+    secret_pattern_combined = re.compile(
+        r"(?P<AWS_Key>AK" + r"IA[0-9A-Z]{16})|"
+        r"(?P<Private_Key>-----BEGIN .* PRIVATE" + r" KEY-----)|"
+        r"(?P<Generic_Token>token\s*=\s*['\"][a-zA-Z0-9]{20,}['\"])"
+    )
 
-    unsafe_pattern = r"un" + r"safe\s*\{"
-    todo_pattern = r"(" + r"TO" + r"DO|" + r"FIX" + r"ME|" + r"X" + r"XX):"
+    unsafe_pattern = re.compile(r"un" + r"safe\s*\{")
+    todo_pattern = re.compile(r"(" + r"TO" + r"DO|" + r"FIX" + r"ME|" + r"X" + r"XX):")
 
     match_count = 0
     start_time = time.time()
@@ -47,16 +47,18 @@ def scan_slow():
     with open(FILENAME, 'r', encoding='utf-8', errors='ignore') as fp:
         for i, line_content in enumerate(fp):
             # Secrets
-            for name, pattern in secret_patterns.items():
-                if re.search(pattern, line_content):
-                    match_count += 1
+            found_secrets = set()
+            for match in secret_pattern_combined.finditer(line_content):
+                if match.lastgroup:
+                    found_secrets.add(match.lastgroup)
+            match_count += len(found_secrets)
 
             # Unsafe
-            if re.search(unsafe_pattern, line_content):
+            if unsafe_pattern.search(line_content):
                 match_count += 1
 
             # tracker
-            if re.search(todo_pattern, line_content):
+            if todo_pattern.search(line_content):
                 match_count += 1
 
     end_time = time.time()
