@@ -54,14 +54,12 @@ fn test_write_byte_z80_bank() {
     let mut bus = Bus::new();
     // 0xA06000
     // bus.z80_bank_addr starts at 0.
-    // write 1 -> bit=1<<15.
+    // write 1 -> 9-bit shift register shifts right, new bit enters at bit 8
     bus.write_byte(0xA06000, 0x01);
-    assert_eq!(bus.z80_bank_addr, 0x8000);
-    assert_eq!(bus.z80_bank_bit, 1);
+    assert_eq!(bus.z80_bank_addr, 0x800000);
 
-    bus.write_byte(0xA06000, 0x01); // bit=1<<16
-    assert_eq!(bus.z80_bank_addr, 0x18000); // 0x8000 | 0x10000
-    assert_eq!(bus.z80_bank_bit, 2);
+    bus.write_byte(0xA06000, 0x01); // bit 8 enters again, previous shifts right
+    assert_eq!(bus.z80_bank_addr, 0xC00000);
 }
 
 #[test]
@@ -87,10 +85,10 @@ fn test_write_byte_z80_control() {
     bus.write_byte(0xA11200, 0x00); // Active Low
     assert!(bus.z80_reset);
     // Reset clears bank bit?
-    bus.z80_bank_bit = 5;
+    bus.z80_bank_addr = 0x800000;
     bus.write_byte(0xA11200, 0x00);
     assert!(bus.z80_reset);
-    assert_eq!(bus.z80_bank_bit, 0);
+    assert_eq!(bus.z80_bank_addr, 0);
 
     bus.write_byte(0xA11200, 0x01);
     assert!(!bus.z80_reset);

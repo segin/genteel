@@ -43,7 +43,6 @@ impl Z80Bus {
     pub fn reset_bank(&mut self) {
         let mut bus = self.bus.bus.borrow_mut();
         bus.z80_bank_addr = 0;
-        bus.z80_bank_bit = 0;
     }
 
     /// Internal helper to read byte from Bus (deduplicated logic)
@@ -262,31 +261,27 @@ mod tests {
         {
             let bus = z80_bus.bus.bus.borrow();
             assert_eq!(bus.z80_bank_addr, 0);
-            assert_eq!(bus.z80_bank_bit, 0);
         }
 
-        // set_bank(1) -> bit 15 of addr becomes 1, bank_bit becomes 1
+        // set_bank(1) -> bit 23 of addr becomes 1, others shifted right
         z80_bus.set_bank(1);
         {
             let bus = z80_bus.bus.bus.borrow();
-            assert_eq!(bus.z80_bank_addr, 1 << 15);
-            assert_eq!(bus.z80_bank_bit, 1);
+            assert_eq!(bus.z80_bank_addr, 1 << 23);
         }
 
-        // set_bank(0) -> bit 16 of addr remains 0, bank_bit becomes 2
+        // set_bank(0) -> top bit 0, previous bit shifted to 22
         z80_bus.set_bank(0);
         {
             let bus = z80_bus.bus.bus.borrow();
-            assert_eq!(bus.z80_bank_addr, 1 << 15);
-            assert_eq!(bus.z80_bank_bit, 2);
+            assert_eq!(bus.z80_bank_addr, 1 << 22);
         }
 
-        // set_bank(1) -> bit 17 of addr becomes 1, bank_bit becomes 3
+        // set_bank(1) -> top bit 1, previous bits shifted right
         z80_bus.set_bank(1);
         {
             let bus = z80_bus.bus.bus.borrow();
-            assert_eq!(bus.z80_bank_addr, (1 << 15) | (1 << 17));
-            assert_eq!(bus.z80_bank_bit, 3);
+            assert_eq!(bus.z80_bank_addr, (1 << 23) | (1 << 21));
         }
 
         // Reset
@@ -294,7 +289,6 @@ mod tests {
         {
             let bus = z80_bus.bus.bus.borrow();
             assert_eq!(bus.z80_bank_addr, 0);
-            assert_eq!(bus.z80_bank_bit, 0);
         }
     }
 
@@ -303,25 +297,25 @@ mod tests {
         let mut z80_bus = create_test_z80_bus();
 
         // 1. Ignored upper bits (only LSB matters)
+        // A right shift register places new bits at the top (bit 8)
         z80_bus.set_bank(0xFF); // LSB is 1
         {
             let bus = z80_bus.bus.bus.borrow();
-            assert_eq!(bus.z80_bank_addr, 1 << 15);
-            assert_eq!(bus.z80_bank_bit, 1);
+            assert_eq!(bus.z80_bank_addr, 1 << 23);
         }
 
         z80_bus.set_bank(0xFE); // LSB is 0
         {
             let bus = z80_bus.bus.bus.borrow();
-            assert_eq!(bus.z80_bank_addr, 1 << 15);
-            assert_eq!(bus.z80_bank_bit, 2);
+            assert_eq!(bus.z80_bank_addr, 0 << 23 | 1 << 22);
         }
 
         z80_bus.reset_bank();
 
         // 2. Full 9-bit write
         // We will write 1, 0, 1, 0, 1, 0, 1, 0, 1
-        // This corresponds to binary: 101010101 -> 0x155
+        // Since bits enter at bit 8 and shift right, the FIRST bit written ends up at bit 0.
+        // Bit 0: 1, Bit 1: 0, ..., Bit 8: 1 -> binary 101010101 -> 0x155
         let bits = [1, 0, 1, 0, 1, 0, 1, 0, 1];
         for b in bits {
             z80_bus.set_bank(b);
@@ -330,19 +324,24 @@ mod tests {
         {
             let bus = z80_bus.bus.bus.borrow();
             assert_eq!(bus.z80_bank_addr, 0x155 << 15);
-            assert_eq!(bus.z80_bank_bit, 0); // 9 writes means it wraps around to 0
         }
 
-        // 3. Wraparound behavior
+        // 3. Wraparound behavior (shifting out the 10th bit)
         // Write a 10th bit (0)
         z80_bus.set_bank(0);
         {
             let bus = z80_bus.bus.bus.borrow();
-            // Bit 15 should now be 0, all other bits remain the same
-            // Original: 101010101 -> 0x155
-            // New:      101010100 -> 0x154
-            assert_eq!(bus.z80_bank_addr, 0x154 << 15);
-            assert_eq!(bus.z80_bank_bit, 1);
+            // The old value (0x155) is shifted right by 1, and the new 0 bit enters at bit 8.
+            // 0x155 >> 1 = 0xAA (10101010). Bit 8 is 0.
+            assert_eq!(bus.z80_bank_addr, 0xAA << 15);
+        }
+
+        // Write a 11th bit (1)
+        z80_bus.set_bank(1);
+        {
+            let bus = z80_bus.bus.bus.borrow();
+            // The old value (0xAA) is shifted right by 1 -> 0x55. New 1 enters at bit 8 -> 0x155.
+            assert_eq!(bus.z80_bank_addr, 0x155 << 15);
         }
     }
 }
