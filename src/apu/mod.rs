@@ -112,7 +112,7 @@ impl Debuggable for Apu {
     }
 
     fn write_state(&mut self, state: &Value) {
-        if let Ok(new_apu) = serde_json::from_value(state.clone()) {
+        if let Ok(new_apu) = Apu::deserialize(state) {
             *self = new_apu;
         }
     }
@@ -149,6 +149,35 @@ mod tests {
         apu.write_fm_addr(Bank::Bank0, 0x28);
         apu.write_fm_data(Bank::Bank0, 0xF0);
         assert_eq!(apu.fm.registers[0][0x28], 0xF0);
+    }
+
+    #[test]
+    fn test_write_fm_addr() {
+        let mut apu = Apu::new();
+
+        // Write address to Bank0, and check if data written goes to this address
+        apu.write_fm_addr(Bank::Bank0, 0x22);
+        apu.write_fm_data(Bank::Bank0, 0x11);
+        assert_eq!(apu.fm.registers[0][0x22], 0x11);
+
+        // Change address in Bank0, write data, check new address is used
+        apu.write_fm_addr(Bank::Bank0, 0x27);
+        apu.write_fm_data(Bank::Bank0, 0x33);
+        assert_eq!(apu.fm.registers[0][0x27], 0x33);
+
+        // Verify that Bank1 operates independently
+        apu.write_fm_addr(Bank::Bank1, 0x28);
+        apu.write_fm_data(Bank::Bank1, 0x44);
+        assert_eq!(apu.fm.registers[1][0x28], 0x44);
+
+        // Change address in Bank1
+        apu.write_fm_addr(Bank::Bank1, 0x2B);
+        apu.write_fm_data(Bank::Bank1, 0x55);
+        assert_eq!(apu.fm.registers[1][0x2B], 0x55);
+
+        // Ensure Bank0 address wasn't affected by Bank1 address writes
+        apu.write_fm_data(Bank::Bank0, 0x66);
+        assert_eq!(apu.fm.registers[0][0x27], 0x66); // The last address set for Bank0 was 0x27
     }
 
     #[test]
