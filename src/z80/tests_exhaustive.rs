@@ -1,4 +1,3 @@
-#![allow(unused_imports)]
 //! Exhaustive Z80 ALU Verification
 //!
 //! "Golden Reference" model for Z80 ALU.

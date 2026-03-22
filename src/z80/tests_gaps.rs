@@ -1,4 +1,3 @@
-#![allow(unused_imports)]
 //! Z80 Torture Tests - Gap Coverage
 //!
 //! Tests for 20 specific edge cases identified in the code audit.

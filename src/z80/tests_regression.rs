@@ -1,4 +1,3 @@
-#![allow(unused_imports)]
 //! Z80 Regression Test Suite
 //!
 //! Known edge cases and common emulator edge cases.

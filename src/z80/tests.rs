@@ -1,4 +1,3 @@
-#![allow(unused_imports)]
 //! Comprehensive unit tests for Z80 CPU
 
 use super::*;

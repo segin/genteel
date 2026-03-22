@@ -1,4 +1,3 @@
-#![allow(unused_imports)]
 //! Z80 Undocumented Instruction Tests
 //!
 //! Tests for undocumented but commonly used Z80 instructions:

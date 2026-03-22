@@ -1,4 +1,3 @@
-#![allow(unused_imports)]
 //! Property-based tests for Z80 CPU using proptest
 
 use super::*;

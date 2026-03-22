@@ -1,4 +1,3 @@
-#![allow(unused_imports)]
 //! Z80 Block Operation Tests
 //!
 //! Exhaustive property-based tests for block transfer and search operations.
