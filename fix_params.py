@@ -149,4 +149,5 @@ def fix():
     with open("src/vdp/render.rs", "w") as f:
         f.write(src)
 
-fix()
+if __name__ == "__main__":
+    fix()
