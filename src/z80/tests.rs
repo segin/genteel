@@ -20,6 +20,22 @@ fn test_af_getter() {
     z80.a = 0x12;
     z80.f = 0x34;
     assert_eq!(z80.af(), 0x1234);
+
+    z80.a = 0x00;
+    z80.f = 0x00;
+    assert_eq!(z80.af(), 0x0000);
+
+    z80.a = 0xFF;
+    z80.f = 0xFF;
+    assert_eq!(z80.af(), 0xFFFF);
+
+    z80.a = 0x00;
+    z80.f = 0xFF;
+    assert_eq!(z80.af(), 0x00FF);
+
+    z80.a = 0xFF;
+    z80.f = 0x00;
+    assert_eq!(z80.af(), 0xFF00);
 }
 
 #[test]
@@ -37,6 +53,22 @@ fn test_bc_getter() {
     z80.b = 0xAB;
     z80.c = 0xCD;
     assert_eq!(z80.bc(), 0xABCD);
+
+    z80.b = 0x00;
+    z80.c = 0x00;
+    assert_eq!(z80.bc(), 0x0000);
+
+    z80.b = 0xFF;
+    z80.c = 0xFF;
+    assert_eq!(z80.bc(), 0xFFFF);
+
+    z80.b = 0x00;
+    z80.c = 0xFF;
+    assert_eq!(z80.bc(), 0x00FF);
+
+    z80.b = 0xFF;
+    z80.c = 0x00;
+    assert_eq!(z80.bc(), 0xFF00);
 }
 
 #[test]
@@ -54,6 +86,22 @@ fn test_de_getter() {
     z80.d = 0x56;
     z80.e = 0x78;
     assert_eq!(z80.de(), 0x5678);
+
+    z80.d = 0x00;
+    z80.e = 0x00;
+    assert_eq!(z80.de(), 0x0000);
+
+    z80.d = 0xFF;
+    z80.e = 0xFF;
+    assert_eq!(z80.de(), 0xFFFF);
+
+    z80.d = 0x00;
+    z80.e = 0xFF;
+    assert_eq!(z80.de(), 0x00FF);
+
+    z80.d = 0xFF;
+    z80.e = 0x00;
+    assert_eq!(z80.de(), 0xFF00);
 }
 
 #[test]
@@ -71,6 +119,22 @@ fn test_hl_getter() {
     z80.h = 0xBE;
     z80.l = 0xEF;
     assert_eq!(z80.hl(), 0xBEEF);
+
+    z80.h = 0x00;
+    z80.l = 0x00;
+    assert_eq!(z80.hl(), 0x0000);
+
+    z80.h = 0xFF;
+    z80.l = 0xFF;
+    assert_eq!(z80.hl(), 0xFFFF);
+
+    z80.h = 0x00;
+    z80.l = 0xFF;
+    assert_eq!(z80.hl(), 0x00FF);
+
+    z80.h = 0xFF;
+    z80.l = 0x00;
+    assert_eq!(z80.hl(), 0xFF00);
 }
 
 #[test]
@@ -235,7 +299,6 @@ fn test_set_rp2() {
     z80.set_bc(0);
     z80.set_rp2(4, 0xFFFF);
     assert_eq!(z80.bc(), 0);
-}
 }
 
 // ==================== NOP Tests ====================
@@ -581,6 +644,58 @@ fn test_cb_res_7_a() {
 // ==================== IX/IY Tests ====================
 
 #[test]
+fn test_ix_half_registers() {
+    let mut z80 = create_z80(&[]);
+
+    // Set low half
+    z80.ix = 0x1234;
+    z80.set_ixl(0x56);
+    assert_eq!(z80.ix, 0x1256);
+    assert_eq!(z80.ixl(), 0x56);
+    assert_eq!(z80.ixh(), 0x12);
+
+    // Set high half
+    z80.ix = 0x1234;
+    z80.set_ixh(0x56);
+    assert_eq!(z80.ix, 0x5634);
+    assert_eq!(z80.ixl(), 0x34);
+    assert_eq!(z80.ixh(), 0x56);
+
+    // Extreme values
+    z80.ix = 0xFFFF;
+    z80.set_ixh(0x00);
+    assert_eq!(z80.ix, 0x00FF);
+    z80.set_ixl(0x00);
+    assert_eq!(z80.ix, 0x0000);
+}
+
+#[test]
+fn test_iy_half_registers() {
+    let mut z80 = create_z80(&[]);
+
+    // Set low half
+    z80.iy = 0xABCD;
+    z80.set_iyl(0xEF);
+    assert_eq!(z80.iy, 0xABEF);
+    assert_eq!(z80.iyl(), 0xEF);
+    assert_eq!(z80.iyh(), 0xAB);
+
+    // Set high half
+    z80.iy = 0xABCD;
+    z80.set_iyh(0xEF);
+    assert_eq!(z80.iy, 0xEFCD);
+    assert_eq!(z80.iyl(), 0xCD);
+    assert_eq!(z80.iyh(), 0xEF);
+
+    // Extreme values
+    z80.iy = 0xFFFF;
+    z80.set_iyh(0x00);
+    assert_eq!(z80.iy, 0x00FF);
+    z80.set_iyl(0x00);
+    assert_eq!(z80.iy, 0x0000);
+}
+
+#[test]
 fn test_ld_ix_nn() {
     let mut z80 = create_z80(&[0xDD, 0x21, 0x34, 0x12]);
     z80.step();
@@ -846,5 +961,4 @@ fn test_trigger_nmi() {
     let popped_pc = z80.pop();
     assert_eq!(popped_pc, 0x1234);
     assert_eq!(z80.sp, 0x2000);
-}
 }
