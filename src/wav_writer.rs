@@ -281,4 +281,28 @@ mod tests {
             assert_eq!(wav_stereo.channels(), 2);
         }
     }
+
+    #[test]
+    fn test_channels_getter_comprehensive() {
+        // Test various channel counts without I/O overhead by directly instantiating the struct.
+        // The tests module has access to private fields since it's in the same file.
+        let channel_counts: [u16; 7] = [0, 1, 2, 4, 8, 255, 65535];
+
+        for &channels in &channel_counts {
+            // Using a dummy writer (an empty Vec)
+            let writer = Cursor::new(Vec::new());
+            let wav = WavWriter {
+                writer,
+                data_size: 0,
+                channels,
+            };
+
+            assert_eq!(
+                wav.channels(),
+                channels,
+                "WavWriter::channels() returned incorrect value for {} channels",
+                channels
+            );
+        }
+    }
 }
