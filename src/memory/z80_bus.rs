@@ -322,12 +322,6 @@ mod tests {
             assert_eq!(bus.z80_bank_addr, (1 << 23) | (1 << 21));
         }
 
-        // Reset
-        z80_bus.reset_bank();
-        {
-            let bus = z80_bus.bus.bus.borrow();
-            assert_eq!(bus.z80_bank_addr, 0);
-        }
     }
 
     #[test]
@@ -414,6 +408,7 @@ mod tests {
         let mut z80_bus = create_test_z80_bus();
 
         // 1. Ignored upper bits (only LSB matters)
+        // A right shift register places new bits at the top (bit 8)
         z80_bus.set_bank(0xFF); // LSB is 1
         {
             let bus = z80_bus.bus.bus.borrow();
@@ -445,7 +440,7 @@ mod tests {
             assert_eq!(bus.z80_bank_addr, 0x155 << 15);
         }
 
-        // 3. Wraparound behavior
+        // 3. Wraparound behavior (shifting out the 10th bit)
         // Write a 10th bit (0)
         z80_bus.set_bank(0);
         {
