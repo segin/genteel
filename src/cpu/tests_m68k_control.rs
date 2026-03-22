@@ -5,6 +5,7 @@
 
 #![cfg(test)]
 
+use crate::{Cpu, Memory};
 use crate::cpu::flags;
 use crate::cpu::test_utils::{create_cpu, write_op};
 use crate::memory::MemoryInterface;

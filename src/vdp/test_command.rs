@@ -162,7 +162,7 @@ fn test_vdp_mode2_getter() {
 }
 
 #[test]
-fn test_vdp_mode2_getter() {
+fn test_vdp_mode2_getter_custom_value() {
     let mut vdp = Vdp::new();
 
     // Set register 1 (REG_MODE2) to a known value
