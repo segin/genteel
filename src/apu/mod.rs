@@ -221,4 +221,28 @@ mod tests {
         apu.tick_cycles(200);
         assert!((apu.read_fm_status() & 0x02) != 0);
     }
+
+    #[test]
+    fn test_write_fm_data_side_effects() {
+        let mut apu = Apu::new();
+
+        // Enable DAC
+        apu.write_fm_addr(Bank::Bank0, 0x2B);
+        apu.write_fm_data(Bank::Bank0, 0x80);
+
+        // Set DAC value to a non-zero amplitude
+        apu.write_fm_addr(Bank::Bank0, 0x2A);
+        apu.write_fm_data(Bank::Bank0, 0xFF);
+
+        // Pan Left Only to test specific output
+        apu.write_fm_addr(Bank::Bank1, 0xB6);
+        apu.write_fm_data(Bank::Bank1, 0x80);
+
+        // Tick cycles to allow YM2612 to generate samples
+        apu.tick_cycles(1);
+
+        // Assert DAC output is observable in the blip buffer
+        assert!(apu.fm.blip_l.read_instant() > 0, "Left audio should be positive due to DAC");
+        assert_eq!(apu.fm.blip_r.read_instant(), 0, "Right audio should be zero due to panning");
+    }
 }
