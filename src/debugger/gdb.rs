@@ -1618,4 +1618,26 @@ mod tests {
         // Triggering the failure on local_addr() after a successful bind
         let _port = server.port();
     }
+
+    #[test]
+    fn test_is_breakpoint() {
+        let mut server = create_test_server();
+
+        // Initially no breakpoints
+        assert!(!server.is_breakpoint(0x1000));
+        assert!(!server.is_breakpoint(0x2000));
+
+        // Add a breakpoint directly
+        server.breakpoints.insert(0x1000);
+
+        // Verify it exists, and others do not
+        assert!(server.is_breakpoint(0x1000));
+        assert!(!server.is_breakpoint(0x2000));
+
+        // Remove the breakpoint
+        server.breakpoints.remove(&0x1000);
+
+        // Verify it is gone
+        assert!(!server.is_breakpoint(0x1000));
+    }
 }
