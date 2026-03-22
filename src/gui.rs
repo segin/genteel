@@ -17,7 +17,6 @@ use winit::{
     keyboard::{KeyCode, PhysicalKey},
     window::WindowBuilder,
 };
-
 #[cfg(feature = "gilrs")]
 pub fn init_gilrs_with_builder<F, R, E>(builder: F) -> Option<R>
 where
@@ -273,7 +272,8 @@ pub struct Framework {
     pub gui_state: GuiState,
     pub tile_texture: Option<egui::TextureHandle>,
     pub tile_viewer_image: std::sync::Arc<egui::ColorImage>,
-    pub plane_viewer_image: std::sync::Arc<egui::ColorImage>,
+    pub plane_a_viewer_image: std::sync::Arc<egui::ColorImage>,
+    pub plane_b_viewer_image: std::sync::Arc<egui::ColorImage>,
     pub plane_a_texture: Option<egui::TextureHandle>,
     pub plane_b_texture: Option<egui::TextureHandle>,
     pub pending_rom_path: Arc<Mutex<Option<PathBuf>>>,
@@ -295,7 +295,7 @@ impl Framework {
         let egui_state = egui_winit::State::new(
             egui_ctx.clone(),
             egui::viewport::ViewportId::ROOT,
-            &event_loop,
+            event_loop,
             Some(scale_factor),
             None,
         );
@@ -314,7 +314,8 @@ impl Framework {
             gui_state,
             tile_texture: None,
             tile_viewer_image: std::sync::Arc::new(egui::ColorImage::new([128, 1024], egui::Color32::TRANSPARENT)),
-            plane_viewer_image: std::sync::Arc::new(egui::ColorImage::new([512, 512], egui::Color32::TRANSPARENT)),
+            plane_a_viewer_image: std::sync::Arc::new(egui::ColorImage::new([0, 0], egui::Color32::TRANSPARENT)),
+            plane_b_viewer_image: std::sync::Arc::new(egui::ColorImage::new([0, 0], egui::Color32::TRANSPARENT)),
             plane_a_texture: None,
             plane_b_texture: None,
             pending_rom_path: Arc::new(Mutex::new(None)),
@@ -342,8 +343,8 @@ impl Framework {
         let pending = self.pending_rom_path.clone();
         std::thread::spawn(move || {
             let file = rfd::FileDialog::new()
-                .add_filter("Genesis ROMs", &["bin", "md", "gen", "zip"])
-                .add_filter("All Files", &["*"])
+                .add_filter("Genesis ROMs", &["bin", "md", "gen", "zip"][..])
+                .add_filter("All Files", &["*"][..])
                 .pick_file();
             if let Some(path) = file {
                 if let Ok(mut lock) = pending.lock() {
@@ -1028,7 +1029,7 @@ impl Framework {
                     let max_sprites = if h40 { 80 } else { 64 };
 
                     let iter = crate::vdp::SpriteIterator {
-                        vram: &debug_info.vram,
+                        vram: &debug_info.vram[..],
                         next_idx: 0,
                         count: 0,
                         max_sprites,
@@ -1111,15 +1112,14 @@ impl Framework {
                     let render_plane = |ui: &mut egui::Ui,
                                         base: usize,
                                         texture_opt: &mut Option<egui::TextureHandle>,
-                                        image: &mut std::sync::Arc<egui::ColorImage>,
+                                        image_arc: &mut std::sync::Arc<egui::ColorImage>,
                                         id: &str| {
-                        let image_ref = std::sync::Arc::make_mut(image);
+                        let image = std::sync::Arc::make_mut(image_arc);
                         let expected_size = [plane_w * 8, plane_h * 8];
-                        if image_ref.size != expected_size {
-                            *image_ref = egui::ColorImage::new(
-                                expected_size,
-                                egui::Color32::TRANSPARENT,
-                            );
+                        if image.size != expected_size {
+                            *image = egui::ColorImage::new(expected_size, egui::Color32::TRANSPARENT);
+                        } else {
+                            image.pixels.fill(egui::Color32::TRANSPARENT);
                         }
 
                         for ty in 0..plane_h {
@@ -1154,7 +1154,7 @@ impl Framework {
                                         let b = ((color565 & 0x1F) << 3) as u8;
 
                                         let pixel_idx = (ty * 8 + py) * plane_w * 8 + (tx * 8 + px);
-                                        image_ref.pixels[pixel_idx] = egui::Color32::from_rgb(r, g, b);
+                                        image.pixels[pixel_idx] = egui::Color32::from_rgb(r, g, b);
                                     }
                                 }
                             }
@@ -1166,7 +1166,7 @@ impl Framework {
                                 Default::default(),
                             )
                         });
-                        texture.set(image.clone(), Default::default());
+                        texture.set(image_arc.clone(), Default::default());
                         egui::ScrollArea::both().id_source(id).show(ui, |ui| {
                             ui.image(&*texture);
                         });
@@ -1174,10 +1174,22 @@ impl Framework {
 
                     match self.gui_state.scroll_plane_tab {
                         PlaneTab::PlaneA => {
-                            render_plane(ui, plane_a_base, &mut self.plane_a_texture, &mut self.plane_viewer_image, "plane_a");
+                            render_plane(
+                                ui,
+                                plane_a_base,
+                                &mut self.plane_a_texture,
+                                &mut self.plane_a_viewer_image,
+                                "plane_a",
+                            );
                         }
                         PlaneTab::PlaneB => {
-                            render_plane(ui, plane_b_base, &mut self.plane_b_texture, &mut self.plane_viewer_image, "plane_b");
+                            render_plane(
+                                ui,
+                                plane_b_base,
+                                &mut self.plane_b_texture,
+                                &mut self.plane_b_viewer_image,
+                                "plane_b",
+                            );
                         }
                     }
                 });
@@ -1653,16 +1665,17 @@ impl Framework {
             .update_buffers(device, queue, encoder, &paint_jobs, &self.screen_descriptor);
         // Render GUI
         {
-            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("egui"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            let attachments = [Some(wgpu::RenderPassColorAttachment {
                     view: render_target,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
                     },
-                })],
+                })];
+            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("egui"),
+                color_attachments: &attachments[..],
                 depth_stencil_attachment: None,
                 occlusion_query_set: None,
                 timestamp_writes: None,
