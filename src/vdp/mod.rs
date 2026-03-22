@@ -829,7 +829,7 @@ impl Debuggable for Vdp {
     }
 
     fn write_state(&mut self, state: &Value) {
-        let mut new_vdp: Vdp = match serde_json::from_value(state.clone()) {
+        let mut new_vdp: Vdp = match Vdp::deserialize(state) {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("Error deserializing VDP state: {}", e);

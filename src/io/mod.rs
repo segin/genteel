@@ -407,7 +407,7 @@ impl Debuggable for Io {
     }
 
     fn write_state(&mut self, state: &Value) {
-        if let Ok(new_io) = serde_json::from_value(state.clone()) {
+        if let Ok(new_io) = Io::deserialize(state) {
             *self = new_io;
         }
     }

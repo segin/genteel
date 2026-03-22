@@ -112,7 +112,7 @@ impl Debuggable for Apu {
     }
 
     fn write_state(&mut self, state: &Value) {
-        if let Ok(new_apu) = serde_json::from_value(state.clone()) {
+        if let Ok(new_apu) = Apu::deserialize(state) {
             *self = new_apu;
         }
     }
