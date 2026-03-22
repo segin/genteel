@@ -16,11 +16,27 @@ fn test_af_pair() {
 }
 
 #[test]
+fn test_af_getter() {
+    let mut z80 = create_z80(&[]);
+    z80.a = 0x12;
+    z80.f = 0x34;
+    assert_eq!(z80.af(), 0x1234);
+}
+
+#[test]
 fn test_bc_pair() {
     let mut z80 = create_z80(&[]);
     z80.set_bc(0xABCD);
     assert_eq!(z80.b, 0xAB);
     assert_eq!(z80.c, 0xCD);
+    assert_eq!(z80.bc(), 0xABCD);
+}
+
+#[test]
+fn test_bc_getter() {
+    let mut z80 = create_z80(&[]);
+    z80.b = 0xAB;
+    z80.c = 0xCD;
     assert_eq!(z80.bc(), 0xABCD);
 }
 
@@ -34,11 +50,27 @@ fn test_de_pair() {
 }
 
 #[test]
+fn test_de_getter() {
+    let mut z80 = create_z80(&[]);
+    z80.d = 0x56;
+    z80.e = 0x78;
+    assert_eq!(z80.de(), 0x5678);
+}
+
+#[test]
 fn test_hl_pair() {
     let mut z80 = create_z80(&[]);
     z80.set_hl(0xBEEF);
     assert_eq!(z80.h, 0xBE);
     assert_eq!(z80.l, 0xEF);
+    assert_eq!(z80.hl(), 0xBEEF);
+}
+
+#[test]
+fn test_hl_getter() {
+    let mut z80 = create_z80(&[]);
+    z80.h = 0xBE;
+    z80.l = 0xEF;
     assert_eq!(z80.hl(), 0xBEEF);
 }
 
