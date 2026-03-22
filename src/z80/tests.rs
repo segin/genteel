@@ -638,3 +638,33 @@ fn test_debug_state_fallback() {
     assert_eq!(z80.pc, 0x1234);
     assert_eq!(z80.cycles, 100);
 }
+
+#[test]
+fn test_trigger_nmi() {
+    let mut z80 = create_z80(&[]);
+
+    // Setup initial state
+    z80.halted = true;
+    z80.iff1 = true;
+    z80.iff2 = false;
+    z80.pc = 0x1234;
+    z80.sp = 0x2000;
+
+    // Trigger NMI
+    let cycles = z80.trigger_nmi();
+
+    // Assert cycles
+    assert_eq!(cycles, 11);
+
+    // Assert state changes
+    assert_eq!(z80.halted, false);
+    assert_eq!(z80.iff2, true); // Copies iff1
+    assert_eq!(z80.iff1, false); // Disabled
+    assert_eq!(z80.pc, 0x0066); // NMI vector
+    assert_eq!(z80.sp, 0x1FFE); // Stack pointer decremented by 2
+
+    // Verify PC was pushed
+    let popped_pc = z80.pop();
+    assert_eq!(popped_pc, 0x1234);
+    assert_eq!(z80.sp, 0x2000);
+}
