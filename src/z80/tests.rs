@@ -130,6 +130,71 @@ fn test_set_rp() {
     assert_eq!(z80.sp, 0);
 }
 
+// ==================== Flag Helpers Tests ====================
+
+#[test]
+fn test_get_flag() {
+    let mut z80 = create_z80(&[]);
+
+    // No flags set
+    z80.f = 0x00;
+    assert!(!z80.get_flag(flags::CARRY));
+    assert!(!z80.get_flag(flags::ADD_SUB));
+    assert!(!z80.get_flag(flags::PARITY));
+    assert!(!z80.get_flag(flags::X_FLAG));
+    assert!(!z80.get_flag(flags::HALF_CARRY));
+    assert!(!z80.get_flag(flags::Y_FLAG));
+    assert!(!z80.get_flag(flags::ZERO));
+    assert!(!z80.get_flag(flags::SIGN));
+
+    // All flags set
+    z80.f = 0xFF;
+    assert!(z80.get_flag(flags::CARRY));
+    assert!(z80.get_flag(flags::ADD_SUB));
+    assert!(z80.get_flag(flags::PARITY));
+    assert!(z80.get_flag(flags::X_FLAG));
+    assert!(z80.get_flag(flags::HALF_CARRY));
+    assert!(z80.get_flag(flags::Y_FLAG));
+    assert!(z80.get_flag(flags::ZERO));
+    assert!(z80.get_flag(flags::SIGN));
+
+    // Specific flag set
+    z80.f = flags::ZERO;
+    assert!(z80.get_flag(flags::ZERO));
+    assert!(!z80.get_flag(flags::CARRY)); // And others are not
+}
+
+#[test]
+fn test_set_flag() {
+    let mut z80 = create_z80(&[]);
+
+    // Test setting flags individually
+    z80.f = 0x00;
+
+    z80.set_flag(flags::CARRY, true);
+    assert_eq!(z80.f, flags::CARRY);
+
+    z80.set_flag(flags::ZERO, true);
+    assert_eq!(z80.f, flags::CARRY | flags::ZERO);
+
+    // Test clearing flags individually
+    z80.set_flag(flags::CARRY, false);
+    assert_eq!(z80.f, flags::ZERO);
+
+    z80.set_flag(flags::ZERO, false);
+    assert_eq!(z80.f, 0x00);
+
+    // Test setting an already set flag
+    z80.f = flags::SIGN;
+    z80.set_flag(flags::SIGN, true);
+    assert_eq!(z80.f, flags::SIGN);
+
+    // Test clearing an already cleared flag
+    z80.f = 0x00;
+    z80.set_flag(flags::PARITY, false);
+    assert_eq!(z80.f, 0x00);
+}
+
 #[test]
 fn test_get_rp2() {
     let mut z80 = create_z80(&[]);
