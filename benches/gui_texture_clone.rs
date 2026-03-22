@@ -23,17 +23,16 @@ fn bench_texture_clone(c: &mut Criterion) {
                     }
                 }
             }
-            let image = egui::ColorImage::from_rgba_unmultiplied([plane_w * 8, plane_h * 8], &pixels);
+            let image =
+                egui::ColorImage::from_rgba_unmultiplied([plane_w * 8, plane_h * 8], &pixels);
             black_box(image);
         });
     });
 
     group.bench_function("direct_colorimage", |b| {
         b.iter(|| {
-            let mut image = egui::ColorImage::new(
-                [plane_w * 8, plane_h * 8],
-                egui::Color32::TRANSPARENT,
-            );
+            let mut image =
+                egui::ColorImage::new([plane_w * 8, plane_h * 8], egui::Color32::TRANSPARENT);
             for ty in 0..plane_h {
                 for tx in 0..plane_w {
                     for py in 0..8 {

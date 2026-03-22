@@ -82,10 +82,8 @@ fn bench_image_allocation_optimization(c: &mut Criterion) {
                 pixels[pixel_idx + 2] = 0;
                 pixels[pixel_idx + 3] = 255;
             }
-            let image = egui::ColorImage::from_rgba_unmultiplied(
-                [plane_w * 8, plane_h * 8],
-                &pixels,
-            );
+            let image =
+                egui::ColorImage::from_rgba_unmultiplied([plane_w * 8, plane_h * 8], &pixels);
             black_box(image);
         });
     });
