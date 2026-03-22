@@ -236,7 +236,6 @@ fn test_set_rp2() {
     z80.set_rp2(4, 0xFFFF);
     assert_eq!(z80.bc(), 0);
 }
-}
 
 // ==================== NOP Tests ====================
 
@@ -846,5 +845,4 @@ fn test_trigger_nmi() {
     let popped_pc = z80.pop();
     assert_eq!(popped_pc, 0x1234);
     assert_eq!(z80.sp, 0x2000);
-}
 }
