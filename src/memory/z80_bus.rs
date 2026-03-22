@@ -43,7 +43,6 @@ impl Z80Bus {
     pub fn reset_bank(&mut self) {
         let mut bus = self.bus.bus.borrow_mut();
         bus.z80_bank_addr = 0;
-        bus.z80_bank_bit = 0;
     }
 
     /// Internal helper to read byte from Bus (deduplicated logic)
@@ -262,31 +261,27 @@ mod tests {
         {
             let bus = z80_bus.bus.bus.borrow();
             assert_eq!(bus.z80_bank_addr, 0);
-            assert_eq!(bus.z80_bank_bit, 0);
         }
 
-        // set_bank(1) -> bit 15 of addr becomes 1, bank_bit becomes 1
+        // set_bank(1) -> inserts 1 at bit 8 of the 9-bit bank register (bit 23 of address)
         z80_bus.set_bank(1);
         {
             let bus = z80_bus.bus.bus.borrow();
-            assert_eq!(bus.z80_bank_addr, 1 << 15);
-            assert_eq!(bus.z80_bank_bit, 1);
+            assert_eq!(bus.z80_bank_addr, 1 << 23);
         }
 
-        // set_bank(0) -> bit 16 of addr remains 0, bank_bit becomes 2
+        // set_bank(0) -> right shifts, inserts 0 at bit 8 (bit 23 of addr), 1 is now at bit 7 (bit 22 of addr)
         z80_bus.set_bank(0);
         {
             let bus = z80_bus.bus.bus.borrow();
-            assert_eq!(bus.z80_bank_addr, 1 << 15);
-            assert_eq!(bus.z80_bank_bit, 2);
+            assert_eq!(bus.z80_bank_addr, 1 << 22);
         }
 
-        // set_bank(1) -> bit 17 of addr becomes 1, bank_bit becomes 3
+        // set_bank(1) -> right shifts, inserts 1 at bit 8 (bit 23 of addr)
         z80_bus.set_bank(1);
         {
             let bus = z80_bus.bus.bus.borrow();
-            assert_eq!(bus.z80_bank_addr, (1 << 15) | (1 << 17));
-            assert_eq!(bus.z80_bank_bit, 3);
+            assert_eq!(bus.z80_bank_addr, (1 << 23) | (1 << 21));
         }
 
         // Reset
@@ -294,7 +289,85 @@ mod tests {
         {
             let bus = z80_bus.bus.bus.borrow();
             assert_eq!(bus.z80_bank_addr, 0);
-            assert_eq!(bus.z80_bank_bit, 0);
+        }
+    }
+
+    #[test]
+    fn test_set_bank_wraparound() {
+        let mut z80_bus = create_test_z80_bus();
+
+        // 9 successive writes to fill the 9-bit bank register
+        for _ in 0..9 {
+            z80_bus.set_bank(1);
+        }
+
+        {
+            let bus = z80_bus.bus.bus.borrow();
+            // All 9 bits (15..=23) should be set
+            let expected_addr = 0x1FF << 15;
+            assert_eq!(bus.z80_bank_addr, expected_addr);
+        }
+
+        // 10th write, right shifts and inserts 0 at bit 23
+        z80_bus.set_bank(0);
+
+        {
+            let bus = z80_bus.bus.bus.borrow();
+            // Bit 23 should be cleared, bits 15..=22 should remain set
+            // The bit that was at bit 15 is shifted out
+            let expected_addr = 0xFF << 15; // 0x0FF
+            assert_eq!(bus.z80_bank_addr, expected_addr);
+        }
+    }
+
+    #[test]
+    fn test_set_bank_ignore_upper_bits() {
+        let mut z80_bus = create_test_z80_bus();
+
+        // Writing 0xFF should only set the LSB to 1
+        z80_bus.set_bank(0xFF);
+        {
+            let bus = z80_bus.bus.bus.borrow();
+            assert_eq!(bus.z80_bank_addr, 1 << 23);
+        }
+
+        // Writing 0xFE should only set the LSB to 0
+        z80_bus.set_bank(0xFE);
+        {
+            let bus = z80_bus.bus.bus.borrow();
+            assert_eq!(bus.z80_bank_addr, 1 << 22);
+        }
+
+        // Writing 0x81 should set the LSB to 1
+        z80_bus.set_bank(0x81);
+        {
+            let bus = z80_bus.bus.bus.borrow();
+            assert_eq!(bus.z80_bank_addr, (1 << 23) | (1 << 21));
+        }
+    }
+
+    #[test]
+    fn test_set_bank_via_memory_interface_wraparound() {
+        let mut z80_bus = create_test_z80_bus();
+
+        // Ensure writing to 0x6000 directly works exactly like set_bank
+        for _ in 0..9 {
+            z80_bus.write_byte(0x6000, 1);
+        }
+
+        {
+            let bus = z80_bus.bus.bus.borrow();
+            let expected_addr = 0x1FF << 15;
+            assert_eq!(bus.z80_bank_addr, expected_addr);
+        }
+
+        z80_bus.write_byte(0x60FF, 0); // Testing an address within the 6000-60FF range
+
+        {
+            let bus = z80_bus.bus.bus.borrow();
+            // Expected address after right shifting and putting 0 at top bit
+            let expected_addr = 0xFF << 15;
+            assert_eq!(bus.z80_bank_addr, expected_addr);
         }
     }
 }
