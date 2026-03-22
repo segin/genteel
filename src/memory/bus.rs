@@ -717,12 +717,12 @@ impl Debuggable for Bus {
         }
 
         if let Some(val) = state.get("work_ram") {
-            if let Ok(ram) = serde_json::from_value::<Box<[u8]>>(val.clone()) {
+            if let Ok(ram) = Box::<[u8]>::deserialize(val) {
                 self.work_ram = ram;
             }
         }
         if let Some(val) = state.get("z80_ram") {
-            if let Ok(ram) = serde_json::from_value::<Box<[u8]>>(val.clone()) {
+            if let Ok(ram) = Box::<[u8]>::deserialize(val) {
                 self.z80_ram = ram;
             }
         }

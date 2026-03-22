@@ -130,3 +130,14 @@ fn test_write_state_reconstructs_cram_cache() {
         "CRAM cache should be reconstructed from state"
     );
 }
+
+#[test]
+fn test_mode1_getter_behavior() {
+    let mut vdp = Vdp::new();
+
+    // Mode 1 getter should return the value of register 0
+    // Command 0x8014 writes 0x14 to register 0 (0x8000 | (0 << 8) | 0x14)
+    vdp.write_control(0x8014);
+
+    assert_eq!(vdp.mode1(), 0x14, "mode1() did not return the expected value from register 0");
+}

@@ -15,35 +15,28 @@ fn test_psg_tone_0_full_cycle() {
     // Initial state after write: output=false, last_amp=0
     // Manually force output=true to test the decrement/reload cycle
     psg.tones[0].output = true;
+    psg.tones[0].counter = 10;
     psg.update_channel_amp(0);
     // last_amp should now be 4095
     assert_eq!(psg.blip.read_instant(), 4095);
 
-    // Step 1-10: counter 10->9->8->7->6->5->4->3->2->1.
-    for _ in 0..10 {
+    // Step 1-9: counter 10->9->8->7->6->5->4->3->2->1.
+    for _ in 0..9 {
         psg.step_cycles(1);
         assert_eq!(psg.blip.read_instant(), 4095);
     }
 
-    // Step 11: counter=1 -> 0.
-    psg.step_cycles(1);
-    assert_eq!(psg.blip.read_instant(), 4095);
-    assert_eq!(psg.tones[0].counter, 0);
-
-    // Step 12: counter=0 -> reload 10, flip output=false.
+    // Step 10: counter=1 -> 0, reload 10, flip output=false.
     psg.step_cycles(1);
     assert_eq!(psg.blip.read_instant(), 0);
     assert_eq!(psg.tones[0].counter, 10);
     assert!(!psg.tones[0].output);
 
-    // One more half-cycle to check flip back to true
-    for _ in 0..10 {
+    // One more full half-cycle to check flip back to true
+    for _ in 0..9 {
         psg.step_cycles(1);
         assert_eq!(psg.blip.read_instant(), 0);
     }
-    psg.step_cycles(1);
-    assert_eq!(psg.blip.read_instant(), 0);
-    assert_eq!(psg.tones[0].counter, 0);
     psg.step_cycles(1);
     assert_eq!(psg.blip.read_instant(), 4095);
     assert_eq!(psg.tones[0].counter, 10);

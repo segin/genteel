@@ -1,4 +1,3 @@
-#![allow(unused_imports)]
 //! Z80 CPU Cycle Timing Tests
 //!
 //! Verifies exact T-state counts for all instructions.
