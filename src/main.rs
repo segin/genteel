@@ -691,6 +691,7 @@ impl Emulator {
             bus.vdp.render_line(line);
         }
     }
+
     fn sync_components(
         ctx: &mut SystemContext,
         m68k_cycles: u32,
@@ -745,11 +746,11 @@ impl Emulator {
         if z80_can_run {
             const Z80_CYCLES_PER_M68K_CYCLE: f32 = 3579545.0 / 7670453.0;
             *ctx.z80_cycle_debt += m68k_cycles as f32 * Z80_CYCLES_PER_M68K_CYCLE;
-
             // Bind the bus to avoid RefCell double borrow
             unsafe {
                 ctx.z80.memory.bind_bus(ctx.bus);
                 ctx.z80.io.bind_bus(ctx.bus);
+
             }
 
             while *ctx.z80_cycle_debt >= 1.0 {
