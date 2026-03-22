@@ -5,17 +5,9 @@
 #![cfg(test)]
 
 use super::*;
+use crate::cpu::test_utils::create_test_cpu;
 use crate::memory::{Memory, MemoryInterface};
 use proptest::prelude::*;
-
-fn create_test_cpu() -> (Cpu, Memory) {
-    let mut memory = Memory::new(0x10000);
-    // Set up minimal vector table
-    memory.write_long(0, 0x1000); // SSP
-    memory.write_long(4, 0x100); // Reset vector PC
-    let cpu = Cpu::new(&mut memory);
-    (cpu, memory)
-}
 
 fn set_chk_vector(memory: &mut Memory, handler: u32) {
     memory.write_long(0x18, handler);
