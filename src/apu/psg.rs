@@ -65,7 +65,7 @@ impl Psg {
             latch_channel: 0,
             latch_volume: false,
             total_clocks: 1, // Start at 1 to allow delta at 0 if needed
-            blip: BlipBuf::new(3579545, 53267), // Clocked at ~3.58MHz, output at FM rate
+            blip: BlipBuf::new(7670453 / 2, 53267), // Match Apu::tick_cycles(m68k_cycles / 2) precisely
         };
         for tone in &mut psg.tones {
             tone.volume = 0x0F;
@@ -231,7 +231,7 @@ impl Psg {
     pub fn step(&mut self) -> i16 {
         self.step_cycles(1);
         let mut buf = [0i16; 1];
-        if self.blip.read_samples(&mut buf) > 0 {
+        if self.blip.read_samples(&mut buf[..]) > 0 {
             buf[0]
         } else {
             self.blip.read_instant()
@@ -240,7 +240,7 @@ impl Psg {
 
     pub fn generate_sample(&mut self) -> i16 {
         let mut buf = [0i16; 1];
-        if self.blip.read_samples(&mut buf) > 0 {
+        if self.blip.read_samples(&mut buf[..]) > 0 {
             buf[0]
         } else {
             self.blip.read_instant()

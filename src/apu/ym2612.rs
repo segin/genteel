@@ -449,8 +449,8 @@ impl Ym2612 {
             dac_en: false,
             env_counter: 1,
             total_clocks: 0,
-            blip_l: BlipBuf::new(53267, 53267),
-            blip_r: BlipBuf::new(53267, 53267),
+            blip_l: BlipBuf::new(7670453, 53267),
+            blip_r: BlipBuf::new(7670453, 53267),
             last_left: 0,
             last_right: 0,
         };
@@ -512,7 +512,7 @@ impl Ym2612 {
         }
 
         if cycles > 0 {
-            self.total_clocks += 1;
+            self.total_clocks += cycles as u64;
             self.env_counter = (self.env_counter + 1) & 0xFFF;
             let mut left = 0i32;
             let mut right = 0i32;
@@ -598,8 +598,8 @@ impl Ym2612 {
     pub fn generate_sample(&mut self) -> (i16, i16) {
         let mut l = [0i16; 1];
         let mut r = [0i16; 1];
-        if self.blip_l.read_samples(&mut l) > 0 {
-            self.blip_r.read_samples(&mut r);
+        if self.blip_l.read_samples(&mut l[..]) > 0 {
+            self.blip_r.read_samples(&mut r[..]);
             (l[0], r[0])
         } else {
             (self.blip_l.read_instant(), self.blip_r.read_instant())

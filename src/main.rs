@@ -771,11 +771,10 @@ impl Emulator {
             ctx.bus.audio_accumulator += m68k_cycles as f32;
 
             while ctx.bus.audio_accumulator >= cycles_per_sample {
-                if let Some((l, r)) = ctx.bus.apu.generate_sample() {
-                    if ctx.bus.audio_buffer.len() < 32768 {
-                        ctx.bus.audio_buffer.push(l);
-                        ctx.bus.audio_buffer.push(r);
-                    }
+                let (l, r) = ctx.bus.apu.generate_sample();
+                if ctx.bus.audio_buffer.len() < 32768 {
+                    ctx.bus.audio_buffer.push(l);
+                    ctx.bus.audio_buffer.push(r);
                 }
                 ctx.bus.audio_accumulator -= cycles_per_sample;
             }

@@ -47,6 +47,8 @@ pub struct BlipBuf {
     clock_ptr: f64,
     /// Current DC offset
     accumulator: i32,
+    /// Total samples read (shifted out)
+    samples_read: u64,
 }
 
 impl BlipBuf {
@@ -58,6 +60,7 @@ impl BlipBuf {
             last_clock: 0,
             clock_ptr: 0.0,
             accumulator: 0,
+            samples_read: 0,
         }
     }
 
@@ -70,6 +73,7 @@ impl BlipBuf {
     pub fn clear(&mut self) {
         self.buffer.fill(0);
         self.accumulator = 0;
+        self.samples_read = 0;
     }
 
     /// Add a delta (amplitude change) at a specific clock time
@@ -79,13 +83,16 @@ impl BlipBuf {
         }
 
         let time_in_samples = (clock as f64 * self.sample_rate as f64) / self.clock_rate as f64;
-        let sample_idx = time_in_samples as usize;
-        let fract = time_in_samples - sample_idx as f64;
+        let absolute_sample_idx = time_in_samples.floor() as isize;
+        let fract = time_in_samples - absolute_sample_idx as f64;
 
-        if sample_idx + KERNEL_SIZE >= self.buffer.len() {
-            // Should not happen if read frequently, but safety first
+        let sample_idx = absolute_sample_idx - self.samples_read as isize;
+
+        if sample_idx < 0 || sample_idx as usize + KERNEL_SIZE >= self.buffer.len() {
+            // Out of bounds (e.g. buffer size overrun before a read)
             return;
         }
+        let sample_idx = sample_idx as usize;
 
         // Apply band-limited step
         let offset = (fract * RES as f64) as usize;
@@ -111,6 +118,7 @@ impl BlipBuf {
 
         // Shift remaining data (the "tails" of the kernels)
         self.buffer.rotate_left(count);
+        self.samples_read += count as u64;
 
         count
     }
