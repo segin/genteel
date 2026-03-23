@@ -900,4 +900,34 @@ mod tests {
         // Ensure no buttons are set
         assert_eq!(state.to_button_string(), "............");
     }
+
+    #[test]
+    fn test_set_button_invalid_edge_cases() {
+        let mut state = ControllerState::new();
+
+        // Test invalid button names on clean state
+        state.set_button("invalid_button", true);
+        assert_eq!(state.to_button_string(), "............");
+
+        // Set valid button
+        state.set_button("up", true);
+        assert!(state.up);
+        assert_eq!(state.to_button_string(), "U...........");
+
+        // Try to set invalid button, ensure valid button remains
+        state.set_button("start2", true);
+        assert!(state.up);
+        assert!(!state.down);
+        assert!(!state.left);
+        assert!(!state.right);
+        assert!(!state.a);
+        assert!(!state.b);
+        assert!(!state.c);
+        assert!(!state.start);
+        assert!(!state.x);
+        assert!(!state.y);
+        assert!(!state.z);
+        assert!(!state.mode);
+        assert_eq!(state.to_button_string(), "U...........");
+    }
 }
