@@ -5,7 +5,7 @@ use crate::Emulator;
 #[cfg(feature = "gilrs")]
 use gilrs::{Axis, Button, EventType, Gilrs};
 #[cfg(feature = "gui")]
-use pixels::{wgpu, Pixels, SurfaceTexture};
+use pixels::{wgpu, SurfaceTexture};
 use std::collections::HashMap;
 use std::fmt::Write;
 use std::path::PathBuf;
@@ -1883,7 +1883,10 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
     let mut pixels = {
         let window_size = window.inner_size();
         let surface_texture = SurfaceTexture::new(window_size.width, window_size.height, window);
-        Pixels::new(320, 240, surface_texture).map_err(|e| e.to_string())?
+        pixels::PixelsBuilder::new(320, 240, surface_texture)
+            .wgpu_backend(pixels::wgpu::Backends::all())
+            .build()
+            .map_err(|e| e.to_string())?
     };
     // Initialize egui framework
     let mut framework = Framework::new(

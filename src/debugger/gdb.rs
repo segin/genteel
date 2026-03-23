@@ -1731,4 +1731,73 @@ mod tests {
         // Verify it is gone
         assert!(!server.is_breakpoint(0x1000));
     }
+
+    #[test]
+    fn test_receive_packet_would_block() {
+        let mut server = GdbServer::new(0, None).expect("Failed to create GDB server");
+        let port = server.port();
+
+        // Connect via loopback
+        let _client_stream =
+            TcpStream::connect(format!("127.0.0.1:{}", port)).expect("Failed to connect");
+        assert!(server.accept(), "Server should accept connection");
+        assert!(server.is_connected(), "Server should be connected");
+
+        // The client hasn't sent any data.
+        // The server's stream is set to non-blocking in accept().
+        // receive_packet should return None and handle the WouldBlock error cleanly.
+        let result = server.receive_packet();
+        assert!(
+            result.is_none(),
+            "Expected None when no data is available to read"
+        );
+        assert!(
+            server.is_connected(),
+            "Server should remain connected after a WouldBlock"
+        );
+    }
+
+    #[test]
+    fn test_receive_packet_garbage_prefix() {
+        let mut server = GdbServer::new(0, None).expect("Failed to create GDB server");
+        // Disable no_ack_mode to test complete behavior
+        server.no_ack_mode = false;
+        let port = server.port();
+
+        // Connect via loopback
+        let mut client_stream =
+            TcpStream::connect(format!("127.0.0.1:{}", port)).expect("Failed to connect");
+        assert!(server.accept(), "Server should accept connection");
+
+        // Send a valid packet prefixed with some garbage bytes and wait
+        // The garbage should be ignored until '$' is hit.
+        let packet_with_garbage = b"garbage data$OK#9a";
+        client_stream.write_all(packet_with_garbage).unwrap();
+        client_stream.flush().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        assert_eq!(server.receive_packet(), Some("OK".to_string()));
+    }
+
+    #[test]
+    fn test_receive_packet_broken_checksum() {
+        let mut server = GdbServer::new(0, None).expect("Failed to create GDB server");
+        // Disable no_ack_mode to test complete behavior
+        server.no_ack_mode = false;
+        let port = server.port();
+
+        // Connect via loopback
+        let mut client_stream =
+            TcpStream::connect(format!("127.0.0.1:{}", port)).expect("Failed to connect");
+        assert!(server.accept(), "Server should accept connection");
+
+        // Send a valid packet start and data, but disconnect before sending the two-byte checksum
+        let packet_incomplete = b"$OK#9";
+        client_stream.write_all(packet_incomplete).unwrap();
+        client_stream.flush().unwrap();
+        client_stream.shutdown(std::net::Shutdown::Both).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        assert_eq!(server.receive_packet(), None);
+    }
 }

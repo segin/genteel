@@ -339,4 +339,75 @@ mod tests_generate_sample {
 
         assert!(has_non_zero, "Expected non-zero audio samples after setting up APU channels");
     }
+
+    #[test]
+    fn test_generate_sample_none() {
+        let mut apu = Apu::new();
+        let mut sample_count = 0;
+
+        // Read samples until we exhaust the initial pre-allocated buffers
+        while apu.generate_sample().is_some() {
+            sample_count += 1;
+            if sample_count > 10000 {
+                panic!("Infinite loop reading samples");
+            }
+        }
+
+        assert_eq!(apu.generate_sample(), None, "Should return None when buffers are empty");
+    }
+
+    #[test]
+    fn test_generate_sample_clamping() {
+        let mut apu = Apu::new();
+
+        // Drain the initial buffer
+        while apu.generate_sample().is_some() {}
+
+        // Add large deltas to force overflow and clamping to the upper limit
+        // Using `add_delta(0, ...)` as the immediate accumulation point before ticking
+        apu.fm.blip_l.add_delta(0, 32767);
+        apu.fm.blip_r.add_delta(0, -32768);
+        apu.psg.blip.add_delta(0, 32767);
+
+        apu.tick_cycles(100);
+
+        let mut sample = None;
+        for _ in 0..100 {
+            if let Some(s) = apu.generate_sample() {
+                sample = Some(s);
+                break;
+            }
+        }
+        let sample = sample.expect("Should have samples after tick");
+
+        // Output should be clamped to i16::MAX (32767) for left
+        // Output should be -1 for right (-32768 + 32767 = -1)
+        assert_eq!(sample.0, 32767, "Left channel should clamp to maximum positive i16");
+        assert_eq!(sample.1, -1, "Right channel should evaluate to -1");
+
+        // Test underflow clamping
+        // Clear buffers and add large negative deltas
+        apu.fm.blip_l.clear();
+        apu.fm.blip_r.clear();
+        apu.psg.blip.clear();
+
+        apu.fm.blip_l.add_delta(0, -32768);
+        apu.fm.blip_r.add_delta(0, -32768);
+        apu.psg.blip.add_delta(0, -32768);
+
+        apu.tick_cycles(100);
+
+        let mut sample2 = None;
+        for _ in 0..100 {
+            if let Some(s) = apu.generate_sample() {
+                sample2 = Some(s);
+                break;
+            }
+        }
+        let sample2 = sample2.expect("Should have samples");
+
+        // Output should be clamped to i16::MIN (-32768)
+        assert_eq!(sample2.0, -32768, "Left channel should clamp to minimum negative i16");
+        assert_eq!(sample2.1, -32768, "Right channel should clamp to minimum negative i16");
+    }
 }

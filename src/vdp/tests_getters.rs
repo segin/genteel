@@ -64,6 +64,21 @@ fn test_vdp_vint_enabled_getter() {
 }
 
 #[test]
+fn test_vdp_mode1_getter() {
+    let mut vdp = Vdp::new();
+
+    // Test default
+    assert_eq!(vdp.mode1(), 0x00);
+
+    // Test set value
+    vdp.registers[REG_MODE1] = 0x42;
+    assert_eq!(vdp.mode1(), 0x42);
+
+    vdp.registers[REG_MODE1] = 0xFF;
+    assert_eq!(vdp.mode1(), 0xFF);
+}
+
+#[test]
 fn test_vdp_hint_enabled_getter() {
     let mut vdp = Vdp::new();
 
@@ -77,4 +92,24 @@ fn test_vdp_hint_enabled_getter() {
     // Disable HInt
     vdp.registers[REG_MODE1] &= !MODE1_HINT_ENABLE;
     assert!(!vdp.hint_enabled());
+}
+
+#[test]
+fn test_vdp_mode2_getter() {
+    let mut vdp = Vdp::new();
+
+    // Test default
+    assert_eq!(vdp.mode2(), 0);
+
+    // Set arbitrary values
+    vdp.registers[REG_MODE2] = 0x00;
+    assert_eq!(vdp.mode2(), 0x00);
+
+    vdp.registers[REG_MODE2] = 0xFF;
+    assert_eq!(vdp.mode2(), 0xFF);
+
+    // Test with specific known flags for this register
+    let test_val = MODE2_DISPLAY_ENABLE | MODE2_VINT_ENABLE;
+    vdp.registers[REG_MODE2] = test_val;
+    assert_eq!(vdp.mode2(), test_val);
 }
