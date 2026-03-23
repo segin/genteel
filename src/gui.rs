@@ -1882,11 +1882,20 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
     let window: &'static winit::window::Window = Box::leak(Box::new(window));
     let mut pixels = {
         let window_size = window.inner_size();
-        let surface_texture = SurfaceTexture::new(window_size.width, window_size.height, window);
-        pixels::PixelsBuilder::new(320, 240, surface_texture)
-            .wgpu_backend(pixels::wgpu::Backends::all())
-            .build()
-            .map_err(|e| e.to_string())?
+        let build_pixels = |backend| {
+            let surface_texture = SurfaceTexture::new(window_size.width, window_size.height, window);
+            pixels::PixelsBuilder::new(320, 240, surface_texture)
+                .wgpu_backend(backend)
+                .build()
+        };
+
+        match build_pixels(pixels::wgpu::Backends::all()) {
+            Ok(p) => p,
+            Err(_) => {
+                log::warn!("wgpu Backends::all() failed; falling back to GL backend");
+                build_pixels(pixels::wgpu::Backends::GL).map_err(|e| e.to_string())?
+            }
+        }
     };
     // Initialize egui framework
     let mut framework = Framework::new(
