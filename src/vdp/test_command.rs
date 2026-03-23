@@ -172,6 +172,7 @@ fn test_vdp_mode2_getter_direct() {
     assert_eq!(vdp.mode2(), 0xCD);
 }
 
+
 #[test]
 fn test_is_control_pending() {
     let mut vdp = Vdp::new();

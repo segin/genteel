@@ -4,8 +4,9 @@
 
 use crate::Cpu;
 use crate::cpu::flags;
-use crate::cpu::test_utils::create_test_cpu;
+use crate::cpu::{test_utils::create_test_cpu, Cpu};
 use crate::memory::{Memory, MemoryInterface};
+use crate::Cpu;
 use proptest::prelude::*;
 
 // === Test Utilities ===
