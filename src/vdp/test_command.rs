@@ -172,7 +172,6 @@ fn test_vdp_mode2_getter_direct() {
     // mode2() should return the value of register 1
     assert_eq!(vdp.mode2(), 0xCD);
 }
->>>>>>> main
 
 
 #[test]
