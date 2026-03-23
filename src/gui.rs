@@ -1929,6 +1929,8 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
     println!("Starting event loop...");
     event_loop
         .run(move |event, target| {
+            let _keep_audio_alive = &_audio_output; // Ensure audio_output is moved into the closure
+
             match event {
                 Event::WindowEvent { event, .. } => {
                     // Handle GUI events
