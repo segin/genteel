@@ -691,14 +691,16 @@ impl Emulator {
             bus.vdp.render_line(line);
         }
     }
+
     fn sync_components(
         ctx: &mut SystemContext,
         m68k_cycles: u32,
         trigger_vint: bool,
     ) {
-        let _mclk = m68k_cycles * 7;
+        let mclk = m68k_cycles * 7;
 
         // 1. Tick the Bus (VDP, etc)
+        ctx.bus.tick(mclk);
 
         // 2. Z80 State and Timing
         let (z80_can_run, z80_is_reset, cycles_per_sample) = {
@@ -744,10 +746,23 @@ impl Emulator {
         if z80_can_run {
             const Z80_CYCLES_PER_M68K_CYCLE: f32 = 3579545.0 / 7670453.0;
             *ctx.z80_cycle_debt += m68k_cycles as f32 * Z80_CYCLES_PER_M68K_CYCLE;
+            // Bind the bus to avoid RefCell double borrow
+            unsafe {
+                ctx.z80.memory.bind_bus(ctx.bus);
+                ctx.z80.io.bind_bus(ctx.bus);
+
+
+            }
+
             while *ctx.z80_cycle_debt >= 1.0 {
                 let cycles = ctx.z80.step();
                 *ctx.z80_cycle_debt -= cycles as f32;
             }
+
+            // Unbind to return to SharedBus mode
+            ctx.z80.memory.unbind_bus();
+            ctx.z80.io.unbind_bus();
+
         }
 
         // 4. Update APU and generate audio samples
@@ -799,11 +814,7 @@ impl Emulator {
             };
 
             let trigger_vint = line == active_lines && pending_cycles < 10;
-            Self::sync_components(
-                ctx,
-                m68k_cycles,
-                trigger_vint,
-            );
+            Self::sync_components(ctx, m68k_cycles, trigger_vint);
 
             // Check for Z80 state change
             let (req, rst) = (ctx.bus.z80_bus_request, ctx.bus.z80_reset);
@@ -866,11 +877,8 @@ impl Emulator {
                     internal_frame_count: self.internal_frame_count,
                     debug: self.debug,
                 };
-                Self::sync_components(
-                    &mut ctx,
-                    change.instruction_cycles,
-                    trigger_vint,
-                );
+                Self::sync_components(&mut ctx, change.instruction_cycles, trigger_vint);
+
                 cycles_scanline += change.instruction_cycles;
             }
         }
