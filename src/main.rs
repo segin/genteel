@@ -43,7 +43,7 @@ use z80::Z80;
 
 #[derive(Debug, Clone, Copy)]
 struct Z80Change {
-    instruction_cycles: u32,
+    instruction_cycles: m68k_cycles, u32,
     new_req: bool,
     new_rst: bool,
 }
