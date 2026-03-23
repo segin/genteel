@@ -43,7 +43,7 @@ use z80::Z80;
 
 #[derive(Debug, Clone, Copy)]
 struct Z80Change {
-    instruction_cycles: m68k_cycles, u32,
+    instruction_cycles: u32,
     new_req: bool,
     new_rst: bool,
 }
@@ -751,6 +751,7 @@ impl Emulator {
                 ctx.z80.memory.bind_bus(ctx.bus);
                 ctx.z80.io.bind_bus(ctx.bus);
 
+
             }
 
             while *ctx.z80_cycle_debt >= 1.0 {
@@ -877,6 +878,7 @@ impl Emulator {
                     debug: self.debug,
                 };
                 Self::sync_components(&mut ctx, change.instruction_cycles, trigger_vint);
+
                 cycles_scanline += change.instruction_cycles;
             }
         }
