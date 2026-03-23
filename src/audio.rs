@@ -352,6 +352,101 @@ mod tests {
     }
 
     #[test]
+    fn test_audio_buffer_clear_edge_cases() {
+        let mut buf = AudioBuffer::new(2); // total capacity is 4 (stereo)
+
+        // Edge Case 1: Completely full buffer
+        buf.push(&[1i16, 2, 3, 4]);
+        assert_eq!(buf.available(), 4);
+        assert_eq!(buf.write_pos, 0); // wrapped around
+        assert_eq!(buf.read_pos, 0);
+
+        buf.clear();
+        assert_eq!(buf.available(), 0);
+        assert_eq!(buf.write_pos, 0);
+        assert_eq!(buf.read_pos, 0);
+
+        // Edge Case 2: Wrap-around state (read_pos > write_pos)
+        // Push 3 samples
+        buf.push(&[10i16, 20, 30]);
+        assert_eq!(buf.available(), 3);
+        assert_eq!(buf.write_pos, 3);
+
+        // Pop 2 samples (read_pos moves to 2)
+        let mut out = [0i16; 2];
+        buf.pop(&mut out);
+        assert_eq!(buf.available(), 1);
+        assert_eq!(buf.read_pos, 2);
+
+        // Push 2 more samples (write_pos wraps to 1)
+        buf.push(&[40i16, 50]);
+        assert_eq!(buf.available(), 3);
+        assert_eq!(buf.write_pos, 1);
+        assert_eq!(buf.read_pos, 2);
+
+        // Clear in wrap-around state
+        buf.clear();
+        assert_eq!(buf.available(), 0);
+        assert_eq!(buf.write_pos, 0);
+        assert_eq!(buf.read_pos, 0);
+
+        // Verify buffer works normally after wrap-around clear
+        buf.push(&[100i16]);
+        let mut out2 = [0i16; 1];
+        buf.pop(&mut out2);
+        assert_eq!(out2[0], 100);
+    }
+
+    #[test]
+    fn test_audio_buffer_clear_completely_empty() {
+        let mut buf = AudioBuffer::new(64);
+
+        // Clear a brand new, empty buffer
+        buf.clear();
+        assert_eq!(buf.available(), 0);
+        assert_eq!(buf.read_pos, 0);
+        assert_eq!(buf.write_pos, 0);
+    }
+
+    #[test]
+    fn test_audio_buffer_clear_empty_shifted() {
+        let mut buf = AudioBuffer::new(64);
+
+        // Push 4, pop 4 so it's empty but read_pos and write_pos are 4
+        buf.push(&[1i16, 2, 3, 4]);
+        let mut out = [0i16; 4];
+        buf.pop(&mut out);
+
+        assert_eq!(buf.available(), 0);
+        assert_eq!(buf.read_pos, 4);
+        assert_eq!(buf.write_pos, 4);
+
+        // Clear it
+        buf.clear();
+        assert_eq!(buf.available(), 0);
+        assert_eq!(buf.read_pos, 0);
+        assert_eq!(buf.write_pos, 0);
+    }
+
+    #[test]
+    fn test_audio_buffer_clear_partially_full() {
+        let mut buf = AudioBuffer::new(64);
+
+        // Push 4 samples, do not pop any
+        buf.push(&[1i16, 2, 3, 4]);
+
+        assert_eq!(buf.available(), 4);
+        assert_eq!(buf.read_pos, 0);
+        assert_eq!(buf.write_pos, 4);
+
+        // Clear it
+        buf.clear();
+        assert_eq!(buf.available(), 0);
+        assert_eq!(buf.read_pos, 0);
+        assert_eq!(buf.write_pos, 0);
+    }
+
+    #[test]
     fn test_pop_f32_precision_and_range() {
         let mut buf = AudioBuffer::new(64);
 

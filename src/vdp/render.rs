@@ -88,20 +88,23 @@ impl<'a> Iterator for SpriteIterator<'a> {
     }
 }
 
+pub struct TileRenderParams {
+    pub is_plane_a: bool,
+    pub enable_v_scroll: bool,
+    pub name_table_base: usize,
+    pub plane_w: usize,
+    pub plane_h: usize,
+    pub plane_w_mask: usize,
+    pub h_scroll: u16,
+    pub fetch_line: u16,
+}
+
 pub trait RenderOps {
     fn render_line(&mut self, line: u16);
     fn render_plane(&self, is_plane_a: bool, fetch_line: u16, line_buf: &mut [u8; 320]);
-    #[allow(clippy::too_many_arguments)]
     fn render_tile(
         &self,
-        is_plane_a: bool,
-        enable_v_scroll: bool,
-        name_table_base: usize,
-        plane_w: usize,
-        plane_h: usize,
-        plane_w_mask: usize,
-        h_scroll: u16,
-        fetch_line: u16,
+        params: &TileRenderParams,
         screen_x: &mut u16,
         line_buf: &mut [u8; 320],
     );
@@ -144,42 +147,49 @@ pub trait RenderOps {
     fn get_cram_raw(&self) -> [u16; 64];
 }
 
-struct PixelLayerData {
-    bg_color_idx: u8,
-    s_pri: bool,
-    s_trans: bool,
-    s_col: u8,
-    a_pri: bool,
-    a_trans: bool,
-    a_col: u8,
-    b_pri: bool,
-    b_trans: bool,
-    b_col: u8,
+pub struct PixelLayerData {
+    pub bg_color_idx: u8,
+    pub s_pri: bool,
+    pub s_trans: bool,
+    pub s_col: u8,
+    pub a_pri: bool,
+    pub a_trans: bool,
+    pub a_col: u8,
+    pub b_pri: bool,
+    pub b_trans: bool,
+    pub b_col: u8,
+}
+
+pub struct ShadowHighlightParams<'a> {
+    pub top_layer: u8,
+    pub top_col: u8,
+    pub state: u8,
+    pub px: &'a PixelLayerData,
+}
+
+pub struct CompositeLineParams<'a> {
+    pub line_offset: usize,
+    pub bg_color_idx: u8,
+    pub bg_color_val: u16,
+    pub buf_b: &'a [u8; 320],
+    pub buf_a: &'a [u8; 320],
+    pub buf_s: &'a [u8; 320],
 }
 
 impl Vdp {
-    #[allow(clippy::too_many_arguments)]
-    fn composite_line(
-        &mut self,
-        line_offset: usize,
-        bg_color_idx: u8,
-        bg_color_val: u16,
-        buf_b: &[u8; 320],
-        buf_a: &[u8; 320],
-        buf_s: &[u8; 320],
-    ) {
+    fn composite_line(&mut self, params: &CompositeLineParams) {
         let sh_enabled = (self.registers[REG_MODE4] & 0x08) != 0;
         let mask_col0 = (self.registers[REG_MODE1] & 0x20) != 0;
 
         for x in 0..320 {
             if mask_col0 && x < 8 {
-                self.framebuffer[line_offset + x] = bg_color_val;
+                self.framebuffer[params.line_offset + x] = params.bg_color_val;
                 continue;
             }
 
-            let b = buf_b[x];
-            let a = buf_a[x];
-            let s = buf_s[x];
+            let b = params.buf_b[x];
+            let a = params.buf_a[x];
+            let s = params.buf_s[x];
 
             let b_pri = (b & 0x80) != 0;
             let a_pri = (a & 0x80) != 0;
@@ -196,7 +206,7 @@ impl Vdp {
             let any_high = b_pri || a_pri || s_pri;
 
             let px = PixelLayerData {
-                bg_color_idx,
+                bg_color_idx: params.bg_color_idx,
                 s_pri,
                 s_trans,
                 s_col,
@@ -211,18 +221,24 @@ impl Vdp {
             let (mut top_col, top_layer) = self.determine_top_layer(&px);
 
             if !sh_enabled {
-                self.framebuffer[line_offset + x] = self.cram_cache[top_col as usize];
+                self.framebuffer[params.line_offset + x] = self.cram_cache[top_col as usize];
             } else {
                 let mut state = if any_high { 1 } else { 0 };
 
+                let sh_params = ShadowHighlightParams {
+                    top_layer,
+                    top_col,
+                    state,
+                    px: &px,
+                };
                 let (new_top_col, new_state) =
-                    self.apply_shadow_highlight(top_layer, top_col, state, &px);
+                    self.apply_shadow_highlight(sh_params);
                 top_col = new_top_col;
                 state = new_state;
 
                 let color = self.cram_cache[top_col as usize];
                 let final_color = self.apply_color_transform(color, state);
-                self.framebuffer[line_offset + x] = final_color;
+                self.framebuffer[params.line_offset + x] = final_color;
             }
         }
     }
@@ -256,45 +272,42 @@ impl Vdp {
 
     fn apply_shadow_highlight(
         &self,
-        top_layer: u8,
-        mut top_col: u8,
-        mut state: u8,
-        px: &PixelLayerData,
+        mut params: ShadowHighlightParams,
     ) -> (u8, u8) {
-        if top_layer == 3 {
-            if px.s_col == 0x3E {
-                top_col = px.bg_color_idx;
-                if px.a_pri && !px.a_trans {
-                    top_col = px.a_col;
-                } else if px.b_pri && !px.b_trans {
-                    top_col = px.b_col;
-                } else if !px.a_trans {
-                    top_col = px.a_col;
-                } else if !px.b_trans {
-                    top_col = px.b_col;
+        if params.top_layer == 3 {
+            if params.px.s_col == 0x3E {
+                params.top_col = params.px.bg_color_idx;
+                if params.px.a_pri && !params.px.a_trans {
+                    params.top_col = params.px.a_col;
+                } else if params.px.b_pri && !params.px.b_trans {
+                    params.top_col = params.px.b_col;
+                } else if !params.px.a_trans {
+                    params.top_col = params.px.a_col;
+                } else if !params.px.b_trans {
+                    params.top_col = params.px.b_col;
                 }
-                if state < 2 {
-                    state += 1;
+                if params.state < 2 {
+                    params.state += 1;
                 }
-            } else if px.s_col == 0x3F {
-                top_col = px.bg_color_idx;
-                if px.a_pri && !px.a_trans {
-                    top_col = px.a_col;
-                } else if px.b_pri && !px.b_trans {
-                    top_col = px.b_col;
-                } else if !px.a_trans {
-                    top_col = px.a_col;
-                } else if !px.b_trans {
-                    top_col = px.b_col;
+            } else if params.px.s_col == 0x3F {
+                params.top_col = params.px.bg_color_idx;
+                if params.px.a_pri && !params.px.a_trans {
+                    params.top_col = params.px.a_col;
+                } else if params.px.b_pri && !params.px.b_trans {
+                    params.top_col = params.px.b_col;
+                } else if !params.px.a_trans {
+                    params.top_col = params.px.a_col;
+                } else if !params.px.b_trans {
+                    params.top_col = params.px.b_col;
                 }
-                if state > 0 {
-                    state -= 1;
+                if params.state > 0 {
+                    params.state -= 1;
                 }
-            } else if (px.s_col & 0x0F) == 0x0E {
-                state = 1;
+            } else if (params.px.s_col & 0x0F) == 0x0E {
+                params.state = 1;
             }
         }
-        (top_col, state)
+        (params.top_col, params.state)
     }
 
     fn apply_color_transform(&self, color: u16, state: u8) -> u16 {
@@ -370,7 +383,7 @@ fn render_sprite_scanline(
 
         // Prefetch the 4 bytes (8 pixels) for this row.
         // row_addr is guaranteed to be 4-byte aligned (32*k + 4*j).
-        // We already checked row_addr + 4 <= 0x10000.
+        // We already checked row_addr + 4 <= 0x10000. Using unwrap() increases safety and eliminates the unsafe block.
         let patterns: [u8; 4] = vram[row_addr..row_addr + 4].try_into().unwrap();
 
         let base_screen_x = attr.h_pos.wrapping_add(tile_h_offset * 8);
@@ -390,6 +403,7 @@ fn render_sprite_scanline(
                 };
 
                 if color_idx != 0 {
+                    // Note: The unsafe block using unwrap_unchecked() was removed from this file.
                     let addr = ((attr.palette as u8) << 4) | (color_idx as u8);
                     let pri_mask = if attr.priority { 0x80 } else { 0x00 };
                     // Only write if not already occupied by a higher-priority sprite (in this case we draw in reverse order, so we overwrite, wait actually sprite 0 is highest priority.
@@ -460,14 +474,15 @@ impl RenderOps for Vdp {
         self.render_plane(true, fetch_line, &mut buf_a);
         self.render_sprites(active_sprites, fetch_line, &mut buf_s);
 
-        self.composite_line(
+        let composite_params = CompositeLineParams {
             line_offset,
             bg_color_idx,
             bg_color_val,
-            &buf_b,
-            &buf_a,
-            &buf_s,
-        );
+            buf_b: &buf_b,
+            buf_a: &buf_a,
+            buf_s: &buf_s,
+        };
+        self.composite_line(&composite_params);
     }
 
     fn render_plane(&self, is_plane_a: bool, fetch_line: u16, line_buf: &mut [u8; 320]) {
@@ -494,57 +509,48 @@ impl RenderOps for Vdp {
                     (name_table_base, h_scroll, true, plane_w)
                 };
 
-            self.render_tile(
+            let tile_params = TileRenderParams {
                 is_plane_a,
-                use_v_scroll,
-                tile_base,
-                tile_w,
+                enable_v_scroll: use_v_scroll,
+                name_table_base: tile_base,
+                plane_w: tile_w,
                 plane_h,
-                tile_w - 1, // tile_w_mask
-                tile_h_scroll,
+                plane_w_mask: tile_w - 1,
+                h_scroll: tile_h_scroll,
                 fetch_line,
-                &mut screen_x,
-                line_buf,
-            );
+            };
+            self.render_tile(&tile_params, &mut screen_x, line_buf);
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_tile(
         &self,
-        is_plane_a: bool,
-        enable_v_scroll: bool,
-        name_table_base: usize,
-        plane_w: usize,
-        plane_h: usize,
-        plane_w_mask: usize,
-        h_scroll: u16,
-        fetch_line: u16,
+        params: &TileRenderParams,
         screen_x: &mut u16,
         line_buf: &mut [u8; 320],
     ) {
         // Horizontal position in plane
-        let scrolled_h = (*screen_x).wrapping_sub(h_scroll);
+        let scrolled_h = (*screen_x).wrapping_sub(params.h_scroll);
         let pixel_h = scrolled_h & 0x07;
-        let tile_h = ((scrolled_h >> 3) as usize) & plane_w_mask;
+        let tile_h = ((scrolled_h >> 3) as usize) & params.plane_w_mask;
 
         // Fetch V-scroll for this specific column (per-column VS support)
         // If not using scroll (e.g. Window plane), V-scroll is 0.
-        let v_scroll = if enable_v_scroll {
-            self.get_v_scroll(is_plane_a, (*screen_x >> 3) as usize)
+        let v_scroll = if params.enable_v_scroll {
+            self.get_v_scroll(params.is_plane_a, (*screen_x >> 3) as usize)
         } else {
             0
         };
 
         // Vertical position in plane
-        let scrolled_v = fetch_line.wrapping_sub(v_scroll);
-        let tile_v = ((scrolled_v / 8) as usize) % plane_h;
+        let scrolled_v = params.fetch_line.wrapping_sub(v_scroll);
+        let tile_v = ((scrolled_v / 8) as usize) % params.plane_h;
         let pixel_v = scrolled_v % 8;
 
         let pixels_left_in_tile = 8 - pixel_h;
         let pixels_to_process = std::cmp::min(pixels_left_in_tile, self.screen_width() - *screen_x);
 
-        let entry = self.fetch_nametable_entry(name_table_base, tile_v, tile_h, plane_w);
+        let entry = self.fetch_nametable_entry(params.name_table_base, tile_v, tile_h, params.plane_w);
 
         if pixels_to_process == 8 && pixel_h == 0 {
             // Fast path for full aligned tile

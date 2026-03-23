@@ -1,4 +1,3 @@
-#![allow(unused_imports)]
 //! Z80 RRD/RLD (Rotate Digit) Tests
 //!
 //! RRD and RLD are BCD-related nibble rotate instructions.

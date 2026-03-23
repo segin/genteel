@@ -127,9 +127,68 @@ fn test_dma_pending_flag() {
 fn test_vdp_mode1_getter() {
     let mut vdp = Vdp::new();
 
-    // Set register 0 (REG_MODE1) to a known value
-    vdp.registers[0] = 0xAB;
+    // Default value should be 0
+    assert_eq!(vdp.mode1(), 0x00);
+
+    // Set register 0 (REG_MODE1) to a known value using write_control
+    // 0x8000 is register 0 base write. 0x8000 | 0xAB = 0x80AB
+    vdp.write_control(0x80AB);
 
     // mode1() should return the value of register 0
     assert_eq!(vdp.mode1(), 0xAB);
+
+    // Test clearing
+    vdp.write_control(0x8000);
+    assert_eq!(vdp.mode1(), 0x00);
+}
+
+#[test]
+fn test_vdp_mode2_getter() {
+    let mut vdp = Vdp::new();
+
+    // Default value should be 0
+    assert_eq!(vdp.mode2(), 0x00);
+
+    // Set register 1 (REG_MODE2) to a known value using write_control
+    // 0x8000 | (1 << 8) = 0x8100. 0x8100 | 0x44 = 0x8144
+    vdp.write_control(0x8144);
+
+    // mode2() should return the value of register 1
+    assert_eq!(vdp.mode2(), 0x44);
+
+    // Test clearing
+    vdp.write_control(0x8100);
+    assert_eq!(vdp.mode2(), 0x00);
+}
+
+#[test]
+fn test_vdp_mode2_getter_direct() {
+    let mut vdp = Vdp::new();
+
+    // Set register 1 (REG_MODE2) to a known value
+    vdp.registers[1] = 0xCD;
+
+    // mode2() should return the value of register 1
+    assert_eq!(vdp.mode2(), 0xCD);
+}
+
+
+#[test]
+fn test_is_control_pending() {
+    let mut vdp = Vdp::new();
+
+    // Initially, no control word is pending
+    assert!(!vdp.is_control_pending());
+
+    // Write the first word of a VRAM Write command
+    vdp.write_control(0x4000);
+
+    // After the first word, a control word should be pending
+    assert!(vdp.is_control_pending());
+
+    // Write the second word to complete the command
+    vdp.write_control(0x0000);
+
+    // After the second word, the command is complete and pending is cleared
+    assert!(!vdp.is_control_pending());
 }

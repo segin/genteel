@@ -66,7 +66,6 @@ pub struct Bus {
 
     /// Z80 Bank Register (for Mapping $8000-$FFFF in Z80 space)
     pub z80_bank_addr: u32,
-    pub z80_bank_bit: u8, // 0..8
 
     /// TMSS (Trademark Security System) - lock/unlock state
     pub tmss_unlocked: bool,
@@ -105,7 +104,6 @@ impl Bus {
             z80_bus_request: false,
             z80_reset: true, // Z80 starts in reset
             z80_bank_addr: 0,
-            z80_bank_bit: 0,
             tmss_unlocked: false,
             tmss_register: [0; 4],
             audio_accumulator: 0.0,
@@ -190,7 +188,6 @@ impl Bus {
         self.z80_bus_request = false;
         self.z80_reset = true;
         self.z80_bank_addr = 0;
-        self.z80_bank_bit = 0;
         self.tmss_unlocked = false;
         self.tmss_register = [0; 4];
         self.audio_accumulator = 0.0;
@@ -371,10 +368,10 @@ impl Bus {
                 }
             }
             0xA06000..=0xA060FF => {
-                let bit = (value as u32 & 1) << (self.z80_bank_bit + 15);
-                let mask = 1 << (self.z80_bank_bit + 15);
-                self.z80_bank_addr = (self.z80_bank_addr & !mask) | bit;
-                self.z80_bank_bit = (self.z80_bank_bit + 1) % 9;
+                let current_reg = self.z80_bank_addr >> 15;
+                let new_reg = (current_reg >> 1) | ((value as u32 & 1) << 8);
+                // Clear the top bits and assign to the 9-bit register (max 0x1FF)
+                self.z80_bank_addr = (new_reg & 0x1FF) << 15;
             }
             _ => {}
         }
@@ -387,7 +384,6 @@ impl Bus {
             0xA11200 => {
                 self.z80_reset = (value & 0x01) == 0;
                 if self.z80_reset {
-                    self.z80_bank_bit = 0;
                     self.z80_bank_addr = 0;
                 }
             }
@@ -671,7 +667,6 @@ impl Debuggable for Bus {
             "z80_bus_request": self.z80_bus_request,
             "z80_reset": self.z80_reset,
             "z80_bank_addr": self.z80_bank_addr,
-            "z80_bank_bit": self.z80_bank_bit,
             "tmss_unlocked": self.tmss_unlocked,
             "audio_accumulator": self.audio_accumulator,
             "sample_rate": self.sample_rate,
@@ -699,11 +694,6 @@ impl Debuggable for Bus {
                 self.z80_bank_addr = u as u32;
             }
         }
-        if let Some(val) = state.get("z80_bank_bit") {
-            if let Some(u) = val.as_u64() {
-                self.z80_bank_bit = u as u8;
-            }
-        }
         if let Some(val) = state.get("tmss_unlocked") {
             if let Some(b) = val.as_bool() {
                 self.tmss_unlocked = b;
@@ -727,12 +717,12 @@ impl Debuggable for Bus {
         }
 
         if let Some(val) = state.get("work_ram") {
-            if let Ok(ram) = serde_json::from_value::<Box<[u8]>>(val.clone()) {
+            if let Ok(ram) = Box::<[u8]>::deserialize(val) {
                 self.work_ram = ram;
             }
         }
         if let Some(val) = state.get("z80_ram") {
-            if let Ok(ram) = serde_json::from_value::<Box<[u8]>>(val.clone()) {
+            if let Ok(ram) = Box::<[u8]>::deserialize(val) {
                 self.z80_ram = ram;
             }
         }
@@ -797,7 +787,6 @@ mod tests {
                 bus.z80_bus_request = true;
                 bus.z80_reset = false;
                 bus.z80_bank_addr = 0x12345;
-                bus.z80_bank_bit = 7;
                 bus.tmss_unlocked = true;
                 bus.audio_accumulator = 1.234;
                 bus.sample_rate = 48000;
@@ -834,7 +823,6 @@ mod tests {
                 assert_eq!(new_bus.z80_bus_request, true);
                 assert_eq!(new_bus.z80_reset, false);
                 assert_eq!(new_bus.z80_bank_addr, 0x12345);
-                assert_eq!(new_bus.z80_bank_bit, 7);
                 assert_eq!(new_bus.tmss_unlocked, true);
                 assert!((new_bus.audio_accumulator - 1.234).abs() < 1e-6);
                 assert_eq!(new_bus.sample_rate, 48000);

@@ -1,4 +1,3 @@
-#![allow(unused_imports)]
 //! Comprehensive unit tests for Z80 CPU
 
 use super::*;
@@ -8,7 +7,7 @@ use crate::z80::test_utils::create_z80;
 
 #[test]
 fn test_af_pair() {
-    let mut z80 = create_z80(&[]);
+    let mut z80 = create_z80(&[][..]);
     z80.set_af(0x1234);
     assert_eq!(z80.a, 0x12);
     assert_eq!(z80.f, 0x34);
@@ -16,8 +15,32 @@ fn test_af_pair() {
 }
 
 #[test]
+fn test_af_getter() {
+    let mut z80 = create_z80(&[][..]);
+    z80.a = 0x12;
+    z80.f = 0x34;
+    assert_eq!(z80.af(), 0x1234);
+
+    z80.a = 0x00;
+    z80.f = 0x00;
+    assert_eq!(z80.af(), 0x0000);
+
+    z80.a = 0xFF;
+    z80.f = 0xFF;
+    assert_eq!(z80.af(), 0xFFFF);
+
+    z80.a = 0x00;
+    z80.f = 0xFF;
+    assert_eq!(z80.af(), 0x00FF);
+
+    z80.a = 0xFF;
+    z80.f = 0x00;
+    assert_eq!(z80.af(), 0xFF00);
+}
+
+#[test]
 fn test_bc_pair() {
-    let mut z80 = create_z80(&[]);
+    let mut z80 = create_z80(&[][..]);
     z80.set_bc(0xABCD);
     assert_eq!(z80.b, 0xAB);
     assert_eq!(z80.c, 0xCD);
@@ -25,8 +48,32 @@ fn test_bc_pair() {
 }
 
 #[test]
+fn test_bc_getter() {
+    let mut z80 = create_z80(&[][..]);
+    z80.b = 0xAB;
+    z80.c = 0xCD;
+    assert_eq!(z80.bc(), 0xABCD);
+
+    z80.b = 0x00;
+    z80.c = 0x00;
+    assert_eq!(z80.bc(), 0x0000);
+
+    z80.b = 0xFF;
+    z80.c = 0xFF;
+    assert_eq!(z80.bc(), 0xFFFF);
+
+    z80.b = 0x00;
+    z80.c = 0xFF;
+    assert_eq!(z80.bc(), 0x00FF);
+
+    z80.b = 0xFF;
+    z80.c = 0x00;
+    assert_eq!(z80.bc(), 0xFF00);
+}
+
+#[test]
 fn test_de_pair() {
-    let mut z80 = create_z80(&[]);
+    let mut z80 = create_z80(&[][..]);
     z80.set_de(0x5678);
     assert_eq!(z80.d, 0x56);
     assert_eq!(z80.e, 0x78);
@@ -34,8 +81,32 @@ fn test_de_pair() {
 }
 
 #[test]
+fn test_de_getter() {
+    let mut z80 = create_z80(&[][..]);
+    z80.d = 0x56;
+    z80.e = 0x78;
+    assert_eq!(z80.de(), 0x5678);
+
+    z80.d = 0x00;
+    z80.e = 0x00;
+    assert_eq!(z80.de(), 0x0000);
+
+    z80.d = 0xFF;
+    z80.e = 0xFF;
+    assert_eq!(z80.de(), 0xFFFF);
+
+    z80.d = 0x00;
+    z80.e = 0xFF;
+    assert_eq!(z80.de(), 0x00FF);
+
+    z80.d = 0xFF;
+    z80.e = 0x00;
+    assert_eq!(z80.de(), 0xFF00);
+}
+
+#[test]
 fn test_hl_pair() {
-    let mut z80 = create_z80(&[]);
+    let mut z80 = create_z80(&[][..]);
     z80.set_hl(0xBEEF);
     assert_eq!(z80.h, 0xBE);
     assert_eq!(z80.l, 0xEF);
@@ -43,8 +114,52 @@ fn test_hl_pair() {
 }
 
 #[test]
+fn test_hl_getter() {
+    let mut z80 = create_z80(&[][..]);
+    z80.h = 0xBE;
+    z80.l = 0xEF;
+    assert_eq!(z80.hl(), 0xBEEF);
+
+    z80.h = 0x00;
+    z80.l = 0x00;
+    assert_eq!(z80.hl(), 0x0000);
+
+    z80.h = 0xFF;
+    z80.l = 0xFF;
+    assert_eq!(z80.hl(), 0xFFFF);
+
+    z80.h = 0x00;
+    z80.l = 0xFF;
+    assert_eq!(z80.hl(), 0x00FF);
+
+    z80.h = 0xFF;
+    z80.l = 0x00;
+    assert_eq!(z80.hl(), 0xFF00);
+}
+
+#[test]
+fn test_get_rp() {
+    let mut z80 = create_z80(&[][..]);
+
+    z80.set_bc(0x1234);
+    assert_eq!(z80.get_rp(0), 0x1234);
+
+    z80.set_de(0x5678);
+    assert_eq!(z80.get_rp(1), 0x5678);
+
+    z80.set_hl(0x9ABC);
+    assert_eq!(z80.get_rp(2), 0x9ABC);
+
+    z80.sp = 0xDEF0;
+    assert_eq!(z80.get_rp(3), 0xDEF0);
+
+    // Attempt invalid indices
+    assert_eq!(z80.get_rp(4), 0);
+}
+
+#[test]
 fn test_set_rp() {
-    let mut z80 = create_z80(&[]);
+    let mut z80 = create_z80(&[][..]);
 
     // Test index 0 -> BC
     z80.set_rp(0, 0x1234);
@@ -79,11 +194,150 @@ fn test_set_rp() {
     assert_eq!(z80.sp, 0);
 }
 
+// ==================== Flag Helpers Tests ====================
+
+#[test]
+fn test_get_flag() {
+    let mut z80 = create_z80(&[][..]);
+
+    // Test with no flags set
+    z80.f = 0x00;
+    assert!(!z80.get_flag(flags::CARRY));
+    assert!(!z80.get_flag(flags::ADD_SUB));
+    assert!(!z80.get_flag(flags::PARITY));
+    assert!(!z80.get_flag(flags::X_FLAG));
+    assert!(!z80.get_flag(flags::HALF_CARRY));
+    assert!(!z80.get_flag(flags::Y_FLAG));
+    assert!(!z80.get_flag(flags::ZERO));
+    assert!(!z80.get_flag(flags::SIGN));
+
+    // Test with all flags set
+    z80.f = 0xFF;
+    assert!(z80.get_flag(flags::CARRY));
+    assert!(z80.get_flag(flags::ADD_SUB));
+    assert!(z80.get_flag(flags::PARITY));
+    assert!(z80.get_flag(flags::X_FLAG));
+    assert!(z80.get_flag(flags::HALF_CARRY));
+    assert!(z80.get_flag(flags::Y_FLAG));
+    assert!(z80.get_flag(flags::ZERO));
+    assert!(z80.get_flag(flags::SIGN));
+
+    // Test specific flags one by one
+    let all_flags = [
+        flags::CARRY,
+        flags::ADD_SUB,
+        flags::PARITY,
+        flags::X_FLAG,
+        flags::HALF_CARRY,
+        flags::Y_FLAG,
+        flags::ZERO,
+        flags::SIGN,
+    ];
+
+    for &flag in &all_flags {
+        z80.f = flag;
+        assert!(z80.get_flag(flag));
+        // Verify other flags are not affected
+        for &other_flag in &all_flags {
+            if flag != other_flag {
+                assert!(!z80.get_flag(other_flag));
+            }
+        }
+    }
+}
+
+#[test]
+fn test_set_flag() {
+    let mut z80 = create_z80(&[][..]);
+
+    let all_flags = [
+        flags::CARRY,
+        flags::ADD_SUB,
+        flags::PARITY,
+        flags::X_FLAG,
+        flags::HALF_CARRY,
+        flags::Y_FLAG,
+        flags::ZERO,
+        flags::SIGN,
+    ];
+
+
+    // Test setting flags individually
+    for &flag in &all_flags {
+        z80.f = 0x00;
+        z80.set_flag(flag, true);
+        assert_eq!(z80.f, flag);
+    }
+
+    // Test clearing flags individually
+    for &flag in &all_flags {
+        z80.f = 0xFF;
+        z80.set_flag(flag, false);
+        assert_eq!(z80.f, !flag);
+    }
+
+    // Test setting an already set flag
+    for &flag in &all_flags {
+        z80.f = flag;
+        z80.set_flag(flag, true);
+        assert_eq!(z80.f, flag);
+    }
+
+    // Test clearing an already cleared flag
+    for &flag in &all_flags {
+        z80.f = !flag;
+        z80.set_flag(flag, false);
+        assert_eq!(z80.f, !flag);
+    }
+}
+
+#[test]
+fn test_get_rp2() {
+    let mut z80 = create_z80(&[][..]);
+
+    z80.set_bc(0x1234);
+    assert_eq!(z80.get_rp2(0), 0x1234);
+
+    z80.set_de(0x5678);
+    assert_eq!(z80.get_rp2(1), 0x5678);
+
+    z80.set_hl(0x9ABC);
+    assert_eq!(z80.get_rp2(2), 0x9ABC);
+
+    z80.set_af(0xDEF0);
+    assert_eq!(z80.get_rp2(3), 0xDEF0);
+
+    // Attempt invalid indices
+    assert_eq!(z80.get_rp2(4), 0);
+}
+
+#[test]
+fn test_set_rp2() {
+    let mut z80 = create_z80(&[][..]);
+
+    z80.set_rp2(0, 0x1234);
+    assert_eq!(z80.bc(), 0x1234);
+
+    z80.set_rp2(1, 0x5678);
+    assert_eq!(z80.de(), 0x5678);
+
+    z80.set_rp2(2, 0x9ABC);
+    assert_eq!(z80.hl(), 0x9ABC);
+
+    z80.set_rp2(3, 0xDEF0);
+    assert_eq!(z80.af(), 0xDEF0);
+
+    // Attempt invalid indices
+    z80.set_bc(0);
+    z80.set_rp2(4, 0xFFFF);
+    assert_eq!(z80.bc(), 0);
+}
+
 // ==================== NOP Tests ====================
 
 #[test]
 fn test_nop() {
-    let mut z80 = create_z80(&[0x00]);
+    let mut z80 = create_z80(&[0x00][..]);
     let cycles = z80.step();
     assert_eq!(z80.pc, 1);
     assert_eq!(cycles, 4);
@@ -91,7 +345,7 @@ fn test_nop() {
 
 #[test]
 fn test_nop_no_side_effects() {
-    let mut z80 = create_z80(&[0x00]);
+    let mut z80 = create_z80(&[0x00][..]);
     z80.a = 0x42;
     z80.set_bc(0x1234);
     z80.step();
@@ -103,7 +357,7 @@ fn test_nop_no_side_effects() {
 
 #[test]
 fn test_ld_bc_nn() {
-    let mut z80 = create_z80(&[0x01, 0x34, 0x12]);
+    let mut z80 = create_z80(&[0x01, 0x34, 0x12][..]);
     z80.step();
     assert_eq!(z80.bc(), 0x1234);
     assert_eq!(z80.pc, 3);
@@ -111,7 +365,7 @@ fn test_ld_bc_nn() {
 
 #[test]
 fn test_ld_de_nn() {
-    let mut z80 = create_z80(&[0x11, 0xCD, 0xAB]);
+    let mut z80 = create_z80(&[0x11, 0xCD, 0xAB][..]);
     z80.step();
     assert_eq!(z80.de(), 0xABCD);
     assert_eq!(z80.pc, 3);
@@ -119,7 +373,7 @@ fn test_ld_de_nn() {
 
 #[test]
 fn test_ld_hl_nn() {
-    let mut z80 = create_z80(&[0x21, 0xEF, 0xBE]);
+    let mut z80 = create_z80(&[0x21, 0xEF, 0xBE][..]);
     z80.step();
     assert_eq!(z80.hl(), 0xBEEF);
     assert_eq!(z80.pc, 3);
@@ -127,7 +381,7 @@ fn test_ld_hl_nn() {
 
 #[test]
 fn test_ld_sp_nn() {
-    let mut z80 = create_z80(&[0x31, 0x00, 0x80]);
+    let mut z80 = create_z80(&[0x31, 0x00, 0x80][..]);
     z80.step();
     assert_eq!(z80.sp, 0x8000);
     assert_eq!(z80.pc, 3);
@@ -137,7 +391,7 @@ fn test_ld_sp_nn() {
 
 #[test]
 fn test_inc_bc() {
-    let mut z80 = create_z80(&[0x03]);
+    let mut z80 = create_z80(&[0x03][..]);
     z80.set_bc(0x00FF);
     z80.step();
     assert_eq!(z80.bc(), 0x0100);
@@ -145,7 +399,7 @@ fn test_inc_bc() {
 
 #[test]
 fn test_inc_bc_wrap() {
-    let mut z80 = create_z80(&[0x03]);
+    let mut z80 = create_z80(&[0x03][..]);
     z80.set_bc(0xFFFF);
     z80.step();
     assert_eq!(z80.bc(), 0x0000);
@@ -153,7 +407,7 @@ fn test_inc_bc_wrap() {
 
 #[test]
 fn test_dec_bc() {
-    let mut z80 = create_z80(&[0x0B]);
+    let mut z80 = create_z80(&[0x0B][..]);
     z80.set_bc(0x0100);
     z80.step();
     assert_eq!(z80.bc(), 0x00FF);
@@ -161,7 +415,7 @@ fn test_dec_bc() {
 
 #[test]
 fn test_dec_bc_wrap() {
-    let mut z80 = create_z80(&[0x0B]);
+    let mut z80 = create_z80(&[0x0B][..]);
     z80.set_bc(0x0000);
     z80.step();
     assert_eq!(z80.bc(), 0xFFFF);
@@ -171,7 +425,7 @@ fn test_dec_bc_wrap() {
 
 #[test]
 fn test_inc_b() {
-    let mut z80 = create_z80(&[0x04]);
+    let mut z80 = create_z80(&[0x04][..]);
     z80.b = 0x7F;
     z80.step();
     assert_eq!(z80.b, 0x80);
@@ -181,7 +435,7 @@ fn test_inc_b() {
 
 #[test]
 fn test_dec_b() {
-    let mut z80 = create_z80(&[0x05]);
+    let mut z80 = create_z80(&[0x05][..]);
     z80.b = 0x80;
     z80.step();
     assert_eq!(z80.b, 0x7F);
@@ -190,7 +444,7 @@ fn test_dec_b() {
 
 #[test]
 fn test_inc_a_zero() {
-    let mut z80 = create_z80(&[0x3C]);
+    let mut z80 = create_z80(&[0x3C][..]);
     z80.a = 0xFF;
     z80.step();
     assert_eq!(z80.a, 0x00);
@@ -201,7 +455,7 @@ fn test_inc_a_zero() {
 
 #[test]
 fn test_ld_b_c() {
-    let mut z80 = create_z80(&[0x41]);
+    let mut z80 = create_z80(&[0x41][..]);
     z80.c = 0x55;
     z80.step();
     assert_eq!(z80.b, 0x55);
@@ -209,7 +463,7 @@ fn test_ld_b_c() {
 
 #[test]
 fn test_ld_a_b() {
-    let mut z80 = create_z80(&[0x78]);
+    let mut z80 = create_z80(&[0x78][..]);
     z80.b = 0x42;
     z80.step();
     assert_eq!(z80.a, 0x42);
@@ -217,7 +471,7 @@ fn test_ld_a_b() {
 
 #[test]
 fn test_ld_hl_indirect() {
-    let mut z80 = create_z80(&[0x36, 0xAB]);
+    let mut z80 = create_z80(&[0x36, 0xAB][..]);
     z80.set_hl(0x0100);
     z80.step();
     assert_eq!(z80.memory.read_byte(0x0100 as u32), 0xAB);
@@ -227,7 +481,7 @@ fn test_ld_hl_indirect() {
 
 #[test]
 fn test_add_a_b() {
-    let mut z80 = create_z80(&[0x80]);
+    let mut z80 = create_z80(&[0x80][..]);
     z80.a = 0x10;
     z80.b = 0x20;
     z80.step();
@@ -238,7 +492,7 @@ fn test_add_a_b() {
 
 #[test]
 fn test_add_a_overflow() {
-    let mut z80 = create_z80(&[0x80]);
+    let mut z80 = create_z80(&[0x80][..]);
     z80.a = 0x7F;
     z80.b = 0x01;
     z80.step();
@@ -249,7 +503,7 @@ fn test_add_a_overflow() {
 
 #[test]
 fn test_sub_a_b() {
-    let mut z80 = create_z80(&[0x90]);
+    let mut z80 = create_z80(&[0x90][..]);
     z80.a = 0x30;
     z80.b = 0x10;
     z80.step();
@@ -259,7 +513,7 @@ fn test_sub_a_b() {
 
 #[test]
 fn test_and_a() {
-    let mut z80 = create_z80(&[0xA0]);
+    let mut z80 = create_z80(&[0xA0][..]);
     z80.a = 0xF0;
     z80.b = 0x0F;
     z80.step();
@@ -269,7 +523,7 @@ fn test_and_a() {
 
 #[test]
 fn test_or_a() {
-    let mut z80 = create_z80(&[0xB0]);
+    let mut z80 = create_z80(&[0xB0][..]);
     z80.a = 0xF0;
     z80.b = 0x0F;
     z80.step();
@@ -278,7 +532,7 @@ fn test_or_a() {
 
 #[test]
 fn test_xor_a() {
-    let mut z80 = create_z80(&[0xA8]);
+    let mut z80 = create_z80(&[0xA8][..]);
     z80.a = 0xFF;
     z80.b = 0xFF;
     z80.step();
@@ -288,7 +542,7 @@ fn test_xor_a() {
 
 #[test]
 fn test_cp() {
-    let mut z80 = create_z80(&[0xB8]);
+    let mut z80 = create_z80(&[0xB8][..]);
     z80.a = 0x10;
     z80.b = 0x10;
     z80.step();
@@ -300,7 +554,7 @@ fn test_cp() {
 
 #[test]
 fn test_rlca() {
-    let mut z80 = create_z80(&[0x07]);
+    let mut z80 = create_z80(&[0x07][..]);
     z80.a = 0x85;
     z80.step();
     assert_eq!(z80.a, 0x0B);
@@ -309,7 +563,7 @@ fn test_rlca() {
 
 #[test]
 fn test_rrca() {
-    let mut z80 = create_z80(&[0x0F]);
+    let mut z80 = create_z80(&[0x0F][..]);
     z80.a = 0x81;
     z80.step();
     assert_eq!(z80.a, 0xC0);
@@ -320,21 +574,21 @@ fn test_rrca() {
 
 #[test]
 fn test_jp_nn() {
-    let mut z80 = create_z80(&[0xC3, 0x00, 0x10]);
+    let mut z80 = create_z80(&[0xC3, 0x00, 0x10][..]);
     z80.step();
     assert_eq!(z80.pc, 0x1000);
 }
 
 #[test]
 fn test_jr_d() {
-    let mut z80 = create_z80(&[0x18, 0x05]);
+    let mut z80 = create_z80(&[0x18, 0x05][..]);
     z80.step();
     assert_eq!(z80.pc, 7); // 2 + 5
 }
 
 #[test]
 fn test_jr_d_negative() {
-    let mut z80 = create_z80(&[0x00, 0x00, 0x00, 0x00, 0x18, 0xFB]); // JR -5
+    let mut z80 = create_z80(&[0x00, 0x00, 0x00, 0x00, 0x18, 0xFB][..]); // JR -5
     z80.pc = 4;
     z80.step();
     assert_eq!(z80.pc, 1); // 6 - 5
@@ -342,7 +596,7 @@ fn test_jr_d_negative() {
 
 #[test]
 fn test_call_nn() {
-    let mut z80 = create_z80(&[0xCD, 0x00, 0x10]);
+    let mut z80 = create_z80(&[0xCD, 0x00, 0x10][..]);
     z80.sp = 0x2000;
     z80.step();
     assert_eq!(z80.pc, 0x1000);
@@ -351,7 +605,7 @@ fn test_call_nn() {
 
 #[test]
 fn test_ret() {
-    let mut z80 = create_z80(&[0xC9]);
+    let mut z80 = create_z80(&[0xC9][..]);
     z80.sp = 0x1FFE;
     z80.memory.write_byte(0x1FFE as u32, 0x34);
     z80.memory.write_byte(0x1FFF as u32, 0x12);
@@ -364,7 +618,7 @@ fn test_ret() {
 
 #[test]
 fn test_push_bc() {
-    let mut z80 = create_z80(&[0xC5]);
+    let mut z80 = create_z80(&[0xC5][..]);
     z80.sp = 0x2000;
     z80.set_bc(0x1234);
     z80.step();
@@ -375,7 +629,7 @@ fn test_push_bc() {
 
 #[test]
 fn test_pop_bc() {
-    let mut z80 = create_z80(&[0xC1]);
+    let mut z80 = create_z80(&[0xC1][..]);
     z80.sp = 0x1FFE;
     z80.memory.write_byte(0x1FFE as u32, 0xCD);
     z80.memory.write_byte(0x1FFF as u32, 0xAB);
@@ -388,7 +642,7 @@ fn test_pop_bc() {
 
 #[test]
 fn test_cb_rlc_b() {
-    let mut z80 = create_z80(&[0xCB, 0x00]);
+    let mut z80 = create_z80(&[0xCB, 0x00][..]);
     z80.b = 0x85;
     z80.step();
     assert_eq!(z80.b, 0x0B);
@@ -397,7 +651,7 @@ fn test_cb_rlc_b() {
 
 #[test]
 fn test_cb_bit_7_a() {
-    let mut z80 = create_z80(&[0xCB, 0x7F]);
+    let mut z80 = create_z80(&[0xCB, 0x7F][..]);
     z80.a = 0x80;
     z80.step();
     assert!(!z80.get_flag(flags::ZERO));
@@ -405,7 +659,7 @@ fn test_cb_bit_7_a() {
 
 #[test]
 fn test_cb_set_3_b() {
-    let mut z80 = create_z80(&[0xCB, 0xD8]);
+    let mut z80 = create_z80(&[0xCB, 0xD8][..]);
     z80.b = 0x00;
     z80.step();
     assert_eq!(z80.b, 0x08);
@@ -413,7 +667,7 @@ fn test_cb_set_3_b() {
 
 #[test]
 fn test_cb_res_7_a() {
-    let mut z80 = create_z80(&[0xCB, 0xBF]);
+    let mut z80 = create_z80(&[0xCB, 0xBF][..]);
     z80.a = 0xFF;
     z80.step();
     assert_eq!(z80.a, 0x7F);
@@ -422,22 +676,74 @@ fn test_cb_res_7_a() {
 // ==================== IX/IY Tests ====================
 
 #[test]
+fn test_ix_half_registers() {
+    let mut z80 = create_z80(&[]);
+
+    // Set low half
+    z80.ix = 0x1234;
+    z80.set_ixl(0x56);
+    assert_eq!(z80.ix, 0x1256);
+    assert_eq!(z80.ixl(), 0x56);
+    assert_eq!(z80.ixh(), 0x12);
+
+    // Set high half
+    z80.ix = 0x1234;
+    z80.set_ixh(0x56);
+    assert_eq!(z80.ix, 0x5634);
+    assert_eq!(z80.ixl(), 0x34);
+    assert_eq!(z80.ixh(), 0x56);
+
+    // Extreme values
+    z80.ix = 0xFFFF;
+    z80.set_ixh(0x00);
+    assert_eq!(z80.ix, 0x00FF);
+    z80.set_ixl(0x00);
+    assert_eq!(z80.ix, 0x0000);
+}
+
+#[test]
+fn test_iy_half_registers() {
+    let mut z80 = create_z80(&[]);
+
+    // Set low half
+    z80.iy = 0xABCD;
+    z80.set_iyl(0xEF);
+    assert_eq!(z80.iy, 0xABEF);
+    assert_eq!(z80.iyl(), 0xEF);
+    assert_eq!(z80.iyh(), 0xAB);
+
+    // Set high half
+    z80.iy = 0xABCD;
+    z80.set_iyh(0xEF);
+    assert_eq!(z80.iy, 0xEFCD);
+    assert_eq!(z80.iyl(), 0xCD);
+    assert_eq!(z80.iyh(), 0xEF);
+
+    // Extreme values
+    z80.iy = 0xFFFF;
+    z80.set_iyh(0x00);
+    assert_eq!(z80.iy, 0x00FF);
+    z80.set_iyl(0x00);
+    assert_eq!(z80.iy, 0x0000);
+}
+
+#[test]
 fn test_ld_ix_nn() {
-    let mut z80 = create_z80(&[0xDD, 0x21, 0x34, 0x12]);
+    let mut z80 = create_z80(&[0xDD, 0x21, 0x34, 0x12][..]);
     z80.step();
     assert_eq!(z80.ix, 0x1234);
 }
 
 #[test]
 fn test_ld_iy_nn() {
-    let mut z80 = create_z80(&[0xFD, 0x21, 0xCD, 0xAB]);
+    let mut z80 = create_z80(&[0xFD, 0x21, 0xCD, 0xAB][..]);
     z80.step();
     assert_eq!(z80.iy, 0xABCD);
 }
 
 #[test]
 fn test_ld_ix_d_n() {
-    let mut z80 = create_z80(&[0xDD, 0x36, 0x05, 0x42]);
+    let mut z80 = create_z80(&[0xDD, 0x36, 0x05, 0x42][..]);
     z80.ix = 0x1000;
     z80.step();
     assert_eq!(z80.memory.read_byte(0x1005 as u32), 0x42);
@@ -447,7 +753,7 @@ fn test_ld_ix_d_n() {
 
 #[test]
 fn test_ed_neg() {
-    let mut z80 = create_z80(&[0xED, 0x44]);
+    let mut z80 = create_z80(&[0xED, 0x44][..]);
     z80.a = 0x01;
     z80.step();
     assert_eq!(z80.a, 0xFF);
@@ -455,7 +761,7 @@ fn test_ed_neg() {
 
 #[test]
 fn test_ed_ldi() {
-    let mut z80 = create_z80(&[0xED, 0xA0]);
+    let mut z80 = create_z80(&[0xED, 0xA0][..]);
     z80.set_hl(0x1000);
     z80.set_de(0x2000);
     z80.set_bc(0x0010);
@@ -471,7 +777,7 @@ fn test_ed_ldi() {
 
 #[test]
 fn test_halt() {
-    let mut z80 = create_z80(&[0x76]);
+    let mut z80 = create_z80(&[0x76][..]);
     z80.step();
     assert!(z80.halted);
 }
@@ -480,7 +786,7 @@ fn test_halt() {
 
 #[test]
 fn test_ex_af_af_prime() {
-    let mut z80 = create_z80(&[0x08]);
+    let mut z80 = create_z80(&[0x08][..]);
     z80.a = 0x12;
     z80.f = 0x34;
     z80.a_prime = 0xAB;
@@ -494,7 +800,7 @@ fn test_ex_af_af_prime() {
 
 #[test]
 fn test_exx() {
-    let mut z80 = create_z80(&[0xD9]);
+    let mut z80 = create_z80(&[0xD9][..]);
     z80.set_bc(0x1111);
     z80.set_de(0x2222);
     z80.set_hl(0x3333);
@@ -508,7 +814,7 @@ fn test_exx() {
 
 #[test]
 fn test_ex_de_hl() {
-    let mut z80 = create_z80(&[0xEB]);
+    let mut z80 = create_z80(&[0xEB][..]);
     z80.set_de(0x1234);
     z80.set_hl(0xABCD);
     z80.step();
@@ -520,7 +826,7 @@ fn test_ex_de_hl() {
 fn test_debug_state() {
     use crate::debugger::Debuggable;
     use serde_json::json;
-    let mut z80 = create_z80(&[]);
+    let mut z80 = create_z80(&[][..]);
 
     // Set some initial state
     z80.a = 0xAA;
@@ -589,7 +895,7 @@ fn test_debug_state() {
 fn test_debug_state_fallback() {
     use crate::debugger::Debuggable;
     use serde_json::json;
-    let mut z80 = create_z80(&[]);
+    let mut z80 = create_z80(&[][..]);
 
     // Set some initial state
     z80.a = 0xAA;
@@ -605,4 +911,70 @@ fn test_debug_state_fallback() {
     assert_eq!(z80.a, 0xAA);
     assert_eq!(z80.pc, 0x1234);
     assert_eq!(z80.cycles, 100);
+}
+
+#[test]
+fn test_check_condition() {
+    let mut z80 = create_z80(&[][..]);
+
+    // Test exhaustively across all 256 possible flag combinations
+    for f_val in 0..=255u8 {
+        z80.f = f_val;
+
+        let zero = (f_val & flags::ZERO) != 0;
+        let carry = (f_val & flags::CARRY) != 0;
+        let parity = (f_val & flags::PARITY) != 0;
+        let sign = (f_val & flags::SIGN) != 0;
+
+        // 0 => !self.get_flag(flags::ZERO),   // NZ
+        assert_eq!(z80.check_condition(0), !zero, "cc: 0 (NZ), f: {f_val:#04X}");
+        // 1 => self.get_flag(flags::ZERO),    // Z
+        assert_eq!(z80.check_condition(1), zero, "cc: 1 (Z), f: {f_val:#04X}");
+        // 2 => !self.get_flag(flags::CARRY),  // NC
+        assert_eq!(z80.check_condition(2), !carry, "cc: 2 (NC), f: {f_val:#04X}");
+        // 3 => self.get_flag(flags::CARRY),   // C
+        assert_eq!(z80.check_condition(3), carry, "cc: 3 (C), f: {f_val:#04X}");
+        // 4 => !self.get_flag(flags::PARITY), // PO
+        assert_eq!(z80.check_condition(4), !parity, "cc: 4 (PO), f: {f_val:#04X}");
+        // 5 => self.get_flag(flags::PARITY),  // PE
+        assert_eq!(z80.check_condition(5), parity, "cc: 5 (PE), f: {f_val:#04X}");
+        // 6 => !self.get_flag(flags::SIGN),   // P
+        assert_eq!(z80.check_condition(6), !sign, "cc: 6 (P), f: {f_val:#04X}");
+        // 7 => self.get_flag(flags::SIGN),    // M
+        assert_eq!(z80.check_condition(7), sign, "cc: 7 (M), f: {f_val:#04X}");
+
+        // Invalid conditions should always return false
+        assert_eq!(z80.check_condition(8), false, "cc: 8, f: {f_val:#04X}");
+        assert_eq!(z80.check_condition(255), false, "cc: 255, f: {f_val:#04X}");
+    }
+}
+
+#[test]
+fn test_trigger_nmi() {
+    let mut z80 = create_z80(&[][..]);
+
+    // Setup initial state
+    z80.halted = true;
+    z80.iff1 = true;
+    z80.iff2 = false;
+    z80.pc = 0x1234;
+    z80.sp = 0x2000;
+
+    // Trigger NMI
+    let cycles = z80.trigger_nmi();
+
+    // Assert cycles
+    assert_eq!(cycles, 11);
+
+    // Assert state changes
+    assert_eq!(z80.halted, false);
+    assert_eq!(z80.iff2, true); // Copies iff1
+    assert_eq!(z80.iff1, false); // Disabled
+    assert_eq!(z80.pc, 0x0066); // NMI vector
+    assert_eq!(z80.sp, 0x1FFE); // Stack pointer decremented by 2
+
+    // Verify PC was pushed
+    let popped_pc = z80.pop();
+    assert_eq!(popped_pc, 0x1234);
+    assert_eq!(z80.sp, 0x2000);
 }
