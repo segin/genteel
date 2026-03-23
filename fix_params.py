@@ -20,6 +20,31 @@ def fix():
                 priority_filter,
             );""",
 """            self.render_tile(
+                &tile_params,
+                &mut screen_x,
+                line_buf,
+            );"""
+    )
+
+    src = src.replace(
+"""            self.render_tile(
+                &tile_params,
+                &mut screen_x,
+            );""",
+"""            self.render_tile(
+                &tile_params,
+                &mut screen_x,
+                line_buf,
+            );"""
+    )
+
+    src = src.replace(
+"""            self.render_tile(&tile_params, &mut screen_x);""",
+"""            self.render_tile(&tile_params, &mut screen_x, line_buf);"""
+    )
+
+    src = src.replace(
+"""            self.render_tile(
                 is_plane_a,
                 use_v_scroll,
                 tile_base,
@@ -30,8 +55,10 @@ def fix():
                 fetch_line,
                 &mut screen_x,
                 line_buf,
-            );"""
+            );""",
+"""            self.render_tile(&tile_params, &mut screen_x, line_buf);"""
     )
+
 
     # Let's fix RenderOps implementations:
 
