@@ -578,14 +578,15 @@ fn decode_sub(opcode: u16) -> Instruction {
     match opmode {
         0..=2 => {
             // SUB <ea>, Dn
-            let size = Size::from_bits(opmode).unwrap();
-            if let Some(src) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
-                return Instruction::Arithmetic(ArithmeticInstruction::Sub {
-                    size,
-                    src,
-                    dst: AddressingMode::DataRegister(reg),
-                    direction: false,
-                });
+            if let Some(size) = Size::from_bits(opmode) {
+                if let Some(src) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
+                    return Instruction::Arithmetic(ArithmeticInstruction::Sub {
+                        size,
+                        src,
+                        dst: AddressingMode::DataRegister(reg),
+                        direction: false,
+                    });
+                }
             }
         }
         3 | 7 => {
@@ -601,30 +602,30 @@ fn decode_sub(opcode: u16) -> Instruction {
         }
         4..=6 => {
             // SUB Dn, <ea> or SUBX
-            let size = Size::from_bits(opmode - 4).unwrap();
+            if let Some(size) = Size::from_bits(opmode - 4) {
+                // Check for SUBX: 1001 Rx 1 size 00 m Ry
+                if (opcode & 0x0130) == 0x0100 {
+                    let memory_mode = (opcode & 0x0008) != 0;
+                    return Instruction::Arithmetic(ArithmeticInstruction::SubX {
+                        size,
+                        src_reg: ea_reg,
+                        dst_reg: reg,
+                        memory_mode,
+                    });
+                }
 
-            // Check for SUBX: 1001 Rx 1 size 00 m Ry
-            if (opcode & 0x0130) == 0x0100 {
-                let memory_mode = (opcode & 0x0008) != 0;
-                return Instruction::Arithmetic(ArithmeticInstruction::SubX {
-                    size,
-                    src_reg: ea_reg,
-                    dst_reg: reg,
-                    memory_mode,
-                });
-            }
-
-            if ea_mode == 0b001 {
-                // SUB Dn, An is illegal (use SUBA)
-                return Instruction::System(SystemInstruction::Unimplemented { opcode });
-            }
-            if let Some(ea) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
-                return Instruction::Arithmetic(ArithmeticInstruction::Sub {
-                    size,
-                    src: AddressingMode::DataRegister(reg),
-                    dst: ea,
-                    direction: true,
-                });
+                if ea_mode == 0b001 {
+                    // SUB Dn, An is illegal (use SUBA)
+                    return Instruction::System(SystemInstruction::Unimplemented { opcode });
+                }
+                if let Some(ea) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
+                    return Instruction::Arithmetic(ArithmeticInstruction::Sub {
+                        size,
+                        src: AddressingMode::DataRegister(reg),
+                        dst: ea,
+                        direction: true,
+                    });
+                }
             }
         }
         _ => {}
@@ -771,14 +772,15 @@ fn decode_add(opcode: u16) -> Instruction {
     match opmode {
         0..=2 => {
             // ADD <ea>, Dn
-            let size = Size::from_bits(opmode).unwrap();
-            if let Some(src) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
-                return Instruction::Arithmetic(ArithmeticInstruction::Add {
-                    size,
-                    src,
-                    dst: AddressingMode::DataRegister(reg),
-                    direction: false,
-                });
+            if let Some(size) = Size::from_bits(opmode) {
+                if let Some(src) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
+                    return Instruction::Arithmetic(ArithmeticInstruction::Add {
+                        size,
+                        src,
+                        dst: AddressingMode::DataRegister(reg),
+                        direction: false,
+                    });
+                }
             }
         }
         3 | 7 => {
@@ -794,30 +796,30 @@ fn decode_add(opcode: u16) -> Instruction {
         }
         4..=6 => {
             // ADD Dn, <ea> or ADDX
-            let size = Size::from_bits(opmode - 4).unwrap();
+            if let Some(size) = Size::from_bits(opmode - 4) {
+                // Check for ADDX: 1101 Rx 1 size 00 m Ry
+                if (opcode & 0x0130) == 0x0100 {
+                    let memory_mode = (opcode & 0x0008) != 0;
+                    return Instruction::Arithmetic(ArithmeticInstruction::AddX {
+                        size,
+                        src_reg: ea_reg,
+                        dst_reg: reg,
+                        memory_mode,
+                    });
+                }
 
-            // Check for ADDX: 1101 Rx 1 size 00 m Ry
-            if (opcode & 0x0130) == 0x0100 {
-                let memory_mode = (opcode & 0x0008) != 0;
-                return Instruction::Arithmetic(ArithmeticInstruction::AddX {
-                    size,
-                    src_reg: ea_reg,
-                    dst_reg: reg,
-                    memory_mode,
-                });
-            }
-
-            if ea_mode == 0b001 {
-                // ADD Dn, An is illegal (use ADDA)
-                return Instruction::System(SystemInstruction::Unimplemented { opcode });
-            }
-            if let Some(ea) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
-                return Instruction::Arithmetic(ArithmeticInstruction::Add {
-                    size,
-                    src: AddressingMode::DataRegister(reg),
-                    dst: ea,
-                    direction: true,
-                });
+                if ea_mode == 0b001 {
+                    // ADD Dn, An is illegal (use ADDA)
+                    return Instruction::System(SystemInstruction::Unimplemented { opcode });
+                }
+                if let Some(ea) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
+                    return Instruction::Arithmetic(ArithmeticInstruction::Add {
+                        size,
+                        src: AddressingMode::DataRegister(reg),
+                        dst: ea,
+                        direction: true,
+                    });
+                }
             }
         }
         _ => {}
@@ -846,11 +848,7 @@ fn make_shift_instruction(
     }
 }
 
-fn decode_memory_shift(
-    opcode: u16,
-    op_type: u8,
-    direction: bool,
-) -> Option<Instruction> {
+fn decode_memory_shift(opcode: u16, op_type: u8, direction: bool) -> Option<Instruction> {
     let ea_mode = ((opcode >> 3) & 0x07) as u8;
     let ea_reg = (opcode & 0x07) as u8;
     if let Some(dst) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
@@ -861,7 +859,11 @@ fn decode_memory_shift(
             _ => {
                 let count = ShiftCount::Immediate(1);
                 Some(make_shift_instruction(
-                    op_type, direction, Size::Word, dst, count,
+                    op_type,
+                    direction,
+                    Size::Word,
+                    dst,
+                    count,
                 ))
             }
         }
@@ -1468,14 +1470,18 @@ mod tests {
         let dst_asr_abs_short = AddressingMode::AbsoluteShort;
         assert_eq!(
             decode(0xE0F8),
-            Instruction::Bits(BitsInstruction::AsrM { dst: dst_asr_abs_short })
+            Instruction::Bits(BitsInstruction::AsrM {
+                dst: dst_asr_abs_short
+            })
         );
 
         // ASL.W (xxx).L -> 1110 000 1 11 111 001 -> 0xE1F9
         let dst_asl_abs_long = AddressingMode::AbsoluteLong;
         assert_eq!(
             decode(0xE1F9),
-            Instruction::Bits(BitsInstruction::AslM { dst: dst_asl_abs_long })
+            Instruction::Bits(BitsInstruction::AslM {
+                dst: dst_asl_abs_long
+            })
         );
     }
 }
