@@ -35,6 +35,7 @@ image = "0.25.9"
 
 [dev-dependencies]
 criterion = "0.8.2"
+pixels = "0.15"
 proptest = "1.0"
 
 [[bench]]

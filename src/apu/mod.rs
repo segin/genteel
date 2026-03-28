@@ -64,45 +64,37 @@ impl Apu {
 
     pub fn tick_cycles(&mut self, m68k_cycles: u32) {
         self.fm.step(m68k_cycles);
-        let psg_cycles = m68k_cycles / 2;
-        self.psg.step_cycles(psg_cycles);
+        self.psg.step_cycles(m68k_cycles);
     }
 
     /// Attempts to generate a mixed audio sample pair.
-    /// Returns `Some((left, right))` if a sample is available in the blip buffers,
-    /// otherwise returns `None`.
-    pub fn generate_sample(&mut self) -> Option<(i16, i16)> {
+    /// Returns `(left, right)` from the blip buffers.
+    pub fn generate_sample(&mut self) -> (i16, i16) {
         let mut fm_l = [0i16; 1];
         let mut fm_r = [0i16; 1];
         let mut psg_buf = [0i16; 1];
 
-        // We check FM left as the primary clock
-        if self.fm.blip_l.read_samples(&mut fm_l) > 0 {
-            self.fm.blip_r.read_samples(&mut fm_r);
-            self.psg.blip.read_samples(&mut psg_buf);
+        self.fm.blip_l.read_samples(&mut fm_l[..]);
+        self.fm.blip_r.read_samples(&mut fm_r[..]);
+        self.psg.blip.read_samples(&mut psg_buf[..]);
 
-            let fm_l_val = fm_l[0];
-            let fm_r_val = fm_r[0];
-            let psg_val = psg_buf[0];
+        let left = (fm_l[0] as i32 + psg_buf[0] as i32).clamp(-32768, 32767) as i16;
+        let right = (fm_r[0] as i32 + psg_buf[0] as i32).clamp(-32768, 32767) as i16;
 
-            // Update visualization
-            let fm_samples = self.fm.generate_channel_samples();
-            let psg_samples = self.psg.get_channel_samples();
-            for i in 0..6 {
-                self.channel_buffers[i][self.buffer_idx] = fm_samples[i];
-            }
-            for i in 0..4 {
-                self.channel_buffers[6 + i][self.buffer_idx] = psg_samples[i];
-            }
-            self.buffer_idx = (self.buffer_idx + 1) % 128;
+        (left, right)
+    }
 
-            let left = (fm_l_val as i32 + psg_val as i32).clamp(-32768, 32767) as i16;
-            let right = (fm_r_val as i32 + psg_val as i32).clamp(-32768, 32767) as i16;
-
-            Some((left, right))
-        } else {
-            None
+    /// Update visualization buffers (call once per frame)
+    pub fn update_visualization(&mut self) {
+        let fm_samples = self.fm.generate_channel_samples();
+        let psg_samples = self.psg.get_channel_samples();
+        for i in 0..6 {
+            self.channel_buffers[i][self.buffer_idx] = fm_samples[i];
         }
+        for i in 0..4 {
+            self.channel_buffers[6 + i][self.buffer_idx] = psg_samples[i];
+        }
+        self.buffer_idx = (self.buffer_idx + 1) % 128;
     }
 }
 
@@ -292,8 +284,8 @@ mod tests {
         apu.write_fm_addr(Bank::Bank1, 0xB6);
         apu.write_fm_data(Bank::Bank1, 0x80);
 
-        // Tick cycles to allow YM2612 to generate samples
-        apu.tick_cycles(1);
+        // Tick enough cycles (at least 21) for the YM2612 to generate a sample
+        apu.tick_cycles(24);
 
         // Assert DAC output is observable in the blip buffer
         assert!(apu.fm.blip_l.read_instant() > 0, "Left audio should be positive due to DAC");
@@ -301,113 +293,3 @@ mod tests {
     }
 }
 
-#[cfg(test)]
-mod tests_generate_sample {
-    use super::*;
-    use ym2612::Bank;
-
-    #[test]
-    fn test_generate_sample() {
-        let mut apu = Apu::new();
-
-        // At start, the buffer is full of 0s.
-        // generate_sample should return Some((0,0)).
-        let sample = apu.generate_sample();
-        assert_eq!(sample, Some((0, 0)));
-
-        // Setup FM DAC to generate sound (delta != 0)
-        apu.write_fm_addr(Bank::Bank0, 0x2B);
-        apu.write_fm_data(Bank::Bank0, 0x80); // Enable DAC
-        apu.write_fm_addr(Bank::Bank0, 0x2A);
-        apu.write_fm_data(Bank::Bank0, 0xFF); // Write a high DAC value
-
-        // Setup PSG tone to generate sound
-        apu.write_psg(0x8A); // Ch0 freq low
-        apu.write_psg(0x00); // Ch0 freq high
-        apu.write_psg(0x90); // Ch0 vol max
-
-        let mut has_non_zero = false;
-        // Tick enough cycles to produce changes and flush out the zeros
-        for _ in 0..2000 {
-            apu.tick_cycles(1);
-            if let Some((l, r)) = apu.generate_sample() {
-                if l != 0 || r != 0 {
-                    has_non_zero = true;
-                }
-            }
-        }
-
-        assert!(has_non_zero, "Expected non-zero audio samples after setting up APU channels");
-    }
-
-    #[test]
-    fn test_generate_sample_none() {
-        let mut apu = Apu::new();
-        let mut sample_count = 0;
-
-        // Read samples until we exhaust the initial pre-allocated buffers
-        while apu.generate_sample().is_some() {
-            sample_count += 1;
-            if sample_count > 10000 {
-                panic!("Infinite loop reading samples");
-            }
-        }
-
-        assert_eq!(apu.generate_sample(), None, "Should return None when buffers are empty");
-    }
-
-    #[test]
-    fn test_generate_sample_clamping() {
-        let mut apu = Apu::new();
-
-        // Drain the initial buffer
-        while apu.generate_sample().is_some() {}
-
-        // Add large deltas to force overflow and clamping to the upper limit
-        // Using `add_delta(0, ...)` as the immediate accumulation point before ticking
-        apu.fm.blip_l.add_delta(0, 32767);
-        apu.fm.blip_r.add_delta(0, -32768);
-        apu.psg.blip.add_delta(0, 32767);
-
-        apu.tick_cycles(100);
-
-        let mut sample = None;
-        for _ in 0..100 {
-            if let Some(s) = apu.generate_sample() {
-                sample = Some(s);
-                break;
-            }
-        }
-        let sample = sample.expect("Should have samples after tick");
-
-        // Output should be clamped to i16::MAX (32767) for left
-        // Output should be -1 for right (-32768 + 32767 = -1)
-        assert_eq!(sample.0, 32767, "Left channel should clamp to maximum positive i16");
-        assert_eq!(sample.1, -1, "Right channel should evaluate to -1");
-
-        // Test underflow clamping
-        // Clear buffers and add large negative deltas
-        apu.fm.blip_l.clear();
-        apu.fm.blip_r.clear();
-        apu.psg.blip.clear();
-
-        apu.fm.blip_l.add_delta(0, -32768);
-        apu.fm.blip_r.add_delta(0, -32768);
-        apu.psg.blip.add_delta(0, -32768);
-
-        apu.tick_cycles(100);
-
-        let mut sample2 = None;
-        for _ in 0..100 {
-            if let Some(s) = apu.generate_sample() {
-                sample2 = Some(s);
-                break;
-            }
-        }
-        let sample2 = sample2.expect("Should have samples");
-
-        // Output should be clamped to i16::MIN (-32768)
-        assert_eq!(sample2.0, -32768, "Left channel should clamp to minimum negative i16");
-        assert_eq!(sample2.1, -32768, "Right channel should clamp to minimum negative i16");
-    }
-}

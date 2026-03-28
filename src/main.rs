@@ -43,7 +43,6 @@ use z80::Z80;
 
 #[derive(Debug, Clone, Copy)]
 struct Z80Change {
-    instruction_cycles: u32,
     new_req: bool,
     new_rst: bool,
 }
@@ -52,6 +51,7 @@ struct SystemContext<'a> {
     bus: &'a mut Bus,
     z80: &'a mut Z80<Z80Bus, Z80Bus>,
     z80_cycle_debt: &'a mut f32,
+    apu_cycle_debt: &'a mut f32,
     z80_last_bus_req: &'a mut bool,
     z80_last_reset: &'a mut bool,
     z80_trace_count: &'a mut u32,
@@ -108,8 +108,10 @@ pub struct Emulator {
     pub single_step: bool,
     #[serde(skip)]
     pub gdb: Option<GdbServer>,
-    pub current_rom_path: Option<std::path::PathBuf>,
     pub allowed_paths: Vec<std::path::PathBuf>,
+    pub current_rom_path: Option<std::path::PathBuf>,
+    pub z80_cycle_debt: f32,
+    pub apu_cycle_debt: f32,
 }
 impl Default for Emulator {
     fn default() -> Self {
@@ -146,6 +148,8 @@ impl Emulator {
             gdb: None,
             current_rom_path: None,
             allowed_paths: Vec::new(),
+            z80_cycle_debt: 0.0,
+            apu_cycle_debt: 0.0,
         };
         {
             let mut bus = emulator.bus.borrow_mut();
@@ -648,28 +652,26 @@ impl Emulator {
         }
     }
     pub fn step_frame_internal(&mut self) {
+        let (lines, active_lines) = {
+            let bus = self.bus.borrow();
+            if bus.vdp.is_pal {
+                (313, 240)
+            } else {
+                (262, 224)
+            }
+        };
+        let samples_per_line =
+            audio::samples_per_frame() as f32 / lines as f32;
+
+        for line in 0..lines {
+            self.step_scanline(line, active_lines, samples_per_line);
+        }
         self.internal_frame_count += 1;
-        if self.debug {
+        if self.debug && self.internal_frame_count % 60 == 0 {
             self.log_debug(self.internal_frame_count);
         }
-        // Genesis timing constants (NTSC):
-        // M68k: 7.67 MHz, Z80: 3.58 MHz
-        // One frame = 262 scanlines
-        // Active display: lines 0-223
-        // VBlank: lines 224-261
-        // Cycles per scanline: ~488
-        const LINES_PER_FRAME: u16 = 262;
-        // Active lines can be 224 or 240 (V30 mode)
-        let active_lines = self.bus.borrow().vdp.screen_height();
-        // APU Timing
-        let samples_per_frame = audio::samples_per_frame() as f32;
-        let samples_per_line = samples_per_frame / (LINES_PER_FRAME as f32);
-        let mut z80_cycle_debt: f32 = 0.0;
-        for line in 0..LINES_PER_FRAME {
-            self.step_scanline(line, active_lines, samples_per_line, &mut z80_cycle_debt);
-        }
+
         self.generate_audio_samples(samples_per_line);
-        // Update V30 rolling offset
         self.bus.borrow_mut().vdp.update_v30_offset();
     }
     fn step_scanline(
@@ -677,10 +679,9 @@ impl Emulator {
         line: u16,
         active_lines: u16,
         _samples_per_line: f32,
-        z80_cycle_debt: &mut f32,
     ) {
         self.vdp_scanline_setup(line, active_lines);
-        self.run_cpu_loop(line, active_lines, z80_cycle_debt);
+        self.run_cpu_loop(line, active_lines);
         self.handle_interrupts();
     }
     fn vdp_scanline_setup(&mut self, line: u16, _active_lines: u16) {
@@ -771,14 +772,68 @@ impl Emulator {
             ctx.bus.audio_accumulator += m68k_cycles as f32;
 
             while ctx.bus.audio_accumulator >= cycles_per_sample {
-                if let Some((l, r)) = ctx.bus.apu.generate_sample() {
-                    if ctx.bus.audio_buffer.len() < 32768 {
-                        ctx.bus.audio_buffer.push(l);
-                        ctx.bus.audio_buffer.push(r);
-                    }
+                let (l, r) = ctx.bus.apu.generate_sample();
+                if ctx.bus.audio_buffer.len() < 32768 {
+                    ctx.bus.audio_buffer.push(l);
+                    ctx.bus.audio_buffer.push(r);
                 }
                 ctx.bus.audio_accumulator -= cycles_per_sample;
             }
+        }
+    }
+
+    /// Optimized synchronization that only catches up the Z80 and APU without VDP ticking.
+    fn sync_audio_z80(ctx: &mut SystemContext, m68k_cycles: u32) {
+        let cycles_per_sample = 7670453.0 / (ctx.bus.sample_rate as f32);
+
+        // 1. Z80 State
+        let z80_can_run = !ctx.bus.z80_reset && !ctx.bus.z80_bus_request;
+
+        // 2. Catch up Z80
+        if z80_can_run {
+            const Z80_CYCLES_PER_M68K_CYCLE: f32 = 3579545.0 / 7670453.0;
+            *ctx.z80_cycle_debt += m68k_cycles as f32 * Z80_CYCLES_PER_M68K_CYCLE;
+
+            unsafe {
+                ctx.z80.memory.bind_bus(ctx.bus);
+                ctx.z80.io.bind_bus(ctx.bus);
+            }
+
+            while *ctx.z80_cycle_debt >= 1.0 {
+                let cycles = ctx.z80.step();
+                *ctx.z80_cycle_debt -= cycles as f32;
+
+                // Sync APU with Z80 progress using accumulator to avoid drift
+                let equivalent_m68k = cycles as f32 / Z80_CYCLES_PER_M68K_CYCLE;
+                *ctx.apu_cycle_debt += equivalent_m68k;
+                let steps = *ctx.apu_cycle_debt as u32;
+                if steps > 0 {
+                    ctx.bus.apu.tick_cycles(steps);
+                    *ctx.apu_cycle_debt -= steps as f32;
+                }
+            }
+
+            ctx.z80.memory.unbind_bus();
+            ctx.z80.io.unbind_bus();
+        } else {
+             // Z80 is stopped, just tick APU directly
+             *ctx.apu_cycle_debt += m68k_cycles as f32;
+             let steps = *ctx.apu_cycle_debt as u32;
+             if steps > 0 {
+                 ctx.bus.apu.tick_cycles(steps);
+                 *ctx.apu_cycle_debt -= steps as f32;
+             }
+        }
+
+        // 3. Audio buffering
+        ctx.bus.audio_accumulator += m68k_cycles as f32;
+        while ctx.bus.audio_accumulator >= cycles_per_sample {
+            let (l, r) = ctx.bus.apu.generate_sample();
+            if ctx.bus.audio_buffer.len() < 32768 {
+                ctx.bus.audio_buffer.push(l);
+                ctx.bus.audio_buffer.push(r);
+            }
+            ctx.bus.audio_accumulator -= cycles_per_sample;
         }
     }
 
@@ -792,94 +847,79 @@ impl Emulator {
         let mut pending_cycles = 0;
         loop {
             if pending_cycles >= max_cycles {
+                // Final sync for the batch
+                let trigger_vint = line == active_lines && pending_cycles < 10;
+                Self::sync_components(ctx, 0, trigger_vint);
                 return CpuBatchResult {
                     cycles: pending_cycles,
                     z80_change: None,
                 };
             }
-            let m68k_cycles = {
-                let cycles = if ctx.bus.dma_active() {
-                    2 // Yield 2 cycles to let the bus step during DMA
-                } else {
-                    ctx.cpu.step_instruction(ctx.bus)
-                };
 
-                // Real Genesis uses level-triggered interrupts. If the game reads the VDP status
-                // or disables V-Int, the VDP drops the IRQ line. We must cancel it on the CPU.
-                if ctx.cpu.pending_interrupt == 6 && !ctx.bus.vdp.vblank_pending() {
-                    ctx.cpu.cancel_interrupt(6);
-                }
-
-                cycles
+            let m68k_cycles = if ctx.bus.dma_active() {
+                2 // Yield 2 cycles to let the bus step during DMA
+            } else {
+                ctx.cpu.step_instruction(ctx.bus)
             };
 
-            let trigger_vint = line == active_lines && pending_cycles < 10;
-            Self::sync_components(ctx, m68k_cycles, trigger_vint);
+            // Instead of full sync, we tick the VDP and only catch up sensitive components if needed.
+            // Performance: Tick VDP with mclk
+            ctx.bus.tick(m68k_cycles * 7);
 
-            // Check for Z80 state change
+            // Audio and Z80 sync: we can batch this a bit more than 1 instruction
+            // but for DAC accuracy we still need regular updates.
+            // Let's at least avoid the full sync_components (VDP overhead)
+            Self::sync_audio_z80(ctx, m68k_cycles);
+
+            // Real Genesis uses level-triggered interrupts.
+            if ctx.cpu.pending_interrupt == 6 && !ctx.bus.vdp.vblank_pending() {
+                ctx.cpu.cancel_interrupt(6);
+            }
+
+            // Check for Z80 state change (rare but needs early exit)
             let (req, rst) = (ctx.bus.z80_bus_request, ctx.bus.z80_reset);
-
             if req != initial_req || rst != initial_rst {
                 return CpuBatchResult {
-                    cycles: pending_cycles, // cycles accumulated *before* this instruction
+                    cycles: pending_cycles + m68k_cycles,
                     z80_change: Some(Z80Change {
-                        instruction_cycles: m68k_cycles,
                         new_req: req,
                         new_rst: rst,
                     }),
                 };
             }
+
             pending_cycles += m68k_cycles;
         }
     }
-    fn run_cpu_loop(&mut self, line: u16, active_lines: u16, z80_cycle_debt: &mut f32) {
+    fn run_cpu_loop(&mut self, line: u16, active_lines: u16) {
         const CYCLES_PER_LINE: u32 = 488;
-        const BATCH_SIZE: u32 = 64;
         let mut cycles_scanline: u32 = 0;
         let mut bus = self.bus.borrow_mut();
+ 
+        // One context for the entire scanline loop
+        let mut ctx = SystemContext {
+            cpu: &mut self.cpu,
+            bus: &mut *bus,
+            z80: &mut self.z80,
+            z80_cycle_debt: &mut self.z80_cycle_debt,
+            apu_cycle_debt: &mut self.apu_cycle_debt,
+            z80_last_bus_req: &mut self.z80_last_bus_req,
+            z80_last_reset: &mut self.z80_last_reset,
+            z80_trace_count: &mut self.z80_trace_count,
+            internal_frame_count: self.internal_frame_count,
+            debug: self.debug,
+        };
 
         while cycles_scanline < CYCLES_PER_LINE {
             let remaining = CYCLES_PER_LINE - cycles_scanline;
-            let limit = std::cmp::min(remaining, BATCH_SIZE);
-            let result = {
-                let mut ctx = SystemContext {
-                    cpu: &mut self.cpu,
-                    bus: &mut *bus,
-                    z80: &mut self.z80,
-                    z80_cycle_debt: &mut *z80_cycle_debt,
-                    z80_last_bus_req: &mut self.z80_last_bus_req,
-                    z80_last_reset: &mut self.z80_last_reset,
-                    z80_trace_count: &mut self.z80_trace_count,
-                    internal_frame_count: self.internal_frame_count,
-                    debug: self.debug,
-                };
-
-                Self::run_cpu_batch_static(&mut ctx, limit, line, active_lines)
-            };
+            // Batch size of remaining line
+            let result = Self::run_cpu_batch_static(&mut ctx, remaining, line, active_lines);
 
             cycles_scanline += result.cycles;
 
             if let Some(change) = result.z80_change {
-                // Apply the new state for the instruction that caused the change
-                bus.z80_bus_request = change.new_req;
-                bus.z80_reset = change.new_rst;
-
-                let trigger_vint = line == active_lines && cycles_scanline < 10;
-                // Sync components for the instruction that triggered the state change
-                let mut ctx = SystemContext {
-                    cpu: &mut self.cpu,
-                    bus: &mut *bus,
-                    z80: &mut self.z80,
-                    z80_cycle_debt: &mut *z80_cycle_debt,
-                    z80_last_bus_req: &mut self.z80_last_bus_req,
-                    z80_last_reset: &mut self.z80_last_reset,
-                    z80_trace_count: &mut self.z80_trace_count,
-                    internal_frame_count: self.internal_frame_count,
-                    debug: self.debug,
-                };
-                Self::sync_components(&mut ctx, change.instruction_cycles, trigger_vint);
-
-                cycles_scanline += change.instruction_cycles;
+                ctx.bus.z80_bus_request = change.new_req;
+                ctx.bus.z80_reset = change.new_rst;
             }
         }
     }
@@ -911,6 +951,10 @@ impl Emulator {
         if bus.vdp.hint_pending() {
             self.cpu.request_interrupt(4);
         }
+        drop(bus);
+
+        // Update audio visualization once per frame instead of per-sample
+        self.bus.borrow_mut().apu.update_visualization();
     }
     /// Run headless for N frames (or until script ends if N is None)
     pub fn run(

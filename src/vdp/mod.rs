@@ -400,11 +400,8 @@ impl Vdp {
         match code & 0x0F {
             VRAM_READ => {
                 let idx = addr as usize;
-                let val = if idx + 1 < self.vram.len() {
-                    ((self.vram[idx] as u16) << 8) | (self.vram[idx + 1] as u16)
-                } else {
-                    0
-                };
+                let val = ((self.vram[idx] as u16) << 8)
+                    | (self.vram[(addr ^ 1) as usize] as u16);
                 self.command.read_buffer = val;
                 self.command.cd4_flag = true;
             }
@@ -864,6 +861,9 @@ mod tests_control;
 
 #[cfg(test)]
 mod tests_bulk_write;
+
+#[cfg(test)]
+mod tests_read;
 
 #[cfg(test)]
 mod tests_properties;

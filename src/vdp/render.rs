@@ -543,7 +543,7 @@ impl RenderOps for Vdp {
         };
 
         // Vertical position in plane
-        let scrolled_v = params.fetch_line.wrapping_sub(v_scroll);
+        let scrolled_v = params.fetch_line.wrapping_add(v_scroll);
         let tile_v = ((scrolled_v / 8) as usize) % params.plane_h;
         let pixel_v = scrolled_v % 8;
 
@@ -637,7 +637,7 @@ impl RenderOps for Vdp {
         let mode3 = self.registers[REG_MODE3];
 
         // Vertical Scroll (Bits 2 of Mode 3: 0=Full Screen, 1=2-Cell Strips)
-        let mut v_scroll = if (mode3 & 0x04) != 0 {
+        let v_scroll = if (mode3 & 0x04) != 0 {
             // 2-Cell (16-pixel) strips. Each entry in VSRAM is 4 bytes and handles 2 cells.
             // Entry 0: Plane A Cell 0-1, Entry 1: Plane B Cell 0-1, etc.
             let strip_idx = tile_h >> 1;
@@ -653,9 +653,6 @@ impl RenderOps for Vdp {
             (((self.vsram[vs_addr] as u16) << 8) | (self.vsram[vs_addr + 1] as u16)) & 0x03FF
         };
 
-        if (v_scroll & 0x0200) != 0 {
-            v_scroll |= 0xFC00; // Sign extend 10-bit to 16-bit
-        }
         v_scroll
     }
 
@@ -685,12 +682,9 @@ impl RenderOps for Vdp {
         let hi = self.vram[final_hs_addr & 0xFFFF];
         let lo = self.vram[final_hs_addr.wrapping_add(1) & 0xFFFF];
 
-        // H-scroll is 10-bit signed value (bits 0-9).
+        // H-scroll is 10-bit value (bits 0-9).
         let val = ((hi as u16) << 8) | (lo as u16);
-        let mut h_scroll = val & 0x03FF;
-        if (h_scroll & 0x0200) != 0 {
-            h_scroll |= 0xFC00; // Sign extend 10-bit to 16-bit
-        }
+        let h_scroll = val & 0x03FF;
 
         h_scroll
     }

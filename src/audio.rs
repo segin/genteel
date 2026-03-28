@@ -10,6 +10,14 @@ use std::sync::{Arc, Mutex};
 /// Sample rate for audio output (Native Genesis FM rate: 53693175 / 7 / 144 = ~53267)
 pub const SAMPLE_RATE: u32 = 53267;
 
+/// Genesis Master Clock (NTSC)
+pub const NTSC_MCLK: u32 = 53693175;
+/// Genesis Master Clock (PAL)
+pub const PAL_MCLK: u32 = 53203424;
+
+/// Target frames per second
+pub const FPS: u32 = 60;
+
 /// Audio buffer size (in stereo sample pairs)
 pub const BUFFER_SIZE: usize = 512;
 
