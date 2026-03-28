@@ -64,13 +64,11 @@ impl Apu {
 
     pub fn tick_cycles(&mut self, m68k_cycles: u32) {
         self.fm.step(m68k_cycles);
-        let psg_cycles = m68k_cycles / 2;
-        self.psg.step_cycles(psg_cycles);
+        self.psg.step_cycles(m68k_cycles);
     }
 
     /// Attempts to generate a mixed audio sample pair.
-    /// Returns `Some((left, right))` if a sample is available in the blip buffers,
-    /// otherwise returns `None`.
+    /// Returns `(left, right)` from the blip buffers.
     pub fn generate_sample(&mut self) -> (i16, i16) {
         let mut fm_l = [0i16; 1];
         let mut fm_r = [0i16; 1];
@@ -80,11 +78,14 @@ impl Apu {
         self.fm.blip_r.read_samples(&mut fm_r[..]);
         self.psg.blip.read_samples(&mut psg_buf[..]);
 
-        let fm_l_val = fm_l[0];
-        let fm_r_val = fm_r[0];
-        let psg_val = psg_buf[0];
+        let left = (fm_l[0] as i32 + psg_buf[0] as i32).clamp(-32768, 32767) as i16;
+        let right = (fm_r[0] as i32 + psg_buf[0] as i32).clamp(-32768, 32767) as i16;
 
-        // Update visualization
+        (left, right)
+    }
+
+    /// Update visualization buffers (call once per frame)
+    pub fn update_visualization(&mut self) {
         let fm_samples = self.fm.generate_channel_samples();
         let psg_samples = self.psg.get_channel_samples();
         for i in 0..6 {
@@ -94,11 +95,6 @@ impl Apu {
             self.channel_buffers[6 + i][self.buffer_idx] = psg_samples[i];
         }
         self.buffer_idx = (self.buffer_idx + 1) % 128;
-
-        let left = (fm_l_val as i32 + psg_val as i32).clamp(-32768, 32767) as i16;
-        let right = (fm_r_val as i32 + psg_val as i32).clamp(-32768, 32767) as i16;
-
-        (left, right)
     }
 }
 
@@ -288,8 +284,8 @@ mod tests {
         apu.write_fm_addr(Bank::Bank1, 0xB6);
         apu.write_fm_data(Bank::Bank1, 0x80);
 
-        // Tick cycles to allow YM2612 to generate samples
-        apu.tick_cycles(1);
+        // Tick enough cycles (at least 21) for the YM2612 to generate a sample
+        apu.tick_cycles(24);
 
         // Assert DAC output is observable in the blip buffer
         assert!(apu.fm.blip_l.read_instant() > 0, "Left audio should be positive due to DAC");

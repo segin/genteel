@@ -431,8 +431,10 @@ pub struct Ym2612 {
     pub total_clocks: u64,
     pub blip_l: BlipBuf,
     pub blip_r: BlipBuf,
-    last_left: i32,
-    last_right: i32,
+    pub last_left: i32,
+    pub last_right: i32,
+    pub total_mclocks: u64,
+    pub mclk_debt: u32,
 }
 
 impl Ym2612 {
@@ -447,12 +449,14 @@ impl Ym2612 {
             channels: std::array::from_fn(|_| FmChannel::new()),
             dac_val: 0x80,
             dac_en: false,
-            env_counter: 1,
+            env_counter: 0,
             total_clocks: 0,
             blip_l: BlipBuf::new(7670453, 53267),
-            blip_r: BlipBuf::new(7670453, 53267),
+            blip_r: BlipBuf::new(crate::audio::NTSC_MCLK, 44100),
             last_left: 0,
             last_right: 0,
+            total_mclocks: 0,
+            mclk_debt: 0,
         };
         for i in 0..3 {
             ym.registers[0][0xB4 + i] = 0xC0;
@@ -479,70 +483,96 @@ impl Ym2612 {
         self.read_status()
     }
 
+    /// Step the YM2612 by a number of M68K cycles.
+    /// Convert internally to MCLK (1 M68K cycle = 7 MCLK).
     pub fn step(&mut self, cycles: u32) {
-        let mclks = (cycles * 7) as i32;
         if self.busy > 0 {
-            self.busy -= mclks;
+            self.busy = self.busy.saturating_sub(cycles as i32);
         }
 
-        // Timer Logic
-        // Timer A period: (1024 - NA) * 72 master clocks
-        // Timer B period: (256 - NB) * 1152 master clocks
-        for _ in 0..mclks {
-            if (self.registers[0][0x27] & 0x01) != 0 {
-                self.timer_a -= 1;
-                if self.timer_a <= 0 {
-                    let n = ((self.registers[0][0x24] as u32) << 2)
-                        | (self.registers[0][0x25] as u32 & 0x03);
-                    self.timer_a = (1024 - n as i32) * 72;
-                    if (self.registers[0][0x27] & 0x04) != 0 {
-                        self.status |= 0x01;
+        // Handle timers in MCLK units
+        // Timer A period: (1024-NA)*72 FM clocks. 1 FM clock = 144 MCLK.
+        // So Timer A period = (1024-NA)*72*144 MCLK.
+        // But we step in M68K cycles. 1 cycle = 7 MCLK.
+        // Let's just convert cycles to MCLK immediately for all logic.
+        let mclocks = cycles * 7;
+
+        if (self.registers[0][0x27] & 0x01) != 0 || (self.registers[0][0x27] & 0x02) != 0 {
+            let mut remaining_mclk = mclocks;
+            while remaining_mclk > 0 {
+                let step_mclk = remaining_mclk.min(144);
+                if (self.registers[0][0x27] & 0x01) != 0 {
+                    self.timer_a -= step_mclk as i32;
+                    if self.timer_a <= 0 {
+                        let n = ((self.registers[0][0x24] as u32) << 2)
+                            | (self.registers[0][0x25] as u32 & 0x03);
+                        self.timer_a = (1024 - n as i32) * 72 * 144;
+                        if (self.registers[0][0x27] & 0x04) != 0 {
+                            self.status |= 0x01;
+                        }
                     }
                 }
-            }
-            if (self.registers[0][0x27] & 0x02) != 0 {
-                self.timer_b -= 1;
-                if self.timer_b <= 0 {
-                    self.timer_b = (256 - self.registers[0][0x26] as i32) * 1152;
-                    if (self.registers[0][0x27] & 0x08) != 0 {
-                        self.status |= 0x02;
+                if (self.registers[0][0x27] & 0x02) != 0 {
+                    self.timer_b -= step_mclk as i32;
+                    if self.timer_b <= 0 {
+                        self.timer_b = (256 - self.registers[0][0x26] as i32) * 1152 * 144;
+                        if (self.registers[0][0x27] & 0x08) != 0 {
+                            self.status |= 0x02;
+                        }
                     }
                 }
+                remaining_mclk -= step_mclk;
             }
         }
 
-        if cycles > 0 {
-            self.total_clocks += cycles as u64;
-            self.env_counter = (self.env_counter + 1) & 0xFFF;
-            let mut left = 0i32;
-            let mut right = 0i32;
-            for i in 0..6 {
-                let out = if i == 5 && self.dac_en {
-                    (self.dac_val as i32 - 128) << 6
-                } else {
-                    self.channels[i].clock(
-                        &self.registers[if i < 3 { 0 } else { 1 }],
-                        i % 3,
-                        self.env_counter,
-                    ) as i32
-                };
-                if self.channels[i].panning_l {
-                    left += out;
-                }
-                if self.channels[i].panning_r {
-                    right += out;
-                }
+        // FM Synthesis units: 1 OPN2 step = 144 MCLKs.
+        self.mclk_debt += mclocks;
+
+        while self.mclk_debt >= 144 {
+            self.total_mclocks += 144;
+            self.internal_step();
+            self.mclk_debt -= 144;
+        }
+    }
+
+    /// Advance internal FM synthesis by one sample point (53.26 kHz)
+    fn internal_step(&mut self) {
+        self.env_counter = (self.env_counter + 1) & 0xFFF;
+        let mut left = 0i32;
+        let mut right = 0i32;
+        for i in 0..6 {
+            let out = if i == 5 && self.dac_en {
+                (self.dac_val as i32 - 128) << 6
+            } else {
+                self.channels[i].clock(
+                    &self.registers[if i < 3 { 0 } else { 1 }],
+                    i % 3,
+                    self.env_counter,
+                ) as i32
+            };
+            if self.channels[i].panning_l {
+                left += out;
             }
-            let dl = left - self.last_left;
-            if dl != 0 {
-                self.blip_l.add_delta(self.total_clocks, dl);
-                self.last_left = left;
+            if self.channels[i].panning_r {
+                right += out;
             }
-            let dr = right - self.last_right;
-            if dr != 0 {
-                self.blip_r.add_delta(self.total_clocks, dr);
-                self.last_right = right;
-            }
+        }
+        let dl = left - self.last_left;
+        if dl != 0 {
+            self.blip_l.add_delta(self.total_mclocks, dl);
+            self.last_left = left;
+        }
+        let dr = right - self.last_right;
+        if dr != 0 {
+            self.blip_r.add_delta(self.total_mclocks, dr);
+            self.last_right = right;
+        }
+    }
+
+    /// Catch up the YM2612 to the current cycle. Useful before register writes.
+    pub fn catch_up(&mut self, current_cycles: u32) {
+        if current_cycles > 0 {
+            self.step(current_cycles);
         }
     }
 
@@ -582,7 +612,16 @@ impl Ym2612 {
                     self.status &= !0x02;
                 }
             }
-            (Bank::Bank0, 0x2A) => self.dac_val = v,
+            (Bank::Bank0, 0x2A) => {
+                // PCM data MUST be recorded with accurate timing.
+                // We should ideally catch up to the current cycle here,
+                // but since this is called from write_byte, we need to ensure
+                // the caller has synced us.
+                // For now, updating dac_val is enough if we call step() frequently or catch_up().
+                self.dac_val = v;
+                // If DAC is enabled, any value change should be reflected in output immediately?
+                // Actually internal_step() will pick it up next time it runs.
+            }
             (Bank::Bank0, 0x2B) => self.dac_en = (v & 0x80) != 0,
             (_, 0xB4..=0xB6) => {
                 let c = (a - 0xB4) as usize + bank_idx * 3;
