@@ -10,6 +10,14 @@ use std::sync::{Arc, Mutex};
 /// Sample rate for audio output (Native Genesis FM rate: 53693175 / 7 / 144 = ~53267)
 pub const SAMPLE_RATE: u32 = 53267;
 
+/// Genesis Master Clock (NTSC)
+pub const NTSC_MCLK: u32 = 53693175;
+/// Genesis Master Clock (PAL)
+pub const PAL_MCLK: u32 = 53203424;
+
+/// Target frames per second
+pub const FPS: u32 = 60;
+
 /// Audio buffer size (in stereo sample pairs)
 pub const BUFFER_SIZE: usize = 512;
 
@@ -395,6 +403,55 @@ mod tests {
         let mut out2 = [0i16; 1];
         buf.pop(&mut out2);
         assert_eq!(out2[0], 100);
+    }
+
+    #[test]
+    fn test_audio_buffer_clear_completely_empty() {
+        let mut buf = AudioBuffer::new(64);
+
+        // Clear a brand new, empty buffer
+        buf.clear();
+        assert_eq!(buf.available(), 0);
+        assert_eq!(buf.read_pos, 0);
+        assert_eq!(buf.write_pos, 0);
+    }
+
+    #[test]
+    fn test_audio_buffer_clear_empty_shifted() {
+        let mut buf = AudioBuffer::new(64);
+
+        // Push 4, pop 4 so it's empty but read_pos and write_pos are 4
+        buf.push(&[1i16, 2, 3, 4]);
+        let mut out = [0i16; 4];
+        buf.pop(&mut out);
+
+        assert_eq!(buf.available(), 0);
+        assert_eq!(buf.read_pos, 4);
+        assert_eq!(buf.write_pos, 4);
+
+        // Clear it
+        buf.clear();
+        assert_eq!(buf.available(), 0);
+        assert_eq!(buf.read_pos, 0);
+        assert_eq!(buf.write_pos, 0);
+    }
+
+    #[test]
+    fn test_audio_buffer_clear_partially_full() {
+        let mut buf = AudioBuffer::new(64);
+
+        // Push 4 samples, do not pop any
+        buf.push(&[1i16, 2, 3, 4]);
+
+        assert_eq!(buf.available(), 4);
+        assert_eq!(buf.read_pos, 0);
+        assert_eq!(buf.write_pos, 4);
+
+        // Clear it
+        buf.clear();
+        assert_eq!(buf.available(), 0);
+        assert_eq!(buf.read_pos, 0);
+        assert_eq!(buf.write_pos, 0);
     }
 
     #[test]
