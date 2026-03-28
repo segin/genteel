@@ -212,7 +212,7 @@ pub struct DebugInfo {
     pub m68k_sr: u16,
     pub m68k_usp: u32,
     pub m68k_ssp: u32,
-    pub m68k_disasm: Vec<(u32, std::borrow::Cow<'static, str>)>,
+    pub m68k_disasm: [(u32, crate::cpu::instructions::Instruction); 10],
     pub z80_pc: u16,
     pub z80_a: u8,
     pub z80_f: u8,
@@ -230,7 +230,7 @@ pub struct DebugInfo {
     pub z80_memptr: u16,
     pub z80_iff1: bool,
     pub z80_im: u8,
-    pub z80_disasm: Vec<(u16, std::borrow::Cow<'static, str>)>,
+    pub z80_disasm: [(u16, u8); 10],
     pub frame_count: u64,
     pub vdp_status: u16,
     pub vdp_registers: [u8; 24],
@@ -894,14 +894,14 @@ impl Framework {
                         .id_source("m68k_disasm")
                         .show(ui, |ui| {
                             let mut label_buffer = String::with_capacity(64);
-                            for (addr, text) in &debug_info.m68k_disasm {
+                            for (addr, instr) in &debug_info.m68k_disasm {
                                 label_buffer.clear();
                                 let is_current = *addr == debug_info.m68k_pc;
                                 if is_current {
-                                    let _ = write!(&mut label_buffer, "-> {:06X}: {}", addr, text);
+                                    let _ = write!(&mut label_buffer, "-> {:06X}: {:?}", addr, instr);
                                     ui.colored_label(egui::Color32::YELLOW, label_buffer.as_str());
                                 } else {
-                                    let _ = write!(&mut label_buffer, "   {:06X}: {}", addr, text);
+                                    let _ = write!(&mut label_buffer, "   {:06X}: {:?}", addr, instr);
                                     ui.label(label_buffer.as_str());
                                 }
                             }
@@ -912,14 +912,14 @@ impl Framework {
                         .id_source("z80_disasm")
                         .show(ui, |ui| {
                             let mut label_buffer = String::with_capacity(64);
-                            for (addr, text) in &debug_info.z80_disasm {
+                            for (addr, byte) in &debug_info.z80_disasm {
                                 label_buffer.clear();
                                 let is_current = *addr == debug_info.z80_pc;
                                 if is_current {
-                                    let _ = write!(&mut label_buffer, "-> {:04X}: {}", addr, text);
+                                    let _ = write!(&mut label_buffer, "-> {:04X}: {}", addr, HEX_LOOKUP[*byte as usize]);
                                     ui.colored_label(egui::Color32::YELLOW, label_buffer.as_str());
                                 } else {
-                                    let _ = write!(&mut label_buffer, "   {:04X}: {}", addr, text);
+                                    let _ = write!(&mut label_buffer, "   {:04X}: {}", addr, HEX_LOOKUP[*byte as usize]);
                                     ui.label(label_buffer.as_str());
                                 }
                             }
@@ -1717,31 +1717,22 @@ fn collect_debug_info(
     if force_red {
         bus.vdp.framebuffer.fill(0xF800); // Red in RGB565
     }
-    let m68k_disasm = {
-        let mut disasm = Vec::with_capacity(10);
-        let mut addr = emulator.cpu.pc;
-        let mut buffer = String::with_capacity(32);
-        for _ in 0..10 {
-            let opcode = bus.read_word(addr);
-            let instr = crate::cpu::decode(opcode);
-            buffer.clear();
-            use std::fmt::Write;
-            let _ = write!(&mut buffer, "{:?}", instr);
-            disasm.push((addr, std::borrow::Cow::Owned(buffer.clone())));
-            addr += instr.length_words() * 2;
-        }
-        disasm
-    };
-    let z80_disasm = {
-        let mut disasm = Vec::with_capacity(10);
-        let mut addr = emulator.z80.pc;
-        for _ in 0..10 {
-            let byte = bus.read_byte(0xA00000 + addr as u32);
-            disasm.push((addr, std::borrow::Cow::Borrowed(HEX_LOOKUP[byte as usize])));
-            addr += 1;
-        }
-        disasm
-    };
+    let mut m68k_disasm = [(0u32, crate::cpu::instructions::Instruction::System(crate::cpu::instructions::SystemInstruction::Unimplemented { opcode: 0 })); 10];
+    let mut addr = emulator.cpu.pc;
+    for i in 0..10 {
+        let opcode = bus.read_word(addr);
+        let instr = crate::cpu::decode(opcode);
+        m68k_disasm[i] = (addr, instr);
+        addr += instr.length_words() * 2;
+    }
+
+    let mut z80_disasm = [(0u16, 0u8); 10];
+    let mut addr = emulator.z80.pc;
+    for i in 0..10 {
+        let byte = bus.read_byte(0xA00000 + addr as u32);
+        z80_disasm[i] = (addr, byte);
+        addr += 1;
+    }
 
     let mut cram_raw = [0u16; 64];
     for i in 0..64 {
