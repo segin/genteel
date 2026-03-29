@@ -3,17 +3,9 @@ mod tests {
     use crate::cpu::decoder::{
         decode, AddressingMode, BitsInstruction, Instruction, ShiftCount, Size,
     };
+    use crate::cpu::test_utils::create_test_cpu;
     use crate::cpu::Cpu;
     use crate::memory::{Memory, MemoryInterface};
-
-    fn create_test_cpu() -> (Cpu, Memory) {
-        let mut memory = Memory::new(0x10000);
-        // Initial SP and PC
-        memory.write_long(0, 0x1000); // SP
-        memory.write_long(4, 0x100); // PC
-        let cpu = Cpu::new(&mut memory);
-        (cpu, memory)
-    }
 
     #[test]
     fn test_clr_predecrement_double_update_bug() {
