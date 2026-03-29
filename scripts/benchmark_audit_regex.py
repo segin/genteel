@@ -1,8 +1,15 @@
 import time
 import re
 import os
+import sys
 import random
 import string
+
+# Ensure we can import audit_tool from the scripts directory
+scripts_dir = os.path.dirname(os.path.abspath(__file__))
+if scripts_dir not in sys.path:
+    sys.path.append(scripts_dir)
+import audit_tool
 
 FILENAME = "benchmark_data.txt"
 FILE_SIZE_MB = 50
@@ -32,14 +39,16 @@ def generate_data():
 
 def scan_slow():
     print("[*] Running slow scan (re.search inside loop)...")
-    secret_pattern_combined = re.compile(
-        r"(?P<AWS_Key>AK" + r"IA[0-9A-Z]{16})|"
-        r"(?P<Private_Key>-----BEGIN .* PRIVATE" + r" KEY-----)|"
-        r"(?P<Generic_Token>token\s*=\s*['\"][a-zA-Z0-9]{20,}['\"])"
-    )
-
-    unsafe_pattern = re.compile(r"un" + r"safe\s*\{")
-    todo_pattern = re.compile(r"(" + r"TO" + r"DO|" + r"FIX" + r"ME|" + r"X" + r"XX):")
+    # In slow scan, we recreate the old behavior of individual re.search calls
+    # We include more patterns from audit_tool to match behavior
+    slow_secret_patterns = {
+        "Generic Secret": r"(?i)secret\s*[:=]\s*['\"]",
+        "API Key": r"(?i)api[_-]?key\s*[:=]\s*['\"]",
+        "Password": r"(?i)password\s*[:=]\s*['\"]",
+        "AWS Key": r"AKIA[0-9A-Z]{16}",
+        "Private Key": r"-----BEGIN .* PRIVATE " + r"KEY-----",
+        "Generic Token": r"token\s*=\s*['\"][a-zA-Z0-9]{20,}['\"]"
+    }
 
     match_count = 0
     start_time = time.time()
@@ -47,18 +56,16 @@ def scan_slow():
     with open(FILENAME, 'r', encoding='utf-8', errors='ignore') as fp:
         for i, line_content in enumerate(fp):
             # Secrets
-            found_secrets = set()
-            for match in secret_pattern_combined.finditer(line_content):
-                if match.lastgroup:
-                    found_secrets.add(match.lastgroup)
-            match_count += len(found_secrets)
+            for name, pattern in slow_secret_patterns.items():
+                if re.search(pattern, line_content):
+                    match_count += 1
 
             # Unsafe
-            if unsafe_pattern.search(line_content):
+            if re.search(audit_tool.UNSAFE_PATTERN.pattern, line_content):
                 match_count += 1
 
             # tracker
-            if todo_pattern.search(line_content):
+            if re.search(audit_tool.TODO_PATTERN.pattern, line_content):
                 match_count += 1
 
     end_time = time.time()
@@ -68,14 +75,6 @@ def scan_slow():
 
 def scan_fast():
     print("[*] Running fast scan (pre-compiled regex)...")
-    secret_pattern_combined = re.compile(
-        r"(?P<AWS_Key>AK" + r"IA[0-9A-Z]{16})|"
-        r"(?P<Private_Key>-----BEGIN .* PRIVATE" + r" KEY-----)|"
-        r"(?P<Generic_Token>token\s*=\s*['\"][a-zA-Z0-9]{20,}['\"])"
-    )
-
-    unsafe_pattern = re.compile(r"un" + r"safe\s*\{")
-    todo_pattern = re.compile(r"(" + r"TO" + r"DO|" + r"FIX" + r"ME|" + r"X" + r"XX):")
 
     match_count = 0
     start_time = time.time()
@@ -83,15 +82,15 @@ def scan_fast():
     with open(FILENAME, 'r', encoding='utf-8', errors='ignore') as fp:
         for i, line_content in enumerate(fp):
             # Secrets
-            for match in secret_pattern_combined.finditer(line_content):
+            for match in audit_tool.SECRET_PATTERN_COMBINED.finditer(line_content):
                 match_count += 1
 
             # Unsafe
-            if unsafe_pattern.search(line_content):
+            if audit_tool.UNSAFE_PATTERN.search(line_content):
                 match_count += 1
 
             # tracker
-            if todo_pattern.search(line_content):
+            if audit_tool.TODO_PATTERN.search(line_content):
                 match_count += 1
 
     end_time = time.time()
