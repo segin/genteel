@@ -97,6 +97,7 @@ pub struct TileRenderParams {
     pub plane_w_mask: usize,
     pub h_scroll: u16,
     pub fetch_line: u16,
+    pub scanline_width: u16,
 }
 
 pub trait RenderOps {
@@ -519,6 +520,7 @@ impl RenderOps for Vdp {
                 plane_w_mask: win_w - 1,
                 h_scroll: 0,
                 fetch_line,
+                scanline_width: screen_width,
             };
             let plane_params = TileRenderParams {
                 is_plane_a: true,
@@ -529,6 +531,7 @@ impl RenderOps for Vdp {
                 plane_w_mask: plane_w - 1,
                 h_scroll,
                 fetch_line,
+                scanline_width: screen_width,
             };
 
             while screen_x < screen_width {
@@ -547,6 +550,7 @@ impl RenderOps for Vdp {
                 plane_w_mask: plane_w - 1,
                 h_scroll,
                 fetch_line,
+                scanline_width: screen_width,
             };
             while screen_x < screen_width {
                 self.render_tile(&tile_params, &mut screen_x, line_buf);
@@ -580,7 +584,7 @@ impl RenderOps for Vdp {
         let pixel_v = scrolled_v % 8;
 
         let pixels_left_in_tile = 8 - pixel_h;
-        let pixels_to_process = std::cmp::min(pixels_left_in_tile, 320 - current_x);
+        let pixels_to_process = std::cmp::min(pixels_left_in_tile, params.scanline_width - current_x);
 
         let entry = self.fetch_nametable_entry(params.name_table_base, tile_v, tile_h, params.plane_w);
 
