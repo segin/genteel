@@ -793,3 +793,143 @@ impl Default for DecodeCacheEntry {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_size_bytes() {
+        assert_eq!(Size::Byte.bytes(), 1);
+        assert_eq!(Size::Word.bytes(), 2);
+        assert_eq!(Size::Long.bytes(), 4);
+    }
+
+    #[test]
+    fn test_size_mask() {
+        assert_eq!(Size::Byte.mask(), 0xFF);
+        assert_eq!(Size::Word.mask(), 0xFFFF);
+        assert_eq!(Size::Long.mask(), 0xFFFFFFFF);
+    }
+
+    #[test]
+    fn test_size_apply() {
+        assert_eq!(Size::Byte.apply(0x12345678, 0xAAAAAAAA), 0x123456AA);
+        assert_eq!(Size::Word.apply(0x12345678, 0xAAAAAAAA), 0x1234AAAA);
+        assert_eq!(Size::Long.apply(0x12345678, 0xAAAAAAAA), 0xAAAAAAAA);
+    }
+
+    #[test]
+    fn test_size_sign_bit() {
+        assert_eq!(Size::Byte.sign_bit(), 0x80);
+        assert_eq!(Size::Word.sign_bit(), 0x8000);
+        assert_eq!(Size::Long.sign_bit(), 0x80000000);
+    }
+
+    #[test]
+    fn test_size_is_negative() {
+        assert!(Size::Byte.is_negative(0x80));
+        assert!(!Size::Byte.is_negative(0x7F));
+        assert!(Size::Word.is_negative(0x8000));
+        assert!(!Size::Word.is_negative(0x7FFF));
+        assert!(Size::Long.is_negative(0x80000000));
+        assert!(!Size::Long.is_negative(0x7FFFFFFF));
+    }
+
+    #[test]
+    fn test_size_bits() {
+        assert_eq!(Size::Byte.bits(), 8);
+        assert_eq!(Size::Word.bits(), 16);
+        assert_eq!(Size::Long.bits(), 32);
+    }
+
+    #[test]
+    fn test_size_from_bits() {
+        assert_eq!(Size::from_bits(0b00), Some(Size::Byte));
+        assert_eq!(Size::from_bits(0b01), Some(Size::Word));
+        assert_eq!(Size::from_bits(0b10), Some(Size::Long));
+        assert_eq!(Size::from_bits(0b11), None);
+    }
+
+    #[test]
+    fn test_size_from_move_bits() {
+        assert_eq!(Size::from_move_bits(0b01), Some(Size::Byte));
+        assert_eq!(Size::from_move_bits(0b11), Some(Size::Word));
+        assert_eq!(Size::from_move_bits(0b10), Some(Size::Long));
+        assert_eq!(Size::from_move_bits(0b00), None);
+    }
+
+    #[test]
+    fn test_size_display() {
+        assert_eq!(format!("{}", Size::Byte), ".B");
+        assert_eq!(format!("{}", Size::Word), ".W");
+        assert_eq!(format!("{}", Size::Long), ".L");
+    }
+
+    #[test]
+    fn test_addressing_mode_from_mode_reg() {
+        assert_eq!(AddressingMode::from_mode_reg(0, 1), Some(AddressingMode::DataRegister(1)));
+        assert_eq!(AddressingMode::from_mode_reg(1, 2), Some(AddressingMode::AddressRegister(2)));
+        assert_eq!(AddressingMode::from_mode_reg(2, 3), Some(AddressingMode::AddressIndirect(3)));
+        assert_eq!(AddressingMode::from_mode_reg(3, 4), Some(AddressingMode::AddressPostIncrement(4)));
+        assert_eq!(AddressingMode::from_mode_reg(4, 5), Some(AddressingMode::AddressPreDecrement(5)));
+        assert_eq!(AddressingMode::from_mode_reg(5, 6), Some(AddressingMode::AddressDisplacement(6)));
+        assert_eq!(AddressingMode::from_mode_reg(6, 7), Some(AddressingMode::AddressIndex(7)));
+        assert_eq!(AddressingMode::from_mode_reg(7, 0), Some(AddressingMode::AbsoluteShort));
+        assert_eq!(AddressingMode::from_mode_reg(7, 1), Some(AddressingMode::AbsoluteLong));
+        assert_eq!(AddressingMode::from_mode_reg(7, 2), Some(AddressingMode::PcDisplacement));
+        assert_eq!(AddressingMode::from_mode_reg(7, 3), Some(AddressingMode::PcIndex));
+        assert_eq!(AddressingMode::from_mode_reg(7, 4), Some(AddressingMode::Immediate));
+        assert_eq!(AddressingMode::from_mode_reg(7, 5), None);
+    }
+
+    #[test]
+    fn test_addressing_mode_is_alterable() {
+        assert!(AddressingMode::DataRegister(0).is_alterable());
+        assert!(AddressingMode::AddressRegister(0).is_alterable());
+        assert!(AddressingMode::AddressIndirect(0).is_alterable());
+        assert!(!AddressingMode::PcDisplacement.is_alterable());
+        assert!(!AddressingMode::PcIndex.is_alterable());
+        assert!(!AddressingMode::Immediate.is_alterable());
+    }
+
+    #[test]
+    fn test_addressing_mode_is_data_alterable() {
+        assert!(AddressingMode::DataRegister(0).is_data_alterable());
+        assert!(!AddressingMode::AddressRegister(0).is_data_alterable());
+        assert!(AddressingMode::AddressIndirect(0).is_data_alterable());
+    }
+
+    #[test]
+    fn test_addressing_mode_extension_words() {
+        assert_eq!(AddressingMode::DataRegister(0).extension_words(Size::Long), 0);
+        assert_eq!(AddressingMode::AbsoluteShort.extension_words(Size::Long), 1);
+        assert_eq!(AddressingMode::AbsoluteLong.extension_words(Size::Word), 2);
+        assert_eq!(AddressingMode::Immediate.extension_words(Size::Byte), 1);
+        assert_eq!(AddressingMode::Immediate.extension_words(Size::Word), 1);
+        assert_eq!(AddressingMode::Immediate.extension_words(Size::Long), 2);
+    }
+
+    #[test]
+    fn test_addressing_mode_display() {
+        assert_eq!(format!("{}", AddressingMode::DataRegister(1)), "D1");
+        assert_eq!(format!("{}", AddressingMode::PcDisplacement), "d16(PC)");
+        assert_eq!(format!("{}", AddressingMode::Immediate), "#<data>");
+    }
+
+    #[test]
+    fn test_condition_from_bits() {
+        assert_eq!(Condition::from_bits(0x0), Condition::True);
+        assert_eq!(Condition::from_bits(0x7), Condition::Equal);
+        assert_eq!(Condition::from_bits(0xF), Condition::LessOrEqual);
+        // Test with higher bits set (should be masked)
+        assert_eq!(Condition::from_bits(0x10), Condition::True);
+    }
+
+    #[test]
+    fn test_condition_mnemonic() {
+        assert_eq!(Condition::True.mnemonic(), "T");
+        assert_eq!(Condition::Equal.mnemonic(), "EQ");
+        assert_eq!(Condition::LessOrEqual.mnemonic(), "LE");
+    }
+}
