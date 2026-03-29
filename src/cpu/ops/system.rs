@@ -334,17 +334,9 @@ pub fn exec_eori_to_sr<M: MemoryInterface>(cpu: &mut Cpu, memory: &mut M) -> u32
 mod tests {
     use super::*;
     use crate::cpu::flags;
+    use crate::cpu::test_utils::create_test_cpu;
     use crate::cpu::Cpu;
     use crate::memory::Memory;
-
-    fn create_test_cpu() -> (Cpu, Memory) {
-        let mut memory = Memory::new(0x10000);
-        // Initial SP and PC
-        memory.write_long(0, 0x1000); // SP
-        memory.write_long(4, 0x100); // PC
-        let cpu = Cpu::new(&mut memory);
-        (cpu, memory)
-    }
 
     #[test]
     fn test_exec_bra_short_forward() {
