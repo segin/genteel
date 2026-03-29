@@ -847,10 +847,6 @@ impl Framework {
                     // Since columns takes a closure that might outlive the current borrow,
                     // but egui's columns closure is called immediately.
                     // However, &mut self is already borrowed by the outer closure.
-                    // Let's see if we can use a local buffer for columns to keep it simple,
-                    // or just use format! there if it's too complex.
-                    // Actually, the closure is |columns| and we are already in |ui|.
-                    // Let's try using a local buffer for now to avoid borrow checker issues with self in columns.
                     ui.columns(2, |columns| {
                         let mut d_buf = String::with_capacity(16);
                         let mut a_buf = String::with_capacity(16);
@@ -905,45 +901,37 @@ impl Framework {
                     });
                     ui.separator();
                     ui.columns(2, |columns| {
-                        let mut l_buf = String::with_capacity(16);
-                        let _ = write!(&mut l_buf, "A:  {:02X}", debug_info.z80_a);
-                        columns[0].label(&l_buf);
-                        l_buf.clear();
-                        let _ = write!(&mut l_buf, "F:  {:02X}", debug_info.z80_f);
-                        columns[1].label(&l_buf);
-                        l_buf.clear();
-                        let _ = write!(
-                            &mut l_buf,
-                            "BC: {:02X}{:02X}",
-                            debug_info.z80_b, debug_info.z80_c
-                        );
-                        columns[0].label(&l_buf);
-                        l_buf.clear();
-                        let _ = write!(
-                            &mut l_buf,
-                            "DE: {:02X}{:02X}",
-                            debug_info.z80_d, debug_info.z80_e
-                        );
-                        columns[1].label(&l_buf);
-                        l_buf.clear();
-                        let _ = write!(
-                            &mut l_buf,
-                            "HL: {:02X}{:02X}",
-                            debug_info.z80_h, debug_info.z80_l
-                        );
-                        columns[0].label(&l_buf);
-                        l_buf.clear();
-                        let _ = write!(&mut l_buf, "IX: {:04X}", debug_info.z80_ix);
-                        columns[1].label(&l_buf);
-                        l_buf.clear();
-                        let _ = write!(&mut l_buf, "IY: {:04X}", debug_info.z80_iy);
-                        columns[0].label(&l_buf);
-                        l_buf.clear();
-                        let _ = write!(&mut l_buf, "I:  {:02X}", debug_info.z80_i);
-                        columns[1].label(&l_buf);
-                        l_buf.clear();
-                        let _ = write!(&mut l_buf, "R:  {:02X}", debug_info.z80_r);
-                        columns[0].label(&l_buf);
+                        let mut buf = String::with_capacity(16);
+                        let mut draw_reg = |col: &mut egui::Ui, label: &str, val: u8| {
+                            buf.clear();
+                            let _ = write!(&mut buf, "{}:  {:02X}", label, val);
+                            col.label(&buf);
+                        };
+                        let mut draw_reg16 = |col: &mut egui::Ui, label: &str, val: u16| {
+                            buf.clear();
+                            let _ = write!(&mut buf, "{}: {:04X}", label, val);
+                            col.label(&buf);
+                        };
+
+                        draw_reg(&mut columns[0], "A", debug_info.z80_a);
+                        draw_reg(&mut columns[1], "F", debug_info.z80_f);
+                        
+                        buf.clear();
+                        let _ = write!(&mut buf, "BC: {:02X}{:02X}", debug_info.z80_b, debug_info.z80_c);
+                        columns[0].label(&buf);
+
+                        buf.clear();
+                        let _ = write!(&mut buf, "DE: {:02X}{:02X}", debug_info.z80_d, debug_info.z80_e);
+                        columns[1].label(&buf);
+
+                        buf.clear();
+                        let _ = write!(&mut buf, "HL: {:02X}{:02X}", debug_info.z80_h, debug_info.z80_l);
+                        columns[0].label(&buf);
+
+                        draw_reg16(&mut columns[1], "IX", debug_info.z80_ix);
+                        draw_reg16(&mut columns[0], "IY", debug_info.z80_iy);
+                        draw_reg(&mut columns[1], "I", debug_info.z80_i);
+                        draw_reg(&mut columns[0], "R", debug_info.z80_r);
                     });
                     ui.separator();
                     self.label_fmt(ui, format_args!("IM: {}", debug_info.z80_im));
