@@ -193,7 +193,7 @@ impl Emulator {
             return;
         };
         let sram_path = path.with_extension("srm");
-        let Ok(mut file) = std::fs::File::open(&sram_path) else {
+        let Ok(file) = std::fs::File::open(&sram_path) else {
             return;
         };
 

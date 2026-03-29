@@ -361,7 +361,7 @@ impl Framework {
     fn on_hover_text_fmt(&mut self, response: &egui::Response, args: std::fmt::Arguments) {
         self.label_buffer.clear();
         let _ = self.label_buffer.write_fmt(args);
-        response.on_hover_text(&self.label_buffer);
+        response.clone().on_hover_text(&self.label_buffer);
     }
 
     pub fn pick_rom(&mut self) {
@@ -472,11 +472,12 @@ impl Framework {
     }
 
     pub fn prepare(&mut self, window: &winit::window::Window, debug_info: &DebugInfo) {
+        let ctx = self.egui_ctx.clone();
         let raw_input = self.egui_state.take_egui_input(window);
-        self.egui_ctx.begin_frame(raw_input);
+        ctx.begin_frame(raw_input);
 
         // Global shortcuts
-        let ctrl = self.egui_ctx.input(|i| i.modifiers.command);
+        let ctrl = ctx.input(|i| i.modifiers.command);
         if ctrl && self.egui_ctx.input(|i| i.key_pressed(egui::Key::O)) {
             self.gui_state.pick_rom_requested = true;
         }
@@ -513,7 +514,8 @@ impl Framework {
 
     fn render_top_menu_bar(&mut self, debug_info: &DebugInfo) {
         // Draw the GUI
-        egui::TopBottomPanel::top("menubar_container").show(&self.egui_ctx, |ui| {
+        let ctx = self.egui_ctx.clone();
+        egui::TopBottomPanel::top("menubar_container").show(&ctx, |ui| {
             egui::menu::bar(ui, |ui| {
                 ui.menu_button("File", |ui| {
                     if ui
@@ -633,9 +635,10 @@ impl Framework {
 
     fn render_about_window(&mut self) {
         if self.gui_state.show_about {
+            let ctx = self.egui_ctx.clone();
             egui::Window::new("About Genteel")
                 .open(&mut self.gui_state.show_about)
-                .show(&self.egui_ctx, |ui| {
+                .show(&ctx, |ui| {
                     ui.vertical_centered(|ui| {
                         ui.heading("Genteel");
                         ui.label(format!("Version: {}", genteel::VERSION));
@@ -673,9 +676,10 @@ impl Framework {
     fn render_performance_debug_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Performance & Debug") {
             let mut open = true;
+            let ctx = self.egui_ctx.clone();
             egui::Window::new("Performance & Debug")
                 .open(&mut open)
-                .show(&self.egui_ctx, |ui| {
+                .show(&ctx, |ui| {
                     let dt = self.egui_ctx.input(|i| i.stable_dt);
                     let fps = if dt > 0.0 { 1.0 / dt } else { 0.0 };
                     self.label_fmt(ui, format_args!("Frontend FPS: {:.1}", fps));
@@ -720,13 +724,14 @@ impl Framework {
                         ui.separator();
                         ui.heading("Connected Gamepads");
                         if let Some(gilrs) = &self.gilrs {
-                            let mut found = false;
-                            for (id, gamepad) in gilrs.gamepads() {
-                                self.label_fmt(ui, format_args!("{}: {}", id, gamepad.name()));
-                                found = true;
-                            }
-                            if !found {
+                            let gamepads: Vec<_> =
+                                gilrs.gamepads().map(|(id, g)| (id, g.name().to_string())).collect();
+                            if gamepads.is_empty() {
                                 ui.label("No gamepads connected");
+                            } else {
+                                for (id, name) in gamepads {
+                                    self.label_fmt(ui, format_args!("{}: {}", id, name));
+                                }
                             }
                         } else {
                             ui.label("Gamepad support disabled or failed to initialize");
@@ -742,9 +747,10 @@ impl Framework {
     fn render_settings_window(&mut self) {
         if self.gui_state.is_window_open("Settings") {
             let mut open = true;
+            let ctx = self.egui_ctx.clone();
             egui::Window::new("Settings")
                 .open(&mut open)
-                .show(&self.egui_ctx, |ui| {
+                .show(&ctx, |ui| {
                     ui.heading("Video");
                     if ui
                         .checkbox(&mut self.gui_state.integer_scaling, "Integer Pixel Scaling")
@@ -793,9 +799,10 @@ impl Framework {
     fn render_execution_control_window(&mut self) {
         if self.gui_state.is_window_open("Execution Control") {
             let mut open = true;
+            let ctx = self.egui_ctx.clone();
             egui::Window::new("Execution Control")
                 .open(&mut open)
-                .show(&self.egui_ctx, |ui| {
+                .show(&ctx, |ui| {
                     ui.horizontal(|ui| {
                         if self.gui_state.paused {
                             if ui.button("▶ Resume").clicked() {
@@ -823,9 +830,10 @@ impl Framework {
     fn render_m68k_status_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("M68k Status") {
             let mut open = true;
+            let ctx = self.egui_ctx.clone();
             egui::Window::new("M68k Status")
                 .open(&mut open)
-                .show(&self.egui_ctx, |ui| {
+                .show(&ctx, |ui| {
                     self.label_fmt(ui, format_args!("PC: {:06X}", debug_info.m68k_pc));
                     self.label_fmt(ui, format_args!("SR: {:04X}", debug_info.m68k_sr));
                     let sr = debug_info.m68k_sr;
@@ -872,9 +880,10 @@ impl Framework {
     fn render_z80_status_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Z80 Status") {
             let mut open = true;
+            let ctx = self.egui_ctx.clone();
             egui::Window::new("Z80 Status")
                 .open(&mut open)
-                .show(&self.egui_ctx, |ui| {
+                .show(&ctx, |ui| {
                     self.label_fmt(ui, format_args!("PC: {:04X}", debug_info.z80_pc));
                     self.label_fmt(ui, format_args!("SP: {:04X}", debug_info.z80_sp));
                     self.label_fmt(
@@ -902,19 +911,14 @@ impl Framework {
                     ui.separator();
                     ui.columns(2, |columns| {
                         let mut buf = String::with_capacity(16);
-                        let mut draw_reg = |col: &mut egui::Ui, label: &str, val: u8| {
-                            buf.clear();
-                            let _ = write!(&mut buf, "{}:  {:02X}", label, val);
-                            col.label(&buf);
-                        };
-                        let mut draw_reg16 = |col: &mut egui::Ui, label: &str, val: u16| {
-                            buf.clear();
-                            let _ = write!(&mut buf, "{}: {:04X}", label, val);
-                            col.label(&buf);
-                        };
+                        
+                        buf.clear();
+                        let _ = write!(&mut buf, "A:  {:02X}", debug_info.z80_a);
+                        columns[0].label(&buf);
 
-                        draw_reg(&mut columns[0], "A", debug_info.z80_a);
-                        draw_reg(&mut columns[1], "F", debug_info.z80_f);
+                        buf.clear();
+                        let _ = write!(&mut buf, "F:  {:02X}", debug_info.z80_f);
+                        columns[1].label(&buf);
                         
                         buf.clear();
                         let _ = write!(&mut buf, "BC: {:02X}{:02X}", debug_info.z80_b, debug_info.z80_c);
@@ -928,10 +932,21 @@ impl Framework {
                         let _ = write!(&mut buf, "HL: {:02X}{:02X}", debug_info.z80_h, debug_info.z80_l);
                         columns[0].label(&buf);
 
-                        draw_reg16(&mut columns[1], "IX", debug_info.z80_ix);
-                        draw_reg16(&mut columns[0], "IY", debug_info.z80_iy);
-                        draw_reg(&mut columns[1], "I", debug_info.z80_i);
-                        draw_reg(&mut columns[0], "R", debug_info.z80_r);
+                        buf.clear();
+                        let _ = write!(&mut buf, "IX: {:04X}", debug_info.z80_ix);
+                        columns[1].label(&buf);
+
+                        buf.clear();
+                        let _ = write!(&mut buf, "IY: {:04X}", debug_info.z80_iy);
+                        columns[0].label(&buf);
+
+                        buf.clear();
+                        let _ = write!(&mut buf, "I:  {:02X}", debug_info.z80_i);
+                        columns[1].label(&buf);
+
+                        buf.clear();
+                        let _ = write!(&mut buf, "R:  {:02X}", debug_info.z80_r);
+                        columns[0].label(&buf);
                     });
                     ui.separator();
                     self.label_fmt(ui, format_args!("IM: {}", debug_info.z80_im));
@@ -946,9 +961,10 @@ impl Framework {
     fn render_disassembly_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Disassembly") {
             let mut open = true;
+            let ctx = self.egui_ctx.clone();
             egui::Window::new("Disassembly")
                 .open(&mut open)
-                .show(&self.egui_ctx, |ui| {
+                .show(&ctx, |ui| {
                     ui.heading("M68k Disassembly");
                     egui::ScrollArea::vertical()
                         .id_source("m68k_disasm")
@@ -997,9 +1013,10 @@ impl Framework {
     fn render_palette_viewer_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Palette Viewer") {
             let mut open = true;
+            let ctx = self.egui_ctx.clone();
             egui::Window::new("Palette Viewer")
                 .open(&mut open)
-                .show(&self.egui_ctx, |ui| {
+                .show(&ctx, |ui| {
                     for palette in 0..4 {
                         ui.horizontal(|ui| {
                             self.label_fmt(ui, format_args!("Pal {}:", palette));
@@ -1038,9 +1055,10 @@ impl Framework {
     fn render_tile_viewer_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Tile Viewer") {
             let mut open = true;
+            let ctx = self.egui_ctx.clone();
             egui::Window::new("Tile Viewer")
                 .open(&mut open)
-                .show(&self.egui_ctx, |ui| {
+                .show(&ctx, |ui| {
                     // Render tiles to a buffer
                     let image = std::sync::Arc::make_mut(&mut self.tile_viewer_image);
                     for tile_idx in 0..2048 {
@@ -1087,9 +1105,10 @@ impl Framework {
     fn render_sprite_viewer_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Sprite Viewer") {
             let mut open = true;
+            let ctx = self.egui_ctx.clone();
             egui::Window::new("Sprite Viewer")
                 .open(&mut open)
-                .show(&self.egui_ctx, |ui| {
+                .show(&ctx, |ui| {
                     let sat_base = ((debug_info.vdp_registers[5] as usize) & 0x7F) << 9;
                     let h40 = (debug_info.vdp_registers[12] & 0x81) == 0x81;
                     let max_sprites = if h40 { 80 } else { 64 };
@@ -1144,9 +1163,10 @@ impl Framework {
     fn render_scroll_plane_viewer_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Scroll Plane Viewer") {
             let mut open = true;
+            let ctx = self.egui_ctx.clone();
             egui::Window::new("Scroll Plane Viewer")
                 .open(&mut open)
-                .show(&self.egui_ctx, |ui| {
+                .show(&ctx, |ui| {
                     let size_bits = debug_info.vdp_registers[crate::vdp::REG_PLANE_SIZE];
                     let (plane_w, plane_h) = crate::vdp::Vdp::decode_plane_size(size_bits);
 
@@ -1271,9 +1291,10 @@ impl Framework {
     fn render_vdp_memory_hex_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("VDP Memory Hex") {
             let mut open = true;
+            let ctx = self.egui_ctx.clone();
             egui::Window::new("VDP Memory Hex")
                 .open(&mut open)
-                .show(&self.egui_ctx, |ui| {
+                .show(&ctx, |ui| {
                     ui.collapsing("VRAM", |ui| {
                         egui::ScrollArea::vertical()
                             .id_source("vram_hex")
@@ -1367,9 +1388,10 @@ impl Framework {
     fn render_memory_viewer_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Memory Viewer") {
             let mut open = true;
+            let ctx = self.egui_ctx.clone();
             egui::Window::new("Memory Viewer")
                 .open(&mut open)
-                .show(&self.egui_ctx, |ui| {
+                .show(&ctx, |ui| {
                     ui.collapsing("Work RAM (M68k)", |ui| {
                         egui::ScrollArea::vertical()
                             .id_source("wram_hex")
@@ -1449,9 +1471,10 @@ impl Framework {
     fn render_sound_chip_visualizer_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Sound Chip Visualizer") {
             let mut open = true;
+            let ctx = self.egui_ctx.clone();
             egui::Window::new("Sound Chip Visualizer")
                 .open(&mut open)
-                .show(&self.egui_ctx, |ui| {
+                .show(&ctx, |ui| {
                     ui.collapsing("SN76489 PSG", |ui| {
                         for i in 0..3 {
                             ui.horizontal(|ui| {
@@ -1544,9 +1567,10 @@ impl Framework {
     fn render_audio_channel_waveforms_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Audio Channel Waveforms") {
             let mut open = true;
+            let ctx = self.egui_ctx.clone();
             egui::Window::new("Audio Channel Waveforms")
                 .open(&mut open)
-                .show(&self.egui_ctx, |ui| {
+                .show(&ctx, |ui| {
                     for ch in 0..10 {
                         let label = if ch < 6 {
                             format!("FM {}", ch + 1)
@@ -1587,9 +1611,10 @@ impl Framework {
     fn render_controller_viewer_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Controller Viewer") {
             let mut open = true;
+            let ctx = self.egui_ctx.clone();
             egui::Window::new("Controller Viewer")
                 .open(&mut open)
-                .show(&self.egui_ctx, |ui| {
+                .show(&ctx, |ui| {
                     for (i, (state, c_type)) in [
                         (debug_info.port1_state, debug_info.port1_type),
                         (debug_info.port2_state, debug_info.port2_type),
@@ -1657,9 +1682,10 @@ impl Framework {
     fn render_state_browser_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("State Browser") {
             let mut open = true;
+            let ctx = self.egui_ctx.clone();
             egui::Window::new("State Browser")
                 .open(&mut open)
-                .show(&self.egui_ctx, |ui| {
+                .show(&ctx, |ui| {
                     if let Some(path) = &debug_info.current_rom_path {
                         egui::Grid::new("state_browser_grid")
                             .striped(true)
