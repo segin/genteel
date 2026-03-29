@@ -4,8 +4,7 @@ mod tests {
         decode, AddressingMode, BitsInstruction, Instruction, ShiftCount, Size,
     };
     use crate::cpu::test_utils::create_test_cpu;
-    use crate::cpu::Cpu;
-    use crate::memory::{Memory, MemoryInterface};
+    use crate::memory::MemoryInterface;
 
     #[test]
     fn test_clr_predecrement_double_update_bug() {

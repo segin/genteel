@@ -335,8 +335,6 @@ mod tests {
     use super::*;
     use crate::cpu::flags;
     use crate::cpu::test_utils::create_test_cpu;
-    use crate::cpu::Cpu;
-    use crate::memory::Memory;
 
     #[test]
     fn test_exec_bra_short_forward() {
