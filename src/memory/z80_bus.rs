@@ -12,7 +12,7 @@ use super::{byte_utils, IoInterface, MemoryInterface, SharedBus};
 use serde::{Deserialize, Serialize};
 
 /// Z80 Bus adapter that routes memory accesses to Genesis components
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Z80Bus {
     /// Reference to the main Genesis bus.
     bus: SharedBus,
@@ -22,14 +22,6 @@ impl Z80Bus {
     /// Create a new Z80 bus adapter
     pub fn new(bus: SharedBus) -> Self {
         Self { bus }
-    }
-}
-
-impl Default for Z80Bus {
-    fn default() -> Self {
-        Self {
-            bus: SharedBus::default(),
-        }
     }
 }
 

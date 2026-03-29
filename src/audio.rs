@@ -107,11 +107,13 @@ impl AudioBuffer {
 
         if samples_to_read > 0 {
             let first_chunk_len = std::cmp::min(samples_to_read, self.buffer.len() - self.read_pos);
-            dest[..first_chunk_len].copy_from_slice(&self.buffer[self.read_pos..self.read_pos + first_chunk_len]);
+            dest[..first_chunk_len]
+                .copy_from_slice(&self.buffer[self.read_pos..self.read_pos + first_chunk_len]);
 
             let second_chunk_len = samples_to_read - first_chunk_len;
             if second_chunk_len > 0 {
-                dest[first_chunk_len..samples_to_read].copy_from_slice(&self.buffer[..second_chunk_len]);
+                dest[first_chunk_len..samples_to_read]
+                    .copy_from_slice(&self.buffer[..second_chunk_len]);
             }
 
             self.read_pos = (self.read_pos + samples_to_read) % self.buffer.len();

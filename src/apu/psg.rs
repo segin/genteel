@@ -220,8 +220,8 @@ impl Psg {
 
     pub fn get_channel_samples(&self) -> [i16; 4] {
         let mut s = [0i16; 4];
-        for i in 0..3 {
-            s[i] = self.tones[i].last_amp as i16;
+        for (i, item) in s.iter_mut().enumerate().take(3) {
+            *item = self.tones[i].last_amp as i16;
         }
         s[3] = self.noise.last_amp as i16;
         s
@@ -251,3 +251,9 @@ impl Psg {
 const VOLUME_TABLE: [i16; 16] = [
     4095, 3253, 2584, 2052, 1630, 1295, 1028, 817, 649, 515, 409, 325, 258, 205, 163, 0,
 ];
+
+impl Default for Psg {
+    fn default() -> Self {
+        Self::new()
+    }
+}

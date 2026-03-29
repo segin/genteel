@@ -312,7 +312,10 @@ impl Framework {
             renderer,
             gui_state,
             tile_texture: None,
-            tile_viewer_image: std::sync::Arc::new(egui::ColorImage::new([128, 1024], egui::Color32::TRANSPARENT)),
+            tile_viewer_image: std::sync::Arc::new(egui::ColorImage::new(
+                [128, 1024],
+                egui::Color32::TRANSPARENT,
+            )),
             plane_a_texture: None,
             plane_b_texture: None,
             pending_rom_path: Arc::new(Mutex::new(None)),
@@ -913,10 +916,12 @@ impl Framework {
                                 label_buffer.clear();
                                 let is_current = *addr == debug_info.z80_pc;
                                 if is_current {
-                                    let _ = write!(&mut label_buffer, "-> {:04X}: {:02X}", addr, byte);
+                                    let _ =
+                                        write!(&mut label_buffer, "-> {:04X}: {:02X}", addr, byte);
                                     ui.colored_label(egui::Color32::YELLOW, label_buffer.as_str());
                                 } else {
-                                    let _ = write!(&mut label_buffer, "   {:04X}: {:02X}", addr, byte);
+                                    let _ =
+                                        write!(&mut label_buffer, "   {:04X}: {:02X}", addr, byte);
                                     ui.label(label_buffer.as_str());
                                 }
                             }

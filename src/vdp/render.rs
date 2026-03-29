@@ -287,9 +287,7 @@ impl Vdp {
                 } else if !px.b_trans {
                     top_col = px.b_col;
                 }
-                if state > 0 {
-                    state -= 1;
-                }
+                state = state.saturating_sub(1);
             } else if (px.s_col & 0x0F) == 0x0E {
                 state = 1;
             }
@@ -390,7 +388,7 @@ fn render_sprite_scanline(
                 };
 
                 if color_idx != 0 {
-                    let addr = ((attr.palette as u8) << 4) | (color_idx as u8);
+                    let addr = (attr.palette << 4) | color_idx;
                     let pri_mask = if attr.priority { 0x80 } else { 0x00 };
                     // Only write if not already occupied by a higher-priority sprite (in this case we draw in reverse order, so we overwrite, wait actually sprite 0 is highest priority.
                     // If we draw in reverse order (sprites.iter().rev()), the highest priority sprite is drawn last and overwrites.
@@ -418,7 +416,7 @@ fn render_sprite_scanline(
                 };
 
                 if color_idx != 0 {
-                    let addr = ((attr.palette as u8) << 4) | (color_idx as u8);
+                    let addr = (attr.palette << 4) | color_idx;
                     let pri_mask = if attr.priority { 0x80 } else { 0x00 };
                     if let Some(pixel) = line_buf.get_mut(screen_x as usize) {
                         *pixel = addr | pri_mask;
@@ -826,8 +824,8 @@ impl RenderOps for Vdp {
 
     fn get_cram_raw(&self) -> [u16; 64] {
         let mut raw = [0u16; 64];
-        for i in 0..64 {
-            raw[i] = ((self.cram[i * 2] as u16) << 8) | (self.cram[i * 2 + 1] as u16);
+        for (i, item) in raw.iter_mut().enumerate() {
+            *item = ((self.cram[i * 2] as u16) << 8) | (self.cram[i * 2 + 1] as u16);
         }
         raw
     }

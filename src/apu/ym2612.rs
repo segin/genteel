@@ -346,8 +346,8 @@ impl FmChannel {
     fn clock(&mut self, regs: &[u8; 256], ch_off: usize, counter: u16) -> i16 {
         let op_offsets: [usize; 4] = [0, 8, 4, 12];
         let kc = compute_key_code(self.fnum as u32, self.block);
-        for i in 0..4 {
-            let off = op_offsets[i] + ch_off;
+        for (i, item) in op_offsets.iter().enumerate() {
+            let off = *item + ch_off;
             self.operators[i].clock_phase(
                 self.fnum as u32,
                 self.block,
@@ -433,6 +433,12 @@ pub struct Ym2612 {
     pub blip_r: BlipBuf,
     last_left: i32,
     last_right: i32,
+}
+
+impl Default for Ym2612 {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Ym2612 {

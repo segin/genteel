@@ -846,11 +846,7 @@ fn make_shift_instruction(
     }
 }
 
-fn decode_memory_shift(
-    opcode: u16,
-    op_type: u8,
-    direction: bool,
-) -> Option<Instruction> {
+fn decode_memory_shift(opcode: u16, op_type: u8, direction: bool) -> Option<Instruction> {
     let ea_mode = ((opcode >> 3) & 0x07) as u8;
     let ea_reg = (opcode & 0x07) as u8;
     if let Some(dst) = AddressingMode::from_mode_reg(ea_mode, ea_reg) {
@@ -861,7 +857,11 @@ fn decode_memory_shift(
             _ => {
                 let count = ShiftCount::Immediate(1);
                 Some(make_shift_instruction(
-                    op_type, direction, Size::Word, dst, count,
+                    op_type,
+                    direction,
+                    Size::Word,
+                    dst,
+                    count,
                 ))
             }
         }
@@ -1468,14 +1468,18 @@ mod tests {
         let dst_asr_abs_short = AddressingMode::AbsoluteShort;
         assert_eq!(
             decode(0xE0F8),
-            Instruction::Bits(BitsInstruction::AsrM { dst: dst_asr_abs_short })
+            Instruction::Bits(BitsInstruction::AsrM {
+                dst: dst_asr_abs_short
+            })
         );
 
         // ASL.W (xxx).L -> 1110 000 1 11 111 001 -> 0xE1F9
         let dst_asl_abs_long = AddressingMode::AbsoluteLong;
         assert_eq!(
             decode(0xE1F9),
-            Instruction::Bits(BitsInstruction::AslM { dst: dst_asl_abs_long })
+            Instruction::Bits(BitsInstruction::AslM {
+                dst: dst_asl_abs_long
+            })
         );
     }
 }

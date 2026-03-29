@@ -527,8 +527,7 @@ fn exhaustive_8bit_arithmetic() {
         cpu.a = a;
         cpu.b = b;
         cpu.f = rng.next_u8();
-        cpu.memory.write_byte(
-0 as u32, 0x80);
+        cpu.memory.write_byte(0 as u32, 0x80);
         cpu.pc = 0;
         cpu.step();
         let (exp_res, exp_f) = ref_add(a, b);
@@ -544,8 +543,7 @@ fn exhaustive_8bit_arithmetic() {
         cpu.a = a;
         cpu.b = b;
         cpu.f = f_init;
-        cpu.memory.write_byte(
-0 as u32, 0x88);
+        cpu.memory.write_byte(0 as u32, 0x88);
         cpu.pc = 0;
         cpu.step();
         let (exp_res, exp_f) = ref_adc(a, b, (f_init & flags::CARRY) != 0);
@@ -560,8 +558,7 @@ fn exhaustive_8bit_arithmetic() {
         cpu.a = a;
         cpu.b = b;
         cpu.f = rng.next_u8();
-        cpu.memory.write_byte(
-0 as u32, 0x90);
+        cpu.memory.write_byte(0 as u32, 0x90);
         cpu.pc = 0;
         cpu.step();
         let (exp_res, exp_f) = ref_sub(a, b);
@@ -577,8 +574,7 @@ fn exhaustive_8bit_arithmetic() {
         cpu.a = a;
         cpu.b = b;
         cpu.f = f_init;
-        cpu.memory.write_byte(
-0 as u32, 0x98);
+        cpu.memory.write_byte(0 as u32, 0x98);
         cpu.pc = 0;
         cpu.step();
         let (exp_res, exp_f) = ref_sbc(a, b, (f_init & flags::CARRY) != 0);
@@ -598,8 +594,7 @@ fn exhaustive_logic() {
         cpu.a = a;
         cpu.b = b;
         cpu.f = rng.next_u8();
-        cpu.memory.write_byte(
-0 as u32, 0xA0);
+        cpu.memory.write_byte(0 as u32, 0xA0);
         cpu.pc = 0;
         cpu.step();
         let (exp_res, exp_f) = ref_logic(0, a, b);
@@ -613,8 +608,7 @@ fn exhaustive_logic() {
         cpu.a = a;
         cpu.b = b;
         cpu.f = rng.next_u8();
-        cpu.memory.write_byte(
-0 as u32, 0xA8);
+        cpu.memory.write_byte(0 as u32, 0xA8);
         cpu.pc = 0;
         cpu.step();
         let (exp_res, exp_f) = ref_logic(1, a, b);
@@ -628,8 +622,7 @@ fn exhaustive_logic() {
         cpu.a = a;
         cpu.b = b;
         cpu.f = rng.next_u8();
-        cpu.memory.write_byte(
-0 as u32, 0xB0);
+        cpu.memory.write_byte(0 as u32, 0xB0);
         cpu.pc = 0;
         cpu.step();
         let (exp_res, exp_f) = ref_logic(2, a, b);
@@ -648,8 +641,7 @@ fn exhaustive_inc_dec() {
         let f_init = rng.next_u8();
         cpu.b = b;
         cpu.f = f_init;
-        cpu.memory.write_byte(
-0 as u32, 0x04);
+        cpu.memory.write_byte(0 as u32, 0x04);
         cpu.pc = 0;
         cpu.step();
         let (exp_res, exp_f) = ref_inc(b, f_init);
@@ -662,8 +654,7 @@ fn exhaustive_inc_dec() {
         let f_init = rng.next_u8();
         cpu.b = b;
         cpu.f = f_init;
-        cpu.memory.write_byte(
-0 as u32, 0x05);
+        cpu.memory.write_byte(0 as u32, 0x05);
         cpu.pc = 0;
         cpu.step();
         let (exp_res, exp_f) = ref_dec(b, f_init);
@@ -682,10 +673,8 @@ fn exhaustive_neg() {
         // NEG ignores input flags (it's 0 - A)
         cpu.f = 0;
 
-        cpu.memory.write_byte(
-0 as u32, 0xED);
-        cpu.memory.write_byte(
-1 as u32, 0x44);
+        cpu.memory.write_byte(0 as u32, 0xED);
+        cpu.memory.write_byte(1 as u32, 0x44);
         cpu.pc = 0;
 
         cpu.step();
@@ -710,8 +699,7 @@ fn exhaustive_16bit_arithmetic() {
         cpu.set_hl(hl);
         cpu.set_bc(bc);
         cpu.f = f_init;
-        cpu.memory.write_byte(
-0 as u32, 0x09);
+        cpu.memory.write_byte(0 as u32, 0x09);
         cpu.pc = 0;
         cpu.step();
         let (exp_res, exp_f) = ref_add16(hl, bc, f_init);
@@ -726,10 +714,8 @@ fn exhaustive_16bit_arithmetic() {
         cpu.set_hl(hl);
         cpu.set_bc(bc);
         cpu.f = f_init;
-        cpu.memory.write_byte(
-0 as u32, 0xED);
-        cpu.memory.write_byte(
-1 as u32, 0x4A);
+        cpu.memory.write_byte(0 as u32, 0xED);
+        cpu.memory.write_byte(1 as u32, 0x4A);
         cpu.pc = 0;
         cpu.step();
         let (exp_res, exp_f) = ref_adc16(hl, bc, f_init);
@@ -744,10 +730,8 @@ fn exhaustive_16bit_arithmetic() {
         cpu.set_hl(hl);
         cpu.set_bc(bc);
         cpu.f = f_init;
-        cpu.memory.write_byte(
-0 as u32, 0xED);
-        cpu.memory.write_byte(
-1 as u32, 0x42);
+        cpu.memory.write_byte(0 as u32, 0xED);
+        cpu.memory.write_byte(1 as u32, 0x42);
         cpu.pc = 0;
         cpu.step();
         let (exp_res, exp_f) = ref_sbc16(hl, bc, f_init);
@@ -769,10 +753,8 @@ fn exhaustive_shifts() {
             let f_init = rng.next_u8();
             cpu.b = val;
             cpu.f = f_init;
-            cpu.memory.write_byte(
-0 as u32, 0xCB);
-            cpu.memory.write_byte(
-1 as u32, opcode_byte);
+            cpu.memory.write_byte(0 as u32, 0xCB);
+            cpu.memory.write_byte(1 as u32, opcode_byte);
             cpu.pc = 0;
             cpu.step();
             let (exp_res, exp_f) = ref_shift(t, val, f_init);
@@ -805,10 +787,8 @@ fn exhaustive_bit_register() {
                 let f_init = rng.next_u8();
                 cpu.f = f_init;
                 let opcode = 0x40 | (b << 3) | r;
-                cpu.memory.write_byte(
-0 as u32, 0xCB);
-                cpu.memory.write_byte(
-1 as u32, opcode);
+                cpu.memory.write_byte(0 as u32, 0xCB);
+                cpu.memory.write_byte(1 as u32, opcode);
                 cpu.pc = 0;
                 cpu.step();
                 let exp_f = ref_bit(b, val, f_init);

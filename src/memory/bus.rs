@@ -251,6 +251,7 @@ impl Bus {
     }
 
     fn read_sram(&self, addr: u32) -> u8 {
+        #[allow(clippy::manual_is_multiple_of)]
         if addr % 2 == 0 {
             // SRAM is usually on even bytes only
             let sram_addr = ((addr - self.sram_start) / 2) as usize;
@@ -265,6 +266,7 @@ impl Bus {
     }
 
     fn write_sram(&mut self, addr: u32, value: u8) {
+        #[allow(clippy::manual_is_multiple_of)]
         if addr % 2 == 0 {
             let sram_addr = ((addr - self.sram_start) / 2) as usize;
             if sram_addr < self.sram.len() {

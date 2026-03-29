@@ -386,9 +386,9 @@ fn daa_bcd_99_plus_1() {
     c.a = 0x99;
     c.b = 0x01;
     c.step();
- // ADD
+    // ADD
     c.step();
- // DAA
+    // DAA
     assert_eq!(c.a, 0x00);
     assert!(c.get_flag(flags::CARRY)); // Overflow to 100
 }

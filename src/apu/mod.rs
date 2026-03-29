@@ -88,11 +88,11 @@ impl Apu {
             // Update visualization
             let fm_samples = self.fm.generate_channel_samples();
             let psg_samples = self.psg.get_channel_samples();
-            for i in 0..6 {
-                self.channel_buffers[i][self.buffer_idx] = fm_samples[i];
+            for (i, item) in fm_samples.iter().enumerate() {
+                self.channel_buffers[i][self.buffer_idx] = *item;
             }
-            for i in 0..4 {
-                self.channel_buffers[6 + i][self.buffer_idx] = psg_samples[i];
+            for (i, item) in psg_samples.iter().enumerate() {
+                self.channel_buffers[6 + i][self.buffer_idx] = *item;
             }
             self.buffer_idx = (self.buffer_idx + 1) % 128;
 
