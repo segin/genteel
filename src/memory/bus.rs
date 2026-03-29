@@ -30,6 +30,9 @@ use crate::vdp::Vdp;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+/// Maximum SRAM size in bytes (2MB) to prevent OOM/DoS
+const MAX_SRAM_SIZE: usize = 2 * 1024 * 1024;
+
 /// Sega Genesis Memory Bus
 ///
 /// Routes memory accesses to the appropriate component based on address.
@@ -141,9 +144,14 @@ impl Bus {
             } else {
                 0
             };
-            if size > 0 {
+            if size > 0 && size <= MAX_SRAM_SIZE {
                 self.sram = vec![0; size].into_boxed_slice();
                 self.sram_enabled = true;
+            } else if size > MAX_SRAM_SIZE {
+                eprintln!(
+                    "ROM header specified SRAM size too large: {} bytes (max {})",
+                    size, MAX_SRAM_SIZE
+                );
             }
         } else {
             // Default SRAM if not specified but needed by some games
