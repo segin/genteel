@@ -28,6 +28,9 @@ pub const SLOT_EXTS: [&str; 10] = ["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7
 /// Maximum save state size in bytes (25MB) to prevent OOM
 const MAX_STATE_SIZE: u64 = 25 * 1024 * 1024;
 
+/// Maximum SRAM size in bytes (2MB) to prevent OOM/DoS
+const MAX_SRAM_SIZE: u64 = 2 * 1024 * 1024;
+
 use crate::vdp::RenderOps;
 use apu::Apu;
 use cpu::Cpu;
@@ -190,15 +193,38 @@ impl Emulator {
             return;
         };
         let sram_path = path.with_extension("srm");
-        if let Ok(data) = std::fs::read(&sram_path) {
-            println!("Loading SRAM from {:?}", sram_path);
-            let mut bus = self.bus.borrow_mut();
-            if data.len() == bus.sram.len() {
-                bus.sram.copy_from_slice(&data);
-            } else {
-                let len = data.len().min(bus.sram.len());
-                bus.sram[..len].copy_from_slice(&data[..len]);
+        let Ok(mut file) = std::fs::File::open(&sram_path) else {
+            return;
+        };
+
+        // 1. Check metadata size
+        if let Ok(metadata) = file.metadata() {
+            if metadata.len() > MAX_SRAM_SIZE {
+                eprintln!("SRAM file too large: {} bytes", metadata.len());
+                return;
             }
+        }
+
+        // 2. Read with limit to prevent OOM
+        use std::io::Read;
+        let mut data = Vec::new();
+        if let Err(e) = file.take(MAX_SRAM_SIZE + 1).read_to_end(&mut data) {
+            eprintln!("Failed to read SRAM: {}", e);
+            return;
+        }
+
+        if data.len() as u64 > MAX_SRAM_SIZE {
+            eprintln!("SRAM exceeds size limit");
+            return;
+        }
+
+        println!("Loading SRAM from {:?}", sram_path);
+        let mut bus = self.bus.borrow_mut();
+        if data.len() == bus.sram.len() {
+            bus.sram.copy_from_slice(&data);
+        } else {
+            let len = data.len().min(bus.sram.len());
+            bus.sram[..len].copy_from_slice(&data[..len]);
         }
     }
 
@@ -1718,6 +1744,34 @@ mod tests {
                 sanitized_path
             );
         }
+    }
+
+    #[test]
+    fn test_large_sram_prevention() {
+        let path = std::path::PathBuf::from("test_large_sram.bin");
+        let srm_path = path.with_extension("srm");
+        // Create a file larger than MAX_SRAM_SIZE (2MB + 1 byte)
+        let mut file = std::fs::File::create(&srm_path).unwrap();
+        let chunk = vec![0u8; 1024 * 1024]; // 1MB chunk
+        for _ in 0..2 {
+            std::io::Write::write_all(&mut file, &chunk).unwrap();
+        }
+        std::io::Write::write_all(&mut file, &[0u8]).unwrap(); // last byte
+        drop(file);
+
+        let mut emulator = Emulator::new();
+        emulator.current_rom_path = Some(path.clone());
+
+        let initial_sram_len = emulator.bus.borrow().sram.len();
+
+        // Attempt to load - should fail/print warning and not change sram contents or crash
+        emulator.load_sram();
+
+        // SRAM size should not have changed to the large size
+        assert_eq!(emulator.bus.borrow().sram.len(), initial_sram_len);
+
+        // Cleanup
+        let _ = std::fs::remove_file(srm_path);
     }
 
     #[test]
