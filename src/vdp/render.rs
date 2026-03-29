@@ -97,6 +97,7 @@ pub struct TileRenderParams {
     pub plane_w_mask: usize,
     pub h_scroll: u16,
     pub fetch_line: u16,
+    pub scanline_width: u16,
 }
 
 pub trait RenderOps {
@@ -494,32 +495,66 @@ impl RenderOps for Vdp {
         };
 
         let screen_width = self.screen_width();
+        let h_scroll = self.get_h_scroll(is_plane_a, fetch_line);
+        let h40_mode = self.h40_mode();
 
         let mut screen_x: u16 = 0;
 
-        while screen_x < screen_width {
-            // Fetch H-scroll for every tile column to allow mid-line changes
-            let h_scroll = self.get_h_scroll(is_plane_a, fetch_line);
+        if is_plane_a {
+            let h_pos = self.registers[REG_WINDOW_H_POS];
+            let v_pos = self.registers[REG_WINDOW_V_POS];
+            let win_h_point = (h_pos as u16 & 0x1F) * 16;
+            let v_point = (v_pos as u16 & 0x1F) * 8;
+            let win_h_dir = (h_pos & 0x80) != 0;
+            let v_dir = (v_pos & 0x80) != 0;
+            let win_in_v = if v_dir { fetch_line >= v_point } else { fetch_line < v_point };
+            let win_addr = self.window_address();
+            let win_w = if h40_mode { 64 } else { 32 };
 
-            let (tile_base, tile_h_scroll, use_v_scroll, tile_w) =
-                if is_plane_a && self.is_window_area(screen_x, fetch_line) {
-                    let win_w = if self.h40_mode() { 64 } else { 32 };
-                    (self.window_address(), 0, false, win_w)
-                } else {
-                    (name_table_base, h_scroll, true, plane_w)
-                };
-
-            let tile_params = TileRenderParams {
-                is_plane_a,
-                enable_v_scroll: use_v_scroll,
-                name_table_base: tile_base,
-                plane_w: tile_w,
+            let win_params = TileRenderParams {
+                is_plane_a: true,
+                enable_v_scroll: false,
+                name_table_base: win_addr,
+                plane_w: win_w,
                 plane_h,
-                plane_w_mask: tile_w - 1,
-                h_scroll: tile_h_scroll,
+                plane_w_mask: win_w - 1,
+                h_scroll: 0,
                 fetch_line,
+                scanline_width: screen_width,
             };
-            self.render_tile(&tile_params, &mut screen_x, line_buf);
+            let plane_params = TileRenderParams {
+                is_plane_a: true,
+                enable_v_scroll: true,
+                name_table_base,
+                plane_w,
+                plane_h,
+                plane_w_mask: plane_w - 1,
+                h_scroll,
+                fetch_line,
+                scanline_width: screen_width,
+            };
+
+            while screen_x < screen_width {
+                let in_h = if win_h_dir { screen_x >= win_h_point } else { screen_x < win_h_point };
+                let params = if in_h || win_in_v { &win_params } else { &plane_params };
+                self.render_tile(params, &mut screen_x, line_buf);
+            }
+        } else {
+            // Plane B never has a window
+            let tile_params = TileRenderParams {
+                is_plane_a: false,
+                enable_v_scroll: true,
+                name_table_base,
+                plane_w,
+                plane_h,
+                plane_w_mask: plane_w - 1,
+                h_scroll,
+                fetch_line,
+                scanline_width: screen_width,
+            };
+            while screen_x < screen_width {
+                self.render_tile(&tile_params, &mut screen_x, line_buf);
+            }
         }
     }
 
@@ -529,15 +564,16 @@ impl RenderOps for Vdp {
         screen_x: &mut u16,
         line_buf: &mut [u8; 320],
     ) {
+        let current_x = *screen_x;
         // Horizontal position in plane
-        let scrolled_h = (*screen_x).wrapping_sub(params.h_scroll);
+        let scrolled_h = current_x.wrapping_sub(params.h_scroll);
         let pixel_h = scrolled_h & 0x07;
         let tile_h = ((scrolled_h >> 3) as usize) & params.plane_w_mask;
 
         // Fetch V-scroll for this specific column (per-column VS support)
         // If not using scroll (e.g. Window plane), V-scroll is 0.
         let v_scroll = if params.enable_v_scroll {
-            self.get_v_scroll(params.is_plane_a, (*screen_x >> 3) as usize)
+            self.get_v_scroll(params.is_plane_a, (current_x >> 3) as usize)
         } else {
             0
         };
@@ -548,24 +584,24 @@ impl RenderOps for Vdp {
         let pixel_v = scrolled_v % 8;
 
         let pixels_left_in_tile = 8 - pixel_h;
-        let pixels_to_process = std::cmp::min(pixels_left_in_tile, self.screen_width() - *screen_x);
+        let pixels_to_process = std::cmp::min(pixels_left_in_tile, params.scanline_width - current_x);
 
         let entry = self.fetch_nametable_entry(params.name_table_base, tile_v, tile_h, params.plane_w);
 
         if pixels_to_process == 8 && pixel_h == 0 {
             // Fast path for full aligned tile
-            self.draw_full_tile_row(entry, pixel_v, *screen_x as usize, line_buf);
+            self.draw_full_tile_row(entry, pixel_v, current_x as usize, line_buf);
         } else {
             self.draw_partial_tile_row(
                 entry,
                 pixel_v,
                 pixel_h,
                 pixels_to_process,
-                *screen_x as usize,
+                current_x as usize,
                 line_buf,
             );
         }
-        *screen_x += pixels_to_process;
+        *screen_x = current_x + pixels_to_process;
     }
 
     fn get_active_sprites(&self, line: u16, sprites: &mut [SpriteAttributes]) -> usize {
