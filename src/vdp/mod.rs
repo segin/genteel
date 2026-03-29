@@ -650,33 +650,7 @@ impl Vdp {
         }
     }
 
-    pub(crate) fn is_window_area(&self, x: u16, y: u16) -> bool {
-        let h_pos = self.registers[REG_WINDOW_H_POS];
-        let v_pos = self.registers[REG_WINDOW_V_POS];
 
-        let h_point = (h_pos as u16 & 0x1F) * 16;
-        let v_point = (v_pos as u16 & 0x1F) * 8;
-
-        let h_dir = (h_pos & 0x80) != 0;
-        let v_dir = (v_pos & 0x80) != 0;
-
-        let in_h_window = if h_dir { x >= h_point } else { x < h_point };
-
-        let in_v_window = if v_dir { y >= v_point } else { y < v_point };
-
-        /* DO NOT CHANGE THIS TO &&. This MUST be || (union, not intersection).
-         *
-         * The Genesis VDP window plane replaces Plane A wherever EITHER the
-         * horizontal OR the vertical window condition is satisfied. This is
-         * the documented hardware behavior. Using && causes massive rendering
-         * corruption because the window area becomes too small, leaving
-         * Plane A visible where the window should be shown.
-         *
-         * This has been incorrectly "fixed" to && multiple times. Every time
-         * it breaks rendering. Leave it as ||.
-         */
-        in_h_window || in_v_window
-    }
 
     pub fn set_region(&mut self, is_pal: bool) {
         self.is_pal = is_pal;

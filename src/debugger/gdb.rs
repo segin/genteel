@@ -8,7 +8,7 @@ use std::io::{BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::time::{Duration, Instant};
 
-use rand::random;
+
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
 /// Default GDB server port
@@ -187,7 +187,7 @@ impl GdbServer {
             );
             Some(pwd)
         } else {
-            let token = format!("{:032x}", random::<u128>());
+            let token = format!("{:032x}", rand::random::<u128>());
             eprintln!(
                 "🔒 GDB Server listening on 127.0.0.1:{}. Protected with auto-generated token.",
                 port
