@@ -64,7 +64,7 @@ impl Apu {
 
     pub fn tick_cycles(&mut self, m68k_cycles: u32) {
         self.fm.step(m68k_cycles);
-        self.psg.step_cycles(m68k_cycles);
+        self.psg.step_m68k_cycles(m68k_cycles);
     }
 
     /// Attempts to generate a mixed audio sample pair.
@@ -88,11 +88,11 @@ impl Apu {
     pub fn update_visualization(&mut self) {
         let fm_samples = self.fm.generate_channel_samples();
         let psg_samples = self.psg.get_channel_samples();
-        for i in 0..6 {
-            self.channel_buffers[i][self.buffer_idx] = fm_samples[i];
+        for (i, sample) in fm_samples.iter().enumerate() {
+            self.channel_buffers[i][self.buffer_idx] = *sample;
         }
-        for i in 0..4 {
-            self.channel_buffers[6 + i][self.buffer_idx] = psg_samples[i];
+        for (i, sample) in psg_samples.iter().enumerate() {
+            self.channel_buffers[6 + i][self.buffer_idx] = *sample;
         }
         self.buffer_idx = (self.buffer_idx + 1) % 128;
     }
@@ -288,8 +288,14 @@ mod tests {
         apu.tick_cycles(24);
 
         // Assert DAC output is observable in the blip buffer
-        assert!(apu.fm.blip_l.read_instant() > 0, "Left audio should be positive due to DAC");
-        assert_eq!(apu.fm.blip_r.read_instant(), 0, "Right audio should be zero due to panning");
+        assert!(
+            apu.fm.blip_l.read_instant() > 0,
+            "Left audio should be positive due to DAC"
+        );
+        assert_eq!(
+            apu.fm.blip_r.read_instant(),
+            0,
+            "Right audio should be zero due to panning"
+        );
     }
 }
-

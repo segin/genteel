@@ -14,8 +14,7 @@ fn main() {
             SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
 
         for i in 0..10000 {
-            zip.start_file(format!("dummy_{}.txt", i), options.clone())
-                .unwrap();
+            zip.start_file(format!("dummy_{}.txt", i), options).unwrap();
             zip.write_all(b"Hello").unwrap();
         }
         zip.start_file("game.md", options).unwrap();

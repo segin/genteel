@@ -314,9 +314,18 @@ impl Framework {
             renderer,
             gui_state,
             tile_texture: None,
-            tile_viewer_image: std::sync::Arc::new(egui::ColorImage::new([128, 1024], egui::Color32::TRANSPARENT)),
-            plane_a_viewer_image: std::sync::Arc::new(egui::ColorImage::new([0, 0], egui::Color32::TRANSPARENT)),
-            plane_b_viewer_image: std::sync::Arc::new(egui::ColorImage::new([0, 0], egui::Color32::TRANSPARENT)),
+            tile_viewer_image: std::sync::Arc::new(egui::ColorImage::new(
+                [128, 1024],
+                egui::Color32::TRANSPARENT,
+            )),
+            plane_a_viewer_image: std::sync::Arc::new(egui::ColorImage::new(
+                [0, 0],
+                egui::Color32::TRANSPARENT,
+            )),
+            plane_b_viewer_image: std::sync::Arc::new(egui::ColorImage::new(
+                [0, 0],
+                egui::Color32::TRANSPARENT,
+            )),
             plane_a_texture: None,
             plane_b_texture: None,
             pending_rom_path: Arc::new(Mutex::new(None)),
@@ -703,7 +712,10 @@ impl Framework {
                             }
                         ),
                     );
-                    self.label_fmt(ui, format_args!("VDP Status: {:04X}", debug_info.vdp_status));
+                    self.label_fmt(
+                        ui,
+                        format_args!("VDP Status: {:04X}", debug_info.vdp_status),
+                    );
                     self.label_fmt(
                         ui,
                         format_args!("BG Color Index: {}", debug_info.bg_color_index),
@@ -724,8 +736,10 @@ impl Framework {
                         ui.separator();
                         ui.heading("Connected Gamepads");
                         if let Some(gilrs) = &self.gilrs {
-                            let gamepads: Vec<_> =
-                                gilrs.gamepads().map(|(id, g)| (id, g.name().to_string())).collect();
+                            let gamepads: Vec<_> = gilrs
+                                .gamepads()
+                                .map(|(id, g)| (id, g.name().to_string()))
+                                .collect();
                             if gamepads.is_empty() {
                                 ui.label("No gamepads connected");
                             } else {
@@ -911,7 +925,7 @@ impl Framework {
                     ui.separator();
                     ui.columns(2, |columns| {
                         let mut buf = String::with_capacity(16);
-                        
+
                         buf.clear();
                         let _ = write!(&mut buf, "A:  {:02X}", debug_info.z80_a);
                         columns[0].label(&buf);
@@ -919,17 +933,29 @@ impl Framework {
                         buf.clear();
                         let _ = write!(&mut buf, "F:  {:02X}", debug_info.z80_f);
                         columns[1].label(&buf);
-                        
+
                         buf.clear();
-                        let _ = write!(&mut buf, "BC: {:02X}{:02X}", debug_info.z80_b, debug_info.z80_c);
+                        let _ = write!(
+                            &mut buf,
+                            "BC: {:02X}{:02X}",
+                            debug_info.z80_b, debug_info.z80_c
+                        );
                         columns[0].label(&buf);
 
                         buf.clear();
-                        let _ = write!(&mut buf, "DE: {:02X}{:02X}", debug_info.z80_d, debug_info.z80_e);
+                        let _ = write!(
+                            &mut buf,
+                            "DE: {:02X}{:02X}",
+                            debug_info.z80_d, debug_info.z80_e
+                        );
                         columns[1].label(&buf);
 
                         buf.clear();
-                        let _ = write!(&mut buf, "HL: {:02X}{:02X}", debug_info.z80_h, debug_info.z80_l);
+                        let _ = write!(
+                            &mut buf,
+                            "HL: {:02X}{:02X}",
+                            debug_info.z80_h, debug_info.z80_l
+                        );
                         columns[0].label(&buf);
 
                         buf.clear();
@@ -978,7 +1004,10 @@ impl Framework {
                                         format_args!("-> {:06X}: {:?}", addr, instr),
                                     );
                                 } else {
-                                    self.label_fmt(ui, format_args!("   {:06X}: {:?}", addr, instr));
+                                    self.label_fmt(
+                                        ui,
+                                        format_args!("   {:06X}: {:?}", addr, instr),
+                                    );
                                 }
                             }
                         });
@@ -993,12 +1022,18 @@ impl Framework {
                                     self.colored_label_fmt(
                                         ui,
                                         egui::Color32::YELLOW,
-                                        format_args!("-> {:04X}: {}", addr, HEX_LOOKUP[*byte as usize]),
+                                        format_args!(
+                                            "-> {:04X}: {}",
+                                            addr, HEX_LOOKUP[*byte as usize]
+                                        ),
                                     );
                                 } else {
                                     self.label_fmt(
                                         ui,
-                                        format_args!("   {:04X}: {}", addr, HEX_LOOKUP[*byte as usize]),
+                                        format_args!(
+                                            "   {:04X}: {}",
+                                            addr, HEX_LOOKUP[*byte as usize]
+                                        ),
                                     );
                                 }
                             }
@@ -1206,7 +1241,8 @@ impl Framework {
                         let image = std::sync::Arc::make_mut(image_arc);
                         let expected_size = [plane_w * 8, plane_h * 8];
                         if image.size != expected_size {
-                            *image = egui::ColorImage::new(expected_size, egui::Color32::TRANSPARENT);
+                            *image =
+                                egui::ColorImage::new(expected_size, egui::Color32::TRANSPARENT);
                         } else {
                             image.pixels.fill(egui::Color32::TRANSPARENT);
                         }
@@ -1309,9 +1345,7 @@ impl Framework {
                                             let addr = row * 16;
                                             l_buffer.clear();
                                             let _ = write!(&mut l_buffer, "{:04X}:", addr);
-                                            ui.label(
-                                                egui::RichText::new(&l_buffer).monospace(),
-                                            );
+                                            ui.label(egui::RichText::new(&l_buffer).monospace());
 
                                             l_buffer.clear();
                                             for i in 0..16 {
@@ -1320,9 +1354,7 @@ impl Framework {
                                                 );
                                                 l_buffer.push(' ');
                                             }
-                                            ui.label(
-                                                egui::RichText::new(&l_buffer).monospace(),
-                                            );
+                                            ui.label(egui::RichText::new(&l_buffer).monospace());
                                             ui.end_row();
                                         }
                                     });
@@ -1406,9 +1438,7 @@ impl Framework {
                                             let addr = row * 16;
                                             l_buffer.clear();
                                             let _ = write!(&mut l_buffer, "{:04X}:", addr);
-                                            ui.label(
-                                                egui::RichText::new(&l_buffer).monospace(),
-                                            );
+                                            ui.label(egui::RichText::new(&l_buffer).monospace());
 
                                             l_buffer.clear();
                                             for i in 0..16 {
@@ -1417,9 +1447,7 @@ impl Framework {
                                                 );
                                                 l_buffer.push(' ');
                                             }
-                                            ui.label(
-                                                egui::RichText::new(&l_buffer).monospace(),
-                                            );
+                                            ui.label(egui::RichText::new(&l_buffer).monospace());
                                             ui.end_row();
                                         }
                                     });
@@ -1440,9 +1468,7 @@ impl Framework {
                                             let addr = row * 16;
                                             l_buffer.clear();
                                             let _ = write!(&mut l_buffer, "{:04X}:", addr);
-                                            ui.label(
-                                                egui::RichText::new(&l_buffer).monospace(),
-                                            );
+                                            ui.label(egui::RichText::new(&l_buffer).monospace());
 
                                             l_buffer.clear();
                                             for i in 0..16 {
@@ -1452,9 +1478,7 @@ impl Framework {
                                                 );
                                                 l_buffer.push(' ');
                                             }
-                                            ui.label(
-                                                egui::RichText::new(&l_buffer).monospace(),
-                                            );
+                                            ui.label(egui::RichText::new(&l_buffer).monospace());
                                             ui.end_row();
                                         }
                                     });
@@ -1761,13 +1785,13 @@ impl Framework {
         // Render GUI
         {
             let attachments = [Some(wgpu::RenderPassColorAttachment {
-                    view: render_target,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })];
+                view: render_target,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })];
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("egui"),
                 color_attachments: &attachments[..],
@@ -1812,26 +1836,31 @@ fn collect_debug_info(
     if force_red {
         bus.vdp.framebuffer.fill(0xF800); // Red in RGB565
     }
-    let mut m68k_disasm = [(0u32, crate::cpu::instructions::Instruction::System(crate::cpu::instructions::SystemInstruction::Unimplemented { opcode: 0 })); 10];
+    let mut m68k_disasm = [(
+        0u32,
+        crate::cpu::instructions::Instruction::System(
+            crate::cpu::instructions::SystemInstruction::Unimplemented { opcode: 0 },
+        ),
+    ); 10];
     let mut addr = emulator.cpu.pc;
-    for i in 0..10 {
+    for item in &mut m68k_disasm {
         let opcode = bus.read_word(addr);
         let instr = crate::cpu::decode(opcode);
-        m68k_disasm[i] = (addr, instr);
+        *item = (addr, instr);
         addr += instr.length_words() * 2;
     }
 
     let mut z80_disasm = [(0u16, 0u8); 10];
     let mut addr = emulator.z80.pc;
-    for i in 0..10 {
+    for item in &mut z80_disasm {
         let byte = bus.read_byte(0xA00000 + addr as u32);
-        z80_disasm[i] = (addr, byte);
+        *item = (addr, byte);
         addr += 1;
     }
 
     let mut cram_raw = [0u16; 64];
-    for i in 0..64 {
-        cram_raw[i] = u16::from_be_bytes([bus.vdp.cram[i * 2], bus.vdp.cram[i * 2 + 1]]);
+    for (i, value) in cram_raw.iter_mut().enumerate() {
+        *value = u16::from_be_bytes([bus.vdp.cram[i * 2], bus.vdp.cram[i * 2 + 1]]);
     }
 
     let mut wram = [0u8; 0x10000];
@@ -1969,7 +1998,8 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
     let mut pixels = {
         let window_size = window.inner_size();
         let build_pixels = |backend| {
-            let surface_texture = SurfaceTexture::new(window_size.width, window_size.height, window);
+            let surface_texture =
+                SurfaceTexture::new(window_size.width, window_size.height, window);
             pixels::PixelsBuilder::new(320, 240, surface_texture)
                 .wgpu_backend(backend)
                 .build()

@@ -139,5 +139,9 @@ fn test_mode1_getter_behavior() {
     // Command 0x8014 writes 0x14 to register 0 (0x8000 | (0 << 8) | 0x14)
     vdp.write_control(0x8014);
 
-    assert_eq!(vdp.mode1(), 0x14, "mode1() did not return the expected value from register 0");
+    assert_eq!(
+        vdp.mode1(),
+        0x14,
+        "mode1() did not return the expected value from register 0"
+    );
 }

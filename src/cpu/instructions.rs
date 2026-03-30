@@ -868,18 +868,54 @@ mod tests {
 
     #[test]
     fn test_addressing_mode_from_mode_reg() {
-        assert_eq!(AddressingMode::from_mode_reg(0, 1), Some(AddressingMode::DataRegister(1)));
-        assert_eq!(AddressingMode::from_mode_reg(1, 2), Some(AddressingMode::AddressRegister(2)));
-        assert_eq!(AddressingMode::from_mode_reg(2, 3), Some(AddressingMode::AddressIndirect(3)));
-        assert_eq!(AddressingMode::from_mode_reg(3, 4), Some(AddressingMode::AddressPostIncrement(4)));
-        assert_eq!(AddressingMode::from_mode_reg(4, 5), Some(AddressingMode::AddressPreDecrement(5)));
-        assert_eq!(AddressingMode::from_mode_reg(5, 6), Some(AddressingMode::AddressDisplacement(6)));
-        assert_eq!(AddressingMode::from_mode_reg(6, 7), Some(AddressingMode::AddressIndex(7)));
-        assert_eq!(AddressingMode::from_mode_reg(7, 0), Some(AddressingMode::AbsoluteShort));
-        assert_eq!(AddressingMode::from_mode_reg(7, 1), Some(AddressingMode::AbsoluteLong));
-        assert_eq!(AddressingMode::from_mode_reg(7, 2), Some(AddressingMode::PcDisplacement));
-        assert_eq!(AddressingMode::from_mode_reg(7, 3), Some(AddressingMode::PcIndex));
-        assert_eq!(AddressingMode::from_mode_reg(7, 4), Some(AddressingMode::Immediate));
+        assert_eq!(
+            AddressingMode::from_mode_reg(0, 1),
+            Some(AddressingMode::DataRegister(1))
+        );
+        assert_eq!(
+            AddressingMode::from_mode_reg(1, 2),
+            Some(AddressingMode::AddressRegister(2))
+        );
+        assert_eq!(
+            AddressingMode::from_mode_reg(2, 3),
+            Some(AddressingMode::AddressIndirect(3))
+        );
+        assert_eq!(
+            AddressingMode::from_mode_reg(3, 4),
+            Some(AddressingMode::AddressPostIncrement(4))
+        );
+        assert_eq!(
+            AddressingMode::from_mode_reg(4, 5),
+            Some(AddressingMode::AddressPreDecrement(5))
+        );
+        assert_eq!(
+            AddressingMode::from_mode_reg(5, 6),
+            Some(AddressingMode::AddressDisplacement(6))
+        );
+        assert_eq!(
+            AddressingMode::from_mode_reg(6, 7),
+            Some(AddressingMode::AddressIndex(7))
+        );
+        assert_eq!(
+            AddressingMode::from_mode_reg(7, 0),
+            Some(AddressingMode::AbsoluteShort)
+        );
+        assert_eq!(
+            AddressingMode::from_mode_reg(7, 1),
+            Some(AddressingMode::AbsoluteLong)
+        );
+        assert_eq!(
+            AddressingMode::from_mode_reg(7, 2),
+            Some(AddressingMode::PcDisplacement)
+        );
+        assert_eq!(
+            AddressingMode::from_mode_reg(7, 3),
+            Some(AddressingMode::PcIndex)
+        );
+        assert_eq!(
+            AddressingMode::from_mode_reg(7, 4),
+            Some(AddressingMode::Immediate)
+        );
         assert_eq!(AddressingMode::from_mode_reg(7, 5), None);
     }
 
@@ -902,7 +938,10 @@ mod tests {
 
     #[test]
     fn test_addressing_mode_extension_words() {
-        assert_eq!(AddressingMode::DataRegister(0).extension_words(Size::Long), 0);
+        assert_eq!(
+            AddressingMode::DataRegister(0).extension_words(Size::Long),
+            0
+        );
         assert_eq!(AddressingMode::AbsoluteShort.extension_words(Size::Long), 1);
         assert_eq!(AddressingMode::AbsoluteLong.extension_words(Size::Word), 2);
         assert_eq!(AddressingMode::Immediate.extension_words(Size::Byte), 1);

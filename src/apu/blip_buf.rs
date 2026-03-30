@@ -14,10 +14,10 @@ const RES: usize = 512;
 /// Band-limited step kernel (Pre-computed)
 static KERNEL: std::sync::LazyLock<[i32; KERNEL_SIZE * RES]> = std::sync::LazyLock::new(|| {
     let mut kernel = [0i32; KERNEL_SIZE * RES];
-    for i in 0..(KERNEL_SIZE * RES) {
+    for (i, sample) in kernel.iter_mut().enumerate().take(KERNEL_SIZE * RES) {
         let x = (i as f64 / RES as f64) - (KERNEL_SIZE as f64 / 2.0);
         if x.abs() < 1e-9 {
-            kernel[i] = 32767;
+            *sample = 32767;
         } else {
             // Sinc function with Blackman window
             let sinc = (std::f64::consts::PI * x).sin() / (std::f64::consts::PI * x);
@@ -27,7 +27,7 @@ static KERNEL: std::sync::LazyLock<[i32; KERNEL_SIZE * RES]> = std::sync::LazyLo
             let window = a - b
                 * (2.0 * std::f64::consts::PI * i as f64 / (KERNEL_SIZE * RES) as f64).cos()
                 + c * (4.0 * std::f64::consts::PI * i as f64 / (KERNEL_SIZE * RES) as f64).cos();
-            kernel[i] = (sinc * window * 32767.0) as i32;
+            *sample = (sinc * window * 32767.0) as i32;
         }
     }
     kernel
@@ -110,9 +110,9 @@ impl BlipBuf {
         let count = samples.len().min(self.buffer.len() - KERNEL_SIZE);
 
         let mut current = 0;
-        for i in 0..count {
+        for (i, sample) in samples.iter_mut().enumerate().take(count) {
             current += self.buffer[i];
-            samples[i] = (current.clamp(-32768, 32767)) as i16;
+            *sample = (current.clamp(-32768, 32767)) as i16;
             self.buffer[i] = 0;
         }
 

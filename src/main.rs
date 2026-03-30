@@ -686,26 +686,20 @@ impl Emulator {
                 (262, 224)
             }
         };
-        let samples_per_line =
-            audio::samples_per_frame() as f32 / lines as f32;
+        let samples_per_line = audio::samples_per_frame() as f32 / lines as f32;
 
         for line in 0..lines {
             self.step_scanline(line, active_lines, samples_per_line);
         }
         self.internal_frame_count += 1;
-        if self.debug && self.internal_frame_count % 60 == 0 {
+        if self.debug && self.internal_frame_count.is_multiple_of(60) {
             self.log_debug(self.internal_frame_count);
         }
 
         self.generate_audio_samples(samples_per_line);
         self.bus.borrow_mut().vdp.update_v30_offset();
     }
-    fn step_scanline(
-        &mut self,
-        line: u16,
-        active_lines: u16,
-        _samples_per_line: f32,
-    ) {
+    fn step_scanline(&mut self, line: u16, active_lines: u16, _samples_per_line: f32) {
         self.vdp_scanline_setup(line, active_lines);
         self.run_cpu_loop(line, active_lines);
         self.handle_interrupts();
@@ -719,11 +713,7 @@ impl Emulator {
         }
     }
 
-    fn sync_components(
-        ctx: &mut SystemContext,
-        m68k_cycles: u32,
-        trigger_vint: bool,
-    ) {
+    fn sync_components(ctx: &mut SystemContext, m68k_cycles: u32, trigger_vint: bool) {
         let mclk = m68k_cycles * 7;
 
         // 1. Tick the Bus (VDP, etc)
@@ -777,8 +767,6 @@ impl Emulator {
             unsafe {
                 ctx.z80.memory.bind_bus(ctx.bus);
                 ctx.z80.io.bind_bus(ctx.bus);
-
-
             }
 
             while *ctx.z80_cycle_debt >= 1.0 {
@@ -789,7 +777,6 @@ impl Emulator {
             // Unbind to return to SharedBus mode
             ctx.z80.memory.unbind_bus();
             ctx.z80.io.unbind_bus();
-
         }
 
         // 4. Update APU and generate audio samples
@@ -842,13 +829,13 @@ impl Emulator {
             ctx.z80.memory.unbind_bus();
             ctx.z80.io.unbind_bus();
         } else {
-             // Z80 is stopped, just tick APU directly
-             *ctx.apu_cycle_debt += m68k_cycles as f32;
-             let steps = *ctx.apu_cycle_debt as u32;
-             if steps > 0 {
-                 ctx.bus.apu.tick_cycles(steps);
-                 *ctx.apu_cycle_debt -= steps as f32;
-             }
+            // Z80 is stopped, just tick APU directly
+            *ctx.apu_cycle_debt += m68k_cycles as f32;
+            let steps = *ctx.apu_cycle_debt as u32;
+            if steps > 0 {
+                ctx.bus.apu.tick_cycles(steps);
+                *ctx.apu_cycle_debt -= steps as f32;
+            }
         }
 
         // 3. Audio buffering
@@ -921,11 +908,11 @@ impl Emulator {
         const CYCLES_PER_LINE: u32 = 488;
         let mut cycles_scanline: u32 = 0;
         let mut bus = self.bus.borrow_mut();
- 
+
         // One context for the entire scanline loop
         let mut ctx = SystemContext {
             cpu: &mut self.cpu,
-            bus: &mut *bus,
+            bus: &mut bus,
             z80: &mut self.z80,
             z80_cycle_debt: &mut self.z80_cycle_debt,
             apu_cycle_debt: &mut self.apu_cycle_debt,
@@ -1299,8 +1286,10 @@ impl Config {
     where
         I: IntoIterator<Item = String>,
     {
-        let mut config = Config::default();
-        config.gdb_password = std::env::var("GENTEEL_GDB_PASSWORD").ok();
+        let mut config = Config {
+            gdb_password: std::env::var("GENTEEL_GDB_PASSWORD").ok(),
+            ..Config::default()
+        };
         let mut iter = args.into_iter().skip(1);
         let mut current_opt = iter.next();
         while let Some(arg) = current_opt {
@@ -1524,7 +1513,7 @@ mod tests {
         // LD A, 0x80      (3E 80)
         // LD (0x1FFD), A  (32 FD 1F)
         // HALT            (76)
-        let z80_code = vec![0x3E, 0x80, 0x32, 0xFD, 0x1F, 0x76];
+        let z80_code = [0x3E, 0x80, 0x32, 0xFD, 0x1F, 0x76];
         // Ensure Z80 RAM is clear initially (Emulator::new clears it)
         // First, let Z80 run to dirty the PC (simulate running garbage or previous code)
         // By default Z80 is in reset (from new()). We must release it to run.
@@ -1686,7 +1675,7 @@ mod tests {
         // Whitelist a different directory (e.g., system temp)
         let temp_dir = std::env::temp_dir();
         // Only if temp_dir exists and is different from CWD
-        if let Ok(_) = emulator.add_allowed_path(&temp_dir) {
+        if emulator.add_allowed_path(&temp_dir).is_ok() {
             let result = emulator.load_rom(dummy_rom);
             // Assuming dummy_rom is in CWD and not in temp_dir
             // If CWD == temp_dir, this test is weak but passes.
@@ -1723,8 +1712,10 @@ mod tests {
         }
 
         // Construct input with command
-        let mut input = crate::input::FrameInput::default();
-        input.command = Some(format!("SCREENSHOT {}", path));
+        let input = crate::input::FrameInput {
+            command: Some(format!("SCREENSHOT {}", path)),
+            ..Default::default()
+        };
 
         emulator.step_frame(Some(&input));
 
@@ -1784,7 +1775,7 @@ mod tests {
         for _ in 0..25 {
             std::io::Write::write_all(&mut file, &chunk).unwrap();
         }
-        std::io::Write::write_all(&mut file, &[b' ']).unwrap(); // last byte
+        std::io::Write::write_all(&mut file, b" ").unwrap(); // last byte
         drop(file);
 
         let mut emulator = Emulator::new();

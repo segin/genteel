@@ -24,7 +24,7 @@ fn test_render_plane_basic() {
     }
 
     // Nametable Entry at 0xC000 (0,0) -> Tile 1, Pal 0, Priority 0, Flip 0
-    let nt_addr = 0xC000 + (0 * 32 + 0) * 2;
+    let nt_addr = 0xC000;
     vdp.vram[nt_addr] = 0x00;
     vdp.vram[nt_addr + 1] = 0x01;
 
@@ -55,13 +55,13 @@ fn test_render_plane_hflip_quirk() {
     // Pixels: 1, 2, 3, 4, 1, 2, 3, 4
     // Colors: R, G, B, W, R, G, B, W
     let tile1_addr = 32;
-    vdp.vram[tile1_addr + 0] = 0x12;
+    vdp.vram[tile1_addr] = 0x12;
     vdp.vram[tile1_addr + 1] = 0x34;
     vdp.vram[tile1_addr + 2] = 0x12;
     vdp.vram[tile1_addr + 3] = 0x34;
 
     // Nametable Entry at 0xC000 -> Tile 1, H-Flip
-    let nt_addr = 0xC000 + (0 * 32 + 0) * 2;
+    let nt_addr = 0xC000;
     vdp.vram[nt_addr] = 0x08; // Bit 11 set for H-Flip
     vdp.vram[nt_addr + 1] = 0x01;
 
@@ -120,7 +120,7 @@ fn test_render_plane_scroll() {
 
     // Nametable A at 0xC000.
     // Put Tile 1 (Red) at tile_h=31, tile_v=0
-    let nt_addr = 0xC000 + (0 * 32 + 31) * 2;
+    let nt_addr = 0xC000 + 31 * 2;
     vdp.vram[nt_addr] = 0x00;
     vdp.vram[nt_addr + 1] = 0x01;
 
@@ -157,7 +157,7 @@ fn test_render_plane_b_isolation() {
 
     // Plane A: All Tile 0 (Transparent)
     // Plane B: Tile 1 (Green) at screen (0,0)
-    let nt_addr_b = 0xE000 + (0 * 32 + 0) * 2;
+    let nt_addr_b = 0xE000;
     vdp.vram[nt_addr_b] = 0x20; // Pal 1, Tile 1
     vdp.vram[nt_addr_b + 1] = 0x01;
 
@@ -412,7 +412,7 @@ fn test_sprite_rendering_correctness_v2() {
     // Sprite 0 at 0xD800
     // Y=128+10, Size=1x1, Link=0, Attr=(Pri=1, Pal=0, Flip=0, Tile=1), X=128+10
     let base = 0xD800;
-    vdp.vram[base + 0] = 0x00;
+    vdp.vram[base] = 0x00;
     vdp.vram[base + 1] = 128 + 10;
     vdp.vram[base + 2] = 0x00; // 1x1
     vdp.vram[base + 3] = 0x00;
@@ -450,7 +450,7 @@ fn test_sprite_hflip_v2() {
 
     // Sprite 0: Y=10, H-Flip
     let base = 0xD800;
-    vdp.vram[base + 0] = 0x00;
+    vdp.vram[base] = 0x00;
     vdp.vram[base + 1] = 128 + 10;
     vdp.vram[base + 2] = 0x00;
     vdp.vram[base + 3] = 0x00;
@@ -569,8 +569,8 @@ fn test_sprite_oob_rendering() {
     // It's an 8x8 sprite, so it should span 316..324.
     // Screen width is 320. So 316, 317, 318, 319 are visible. 320..323 are OOB.
     let sat_base = 0xD400;
-    vdp.vram[sat_base + 0] = 0x00;
-    vdp.vram[sat_base + 1] = 128 + 0; // y=0
+    vdp.vram[sat_base] = 0x00;
+    vdp.vram[sat_base + 1] = 128; // y=0
     vdp.vram[sat_base + 2] = 0x00; // 1x1 tile
     vdp.vram[sat_base + 3] = 0x00;
     vdp.vram[sat_base + 4] = 0x00;
@@ -608,8 +608,8 @@ fn test_sprite_fully_oob_rendering() {
     // Sprite 0: at screen_x = 320 (H Pos = 320 + 128 = 448 = 0x1C0)
     // Entirely OOB.
     let sat_base = 0xD400;
-    vdp.vram[sat_base + 0] = 0x00;
-    vdp.vram[sat_base + 1] = 128 + 0;
+    vdp.vram[sat_base] = 0x00;
+    vdp.vram[sat_base + 1] = 128;
     vdp.vram[sat_base + 2] = 0x00;
     vdp.vram[sat_base + 3] = 0x00;
     vdp.vram[sat_base + 4] = 0x00;

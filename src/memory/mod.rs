@@ -253,7 +253,7 @@ impl Memory {
         // Pre-allocate capacity to avoid reallocations
         // Each line is roughly 80 characters (10 addr + 48 hex + 1 space + 16 ascii + 1 newline)
         let len = (end as u64).saturating_sub(start as u64).saturating_add(1);
-        let lines = (len + 15) / 16;
+        let lines = len.div_ceil(16);
         let capacity = (lines * 80) as usize;
 
         let mut output = String::with_capacity(capacity);
@@ -292,7 +292,7 @@ mod tests {
     fn test_hex_dump() {
         let mut memory = Memory::new(256);
         for i in 0..32 {
-            memory.data[i] = 'A' as u8 + i as u8;
+            memory.data[i] = b'A' + i as u8;
         }
 
         let dump = memory.hex_dump(0, 31);

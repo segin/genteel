@@ -386,9 +386,9 @@ fn daa_bcd_99_plus_1() {
     c.a = 0x99;
     c.b = 0x01;
     c.step();
- // ADD
+    // ADD
     c.step();
- // DAA
+    // DAA
     assert_eq!(c.a, 0x00);
     assert!(c.get_flag(flags::CARRY)); // Overflow to 100
 }
@@ -438,9 +438,9 @@ fn daa_pc() {
 
 // Reference DAA implementation based on Z80 documented behavior
 fn _reference_daa(a: u8, flags: u8) -> (u8, u8) {
-    let n = (flags & flags::ADD_SUB as u8) != 0;
-    let c = (flags & flags::CARRY as u8) != 0;
-    let h = (flags & flags::HALF_CARRY as u8) != 0;
+    let n = (flags & flags::ADD_SUB) != 0;
+    let c = (flags & flags::CARRY) != 0;
+    let h = (flags & flags::HALF_CARRY) != 0;
 
     let mut val = a;
     let mut new_c = c;
@@ -501,9 +501,9 @@ fn _reference_daa(a: u8, flags: u8) -> (u8, u8) {
 
     // C
     if new_c {
-        new_flags |= flags::CARRY as u8;
+        new_flags |= flags::CARRY;
     } else {
-        new_flags &= !(flags::CARRY as u8);
+        new_flags &= !flags::CARRY;
     }
 
     // H - Parity? Z80 DAA sets H differently.
@@ -520,22 +520,22 @@ fn _reference_daa(a: u8, flags: u8) -> (u8, u8) {
 
     // S, Z, P are standard calc on result
     if (val & 0x80) != 0 {
-        new_flags |= flags::SIGN as u8;
+        new_flags |= flags::SIGN;
     } else {
-        new_flags &= !(flags::SIGN as u8);
+        new_flags &= !flags::SIGN;
     }
     if val == 0 {
-        new_flags |= flags::ZERO as u8;
+        new_flags |= flags::ZERO;
     } else {
-        new_flags &= !(flags::ZERO as u8);
+        new_flags &= !flags::ZERO;
     }
 
     // Parity is P/V parity of result
-    let p = val.count_ones() % 2 == 0;
+    let p = val.count_ones().is_multiple_of(2);
     if p {
-        new_flags |= flags::PARITY as u8;
+        new_flags |= flags::PARITY;
     } else {
-        new_flags &= !(flags::PARITY as u8);
+        new_flags &= !flags::PARITY;
     }
 
     (val, new_flags)
@@ -566,11 +566,10 @@ fn daa_full_state_space() {
             //    Wait, "upper=9 and lower>9" is "Val > 0x99".
 
             // Let's refine the ref logic:
-            let n = (f_in & flags::ADD_SUB as u8) != 0;
-            let c_flag = (f_in & flags::CARRY as u8) != 0;
-            let h_flag = (f_in & flags::HALF_CARRY as u8) != 0;
+            let n = (f_in & flags::ADD_SUB) != 0;
+            let c_flag = (f_in & flags::CARRY) != 0;
+            let h_flag = (f_in & flags::HALF_CARRY) != 0;
 
-            let expected_a;
             let mut expected_c = c_flag;
 
             let mut diff = 0;
@@ -594,7 +593,7 @@ fn daa_full_state_space() {
                 }
             }
 
-            expected_a = if !n {
+            let expected_a = if !n {
                 a_in.wrapping_add(diff)
             } else {
                 a_in.wrapping_sub(diff)

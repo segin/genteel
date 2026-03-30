@@ -90,7 +90,7 @@ fn regression_ld_hl_h() {
     c.set_hl(0x1234);
     let t = c.step();
     assert_eq!(t, 7); // Timing check
-    assert_eq!(c.memory.read_byte(0x1234 as u32), 0x12); // H value, not modified
+    assert_eq!(c.memory.read_byte(0x1234_u32), 0x12); // H value, not modified
 }
 
 #[test]
@@ -99,7 +99,7 @@ fn regression_ld_hl_l() {
     c.set_hl(0x1234);
     let t = c.step();
     assert_eq!(t, 7); // Timing check
-    assert_eq!(c.memory.read_byte(0x1234 as u32), 0x34); // L value
+    assert_eq!(c.memory.read_byte(0x1234_u32), 0x34); // L value
 }
 
 // Z80 Hardware Edge Case: Z80 PUSH/POP AF preserves all bits, including unused bits 5 and 3
@@ -127,12 +127,12 @@ fn regression_ex_sp_hl() {
     let mut c = create_z80(&[0xE3]);
     c.sp = 0x1000;
     c.set_hl(0x1234);
-    c.memory.write_byte(0x1000 as u32, 0xCD);
-    c.memory.write_byte(0x1001 as u32, 0xAB);
+    c.memory.write_byte(0x1000_u32, 0xCD);
+    c.memory.write_byte(0x1001_u32, 0xAB);
     c.step();
     assert_eq!(c.hl(), 0xABCD);
-    assert_eq!(c.memory.read_byte(0x1000 as u32), 0x34);
-    assert_eq!(c.memory.read_byte(0x1001 as u32), 0x12);
+    assert_eq!(c.memory.read_byte(0x1000_u32), 0x34);
+    assert_eq!(c.memory.read_byte(0x1001_u32), 0x12);
 }
 
 // Z80 Hardware Edge Case: INC/DEC not affecting V flag correctly
@@ -316,11 +316,11 @@ fn regression_ldir_bc_zero() {
     c.set_hl(0x1000);
     c.set_de(0x2000);
     c.set_bc(0x0000);
-    c.memory.write_byte(0x1000 as u32, 0xAA);
+    c.memory.write_byte(0x1000_u32, 0xAA);
     c.step();
     // BC was 0, now 0xFFFF
     assert_eq!(c.bc(), 0xFFFF);
-    assert_eq!(c.memory.read_byte(0x2000 as u32), 0xAA);
+    assert_eq!(c.memory.read_byte(0x2000_u32), 0xAA);
     // HL and DE should be incremented
     assert_eq!(c.hl(), 0x1001);
     assert_eq!(c.de(), 0x2001);
@@ -334,11 +334,11 @@ fn regression_lddr_bc_zero() {
     c.set_hl(0x1000);
     c.set_de(0x2000);
     c.set_bc(0x0000);
-    c.memory.write_byte(0x1000 as u32, 0xBB);
+    c.memory.write_byte(0x1000_u32, 0xBB);
     c.step();
     // BC was 0, now 0xFFFF
     assert_eq!(c.bc(), 0xFFFF);
-    assert_eq!(c.memory.read_byte(0x2000 as u32), 0xBB);
+    assert_eq!(c.memory.read_byte(0x2000_u32), 0xBB);
     // HL and DE should be decremented
     assert_eq!(c.hl(), 0x0FFF);
     assert_eq!(c.de(), 0x1FFF);
@@ -440,14 +440,14 @@ fn regression_bit_sets_h_flag() {
     // BIT 0, (HL)
     let mut c = create_z80(&[0xCB, 0x46]);
     c.set_hl(0x1000);
-    c.memory.write_byte(0x1000 as u32, 0x00);
+    c.memory.write_byte(0x1000_u32, 0x00);
     c.step();
     assert!(c.get_flag(flags::HALF_CARRY));
 
     // BIT 4, (IX+5) -> DD CB 05 66
     let mut c = create_z80(&[0xDD, 0xCB, 0x05, 0x66]);
     c.ix = 0x2000;
-    c.memory.write_byte(0x2005 as u32, 0x00);
+    c.memory.write_byte(0x2005_u32, 0x00);
     c.step();
     assert!(c.get_flag(flags::HALF_CARRY));
 }
@@ -617,16 +617,16 @@ fn regression_sp_wrap_push() {
     c.set_bc(0x1234);
     c.step();
     assert_eq!(c.sp, 0xFFFF);
-    assert_eq!(c.memory.read_byte(0xFFFF as u32), 0x34);
-    assert_eq!(c.memory.read_byte(0x0000 as u32), 0x12);
+    assert_eq!(c.memory.read_byte(0xFFFF_u32), 0x34);
+    assert_eq!(c.memory.read_byte(0x0000_u32), 0x12);
 }
 
 #[test]
 fn regression_sp_wrap_pop() {
     let mut c = create_z80(&[0xC1]); // POP BC at addr 0
     c.sp = 0xFFFE; // Use 0xFFFE so we don't overwrite the instruction
-    c.memory.write_byte(0xFFFE as u32, 0xCD);
-    c.memory.write_byte(0xFFFF as u32, 0xAB);
+    c.memory.write_byte(0xFFFE_u32, 0xCD);
+    c.memory.write_byte(0xFFFF_u32, 0xAB);
     c.step();
     assert_eq!(c.bc(), 0xABCD);
     assert_eq!(c.sp, 0x0000);
@@ -636,7 +636,7 @@ fn regression_sp_wrap_pop() {
 fn regression_pc_wrap() {
     let mut c = create_z80(&[0x00]); // NOP at 0xFFFF
     c.pc = 0xFFFF;
-    c.memory.write_byte(0xFFFF as u32, 0x00);
+    c.memory.write_byte(0xFFFF_u32, 0x00);
     c.step();
     assert_eq!(c.pc, 0x0000);
 }

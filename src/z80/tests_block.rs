@@ -96,7 +96,7 @@ fn setup_ldir_params(rng: &mut Rng) -> (u16, u16, u16) {
         rng.next_u16()
     };
 
-    let bc = len as u16;
+    let bc = len;
     (src, dst, bc)
 }
 
@@ -152,7 +152,7 @@ fn execute_ldir_loop<M: MemoryInterface, I: crate::memory::IoInterface>(
         // For chaos test, let's accept divergence if code is overwritten.
         // But checking code integrity complicates things.
         // Let's check if code is intact.
-        if cpu.memory.read_byte(0 as u32) != 0xED || cpu.memory.read_byte(1 as u32) != 0xB0 {
+        if cpu.memory.read_byte(0_u32) != 0xED || cpu.memory.read_byte(1_u32) != 0xB0 {
             // Code overwritten. Skip verification of this insane case.
             break;
         }
@@ -168,6 +168,7 @@ fn execute_ldir_loop<M: MemoryInterface, I: crate::memory::IoInterface>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn validate_ldir_result<M: MemoryInterface, I: crate::memory::IoInterface>(
     cpu: &mut Z80<M, I>,
     exp_hl: u16,
@@ -178,7 +179,7 @@ fn validate_ldir_result<M: MemoryInterface, I: crate::memory::IoInterface>(
     i: usize,
     rng: &mut Rng,
 ) {
-    if cpu.memory.read_byte(0 as u32) == 0xED {
+    if cpu.memory.read_byte(0_u32) == 0xED {
         // valid result check
         assert_eq!(cpu.hl(), exp_hl, "HL mismatch case #{}", i);
         assert_eq!(cpu.de(), exp_de, "DE mismatch case #{}", i);
@@ -212,8 +213,8 @@ fn run_ldir_test_case(i: usize, rng: &mut Rng) {
     // Put Opcode at 0x100 avoids conflict usually?
     // Let's randomize PC placement too? No, keep simple.
     let _code_base = 0x0000;
-    cpu.memory.write_byte(0 as u32, 0xED);
-    cpu.memory.write_byte(1 as u32, 0xB0); // LDIR
+    cpu.memory.write_byte(0_u32, 0xED);
+    cpu.memory.write_byte(1_u32, 0xB0); // LDIR
     cpu.pc = 0;
 
     cpu.set_hl(src);
@@ -268,7 +269,7 @@ fn run_lddr_test_case(i: usize, rng: &mut Rng) {
 
     // Run
     loop {
-        if cpu.memory.read_byte(0 as u32) != 0xED || cpu.memory.read_byte(1 as u32) != 0xB8 {
+        if cpu.memory.read_byte(0_u32) != 0xED || cpu.memory.read_byte(1_u32) != 0xB8 {
             break;
         }
         cpu.step();
@@ -278,7 +279,7 @@ fn run_lddr_test_case(i: usize, rng: &mut Rng) {
     }
 
     // Validate
-    if cpu.memory.read_byte(0 as u32) == 0xED && cpu.memory.read_byte(1 as u32) == 0xB8 {
+    if cpu.memory.read_byte(0_u32) == 0xED && cpu.memory.read_byte(1_u32) == 0xB8 {
         assert_eq!(cpu.hl(), exp_hl, "LDDR HL mismatch #{}", i);
         assert_eq!(cpu.de(), exp_de);
         assert_eq!(cpu.bc(), exp_bc);
@@ -319,7 +320,7 @@ fn run_cpir_test_case(i: usize, rng: &mut Rng) {
     // Logic:
     // Place target at random position? Or fill with noise.
     // Let's decide if we want to Find it or Not.
-    let should_find = (rng.next() % 2) == 0;
+    let should_find = rng.next().is_multiple_of(2);
     let found_idx = if should_find {
         rng.next() as u16 % bc
     } else {
@@ -340,7 +341,7 @@ fn run_cpir_test_case(i: usize, rng: &mut Rng) {
     // Run
     loop {
         // Guard against self-modification
-        if cpu.memory.read_byte(0 as u32) != 0xED || cpu.memory.read_byte(1 as u32) != 0xB1 {
+        if cpu.memory.read_byte(0_u32) != 0xED || cpu.memory.read_byte(1_u32) != 0xB1 {
             break;
         }
         cpu.step();
@@ -349,7 +350,7 @@ fn run_cpir_test_case(i: usize, rng: &mut Rng) {
         }
     }
 
-    if cpu.memory.read_byte(0 as u32) == 0xED && cpu.memory.read_byte(1 as u32) == 0xB1 {
+    if cpu.memory.read_byte(0_u32) == 0xED && cpu.memory.read_byte(1_u32) == 0xB1 {
         if should_find {
             assert!(cpu.get_flag(flags::ZERO), "Should fulfill find #{}", i);
             // Verify HL points to char AFTER found

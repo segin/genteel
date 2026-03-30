@@ -1,4 +1,7 @@
-use crate::vdp::{Vdp, REG_AUTO_INC, REG_MODE2, MODE2_DISPLAY_ENABLE, MODE2_VINT_ENABLE, REG_MODE1, MODE1_HINT_ENABLE};
+use crate::vdp::{
+    Vdp, MODE1_HINT_ENABLE, MODE2_DISPLAY_ENABLE, MODE2_VINT_ENABLE, REG_AUTO_INC, REG_MODE1,
+    REG_MODE2,
+};
 
 #[test]
 fn test_vdp_auto_increment_getter() {

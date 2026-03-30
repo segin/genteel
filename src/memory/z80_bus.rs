@@ -12,7 +12,7 @@ use super::{byte_utils, IoInterface, MemoryInterface, SharedBus};
 use serde::{Deserialize, Serialize};
 
 /// Z80 Bus adapter that routes memory accesses to Genesis components
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Z80Bus {
     /// Reference to the main Genesis bus.
     bus: SharedBus,
@@ -33,19 +33,15 @@ impl Z80Bus {
     }
 }
 
-impl Default for Z80Bus {
-    fn default() -> Self {
-        Self {
-            bus: SharedBus::default(),
-            borrowed_bus: None,
-        }
-    }
-}
-
 impl Z80Bus {
     /// Temporarily bind an already-borrowed Bus reference to this adapter.
     /// This avoids RefCell double borrows during synchronization.
-    /// SAFETY: The caller must ensure the Bus reference remains valid for the duration of the bind.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure the borrowed `Bus` outlives the binding and
+    /// remains exclusively accessible through this adapter until `unbind_bus`
+    /// is called.
     pub unsafe fn bind_bus(&mut self, bus: &mut Bus) {
         self.borrowed_bus = Some(std::ptr::NonNull::from(bus));
     }
@@ -72,7 +68,6 @@ impl Z80Bus {
         } else {
             let mut bus = self.bus.bus.borrow_mut();
             bus.z80_bank_addr = 0;
-
         }
     }
 
@@ -322,7 +317,6 @@ mod tests {
             let bus = z80_bus.bus.bus.borrow();
             assert_eq!(bus.z80_bank_addr, (1 << 23) | (1 << 21));
         }
-
     }
 
     #[test]

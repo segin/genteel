@@ -261,7 +261,6 @@ fn test_set_flag() {
         flags::SIGN,
     ];
 
-
     // Test setting flags individually
     for &flag in &all_flags {
         z80.f = 0x00;
@@ -474,7 +473,7 @@ fn test_ld_hl_indirect() {
     let mut z80 = create_z80(&[0x36, 0xAB][..]);
     z80.set_hl(0x0100);
     z80.step();
-    assert_eq!(z80.memory.read_byte(0x0100 as u32), 0xAB);
+    assert_eq!(z80.memory.read_byte(0x0100_u32), 0xAB);
 }
 
 // ==================== ALU Tests ====================
@@ -607,8 +606,8 @@ fn test_call_nn() {
 fn test_ret() {
     let mut z80 = create_z80(&[0xC9][..]);
     z80.sp = 0x1FFE;
-    z80.memory.write_byte(0x1FFE as u32, 0x34);
-    z80.memory.write_byte(0x1FFF as u32, 0x12);
+    z80.memory.write_byte(0x1FFE_u32, 0x34);
+    z80.memory.write_byte(0x1FFF_u32, 0x12);
     z80.step();
     assert_eq!(z80.pc, 0x1234);
     assert_eq!(z80.sp, 0x2000);
@@ -623,16 +622,16 @@ fn test_push_bc() {
     z80.set_bc(0x1234);
     z80.step();
     assert_eq!(z80.sp, 0x1FFE);
-    assert_eq!(z80.memory.read_byte(0x1FFE as u32), 0x34);
-    assert_eq!(z80.memory.read_byte(0x1FFF as u32), 0x12);
+    assert_eq!(z80.memory.read_byte(0x1FFE_u32), 0x34);
+    assert_eq!(z80.memory.read_byte(0x1FFF_u32), 0x12);
 }
 
 #[test]
 fn test_pop_bc() {
     let mut z80 = create_z80(&[0xC1][..]);
     z80.sp = 0x1FFE;
-    z80.memory.write_byte(0x1FFE as u32, 0xCD);
-    z80.memory.write_byte(0x1FFF as u32, 0xAB);
+    z80.memory.write_byte(0x1FFE_u32, 0xCD);
+    z80.memory.write_byte(0x1FFF_u32, 0xAB);
     z80.step();
     assert_eq!(z80.bc(), 0xABCD);
     assert_eq!(z80.sp, 0x2000);
@@ -746,7 +745,7 @@ fn test_ld_ix_d_n() {
     let mut z80 = create_z80(&[0xDD, 0x36, 0x05, 0x42][..]);
     z80.ix = 0x1000;
     z80.step();
-    assert_eq!(z80.memory.read_byte(0x1005 as u32), 0x42);
+    assert_eq!(z80.memory.read_byte(0x1005_u32), 0x42);
 }
 
 // ==================== ED Prefix Tests ====================
@@ -765,9 +764,9 @@ fn test_ed_ldi() {
     z80.set_hl(0x1000);
     z80.set_de(0x2000);
     z80.set_bc(0x0010);
-    z80.memory.write_byte(0x1000 as u32, 0x42);
+    z80.memory.write_byte(0x1000_u32, 0x42);
     z80.step();
-    assert_eq!(z80.memory.read_byte(0x2000 as u32), 0x42);
+    assert_eq!(z80.memory.read_byte(0x2000_u32), 0x42);
     assert_eq!(z80.hl(), 0x1001);
     assert_eq!(z80.de(), 0x2001);
     assert_eq!(z80.bc(), 0x000F);
@@ -884,10 +883,10 @@ fn test_debug_state() {
     assert_eq!(z80.iy, 0x2000);
     assert_eq!(z80.sp, 0x3000);
     assert_eq!(z80.pc, 0x4000);
-    assert_eq!(z80.iff1, true);
-    assert_eq!(z80.iff2, true);
+    assert!(z80.iff1);
+    assert!(z80.iff2);
     assert_eq!(z80.im, 2);
-    assert_eq!(z80.halted, true);
+    assert!(z80.halted);
     assert_eq!(z80.cycles, 300);
 }
 
@@ -931,21 +930,33 @@ fn test_check_condition() {
         // 1 => self.get_flag(flags::ZERO),    // Z
         assert_eq!(z80.check_condition(1), zero, "cc: 1 (Z), f: {f_val:#04X}");
         // 2 => !self.get_flag(flags::CARRY),  // NC
-        assert_eq!(z80.check_condition(2), !carry, "cc: 2 (NC), f: {f_val:#04X}");
+        assert_eq!(
+            z80.check_condition(2),
+            !carry,
+            "cc: 2 (NC), f: {f_val:#04X}"
+        );
         // 3 => self.get_flag(flags::CARRY),   // C
         assert_eq!(z80.check_condition(3), carry, "cc: 3 (C), f: {f_val:#04X}");
         // 4 => !self.get_flag(flags::PARITY), // PO
-        assert_eq!(z80.check_condition(4), !parity, "cc: 4 (PO), f: {f_val:#04X}");
+        assert_eq!(
+            z80.check_condition(4),
+            !parity,
+            "cc: 4 (PO), f: {f_val:#04X}"
+        );
         // 5 => self.get_flag(flags::PARITY),  // PE
-        assert_eq!(z80.check_condition(5), parity, "cc: 5 (PE), f: {f_val:#04X}");
+        assert_eq!(
+            z80.check_condition(5),
+            parity,
+            "cc: 5 (PE), f: {f_val:#04X}"
+        );
         // 6 => !self.get_flag(flags::SIGN),   // P
         assert_eq!(z80.check_condition(6), !sign, "cc: 6 (P), f: {f_val:#04X}");
         // 7 => self.get_flag(flags::SIGN),    // M
         assert_eq!(z80.check_condition(7), sign, "cc: 7 (M), f: {f_val:#04X}");
 
         // Invalid conditions should always return false
-        assert_eq!(z80.check_condition(8), false, "cc: 8, f: {f_val:#04X}");
-        assert_eq!(z80.check_condition(255), false, "cc: 255, f: {f_val:#04X}");
+        assert!(!z80.check_condition(8), "cc: 8, f: {f_val:#04X}");
+        assert!(!z80.check_condition(255), "cc: 255, f: {f_val:#04X}");
     }
 }
 
@@ -967,9 +978,9 @@ fn test_trigger_nmi() {
     assert_eq!(cycles, 11);
 
     // Assert state changes
-    assert_eq!(z80.halted, false);
-    assert_eq!(z80.iff2, true); // Copies iff1
-    assert_eq!(z80.iff1, false); // Disabled
+    assert!(!z80.halted);
+    assert!(z80.iff2); // Copies iff1
+    assert!(!z80.iff1); // Disabled
     assert_eq!(z80.pc, 0x0066); // NMI vector
     assert_eq!(z80.sp, 0x1FFE); // Stack pointer decremented by 2
 

@@ -8,7 +8,6 @@ use std::io::{BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::time::{Duration, Instant};
 
-
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
 /// Default GDB server port
@@ -128,7 +127,7 @@ impl GdbListener {
         match self {
             Self::Real(l) => l.accept(),
             #[cfg(test)]
-            Self::MockError => Err(std::io::Error::new(std::io::ErrorKind::Other, "mock error")),
+            Self::MockError => Err(std::io::Error::other("mock error")),
         }
     }
 
@@ -1475,7 +1474,7 @@ mod tests {
             "Generated password should be 32 chars"
         );
         assert!(
-            generated_pwd.chars().all(|c| c.is_digit(16)),
+            generated_pwd.chars().all(|c| c.is_ascii_hexdigit()),
             "Generated password should be hex"
         );
 

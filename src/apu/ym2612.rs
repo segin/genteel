@@ -346,8 +346,8 @@ impl FmChannel {
     fn clock(&mut self, regs: &[u8; 256], ch_off: usize, counter: u16) -> i16 {
         let op_offsets: [usize; 4] = [0, 8, 4, 12];
         let kc = compute_key_code(self.fnum as u32, self.block);
-        for i in 0..4 {
-            let off = op_offsets[i] + ch_off;
+        for (i, op_offset) in op_offsets.iter().enumerate() {
+            let off = *op_offset + ch_off;
             self.operators[i].clock_phase(
                 self.fnum as u32,
                 self.block,
@@ -486,8 +486,9 @@ impl Ym2612 {
     /// Step the YM2612 by a number of M68K cycles.
     /// Convert internally to MCLK (1 M68K cycle = 7 MCLK).
     pub fn step(&mut self, cycles: u32) {
+        let mclocks = cycles * 7;
         if self.busy > 0 {
-            self.busy = self.busy.saturating_sub(cycles as i32);
+            self.busy = self.busy.saturating_sub(mclocks as i32);
         }
 
         // Handle timers in MCLK units
@@ -495,8 +496,6 @@ impl Ym2612 {
         // So Timer A period = (1024-NA)*72*144 MCLK.
         // But we step in M68K cycles. 1 cycle = 7 MCLK.
         // Let's just convert cycles to MCLK immediately for all logic.
-        let mclocks = cycles * 7;
-
         if (self.registers[0][0x27] & 0x01) != 0 || (self.registers[0][0x27] & 0x02) != 0 {
             let mut remaining_mclk = mclocks;
             while remaining_mclk > 0 {
@@ -647,6 +646,12 @@ impl Ym2612 {
 
     pub fn generate_channel_samples(&mut self) -> [i16; 6] {
         std::array::from_fn(|i| self.channels[i].last_sample)
+    }
+}
+
+impl Default for Ym2612 {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

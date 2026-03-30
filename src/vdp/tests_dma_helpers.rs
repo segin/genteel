@@ -65,13 +65,13 @@ fn test_dma_source() {
     vdp.registers[REG_DMA_SRC_MID] = 0xAA;
     vdp.registers[REG_DMA_SRC_HI] = 0x0F;
 
-    let expected = ((0x0F as u32) << 17) | ((0xAA as u32) << 9) | ((0x55 as u32) << 1);
+    let expected = (0x0F_u32 << 17) | (0xAA_u32 << 9) | (0x55_u32 << 1);
     assert_eq!(vdp.dma_source(), expected);
 
     // Test Case 4: With Mode Bits set in Reg 23
     // Even if mode bits are set, dma_source() includes them in the shift.
     vdp.registers[REG_DMA_SRC_HI] = 0x8F; // Fill mode + 0x0F address
-    let expected_with_mode = ((0x8F as u32) << 17) | ((0xAA as u32) << 9) | ((0x55 as u32) << 1);
+    let expected_with_mode = (0x8F_u32 << 17) | (0xAA_u32 << 9) | (0x55_u32 << 1);
     assert_eq!(vdp.dma_source(), expected_with_mode);
 }
 
@@ -85,7 +85,7 @@ fn test_dma_source_transfer() {
 
     // Case 1: Reg 23 has no mode bits
     vdp.registers[REG_DMA_SRC_HI] = 0x0F;
-    let expected_base = ((0x0F as u32) << 17) | ((0xAA as u32) << 9) | ((0x55 as u32) << 1);
+    let expected_base = (0x0F_u32 << 17) | (0xAA_u32 << 9) | (0x55_u32 << 1);
     assert_eq!(vdp.dma_source_transfer(), expected_base);
 
     // Case 2: Reg 23 has mode bit 7 set (0x80)
@@ -96,7 +96,7 @@ fn test_dma_source_transfer() {
 
     // Case 3: Reg 23 has bit 6 set (0x40) -> RAM Transfer
     vdp.registers[REG_DMA_SRC_HI] = 0x4F;
-    let expected_ram = 0xFF0000 | ((0xAA as u32) << 9) | ((0x55 as u32) << 1);
+    let expected_ram = 0xFF0000 | (0xAA_u32 << 9) | (0x55_u32 << 1);
     assert_eq!(vdp.dma_source_transfer(), expected_ram);
 }
 

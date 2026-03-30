@@ -400,8 +400,7 @@ impl Vdp {
         match code & 0x0F {
             VRAM_READ => {
                 let idx = addr as usize;
-                let val = ((self.vram[idx] as u16) << 8)
-                    | (self.vram[(addr ^ 1) as usize] as u16);
+                let val = ((self.vram[idx] as u16) << 8) | (self.vram[(addr ^ 1) as usize] as u16);
                 self.command.read_buffer = val;
                 self.command.cd4_flag = true;
             }
@@ -649,8 +648,6 @@ impl Vdp {
             ((self.registers[REG_WINDOW] as usize) & 0x3E) << 10
         }
     }
-
-
 
     pub fn set_region(&mut self, is_pal: bool) {
         self.is_pal = is_pal;

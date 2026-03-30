@@ -256,7 +256,7 @@ impl Bus {
     }
 
     fn read_sram(&self, addr: u32) -> u8 {
-        if addr % 2 == 0 {
+        if addr.is_multiple_of(2) {
             // SRAM is usually on even bytes only
             let sram_addr = ((addr - self.sram_start) / 2) as usize;
             if sram_addr < self.sram.len() {
@@ -270,7 +270,7 @@ impl Bus {
     }
 
     fn write_sram(&mut self, addr: u32, value: u8) {
-        if addr % 2 == 0 {
+        if addr.is_multiple_of(2) {
             let sram_addr = ((addr - self.sram_start) / 2) as usize;
             if sram_addr < self.sram.len() {
                 self.sram[sram_addr] = value;
@@ -757,31 +757,31 @@ mod tests {
     #[test]
     fn test_tmss_unlock_byte_writes() {
         let mut bus = Bus::new();
-        assert_eq!(bus.tmss_unlocked, false);
+        assert!(!bus.tmss_unlocked);
 
         // Write 'S', 'E', 'G', 'A' byte by byte
         bus.write_byte(0xA14000, b'S');
-        assert_eq!(bus.tmss_unlocked, false);
+        assert!(!bus.tmss_unlocked);
 
         bus.write_byte(0xA14001, b'E');
-        assert_eq!(bus.tmss_unlocked, false);
+        assert!(!bus.tmss_unlocked);
 
         bus.write_byte(0xA14002, b'G');
-        assert_eq!(bus.tmss_unlocked, false);
+        assert!(!bus.tmss_unlocked);
 
         bus.write_byte(0xA14003, b'A');
         // This should unlock the TMSS
-        assert_eq!(bus.tmss_unlocked, true);
+        assert!(bus.tmss_unlocked);
     }
 
     #[test]
     fn test_tmss_unlock_long_write() {
         let mut bus = Bus::new();
-        assert_eq!(bus.tmss_unlocked, false);
+        assert!(!bus.tmss_unlocked);
 
         // Write 'SEGA' as a long
         bus.write_long(0xA14000, 0x53454741); // "SEGA"
-        assert_eq!(bus.tmss_unlocked, true);
+        assert!(bus.tmss_unlocked);
     }
 
     #[test]
@@ -828,10 +828,10 @@ mod tests {
                 new_bus.write_state(&state_value);
 
                 // Assert scalar equality
-                assert_eq!(new_bus.z80_bus_request, true);
-                assert_eq!(new_bus.z80_reset, false);
+                assert!(new_bus.z80_bus_request);
+                assert!(!new_bus.z80_reset);
                 assert_eq!(new_bus.z80_bank_addr, 0x12345);
-                assert_eq!(new_bus.tmss_unlocked, true);
+                assert!(new_bus.tmss_unlocked);
                 assert!((new_bus.audio_accumulator - 1.234).abs() < 1e-6);
                 assert_eq!(new_bus.sample_rate, 48000);
 

@@ -98,7 +98,7 @@ fn test_interrupt_clears_halted() {
     let (mut cpu, mut memory) = create_cpu();
 
     cpu.halted = true;
-    cpu.sr = (cpu.sr & !flags::INTERRUPT_MASK) | 0x0000;
+    cpu.sr &= !flags::INTERRUPT_MASK;
 
     cpu.request_interrupt(1);
 
@@ -115,7 +115,7 @@ fn test_interrupt_clears_halted() {
 fn test_multiple_interrupts_priority() {
     let (mut cpu, mut memory) = create_cpu();
 
-    cpu.sr = (cpu.sr & !flags::INTERRUPT_MASK) | 0x0000;
+    cpu.sr &= !flags::INTERRUPT_MASK;
 
     // Request 3 and 5
     cpu.request_interrupt(3);
@@ -145,7 +145,7 @@ fn test_multiple_interrupts_priority() {
 
     // Restore SR to 0 to unmask level 3
     // Manually setting SR to unmask
-    cpu.sr = (cpu.sr & !flags::INTERRUPT_MASK) | 0x0000;
+    cpu.sr &= !flags::INTERRUPT_MASK;
 
     // Vector 27 (Level 3) -> 0x6C
     memory.write_long(0x6C, 0x6000);

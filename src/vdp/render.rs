@@ -103,12 +103,7 @@ pub struct TileRenderParams {
 pub trait RenderOps {
     fn render_line(&mut self, line: u16);
     fn render_plane(&self, is_plane_a: bool, fetch_line: u16, line_buf: &mut [u8; 320]);
-    fn render_tile(
-        &self,
-        params: &TileRenderParams,
-        screen_x: &mut u16,
-        line_buf: &mut [u8; 320],
-    );
+    fn render_tile(&self, params: &TileRenderParams, screen_x: &mut u16, line_buf: &mut [u8; 320]);
     fn get_active_sprites(&self, line: u16, sprites: &mut [SpriteAttributes]) -> usize;
     fn render_sprites(
         &self,
@@ -232,8 +227,7 @@ impl Vdp {
                     state,
                     px: &px,
                 };
-                let (new_top_col, new_state) =
-                    self.apply_shadow_highlight(sh_params);
+                let (new_top_col, new_state) = self.apply_shadow_highlight(sh_params);
                 top_col = new_top_col;
                 state = new_state;
 
@@ -271,10 +265,7 @@ impl Vdp {
         (top_col, top_layer)
     }
 
-    fn apply_shadow_highlight(
-        &self,
-        mut params: ShadowHighlightParams,
-    ) -> (u8, u8) {
+    fn apply_shadow_highlight(&self, mut params: ShadowHighlightParams) -> (u8, u8) {
         if params.top_layer == 3 {
             if params.px.s_col == 0x3E {
                 params.top_col = params.px.bg_color_idx;
@@ -405,7 +396,7 @@ fn render_sprite_scanline(
 
                 if color_idx != 0 {
                     // Note: The unsafe block using unwrap_unchecked() was removed from this file.
-                    let addr = ((attr.palette as u8) << 4) | (color_idx as u8);
+                    let addr = (attr.palette << 4) | color_idx;
                     let pri_mask = if attr.priority { 0x80 } else { 0x00 };
                     // Only write if not already occupied by a higher-priority sprite (in this case we draw in reverse order, so we overwrite, wait actually sprite 0 is highest priority.
                     // If we draw in reverse order (sprites.iter().rev()), the highest priority sprite is drawn last and overwrites.
@@ -433,7 +424,7 @@ fn render_sprite_scanline(
                 };
 
                 if color_idx != 0 {
-                    let addr = ((attr.palette as u8) << 4) | (color_idx as u8);
+                    let addr = (attr.palette << 4) | color_idx;
                     let pri_mask = if attr.priority { 0x80 } else { 0x00 };
                     if let Some(pixel) = line_buf.get_mut(screen_x as usize) {
                         *pixel = addr | pri_mask;
@@ -507,7 +498,11 @@ impl RenderOps for Vdp {
             let v_point = (v_pos as u16 & 0x1F) * 8;
             let win_h_dir = (h_pos & 0x80) != 0;
             let v_dir = (v_pos & 0x80) != 0;
-            let win_in_v = if v_dir { fetch_line >= v_point } else { fetch_line < v_point };
+            let win_in_v = if v_dir {
+                fetch_line >= v_point
+            } else {
+                fetch_line < v_point
+            };
             let win_addr = self.window_address();
             let win_w = if h40_mode { 64 } else { 32 };
 
@@ -535,8 +530,16 @@ impl RenderOps for Vdp {
             };
 
             while screen_x < screen_width {
-                let in_h = if win_h_dir { screen_x >= win_h_point } else { screen_x < win_h_point };
-                let params = if in_h || win_in_v { &win_params } else { &plane_params };
+                let in_h = if win_h_dir {
+                    screen_x >= win_h_point
+                } else {
+                    screen_x < win_h_point
+                };
+                let params = if in_h || win_in_v {
+                    &win_params
+                } else {
+                    &plane_params
+                };
                 self.render_tile(params, &mut screen_x, line_buf);
             }
         } else {
@@ -558,12 +561,7 @@ impl RenderOps for Vdp {
         }
     }
 
-    fn render_tile(
-        &self,
-        params: &TileRenderParams,
-        screen_x: &mut u16,
-        line_buf: &mut [u8; 320],
-    ) {
+    fn render_tile(&self, params: &TileRenderParams, screen_x: &mut u16, line_buf: &mut [u8; 320]) {
         let current_x = *screen_x;
         // Horizontal position in plane
         let scrolled_h = current_x.wrapping_sub(params.h_scroll);
@@ -584,9 +582,11 @@ impl RenderOps for Vdp {
         let pixel_v = scrolled_v % 8;
 
         let pixels_left_in_tile = 8 - pixel_h;
-        let pixels_to_process = std::cmp::min(pixels_left_in_tile, params.scanline_width - current_x);
+        let pixels_to_process =
+            std::cmp::min(pixels_left_in_tile, params.scanline_width - current_x);
 
-        let entry = self.fetch_nametable_entry(params.name_table_base, tile_v, tile_h, params.plane_w);
+        let entry =
+            self.fetch_nametable_entry(params.name_table_base, tile_v, tile_h, params.plane_w);
 
         if pixels_to_process == 8 && pixel_h == 0 {
             // Fast path for full aligned tile
@@ -673,7 +673,7 @@ impl RenderOps for Vdp {
         let mode3 = self.registers[REG_MODE3];
 
         // Vertical Scroll (Bits 2 of Mode 3: 0=Full Screen, 1=2-Cell Strips)
-        let v_scroll = if (mode3 & 0x04) != 0 {
+        if (mode3 & 0x04) != 0 {
             // 2-Cell (16-pixel) strips. Each entry in VSRAM is 4 bytes and handles 2 cells.
             // Entry 0: Plane A Cell 0-1, Entry 1: Plane B Cell 0-1, etc.
             let strip_idx = tile_h >> 1;
@@ -687,9 +687,7 @@ impl RenderOps for Vdp {
             // Full Screen
             let vs_addr = if is_plane_a { 0 } else { 2 };
             (((self.vsram[vs_addr] as u16) << 8) | (self.vsram[vs_addr + 1] as u16)) & 0x03FF
-        };
-
-        v_scroll
+        }
     }
 
     /// Fetch Horizontal scroll value for the given line.
@@ -720,9 +718,7 @@ impl RenderOps for Vdp {
 
         // H-scroll is 10-bit value (bits 0-9).
         let val = ((hi as u16) << 8) | (lo as u16);
-        let h_scroll = val & 0x03FF;
-
-        h_scroll
+        val & 0x03FF
     }
 
     #[inline(always)]
@@ -862,8 +858,8 @@ impl RenderOps for Vdp {
 
     fn get_cram_raw(&self) -> [u16; 64] {
         let mut raw = [0u16; 64];
-        for i in 0..64 {
-            raw[i] = ((self.cram[i * 2] as u16) << 8) | (self.cram[i * 2 + 1] as u16);
+        for (i, value) in raw.iter_mut().enumerate() {
+            *value = ((self.cram[i * 2] as u16) << 8) | (self.cram[i * 2 + 1] as u16);
         }
         raw
     }

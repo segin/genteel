@@ -2,7 +2,6 @@
 //!
 //! Contains 100+ unit and property-based tests covering the M68k instruction set.
 
-
 use crate::cpu::{flags, test_utils::create_test_cpu, Cpu};
 use crate::memory::{Memory, MemoryInterface};
 use proptest::prelude::*;
@@ -72,11 +71,8 @@ fn test_move_w_all_registers() {
 
             cpu.step_instruction(&mut memory);
 
-            if src_reg == dst_reg {
-                assert_eq!(cpu.d[dst_reg as usize] & 0xFFFF, 0xBABE);
-            } else {
-                assert_eq!(cpu.d[dst_reg as usize] & 0xFFFF, 0xBABE);
-            }
+            let _same_register = src_reg == dst_reg;
+            assert_eq!(cpu.d[dst_reg as usize] & 0xFFFF, 0xBABE);
         }
     }
 }
@@ -402,7 +398,7 @@ fn test_lsl_all_counts() {
         memory.write_word(0x100, opcode);
         cpu.d[0] = 0x01;
         cpu.step_instruction(&mut memory);
-        assert_eq!(cpu.d[0] & 0xFF, ((1u32 << count) & 0xFF) as u32);
+        assert_eq!(cpu.d[0] & 0xFF, (1u32 << count) & 0xFF);
     }
 }
 
@@ -414,7 +410,7 @@ fn test_lsr_all_counts() {
         memory.write_word(0x100, opcode);
         cpu.d[0] = 0x80;
         cpu.step_instruction(&mut memory);
-        assert_eq!(cpu.d[0] & 0xFF, ((0x80u32 >> count) & 0xFF) as u32);
+        assert_eq!(cpu.d[0] & 0xFF, (0x80u32 >> count) & 0xFF);
     }
 }
 
@@ -442,7 +438,7 @@ fn test_push_pop_long_sequence() {
 
     // Push sequence
     let values = [0x11111111u32, 0x22222222, 0x33333333, 0x44444444];
-    for (_i, &val) in values.iter().enumerate() {
+    for &val in &values {
         cpu.a[7] = cpu.a[7].wrapping_sub(4);
         memory.write_long(cpu.a[7], val);
     }

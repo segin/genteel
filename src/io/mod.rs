@@ -852,9 +852,10 @@ mod tests {
     #[test]
     fn test_controller_set_button_comprehensive() {
         let mut state = ControllerState::new();
+        type ButtonGetter = fn(&ControllerState) -> bool;
 
         // 1. Verify all valid button names
-        let buttons: [(&str, fn(&ControllerState) -> bool); 12] = [
+        let buttons: [(&str, ButtonGetter); 12] = [
             ("up", |s| s.up),
             ("down", |s| s.down),
             ("left", |s| s.left),
