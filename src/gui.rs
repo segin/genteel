@@ -280,6 +280,7 @@ pub struct Framework {
     #[cfg(feature = "gilrs")]
     pub gilrs: Option<Gilrs>,
     pub label_buffer: String,
+    pub waveform_points: Vec<egui::Pos2>,
 }
 
 #[cfg(feature = "gui")]
@@ -332,6 +333,7 @@ impl Framework {
             #[cfg(feature = "gilrs")]
             gilrs: init_gilrs(),
             label_buffer: String::with_capacity(64),
+            waveform_points: Vec::with_capacity(128),
         }
     }
     pub fn handle_event(
@@ -1609,17 +1611,17 @@ impl Framework {
                             ui.allocate_at_least(egui::vec2(256.0, 48.0), egui::Sense::hover());
                         ui.painter().rect_filled(rect, 0.0, egui::Color32::BLACK);
 
-                        let mut points = Vec::with_capacity(128);
+                        self.waveform_points.clear();
                         for i in 0..128 {
                             let val = debug_info.channel_waveforms[ch][i];
                             let x = rect.left() + (i as f32 * 2.0);
                             let y = rect.center().y - (val as f32 / 16384.0 * 20.0);
-                            points.push(egui::pos2(x, y));
+                            self.waveform_points.push(egui::pos2(x, y));
                         }
 
                         for i in 0..127 {
                             ui.painter().line_segment(
-                                [points[i], points[i + 1]],
+                                [self.waveform_points[i], self.waveform_points[i + 1]],
                                 (1.0, egui::Color32::GREEN),
                             );
                         }
