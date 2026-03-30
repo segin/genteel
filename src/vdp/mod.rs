@@ -587,6 +587,14 @@ impl Vdp {
         self.status |= STATUS_VINT_PENDING;
     }
 
+    pub fn acknowledge_vint(&mut self) {
+        self.status &= !STATUS_VINT_PENDING;
+    }
+
+    pub fn acknowledge_hint(&mut self) {
+        self.hint_pending = false;
+    }
+
     pub fn vblank_pending(&self) -> bool {
         (self.status & STATUS_VINT_PENDING) != 0 && self.vint_enabled()
     }

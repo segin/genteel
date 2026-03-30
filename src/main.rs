@@ -54,7 +54,6 @@ struct SystemContext<'a> {
     bus: &'a mut Bus,
     z80: &'a mut Z80<Z80Bus, Z80Bus>,
     z80_cycle_debt: &'a mut f32,
-    apu_cycle_debt: &'a mut f32,
     z80_last_bus_req: &'a mut bool,
     z80_last_reset: &'a mut bool,
     z80_trace_count: &'a mut u32,
@@ -114,7 +113,6 @@ pub struct Emulator {
     pub allowed_paths: Vec<std::path::PathBuf>,
     pub current_rom_path: Option<std::path::PathBuf>,
     pub z80_cycle_debt: f32,
-    pub apu_cycle_debt: f32,
 }
 impl Default for Emulator {
     fn default() -> Self {
@@ -152,7 +150,6 @@ impl Emulator {
             current_rom_path: None,
             allowed_paths: Vec::new(),
             z80_cycle_debt: 0.0,
-            apu_cycle_debt: 0.0,
         };
         {
             let mut bus = emulator.bus.borrow_mut();
@@ -782,7 +779,7 @@ impl Emulator {
         // 4. Update APU and generate audio samples
         {
             ctx.bus.apu.tick_cycles(m68k_cycles);
-            ctx.bus.audio_accumulator += m68k_cycles as f32;
+            ctx.bus.audio_accumulator += mclk as f32;
 
             while ctx.bus.audio_accumulator >= cycles_per_sample {
                 let (l, r) = ctx.bus.apu.generate_sample();
@@ -792,61 +789,6 @@ impl Emulator {
                 }
                 ctx.bus.audio_accumulator -= cycles_per_sample;
             }
-        }
-    }
-
-    /// Optimized synchronization that only catches up the Z80 and APU without VDP ticking.
-    fn sync_audio_z80(ctx: &mut SystemContext, m68k_cycles: u32) {
-        let cycles_per_sample = 7670453.0 / (ctx.bus.sample_rate as f32);
-
-        // 1. Z80 State
-        let z80_can_run = !ctx.bus.z80_reset && !ctx.bus.z80_bus_request;
-
-        // 2. Catch up Z80
-        if z80_can_run {
-            const Z80_CYCLES_PER_M68K_CYCLE: f32 = 3579545.0 / 7670453.0;
-            *ctx.z80_cycle_debt += m68k_cycles as f32 * Z80_CYCLES_PER_M68K_CYCLE;
-
-            unsafe {
-                ctx.z80.memory.bind_bus(ctx.bus);
-                ctx.z80.io.bind_bus(ctx.bus);
-            }
-
-            while *ctx.z80_cycle_debt >= 1.0 {
-                let cycles = ctx.z80.step();
-                *ctx.z80_cycle_debt -= cycles as f32;
-
-                // Sync APU with Z80 progress using accumulator to avoid drift
-                let equivalent_m68k = cycles as f32 / Z80_CYCLES_PER_M68K_CYCLE;
-                *ctx.apu_cycle_debt += equivalent_m68k;
-                let steps = *ctx.apu_cycle_debt as u32;
-                if steps > 0 {
-                    ctx.bus.apu.tick_cycles(steps);
-                    *ctx.apu_cycle_debt -= steps as f32;
-                }
-            }
-
-            ctx.z80.memory.unbind_bus();
-            ctx.z80.io.unbind_bus();
-        } else {
-            // Z80 is stopped, just tick APU directly
-            *ctx.apu_cycle_debt += m68k_cycles as f32;
-            let steps = *ctx.apu_cycle_debt as u32;
-            if steps > 0 {
-                ctx.bus.apu.tick_cycles(steps);
-                *ctx.apu_cycle_debt -= steps as f32;
-            }
-        }
-
-        // 3. Audio buffering
-        ctx.bus.audio_accumulator += m68k_cycles as f32;
-        while ctx.bus.audio_accumulator >= cycles_per_sample {
-            let (l, r) = ctx.bus.apu.generate_sample();
-            if ctx.bus.audio_buffer.len() < 32768 {
-                ctx.bus.audio_buffer.push(l);
-                ctx.bus.audio_buffer.push(r);
-            }
-            ctx.bus.audio_accumulator -= cycles_per_sample;
         }
     }
 
@@ -875,18 +817,26 @@ impl Emulator {
                 ctx.cpu.step_instruction(ctx.bus)
             };
 
-            // Instead of full sync, we tick the VDP and only catch up sensitive components if needed.
-            // Performance: Tick VDP with mclk
-            ctx.bus.tick(m68k_cycles * 7);
+            match ctx.cpu.last_interrupt_level {
+                6 => ctx.bus.vdp.acknowledge_vint(),
+                4 => ctx.bus.vdp.acknowledge_hint(),
+                _ => {}
+            }
 
-            // Audio and Z80 sync: we can batch this a bit more than 1 instruction
-            // but for DAC accuracy we still need regular updates.
-            // Let's at least avoid the full sync_components (VDP overhead)
-            Self::sync_audio_z80(ctx, m68k_cycles);
+            let trigger_vint = line == active_lines && pending_cycles < 10;
+            Self::sync_components(ctx, m68k_cycles, trigger_vint);
 
-            // Real Genesis uses level-triggered interrupts.
-            if ctx.cpu.pending_interrupt == 6 && !ctx.bus.vdp.vblank_pending() {
+            // Real Genesis IRQ lines are level-triggered and must be observed
+            // during instruction execution, not only at scanline boundaries.
+            if ctx.bus.vdp.vblank_pending() {
+                ctx.cpu.request_interrupt(6);
+            } else {
                 ctx.cpu.cancel_interrupt(6);
+            }
+            if ctx.bus.vdp.hint_pending() {
+                ctx.cpu.request_interrupt(4);
+            } else {
+                ctx.cpu.cancel_interrupt(4);
             }
 
             // Check for Z80 state change (rare but needs early exit)
@@ -915,7 +865,6 @@ impl Emulator {
             bus: &mut bus,
             z80: &mut self.z80,
             z80_cycle_debt: &mut self.z80_cycle_debt,
-            apu_cycle_debt: &mut self.apu_cycle_debt,
             z80_last_bus_req: &mut self.z80_last_bus_req,
             z80_last_reset: &mut self.z80_last_reset,
             z80_trace_count: &mut self.z80_trace_count,
@@ -1186,6 +1135,8 @@ impl Emulator {
         } else {
             0
         };
+        let dma_pending = bus.vdp.command.dma_pending;
+        let fifo_len = bus.vdp.fifo.len();
         let z80_pc = self.z80.pc;
         let z80_reset = if bus.z80_reset { "RST" } else { "RUN" };
         let z80_req = if bus.z80_bus_request { "BUS" } else { "---" };
@@ -1195,12 +1146,14 @@ impl Emulator {
             0
         };
         println_safe!(
-            "FRAME {:05} | 68k: PC={:06X} SR={:04X} | VDP: Disp={} DMA={} CRAM={:04X} | Z80: PC={:04X} OP={:02X} St={} Req={}",
+            "FRAME {:05} | 68k: PC={:06X} SR={:04X} | VDP: Disp={} DMA={} DMAP={} FIFO={} CRAM={:04X} | Z80: PC={:04X} OP={:02X} St={} Req={}",
             frame_count,
             self.cpu.pc,
             self.cpu.sr,
             disp_en,
             dma_en,
+            dma_pending,
+            fifo_len,
             cram_val,
             z80_pc,
             z80_op,

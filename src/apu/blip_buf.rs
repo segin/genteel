@@ -47,6 +47,8 @@ pub struct BlipBuf {
     clock_ptr: f64,
     /// Current DC offset
     accumulator: i32,
+    /// Running integrated output state between read calls.
+    integrator: i32,
     /// Total samples read (shifted out)
     samples_read: u64,
 }
@@ -60,6 +62,7 @@ impl BlipBuf {
             last_clock: 0,
             clock_ptr: 0.0,
             accumulator: 0,
+            integrator: 0,
             samples_read: 0,
         }
     }
@@ -73,6 +76,7 @@ impl BlipBuf {
     pub fn clear(&mut self) {
         self.buffer.fill(0);
         self.accumulator = 0;
+        self.integrator = 0;
         self.samples_read = 0;
     }
 
@@ -109,12 +113,13 @@ impl BlipBuf {
     pub fn read_samples(&mut self, samples: &mut [i16]) -> usize {
         let count = samples.len().min(self.buffer.len() - KERNEL_SIZE);
 
-        let mut current = 0;
+        let mut current = self.integrator;
         for (i, sample) in samples.iter_mut().enumerate().take(count) {
             current += self.buffer[i];
             *sample = (current.clamp(-32768, 32767)) as i16;
             self.buffer[i] = 0;
         }
+        self.integrator = current;
 
         // Shift remaining data (the "tails" of the kernels)
         self.buffer.rotate_left(count);
