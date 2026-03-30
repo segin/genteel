@@ -451,8 +451,8 @@ impl Ym2612 {
             dac_en: false,
             env_counter: 0,
             total_clocks: 0,
-            blip_l: BlipBuf::new(7670453, 53267),
-            blip_r: BlipBuf::new(crate::audio::NTSC_MCLK, 44100),
+            blip_l: BlipBuf::new(crate::audio::NTSC_MCLK, crate::audio::SAMPLE_RATE),
+            blip_r: BlipBuf::new(crate::audio::NTSC_MCLK, crate::audio::SAMPLE_RATE),
             last_left: 0,
             last_right: 0,
             total_mclocks: 0,
@@ -556,6 +556,8 @@ impl Ym2612 {
                 right += out;
             }
         }
+        left >>= 3;
+        right >>= 3;
         let dl = left - self.last_left;
         if dl != 0 {
             self.blip_l.add_delta(self.total_mclocks, dl);

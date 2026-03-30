@@ -37,6 +37,8 @@ static KERNEL: std::sync::LazyLock<[i32; KERNEL_SIZE * RES]> = std::sync::LazyLo
 pub struct BlipBuf {
     /// Internal integration buffer
     buffer: Vec<i32>,
+    /// Logical start of unread samples in the ring buffer
+    start: usize,
     /// Target sample rate (e.g. 44100)
     sample_rate: u32,
     /// Source clock rate (e.g. 53267 for FM, 3579545 for PSG)
@@ -57,6 +59,7 @@ impl BlipBuf {
     pub fn new(clock_rate: u32, sample_rate: u32) -> Self {
         Self {
             buffer: vec![0; (sample_rate as usize / 10) + KERNEL_SIZE + 2], // Large enough for >100ms
+            start: 0,
             sample_rate,
             clock_rate,
             last_clock: 0,
@@ -75,6 +78,7 @@ impl BlipBuf {
     /// Clear the buffer
     pub fn clear(&mut self) {
         self.buffer.fill(0);
+        self.start = 0;
         self.accumulator = 0;
         self.integrator = 0;
         self.samples_read = 0;
@@ -101,8 +105,9 @@ impl BlipBuf {
         // Apply band-limited step
         let offset = (fract * RES as f64) as usize;
         for i in 0..KERNEL_SIZE {
+            let idx = (self.start + sample_idx + i) % self.buffer.len();
             let kernel_val = KERNEL[i * RES + offset];
-            self.buffer[sample_idx + i] += (delta * kernel_val) >> 15;
+            self.buffer[idx] += (delta * kernel_val) >> 15;
         }
 
         // Update DC accumulator for integration
@@ -115,14 +120,14 @@ impl BlipBuf {
 
         let mut current = self.integrator;
         for (i, sample) in samples.iter_mut().enumerate().take(count) {
-            current += self.buffer[i];
+            let idx = (self.start + i) % self.buffer.len();
+            current += self.buffer[idx];
             *sample = (current.clamp(-32768, 32767)) as i16;
-            self.buffer[i] = 0;
+            self.buffer[idx] = 0;
         }
         self.integrator = current;
 
-        // Shift remaining data (the "tails" of the kernels)
-        self.buffer.rotate_left(count);
+        self.start = (self.start + count) % self.buffer.len();
         self.samples_read += count as u64;
 
         count

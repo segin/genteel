@@ -32,6 +32,12 @@ fn default_channel_buffers() -> [[i16; 128]; 10] {
 }
 
 impl Apu {
+    fn mix_sample(sample: i32) -> i16 {
+        let x = sample as f32 / 32768.0;
+        let y = x / (1.0 + x.abs());
+        (y * 32767.0) as i16
+    }
+
     pub fn new() -> Self {
         Self {
             psg: Psg::new(),
@@ -70,16 +76,11 @@ impl Apu {
     /// Attempts to generate a mixed audio sample pair.
     /// Returns `(left, right)` from the blip buffers.
     pub fn generate_sample(&mut self) -> (i16, i16) {
-        let mut fm_l = [0i16; 1];
-        let mut fm_r = [0i16; 1];
-        let mut psg_buf = [0i16; 1];
+        let (fm_l, fm_r) = self.fm.generate_sample();
+        let psg = self.psg.generate_sample();
 
-        self.fm.blip_l.read_samples(&mut fm_l[..]);
-        self.fm.blip_r.read_samples(&mut fm_r[..]);
-        self.psg.blip.read_samples(&mut psg_buf[..]);
-
-        let left = (fm_l[0] as i32 + psg_buf[0] as i32).clamp(-32768, 32767) as i16;
-        let right = (fm_r[0] as i32 + psg_buf[0] as i32).clamp(-32768, 32767) as i16;
+        let left = Self::mix_sample(((fm_l as i32) * 3 + (psg as i32) * 2) / 4);
+        let right = Self::mix_sample(((fm_r as i32) * 3 + (psg as i32) * 2) / 4);
 
         (left, right)
     }

@@ -68,7 +68,7 @@ impl Psg {
             latch_volume: false,
             total_mclocks: 1, // Start at 1 to allow delta at 0 if needed
             mclk_debt: 0,
-            blip: BlipBuf::new(audio::NTSC_MCLK, 44100),
+            blip: BlipBuf::new(audio::NTSC_MCLK, audio::SAMPLE_RATE),
         };
         for tone in &mut psg.tones {
             tone.volume = 0x0F;

@@ -710,13 +710,13 @@ impl Emulator {
         }
     }
 
-    fn sync_components(ctx: &mut SystemContext, m68k_cycles: u32, trigger_vint: bool) {
+    fn sync_audio_z80(ctx: &mut SystemContext, m68k_cycles: u32, trigger_vint: bool) {
+        if m68k_cycles == 0 && !trigger_vint {
+            return;
+        }
+
         let mclk = m68k_cycles * 7;
 
-        // 1. Tick the Bus (VDP, etc)
-        ctx.bus.tick(mclk);
-
-        // 2. Z80 State and Timing
         let (z80_can_run, z80_is_reset, cycles_per_sample) = {
             let prev = *ctx.z80_last_bus_req;
             if ctx.debug && ctx.bus.z80_bus_request != prev {
@@ -731,17 +731,20 @@ impl Emulator {
 
             let z80_can_run = !ctx.bus.z80_reset && !ctx.bus.z80_bus_request;
             let z80_is_reset = ctx.bus.z80_reset;
-            let cycles_per_sample = 7670453.0 / (ctx.bus.sample_rate as f32);
+            let master_clock = if ctx.bus.vdp.is_pal {
+                audio::PAL_MCLK
+            } else {
+                audio::NTSC_MCLK
+            };
+            let cycles_per_sample = master_clock as f32 / (ctx.bus.sample_rate as f32);
             (z80_can_run, z80_is_reset, cycles_per_sample)
         };
 
-        // Handle Z80 Reset
         if z80_is_reset && !*ctx.z80_last_reset {
             ctx.z80.reset();
         }
         *ctx.z80_last_reset = z80_is_reset;
 
-        // Trace Z80 if debugging
         if z80_can_run && ctx.internal_frame_count > 0 {
             ctx.z80.debug = ctx.debug && *ctx.z80_trace_count < 5000;
             if ctx.z80.debug {
@@ -751,16 +754,13 @@ impl Emulator {
             ctx.z80.debug = false;
         }
 
-        // Trigger Z80 VInt if requested
         if trigger_vint && !z80_is_reset {
             ctx.z80.trigger_interrupt(0xFF);
         }
 
-        // 3. Catch up Z80
         if z80_can_run {
             const Z80_CYCLES_PER_M68K_CYCLE: f32 = 3579545.0 / 7670453.0;
             *ctx.z80_cycle_debt += m68k_cycles as f32 * Z80_CYCLES_PER_M68K_CYCLE;
-            // Bind the bus to avoid RefCell double borrow
             unsafe {
                 ctx.z80.memory.bind_bus(ctx.bus);
                 ctx.z80.io.bind_bus(ctx.bus);
@@ -771,24 +771,20 @@ impl Emulator {
                 *ctx.z80_cycle_debt -= cycles as f32;
             }
 
-            // Unbind to return to SharedBus mode
             ctx.z80.memory.unbind_bus();
             ctx.z80.io.unbind_bus();
         }
 
-        // 4. Update APU and generate audio samples
-        {
-            ctx.bus.apu.tick_cycles(m68k_cycles);
-            ctx.bus.audio_accumulator += mclk as f32;
+        ctx.bus.apu.tick_cycles(m68k_cycles);
+        ctx.bus.audio_accumulator += mclk as f32;
 
-            while ctx.bus.audio_accumulator >= cycles_per_sample {
-                let (l, r) = ctx.bus.apu.generate_sample();
-                if ctx.bus.audio_buffer.len() < 32768 {
-                    ctx.bus.audio_buffer.push(l);
-                    ctx.bus.audio_buffer.push(r);
-                }
-                ctx.bus.audio_accumulator -= cycles_per_sample;
+        while ctx.bus.audio_accumulator >= cycles_per_sample {
+            let (l, r) = ctx.bus.apu.generate_sample();
+            if ctx.bus.audio_buffer.len() < 32768 {
+                ctx.bus.audio_buffer.push(l);
+                ctx.bus.audio_buffer.push(r);
             }
+            ctx.bus.audio_accumulator -= cycles_per_sample;
         }
     }
 
@@ -798,13 +794,29 @@ impl Emulator {
         line: u16,
         active_lines: u16,
     ) -> CpuBatchResult {
+        const Z80_AUDIO_SYNC_SLICE: u32 = 32;
         let (initial_req, initial_rst) = (ctx.bus.z80_bus_request, ctx.bus.z80_reset);
         let mut pending_cycles = 0;
+        let mut deferred_bus_cycles = 0;
+        let mut deferred_audio_cycles = 0;
         loop {
             if pending_cycles >= max_cycles {
                 // Final sync for the batch
                 let trigger_vint = line == active_lines && pending_cycles < 10;
-                Self::sync_components(ctx, 0, trigger_vint);
+                if deferred_bus_cycles > 0 {
+                    ctx.bus.tick(deferred_bus_cycles * 7);
+                    if ctx.bus.vdp.vblank_pending() {
+                        ctx.cpu.request_interrupt(6);
+                    } else {
+                        ctx.cpu.cancel_interrupt(6);
+                    }
+                    if ctx.bus.vdp.hint_pending() {
+                        ctx.cpu.request_interrupt(4);
+                    } else {
+                        ctx.cpu.cancel_interrupt(4);
+                    }
+                }
+                Self::sync_audio_z80(ctx, deferred_audio_cycles, trigger_vint);
                 return CpuBatchResult {
                     cycles: pending_cycles,
                     z80_change: None,
@@ -823,25 +835,36 @@ impl Emulator {
                 _ => {}
             }
 
-            let trigger_vint = line == active_lines && pending_cycles < 10;
-            Self::sync_components(ctx, m68k_cycles, trigger_vint);
+            deferred_bus_cycles += m68k_cycles;
+            deferred_audio_cycles += m68k_cycles;
 
-            // Real Genesis IRQ lines are level-triggered and must be observed
-            // during instruction execution, not only at scanline boundaries.
-            if ctx.bus.vdp.vblank_pending() {
-                ctx.cpu.request_interrupt(6);
-            } else {
-                ctx.cpu.cancel_interrupt(6);
-            }
-            if ctx.bus.vdp.hint_pending() {
-                ctx.cpu.request_interrupt(4);
-            } else {
-                ctx.cpu.cancel_interrupt(4);
+            let trigger_vint = line == active_lines && pending_cycles < 10;
+            if deferred_bus_cycles >= Z80_AUDIO_SYNC_SLICE || trigger_vint || ctx.bus.dma_active() {
+                ctx.bus.tick(deferred_bus_cycles * 7);
+                if ctx.bus.vdp.vblank_pending() {
+                    ctx.cpu.request_interrupt(6);
+                } else {
+                    ctx.cpu.cancel_interrupt(6);
+                }
+                if ctx.bus.vdp.hint_pending() {
+                    ctx.cpu.request_interrupt(4);
+                } else {
+                    ctx.cpu.cancel_interrupt(4);
+                }
+                Self::sync_audio_z80(ctx, deferred_audio_cycles, trigger_vint);
+                deferred_bus_cycles = 0;
+                deferred_audio_cycles = 0;
             }
 
             // Check for Z80 state change (rare but needs early exit)
             let (req, rst) = (ctx.bus.z80_bus_request, ctx.bus.z80_reset);
             if req != initial_req || rst != initial_rst {
+                if deferred_bus_cycles > 0 {
+                    ctx.bus.tick(deferred_bus_cycles * 7);
+                }
+                if deferred_audio_cycles > 0 {
+                    Self::sync_audio_z80(ctx, deferred_audio_cycles, false);
+                }
                 return CpuBatchResult {
                     cycles: pending_cycles + m68k_cycles,
                     z80_change: Some(Z80Change {
