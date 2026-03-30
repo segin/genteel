@@ -1492,13 +1492,12 @@ impl Framework {
                             ui.allocate_at_least(egui::vec2(256.0, 48.0), egui::Sense::hover());
                         ui.painter().rect_filled(rect, 0.0, egui::Color32::BLACK);
 
-                        let mut points = Vec::with_capacity(128);
-                        for i in 0..128 {
+                        let points: [egui::Pos2; 128] = std::array::from_fn(|i| {
                             let val = debug_info.channel_waveforms[ch][i];
                             let x = rect.left() + (i as f32 * 2.0);
                             let y = rect.center().y - (val as f32 / 16384.0 * 20.0);
-                            points.push(egui::pos2(x, y));
-                        }
+                            egui::pos2(x, y)
+                        });
 
                         for i in 0..127 {
                             ui.painter().line_segment(
