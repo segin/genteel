@@ -1179,7 +1179,8 @@ fn print_usage() {
     println!("  --headless <n>   Run N frames without display");
     println!("  --screenshot <path> Save screenshot after headless run");
     println!("  --gdb [port]     Start GDB server (default port: 1234)");
-    println!("                   Note: Set GENTEEL_GDB_PASSWORD env var for custom password.");
+    println!("  --gdb-password <pass>  Set password for GDB server authentication");
+    println!("  --gdb-password-file <path> Read GDB password from a file");
     println!("  --dump-audio <file> Dump audio output to WAV file");
     println!(
         "  --input-mapping <type> Set keyboard mapping (original|ergonomic, default: original)"
@@ -1239,10 +1240,7 @@ impl Config {
     where
         I: IntoIterator<Item = String>,
     {
-        let mut config = Config {
-            gdb_password: std::env::var("GENTEEL_GDB_PASSWORD").ok(),
-            ..Config::default()
-        };
+        let mut config = Config::default();
         let mut iter = args.into_iter().skip(1);
         let mut current_opt = iter.next();
         while let Some(arg) = current_opt {
@@ -1287,6 +1285,19 @@ impl Config {
                         }
                     }
                     config.gdb_port = Some(port);
+                }
+                "--gdb-password" => {
+                    config.gdb_password = iter.next();
+                    current_opt = iter.next();
+                }
+                "--gdb-password-file" => {
+                    if let Some(path) = iter.next() {
+                        match std::fs::read_to_string(&path) {
+                            Ok(password) => config.gdb_password = Some(password.trim().to_string()),
+                            Err(e) => eprintln!("Failed to read GDB password file {}: {}", path, e),
+                        }
+                    }
+                    current_opt = iter.next();
                 }
                 "--dump-audio" => {
                     config.dump_audio_path = iter.next();
@@ -1570,11 +1581,33 @@ mod tests {
         assert_eq!(config.gdb_port, Some(1234));
         assert_eq!(config.rom_path, Some("rom.bin".to_string()));
 
-        // Test environment variable password
-        std::env::set_var("GENTEEL_GDB_PASSWORD", "env_secret");
+        // Test GDB password flags
+        let args = vec![
+            "genteel".to_string(),
+            "--gdb-password".to_string(),
+            "secret_pwd".to_string(),
+            "rom.bin".to_string(),
+        ];
+        let config = Config::from_args(args);
+        assert_eq!(config.gdb_password, Some("secret_pwd".to_string()));
+
+        let pwd_file = "test_gdb_pwd.txt";
+        std::fs::write(pwd_file, " file_secret \n").unwrap();
+        let args = vec![
+            "genteel".to_string(),
+            "--gdb-password-file".to_string(),
+            pwd_file.to_string(),
+            "rom.bin".to_string(),
+        ];
+        let config = Config::from_args(args);
+        assert_eq!(config.gdb_password, Some("file_secret".to_string()));
+        let _ = std::fs::remove_file(pwd_file);
+
+        // Verify environment variable is NO LONGER used
+        std::env::set_var("GENTEEL_GDB_PASSWORD", "should_be_ignored");
         let args = vec!["genteel".to_string(), "rom.bin".to_string()];
         let config = Config::from_args(args);
-        assert_eq!(config.gdb_password, Some("env_secret".to_string()));
+        assert_eq!(config.gdb_password, None);
         std::env::remove_var("GENTEEL_GDB_PASSWORD");
 
         let args = vec![
