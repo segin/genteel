@@ -478,6 +478,11 @@ mod tests {
         rgb565_to_rgba8(&input, &mut short_output);
         assert_eq!(short_output, [255, 255, 255, 255]); // First pixel processed correctly
 
+        // Mismatched lengths: Output < 4 bytes (should not process at all due to chunks_exact_mut(4))
+        let mut very_short_output = [1, 2, 3];
+        rgb565_to_rgba8(&input, &mut very_short_output);
+        assert_eq!(very_short_output, [1, 2, 3]); // Should be entirely untouched
+
         // Mismatched lengths: Output too large (should leave remainder untouched)
         let input_short = [0x0000]; // 1 pixel (black)
         let mut long_output = [255u8; 8]; // Room for 2 pixels, initialized to white
