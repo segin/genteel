@@ -5,8 +5,8 @@ fn test_read_long_rom_bounds() {
     let mut bus = Bus::new();
     // Create a 1024 byte ROM to avoid padding logic
     let mut rom = vec![0; 1024];
-    for i in 0..1024 {
-        rom[i] = (i % 256) as u8;
+    for (i, byte) in rom.iter_mut().enumerate().take(1024) {
+        *byte = (i % 256) as u8;
     }
     bus.load_rom(&rom);
 
@@ -34,8 +34,8 @@ fn test_read_long_rom_bounds() {
 fn test_read_word_rom_bounds() {
     let mut bus = Bus::new();
     let mut rom = vec![0; 1024];
-    for i in 0..1024 {
-        rom[i] = (i % 256) as u8;
+    for (i, byte) in rom.iter_mut().enumerate().take(1024) {
+        *byte = (i % 256) as u8;
     }
     bus.load_rom(&rom);
 

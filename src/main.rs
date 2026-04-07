@@ -28,6 +28,9 @@ pub const SLOT_EXTS: [&str; 10] = ["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7
 /// Maximum save state size in bytes (25MB) to prevent OOM
 const MAX_STATE_SIZE: u64 = 25 * 1024 * 1024;
 
+/// Maximum SRAM size in bytes (2MB) to prevent OOM/DoS
+const MAX_SRAM_SIZE: u64 = 2 * 1024 * 1024;
+
 use crate::vdp::RenderOps;
 use apu::Apu;
 use cpu::Cpu;
@@ -43,7 +46,6 @@ use z80::Z80;
 
 #[derive(Debug, Clone, Copy)]
 struct Z80Change {
-    instruction_cycles: u32,
     new_req: bool,
     new_rst: bool,
 }
@@ -108,8 +110,9 @@ pub struct Emulator {
     pub single_step: bool,
     #[serde(skip)]
     pub gdb: Option<GdbServer>,
-    pub current_rom_path: Option<std::path::PathBuf>,
     pub allowed_paths: Vec<std::path::PathBuf>,
+    pub current_rom_path: Option<std::path::PathBuf>,
+    pub z80_cycle_debt: f32,
 }
 impl Default for Emulator {
     fn default() -> Self {
@@ -146,6 +149,7 @@ impl Emulator {
             gdb: None,
             current_rom_path: None,
             allowed_paths: Vec::new(),
+            z80_cycle_debt: 0.0,
         };
         {
             let mut bus = emulator.bus.borrow_mut();
@@ -186,15 +190,38 @@ impl Emulator {
             return;
         };
         let sram_path = path.with_extension("srm");
-        if let Ok(data) = std::fs::read(&sram_path) {
-            println!("Loading SRAM from {:?}", sram_path);
-            let mut bus = self.bus.borrow_mut();
-            if data.len() == bus.sram.len() {
-                bus.sram.copy_from_slice(&data);
-            } else {
-                let len = data.len().min(bus.sram.len());
-                bus.sram[..len].copy_from_slice(&data[..len]);
+        let Ok(file) = std::fs::File::open(&sram_path) else {
+            return;
+        };
+
+        // 1. Check metadata size
+        if let Ok(metadata) = file.metadata() {
+            if metadata.len() > MAX_SRAM_SIZE {
+                eprintln!("SRAM file too large: {} bytes", metadata.len());
+                return;
             }
+        }
+
+        // 2. Read with limit to prevent OOM
+        use std::io::Read;
+        let mut data = Vec::new();
+        if let Err(e) = file.take(MAX_SRAM_SIZE + 1).read_to_end(&mut data) {
+            eprintln!("Failed to read SRAM: {}", e);
+            return;
+        }
+
+        if data.len() as u64 > MAX_SRAM_SIZE {
+            eprintln!("SRAM exceeds size limit");
+            return;
+        }
+
+        println!("Loading SRAM from {:?}", sram_path);
+        let mut bus = self.bus.borrow_mut();
+        if data.len() == bus.sram.len() {
+            bus.sram.copy_from_slice(&data);
+        } else {
+            let len = data.len().min(bus.sram.len());
+            bus.sram[..len].copy_from_slice(&data[..len]);
         }
     }
 
@@ -648,39 +675,30 @@ impl Emulator {
         }
     }
     pub fn step_frame_internal(&mut self) {
+        let (lines, active_lines) = {
+            let bus = self.bus.borrow();
+            if bus.vdp.is_pal {
+                (313, 240)
+            } else {
+                (262, 224)
+            }
+        };
+        let samples_per_line = audio::samples_per_frame() as f32 / lines as f32;
+
+        for line in 0..lines {
+            self.step_scanline(line, active_lines, samples_per_line);
+        }
         self.internal_frame_count += 1;
-        if self.debug {
+        if self.debug && self.internal_frame_count.is_multiple_of(60) {
             self.log_debug(self.internal_frame_count);
         }
-        // Genesis timing constants (NTSC):
-        // M68k: 7.67 MHz, Z80: 3.58 MHz
-        // One frame = 262 scanlines
-        // Active display: lines 0-223
-        // VBlank: lines 224-261
-        // Cycles per scanline: ~488
-        const LINES_PER_FRAME: u16 = 262;
-        // Active lines can be 224 or 240 (V30 mode)
-        let active_lines = self.bus.borrow().vdp.screen_height();
-        // APU Timing
-        let samples_per_frame = audio::samples_per_frame() as f32;
-        let samples_per_line = samples_per_frame / (LINES_PER_FRAME as f32);
-        let mut z80_cycle_debt: f32 = 0.0;
-        for line in 0..LINES_PER_FRAME {
-            self.step_scanline(line, active_lines, samples_per_line, &mut z80_cycle_debt);
-        }
+
         self.generate_audio_samples(samples_per_line);
-        // Update V30 rolling offset
         self.bus.borrow_mut().vdp.update_v30_offset();
     }
-    fn step_scanline(
-        &mut self,
-        line: u16,
-        active_lines: u16,
-        _samples_per_line: f32,
-        z80_cycle_debt: &mut f32,
-    ) {
+    fn step_scanline(&mut self, line: u16, active_lines: u16, _samples_per_line: f32) {
         self.vdp_scanline_setup(line, active_lines);
-        self.run_cpu_loop(line, active_lines, z80_cycle_debt);
+        self.run_cpu_loop(line, active_lines);
         self.handle_interrupts();
     }
     fn vdp_scanline_setup(&mut self, line: u16, _active_lines: u16) {
@@ -691,89 +709,82 @@ impl Emulator {
             bus.vdp.render_line(line);
         }
     }
-    #[allow(clippy::too_many_arguments)]
-    fn sync_components(
-        bus: &mut Bus,
-        m68k_cycles: u32,
-        z80: &mut Z80<Z80Bus, Z80Bus>,
-        z80_cycle_debt: &mut f32,
-        trigger_vint: bool,
-        internal_frame_count: u64,
-        z80_last_bus_req: &mut bool,
-        z80_last_reset: &mut bool,
-        z80_trace_count: &mut u32,
-        cpu_pc: u32,
-        debug: bool,
-    ) {
+
+    fn sync_audio_z80(ctx: &mut SystemContext, m68k_cycles: u32, trigger_vint: bool) {
+        if m68k_cycles == 0 && !trigger_vint {
+            return;
+        }
+
         let mclk = m68k_cycles * 7;
 
-        // 1. Tick the Bus (VDP, etc)
-        bus.tick(mclk);
-
-        // 2. Z80 State and Timing
         let (z80_can_run, z80_is_reset, cycles_per_sample) = {
-            let prev = *z80_last_bus_req;
-            if debug && bus.z80_bus_request != prev {
+            let prev = *ctx.z80_last_bus_req;
+            if ctx.debug && ctx.bus.z80_bus_request != prev {
                 log::debug!(
                     "Bus Req Changed: {} -> {} at 68k PC={:06X}",
                     prev,
-                    bus.z80_bus_request,
-                    cpu_pc
+                    ctx.bus.z80_bus_request,
+                    ctx.cpu.pc
                 );
             }
-            *z80_last_bus_req = bus.z80_bus_request;
+            *ctx.z80_last_bus_req = ctx.bus.z80_bus_request;
 
-            let z80_can_run = !bus.z80_reset && !bus.z80_bus_request;
-            let z80_is_reset = bus.z80_reset;
-            let cycles_per_sample = 7670453.0 / (bus.sample_rate as f32);
+            let z80_can_run = !ctx.bus.z80_reset && !ctx.bus.z80_bus_request;
+            let z80_is_reset = ctx.bus.z80_reset;
+            let master_clock = if ctx.bus.vdp.is_pal {
+                audio::PAL_MCLK
+            } else {
+                audio::NTSC_MCLK
+            };
+            let cycles_per_sample = master_clock as f32 / (ctx.bus.sample_rate as f32);
             (z80_can_run, z80_is_reset, cycles_per_sample)
         };
 
-        // Handle Z80 Reset
-        if z80_is_reset && !*z80_last_reset {
-            z80.reset();
+        if z80_is_reset && !*ctx.z80_last_reset {
+            ctx.z80.reset();
         }
-        *z80_last_reset = z80_is_reset;
+        *ctx.z80_last_reset = z80_is_reset;
 
-        // Trace Z80 if debugging
-        if z80_can_run && internal_frame_count > 0 {
-            z80.debug = debug && *z80_trace_count < 5000;
-            if z80.debug {
-                *z80_trace_count += 1;
+        if z80_can_run && ctx.internal_frame_count > 0 {
+            ctx.z80.debug = ctx.debug && *ctx.z80_trace_count < 5000;
+            if ctx.z80.debug {
+                *ctx.z80_trace_count += 1;
             }
         } else {
-            z80.debug = false;
+            ctx.z80.debug = false;
         }
 
-        // Trigger Z80 VInt if requested
         if trigger_vint && !z80_is_reset {
-            z80.trigger_interrupt(0xFF);
+            ctx.z80.trigger_interrupt(0xFF);
         }
 
-        // 3. Catch up Z80
         if z80_can_run {
             const Z80_CYCLES_PER_M68K_CYCLE: f32 = 3579545.0 / 7670453.0;
-            *z80_cycle_debt += m68k_cycles as f32 * Z80_CYCLES_PER_M68K_CYCLE;
-            while *z80_cycle_debt >= 1.0 {
-                let cycles = z80.step();
-                *z80_cycle_debt -= cycles as f32;
+            *ctx.z80_cycle_debt += m68k_cycles as f32 * Z80_CYCLES_PER_M68K_CYCLE;
+            unsafe {
+                ctx.z80.memory.bind_bus(ctx.bus);
+                ctx.z80.io.bind_bus(ctx.bus);
             }
+
+            while *ctx.z80_cycle_debt >= 1.0 {
+                let cycles = ctx.z80.step();
+                *ctx.z80_cycle_debt -= cycles as f32;
+            }
+
+            ctx.z80.memory.unbind_bus();
+            ctx.z80.io.unbind_bus();
         }
 
-        // 4. Update APU and generate audio samples
-        {
-            bus.apu.tick_cycles(m68k_cycles);
-            bus.audio_accumulator += m68k_cycles as f32;
+        ctx.bus.apu.tick_cycles(m68k_cycles);
+        ctx.bus.audio_accumulator += mclk as f32;
 
-            while bus.audio_accumulator >= cycles_per_sample {
-                if let Some((l, r)) = bus.apu.generate_sample() {
-                    if bus.audio_buffer.len() < 32768 {
-                        bus.audio_buffer.push(l);
-                        bus.audio_buffer.push(r);
-                    }
-                }
-                bus.audio_accumulator -= cycles_per_sample;
+        while ctx.bus.audio_accumulator >= cycles_per_sample {
+            let (l, r) = ctx.bus.apu.generate_sample();
+            if ctx.bus.audio_buffer.len() < 32768 {
+                ctx.bus.audio_buffer.push(l);
+                ctx.bus.audio_buffer.push(r);
             }
+            ctx.bus.audio_accumulator -= cycles_per_sample;
         }
     }
 
@@ -783,110 +794,117 @@ impl Emulator {
         line: u16,
         active_lines: u16,
     ) -> CpuBatchResult {
+        const Z80_AUDIO_SYNC_SLICE: u32 = 32;
         let (initial_req, initial_rst) = (ctx.bus.z80_bus_request, ctx.bus.z80_reset);
         let mut pending_cycles = 0;
+        let mut deferred_bus_cycles = 0;
+        let mut deferred_audio_cycles = 0;
         loop {
             if pending_cycles >= max_cycles {
+                // Final sync for the batch
+                let trigger_vint = line == active_lines && pending_cycles < 10;
+                if deferred_bus_cycles > 0 {
+                    ctx.bus.tick(deferred_bus_cycles * 7);
+                    if ctx.bus.vdp.vblank_pending() {
+                        ctx.cpu.request_interrupt(6);
+                    } else {
+                        ctx.cpu.cancel_interrupt(6);
+                    }
+                    if ctx.bus.vdp.hint_pending() {
+                        ctx.cpu.request_interrupt(4);
+                    } else {
+                        ctx.cpu.cancel_interrupt(4);
+                    }
+                }
+                Self::sync_audio_z80(ctx, deferred_audio_cycles, trigger_vint);
                 return CpuBatchResult {
                     cycles: pending_cycles,
                     z80_change: None,
                 };
             }
-            let m68k_cycles = {
-                let cycles = if ctx.bus.dma_active() {
-                    2 // Yield 2 cycles to let the bus step during DMA
-                } else {
-                    ctx.cpu.step_instruction(ctx.bus)
-                };
 
-                // Real Genesis uses level-triggered interrupts. If the game reads the VDP status
-                // or disables V-Int, the VDP drops the IRQ line. We must cancel it on the CPU.
-                if ctx.cpu.pending_interrupt == 6 && !ctx.bus.vdp.vblank_pending() {
-                    ctx.cpu.cancel_interrupt(6);
-                }
-
-                cycles
+            let m68k_cycles = if ctx.bus.dma_active() {
+                2 // Yield 2 cycles to let the bus step during DMA
+            } else {
+                ctx.cpu.step_instruction(ctx.bus)
             };
 
+            match ctx.cpu.last_interrupt_level {
+                6 => ctx.bus.vdp.acknowledge_vint(),
+                4 => ctx.bus.vdp.acknowledge_hint(),
+                _ => {}
+            }
+
+            deferred_bus_cycles += m68k_cycles;
+            deferred_audio_cycles += m68k_cycles;
+
             let trigger_vint = line == active_lines && pending_cycles < 10;
-            Self::sync_components(
-                ctx.bus,
-                m68k_cycles,
-                ctx.z80,
-                ctx.z80_cycle_debt,
-                trigger_vint,
-                ctx.internal_frame_count,
-                ctx.z80_last_bus_req,
-                ctx.z80_last_reset,
-                ctx.z80_trace_count,
-                ctx.cpu.pc,
-                ctx.debug,
-            );
+            if deferred_bus_cycles >= Z80_AUDIO_SYNC_SLICE || trigger_vint || ctx.bus.dma_active() {
+                ctx.bus.tick(deferred_bus_cycles * 7);
+                if ctx.bus.vdp.vblank_pending() {
+                    ctx.cpu.request_interrupt(6);
+                } else {
+                    ctx.cpu.cancel_interrupt(6);
+                }
+                if ctx.bus.vdp.hint_pending() {
+                    ctx.cpu.request_interrupt(4);
+                } else {
+                    ctx.cpu.cancel_interrupt(4);
+                }
+                Self::sync_audio_z80(ctx, deferred_audio_cycles, trigger_vint);
+                deferred_bus_cycles = 0;
+                deferred_audio_cycles = 0;
+            }
 
-            // Check for Z80 state change
+            // Check for Z80 state change (rare but needs early exit)
             let (req, rst) = (ctx.bus.z80_bus_request, ctx.bus.z80_reset);
-
             if req != initial_req || rst != initial_rst {
+                if deferred_bus_cycles > 0 {
+                    ctx.bus.tick(deferred_bus_cycles * 7);
+                }
+                if deferred_audio_cycles > 0 {
+                    Self::sync_audio_z80(ctx, deferred_audio_cycles, false);
+                }
                 return CpuBatchResult {
-                    cycles: pending_cycles, // cycles accumulated *before* this instruction
+                    cycles: pending_cycles + m68k_cycles,
                     z80_change: Some(Z80Change {
-                        instruction_cycles: m68k_cycles,
                         new_req: req,
                         new_rst: rst,
                     }),
                 };
             }
+
             pending_cycles += m68k_cycles;
         }
     }
-    fn run_cpu_loop(&mut self, line: u16, active_lines: u16, z80_cycle_debt: &mut f32) {
+    fn run_cpu_loop(&mut self, line: u16, active_lines: u16) {
         const CYCLES_PER_LINE: u32 = 488;
-        const BATCH_SIZE: u32 = 64;
         let mut cycles_scanline: u32 = 0;
         let mut bus = self.bus.borrow_mut();
 
+        // One context for the entire scanline loop
+        let mut ctx = SystemContext {
+            cpu: &mut self.cpu,
+            bus: &mut bus,
+            z80: &mut self.z80,
+            z80_cycle_debt: &mut self.z80_cycle_debt,
+            z80_last_bus_req: &mut self.z80_last_bus_req,
+            z80_last_reset: &mut self.z80_last_reset,
+            z80_trace_count: &mut self.z80_trace_count,
+            internal_frame_count: self.internal_frame_count,
+            debug: self.debug,
+        };
+
         while cycles_scanline < CYCLES_PER_LINE {
             let remaining = CYCLES_PER_LINE - cycles_scanline;
-            let limit = std::cmp::min(remaining, BATCH_SIZE);
-            let result = {
-                let mut ctx = SystemContext {
-                    cpu: &mut self.cpu,
-                    bus: &mut *bus,
-                    z80: &mut self.z80,
-                    z80_cycle_debt: &mut *z80_cycle_debt,
-                    z80_last_bus_req: &mut self.z80_last_bus_req,
-                    z80_last_reset: &mut self.z80_last_reset,
-                    z80_trace_count: &mut self.z80_trace_count,
-                    internal_frame_count: self.internal_frame_count,
-                    debug: self.debug,
-                };
-
-                Self::run_cpu_batch_static(&mut ctx, limit, line, active_lines)
-            };
+            // Batch size of remaining line
+            let result = Self::run_cpu_batch_static(&mut ctx, remaining, line, active_lines);
 
             cycles_scanline += result.cycles;
 
             if let Some(change) = result.z80_change {
-                // Apply the new state for the instruction that caused the change
-                bus.z80_bus_request = change.new_req;
-                bus.z80_reset = change.new_rst;
-
-                let trigger_vint = line == active_lines && cycles_scanline < 10;
-                // Sync components for the instruction that triggered the state change
-                Self::sync_components(
-                    &mut *bus,
-                    change.instruction_cycles,
-                    &mut self.z80,
-                    z80_cycle_debt,
-                    trigger_vint,
-                    self.internal_frame_count,
-                    &mut self.z80_last_bus_req,
-                    &mut self.z80_last_reset,
-                    &mut self.z80_trace_count,
-                    self.cpu.pc,
-                    self.debug,
-                );
-                cycles_scanline += change.instruction_cycles;
+                ctx.bus.z80_bus_request = change.new_req;
+                ctx.bus.z80_reset = change.new_rst;
             }
         }
     }
@@ -918,6 +936,10 @@ impl Emulator {
         if bus.vdp.hint_pending() {
             self.cpu.request_interrupt(4);
         }
+        drop(bus);
+
+        // Update audio visualization once per frame instead of per-sample
+        self.bus.borrow_mut().apu.update_visualization();
     }
     /// Run headless for N frames (or until script ends if N is None)
     pub fn run(
@@ -1136,6 +1158,8 @@ impl Emulator {
         } else {
             0
         };
+        let dma_pending = bus.vdp.command.dma_pending;
+        let fifo_len = bus.vdp.fifo.len();
         let z80_pc = self.z80.pc;
         let z80_reset = if bus.z80_reset { "RST" } else { "RUN" };
         let z80_req = if bus.z80_bus_request { "BUS" } else { "---" };
@@ -1145,12 +1169,14 @@ impl Emulator {
             0
         };
         println_safe!(
-            "FRAME {:05} | 68k: PC={:06X} SR={:04X} | VDP: Disp={} DMA={} CRAM={:04X} | Z80: PC={:04X} OP={:02X} St={} Req={}",
+            "FRAME {:05} | 68k: PC={:06X} SR={:04X} | VDP: Disp={} DMA={} DMAP={} FIFO={} CRAM={:04X} | Z80: PC={:04X} OP={:02X} St={} Req={}",
             frame_count,
             self.cpu.pc,
             self.cpu.sr,
             disp_en,
             dma_en,
+            dma_pending,
+            fifo_len,
             cram_val,
             z80_pc,
             z80_op,
@@ -1176,7 +1202,8 @@ fn print_usage() {
     println!("  --headless <n>   Run N frames without display");
     println!("  --screenshot <path> Save screenshot after headless run");
     println!("  --gdb [port]     Start GDB server (default port: 1234)");
-    println!("                   Note: Set GENTEEL_GDB_PASSWORD env var for custom password.");
+    println!("  --gdb-password <pass>  Set password for GDB server authentication");
+    println!("  --gdb-password-file <path> Read GDB password from a file");
     println!("  --dump-audio <file> Dump audio output to WAV file");
     println!(
         "  --input-mapping <type> Set keyboard mapping (original|ergonomic, default: original)"
@@ -1237,7 +1264,6 @@ impl Config {
         I: IntoIterator<Item = String>,
     {
         let mut config = Config::default();
-        config.gdb_password = std::env::var("GENTEEL_GDB_PASSWORD").ok();
         let mut iter = args.into_iter().skip(1);
         let mut current_opt = iter.next();
         while let Some(arg) = current_opt {
@@ -1282,6 +1308,19 @@ impl Config {
                         }
                     }
                     config.gdb_port = Some(port);
+                }
+                "--gdb-password" => {
+                    config.gdb_password = iter.next();
+                    current_opt = iter.next();
+                }
+                "--gdb-password-file" => {
+                    if let Some(path) = iter.next() {
+                        match std::fs::read_to_string(&path) {
+                            Ok(password) => config.gdb_password = Some(password.trim().to_string()),
+                            Err(e) => eprintln!("Failed to read GDB password file {}: {}", path, e),
+                        }
+                    }
+                    current_opt = iter.next();
                 }
                 "--dump-audio" => {
                     config.dump_audio_path = iter.next();
@@ -1461,7 +1500,7 @@ mod tests {
         // LD A, 0x80      (3E 80)
         // LD (0x1FFD), A  (32 FD 1F)
         // HALT            (76)
-        let z80_code = vec![0x3E, 0x80, 0x32, 0xFD, 0x1F, 0x76];
+        let z80_code = [0x3E, 0x80, 0x32, 0xFD, 0x1F, 0x76];
         // Ensure Z80 RAM is clear initially (Emulator::new clears it)
         // First, let Z80 run to dirty the PC (simulate running garbage or previous code)
         // By default Z80 is in reset (from new()). We must release it to run.
@@ -1565,11 +1604,33 @@ mod tests {
         assert_eq!(config.gdb_port, Some(1234));
         assert_eq!(config.rom_path, Some("rom.bin".to_string()));
 
-        // Test environment variable password
-        std::env::set_var("GENTEEL_GDB_PASSWORD", "env_secret");
+        // Test GDB password flags
+        let args = vec![
+            "genteel".to_string(),
+            "--gdb-password".to_string(),
+            "secret_pwd".to_string(),
+            "rom.bin".to_string(),
+        ];
+        let config = Config::from_args(args);
+        assert_eq!(config.gdb_password, Some("secret_pwd".to_string()));
+
+        let pwd_file = "test_gdb_pwd.txt";
+        std::fs::write(pwd_file, " file_secret \n").unwrap();
+        let args = vec![
+            "genteel".to_string(),
+            "--gdb-password-file".to_string(),
+            pwd_file.to_string(),
+            "rom.bin".to_string(),
+        ];
+        let config = Config::from_args(args);
+        assert_eq!(config.gdb_password, Some("file_secret".to_string()));
+        let _ = std::fs::remove_file(pwd_file);
+
+        // Verify environment variable is NO LONGER used
+        std::env::set_var("GENTEEL_GDB_PASSWORD", "should_be_ignored");
         let args = vec!["genteel".to_string(), "rom.bin".to_string()];
         let config = Config::from_args(args);
-        assert_eq!(config.gdb_password, Some("env_secret".to_string()));
+        assert_eq!(config.gdb_password, None);
         std::env::remove_var("GENTEEL_GDB_PASSWORD");
 
         let args = vec![
@@ -1623,7 +1684,7 @@ mod tests {
         // Whitelist a different directory (e.g., system temp)
         let temp_dir = std::env::temp_dir();
         // Only if temp_dir exists and is different from CWD
-        if let Ok(_) = emulator.add_allowed_path(&temp_dir) {
+        if emulator.add_allowed_path(&temp_dir).is_ok() {
             let result = emulator.load_rom(dummy_rom);
             // Assuming dummy_rom is in CWD and not in temp_dir
             // If CWD == temp_dir, this test is weak but passes.
@@ -1660,8 +1721,10 @@ mod tests {
         }
 
         // Construct input with command
-        let mut input = crate::input::FrameInput::default();
-        input.command = Some(format!("SCREENSHOT {}", path));
+        let input = crate::input::FrameInput {
+            command: Some(format!("SCREENSHOT {}", path)),
+            ..Default::default()
+        };
 
         emulator.step_frame(Some(&input));
 
@@ -1684,6 +1747,34 @@ mod tests {
     }
 
     #[test]
+    fn test_large_sram_prevention() {
+        let path = std::path::PathBuf::from("test_large_sram.bin");
+        let srm_path = path.with_extension("srm");
+        // Create a file larger than MAX_SRAM_SIZE (2MB + 1 byte)
+        let mut file = std::fs::File::create(&srm_path).unwrap();
+        let chunk = vec![0u8; 1024 * 1024]; // 1MB chunk
+        for _ in 0..2 {
+            std::io::Write::write_all(&mut file, &chunk).unwrap();
+        }
+        std::io::Write::write_all(&mut file, &[0u8]).unwrap(); // last byte
+        drop(file);
+
+        let mut emulator = Emulator::new();
+        emulator.current_rom_path = Some(path.clone());
+
+        let initial_sram_len = emulator.bus.borrow().sram.len();
+
+        // Attempt to load - should fail/print warning and not change sram contents or crash
+        emulator.load_sram();
+
+        // SRAM size should not have changed to the large size
+        assert_eq!(emulator.bus.borrow().sram.len(), initial_sram_len);
+
+        // Cleanup
+        let _ = std::fs::remove_file(srm_path);
+    }
+
+    #[test]
     fn test_large_state_prevention() {
         let path = std::path::PathBuf::from("test_large.state");
         // Create a file larger than MAX_STATE_SIZE (25MB + 1 byte)
@@ -1693,7 +1784,7 @@ mod tests {
         for _ in 0..25 {
             std::io::Write::write_all(&mut file, &chunk).unwrap();
         }
-        std::io::Write::write_all(&mut file, &[b' ']).unwrap(); // last byte
+        std::io::Write::write_all(&mut file, b" ").unwrap(); // last byte
         drop(file);
 
         let mut emulator = Emulator::new();

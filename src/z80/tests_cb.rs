@@ -1,4 +1,3 @@
-#![allow(unused_imports)]
 //! Unit tests for Z80 CPU - Part 3: CB Prefix (Bit Operations)
 
 use super::*;

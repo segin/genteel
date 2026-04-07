@@ -6,6 +6,9 @@ pub mod decoder;
 pub mod instructions;
 pub mod ops;
 
+#[cfg(test)]
+pub mod test_utils;
+
 pub use addressing::EffectiveAddress;
 pub use decoder::{decode, Condition, Size};
 use instructions::{
@@ -28,6 +31,7 @@ pub struct Cpu {
     pub pending_interrupt: u8,
     pub interrupt_pending_mask: u8,
     pub pending_exception: bool,
+    pub last_interrupt_level: u8,
     pub cycles: u64,
     #[serde(skip)]
     pub decode_cache: Box<[DecodeCacheEntry]>,
@@ -73,6 +77,7 @@ impl Cpu {
             pending_interrupt: 0,
             interrupt_pending_mask: 0,
             pending_exception: false,
+            last_interrupt_level: 0,
             cycles: 0,
             decode_cache: cache,
         };
@@ -89,6 +94,7 @@ impl Cpu {
         self.pending_interrupt = 0;
         self.interrupt_pending_mask = 0;
         self.pending_exception = false;
+        self.last_interrupt_level = 0;
         self.invalidate_cache();
     }
 
@@ -160,6 +166,7 @@ impl Cpu {
             self.sr = (self.sr & !flags::INTERRUPT_MASK) | ((level as u16) << 8);
             self.acknowledge_interrupt(level);
             self.halted = false;
+            self.last_interrupt_level = level;
             return 44;
         }
         0
@@ -423,6 +430,7 @@ impl Cpu {
 
     pub fn step_instruction<M: MemoryInterface>(&mut self, memory: &mut M) -> u32 {
         self.pending_exception = false;
+        self.last_interrupt_level = 0;
 
         let int_cycles = self.check_interrupts(memory);
         if int_cycles > 0 {
@@ -769,6 +777,9 @@ impl Cpu {
         }
     }
 }
+
+#[cfg(test)]
+pub mod test_utils;
 
 #[cfg(test)]
 mod bench_decoder;

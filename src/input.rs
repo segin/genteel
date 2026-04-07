@@ -688,7 +688,7 @@ mod tests {
         for _ in 0..50 {
             file.write_all(&chunk).unwrap();
         }
-        file.write_all(&[b' ']).unwrap(); // +1 byte
+        file.write_all(b" ").unwrap(); // +1 byte
 
         let result = InputScript::load(path);
 

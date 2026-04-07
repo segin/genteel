@@ -171,8 +171,8 @@ mod tests {
     #[test]
     fn test_big_array_serialization_roundtrip() {
         let mut data = [0u8; 64];
-        for i in 0..64 {
-            data[i] = i as u8;
+        for (i, value) in data.iter_mut().enumerate() {
+            *value = i as u8;
         }
 
         let test_struct = BigArrayTestStruct { data };
@@ -191,8 +191,8 @@ mod tests {
     #[test]
     fn test_big_array_serialization_roundtrip_33() {
         let mut data = [0u8; 33];
-        for i in 0..33 {
-            data[i] = (i * 2) as u8;
+        for (i, value) in data.iter_mut().enumerate() {
+            *value = (i * 2) as u8;
         }
 
         let test_struct = BigArrayTestStruct33 { data };
@@ -455,8 +455,8 @@ mod tests {
     #[test]
     fn test_medium_array_serialization_roundtrip() {
         let mut data = [0u8; 33];
-        for i in 0..33 {
-            data[i] = i as u8;
+        for (i, value) in data.iter_mut().enumerate() {
+            *value = i as u8;
         }
 
         let test_struct = MediumArrayTestStruct { data };

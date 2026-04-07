@@ -32,6 +32,12 @@ fn default_channel_buffers() -> [[i16; 128]; 10] {
 }
 
 impl Apu {
+    fn mix_sample(sample: i32) -> i16 {
+        let x = sample as f32 / 32768.0;
+        let y = x / (1.0 + x.abs());
+        (y * 32767.0) as i16
+    }
+
     pub fn new() -> Self {
         Self {
             psg: Psg::new(),
@@ -64,45 +70,32 @@ impl Apu {
 
     pub fn tick_cycles(&mut self, m68k_cycles: u32) {
         self.fm.step(m68k_cycles);
-        let psg_cycles = m68k_cycles / 2;
-        self.psg.step_cycles(psg_cycles);
+        self.psg.step_m68k_cycles(m68k_cycles);
     }
 
     /// Attempts to generate a mixed audio sample pair.
-    /// Returns `Some((left, right))` if a sample is available in the blip buffers,
-    /// otherwise returns `None`.
-    pub fn generate_sample(&mut self) -> Option<(i16, i16)> {
-        let mut fm_l = [0i16; 1];
-        let mut fm_r = [0i16; 1];
-        let mut psg_buf = [0i16; 1];
+    /// Returns `(left, right)` from the blip buffers.
+    pub fn generate_sample(&mut self) -> (i16, i16) {
+        let (fm_l, fm_r) = self.fm.generate_sample();
+        let psg = self.psg.generate_sample();
 
-        // We check FM left as the primary clock
-        if self.fm.blip_l.read_samples(&mut fm_l) > 0 {
-            self.fm.blip_r.read_samples(&mut fm_r);
-            self.psg.blip.read_samples(&mut psg_buf);
+        let left = Self::mix_sample(((fm_l as i32) * 3 + (psg as i32) * 2) / 4);
+        let right = Self::mix_sample(((fm_r as i32) * 3 + (psg as i32) * 2) / 4);
 
-            let fm_l_val = fm_l[0];
-            let fm_r_val = fm_r[0];
-            let psg_val = psg_buf[0];
+        (left, right)
+    }
 
-            // Update visualization
-            let fm_samples = self.fm.generate_channel_samples();
-            let psg_samples = self.psg.get_channel_samples();
-            for (i, item) in fm_samples.iter().enumerate() {
-                self.channel_buffers[i][self.buffer_idx] = *item;
-            }
-            for (i, item) in psg_samples.iter().enumerate() {
-                self.channel_buffers[6 + i][self.buffer_idx] = *item;
-            }
-            self.buffer_idx = (self.buffer_idx + 1) % 128;
-
-            let left = (fm_l_val as i32 + psg_val as i32).clamp(-32768, 32767) as i16;
-            let right = (fm_r_val as i32 + psg_val as i32).clamp(-32768, 32767) as i16;
-
-            Some((left, right))
-        } else {
-            None
+    /// Update visualization buffers (call once per frame)
+    pub fn update_visualization(&mut self) {
+        let fm_samples = self.fm.generate_channel_samples();
+        let psg_samples = self.psg.get_channel_samples();
+        for (i, sample) in fm_samples.iter().enumerate() {
+            self.channel_buffers[i][self.buffer_idx] = *sample;
         }
+        for (i, sample) in psg_samples.iter().enumerate() {
+            self.channel_buffers[6 + i][self.buffer_idx] = *sample;
+        }
+        self.buffer_idx = (self.buffer_idx + 1) % 128;
     }
 }
 
@@ -112,7 +105,7 @@ impl Debuggable for Apu {
     }
 
     fn write_state(&mut self, state: &Value) {
-        if let Ok(new_apu) = serde_json::from_value(state.clone()) {
+        if let Ok(new_apu) = Apu::deserialize(state) {
             *self = new_apu;
         }
     }
@@ -152,6 +145,35 @@ mod tests {
     }
 
     #[test]
+    fn test_write_fm_addr() {
+        let mut apu = Apu::new();
+
+        // Write address to Bank0, and check if data written goes to this address
+        apu.write_fm_addr(Bank::Bank0, 0x22);
+        apu.write_fm_data(Bank::Bank0, 0x11);
+        assert_eq!(apu.fm.registers[0][0x22], 0x11);
+
+        // Change address in Bank0, write data, check new address is used
+        apu.write_fm_addr(Bank::Bank0, 0x27);
+        apu.write_fm_data(Bank::Bank0, 0x33);
+        assert_eq!(apu.fm.registers[0][0x27], 0x33);
+
+        // Verify that Bank1 operates independently
+        apu.write_fm_addr(Bank::Bank1, 0x28);
+        apu.write_fm_data(Bank::Bank1, 0x44);
+        assert_eq!(apu.fm.registers[1][0x28], 0x44);
+
+        // Change address in Bank1
+        apu.write_fm_addr(Bank::Bank1, 0x2B);
+        apu.write_fm_data(Bank::Bank1, 0x55);
+        assert_eq!(apu.fm.registers[1][0x2B], 0x55);
+
+        // Ensure Bank0 address wasn't affected by Bank1 address writes
+        apu.write_fm_data(Bank::Bank0, 0x66);
+        assert_eq!(apu.fm.registers[0][0x27], 0x66); // The last address set for Bank0 was 0x27
+    }
+
+    #[test]
     fn test_write_fm_data() {
         let mut apu = Apu::new();
 
@@ -168,6 +190,31 @@ mod tests {
         apu.write_fm_data(Bank::Bank1, 0xBB);
         assert_eq!(apu.fm.registers[1][0x24], 0xBB);
         assert!((apu.read_fm_status() & 0x80) != 0); // Busy flag should be set
+    }
+
+    #[test]
+    fn test_apu_write_fm_data_delegation_side_effects() {
+        let mut apu = Apu::new();
+
+        // 1. Test DAC Enable (Bank0, Register 0x2B)
+        apu.write_fm_addr(Bank::Bank0, 0x2B);
+        apu.write_fm_data(Bank::Bank0, 0x80); // Enable DAC
+        assert_eq!(apu.fm.registers[0][0x2B], 0x80);
+        assert!((apu.read_fm_status() & 0x80) != 0); // Busy flag set
+        apu.tick_cycles(32); // clear busy
+
+        // 2. Test DAC Value (Bank0, Register 0x2A)
+        apu.write_fm_addr(Bank::Bank0, 0x2A);
+        apu.write_fm_data(Bank::Bank0, 0xFF); // Set DAC value to maximum
+        assert_eq!(apu.fm.registers[0][0x2A], 0xFF);
+        assert!((apu.read_fm_status() & 0x80) != 0); // Busy flag set
+        apu.tick_cycles(32); // clear busy
+
+        // 3. Test Panning Update (Bank1, Register 0xB6)
+        apu.write_fm_addr(Bank::Bank1, 0xB6);
+        apu.write_fm_data(Bank::Bank1, 0xC0); // Left and Right panning
+        assert_eq!(apu.fm.registers[1][0xB6], 0xC0);
+        assert!((apu.read_fm_status() & 0x80) != 0); // Busy flag set
     }
 
     #[test]
@@ -220,5 +267,36 @@ mod tests {
         // tick_cycles(200) should be enough (200 * 7 = 1400 master clocks)
         apu.tick_cycles(200);
         assert!((apu.read_fm_status() & 0x02) != 0);
+    }
+
+    #[test]
+    fn test_write_fm_data_side_effects() {
+        let mut apu = Apu::new();
+
+        // Enable DAC
+        apu.write_fm_addr(Bank::Bank0, 0x2B);
+        apu.write_fm_data(Bank::Bank0, 0x80);
+
+        // Set DAC value to a non-zero amplitude
+        apu.write_fm_addr(Bank::Bank0, 0x2A);
+        apu.write_fm_data(Bank::Bank0, 0xFF);
+
+        // Pan Left Only to test specific output
+        apu.write_fm_addr(Bank::Bank1, 0xB6);
+        apu.write_fm_data(Bank::Bank1, 0x80);
+
+        // Tick enough cycles (at least 21) for the YM2612 to generate a sample
+        apu.tick_cycles(24);
+
+        // Assert DAC output is observable in the blip buffer
+        assert!(
+            apu.fm.blip_l.read_instant() > 0,
+            "Left audio should be positive due to DAC"
+        );
+        assert_eq!(
+            apu.fm.blip_r.read_instant(),
+            0,
+            "Right audio should be zero due to panning"
+        );
     }
 }

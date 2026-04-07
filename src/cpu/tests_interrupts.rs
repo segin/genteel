@@ -5,27 +5,8 @@
 #![cfg(test)]
 
 use crate::cpu::flags;
-use crate::cpu::Cpu;
-use crate::memory::{Memory, MemoryInterface};
-
-fn create_cpu() -> (Cpu, Memory) {
-    let mut memory = Memory::new(0x100000);
-    let mut cpu = Cpu::new(&mut memory);
-    cpu.pc = 0x1000;
-    cpu.a[7] = 0x8000;
-    // Set SR to 0x2700 (Supervisor + Interrupt mask 7) by default in new(),
-    // but let's make it clear and adjustable in tests.
-    cpu.sr = 0x2000; // Supervisor, Mask 0
-    (cpu, memory)
-}
-
-fn write_op(memory: &mut Memory, opcodes: &[u16]) {
-    let mut addr = 0x1000u32;
-    for &op in opcodes {
-        memory.write_word(addr, op);
-        addr += 2;
-    }
-}
+use crate::cpu::test_utils::{create_cpu, write_op};
+use crate::memory::MemoryInterface;
 
 #[test]
 fn test_interrupt_masked() {
@@ -117,7 +98,7 @@ fn test_interrupt_clears_halted() {
     let (mut cpu, mut memory) = create_cpu();
 
     cpu.halted = true;
-    cpu.sr = (cpu.sr & !flags::INTERRUPT_MASK) | 0x0000;
+    cpu.sr &= !flags::INTERRUPT_MASK;
 
     cpu.request_interrupt(1);
 
@@ -134,7 +115,7 @@ fn test_interrupt_clears_halted() {
 fn test_multiple_interrupts_priority() {
     let (mut cpu, mut memory) = create_cpu();
 
-    cpu.sr = (cpu.sr & !flags::INTERRUPT_MASK) | 0x0000;
+    cpu.sr &= !flags::INTERRUPT_MASK;
 
     // Request 3 and 5
     cpu.request_interrupt(3);
@@ -164,7 +145,7 @@ fn test_multiple_interrupts_priority() {
 
     // Restore SR to 0 to unmask level 3
     // Manually setting SR to unmask
-    cpu.sr = (cpu.sr & !flags::INTERRUPT_MASK) | 0x0000;
+    cpu.sr &= !flags::INTERRUPT_MASK;
 
     // Vector 27 (Level 3) -> 0x6C
     memory.write_long(0x6C, 0x6000);

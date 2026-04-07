@@ -400,11 +400,7 @@ impl Vdp {
         match code & 0x0F {
             VRAM_READ => {
                 let idx = addr as usize;
-                let val = if idx + 1 < self.vram.len() {
-                    ((self.vram[idx] as u16) << 8) | (self.vram[idx + 1] as u16)
-                } else {
-                    0
-                };
+                let val = ((self.vram[idx] as u16) << 8) | (self.vram[(addr ^ 1) as usize] as u16);
                 self.command.read_buffer = val;
                 self.command.cd4_flag = true;
             }
@@ -591,6 +587,14 @@ impl Vdp {
         self.status |= STATUS_VINT_PENDING;
     }
 
+    pub fn acknowledge_vint(&mut self) {
+        self.status &= !STATUS_VINT_PENDING;
+    }
+
+    pub fn acknowledge_hint(&mut self) {
+        self.hint_pending = false;
+    }
+
     pub fn vblank_pending(&self) -> bool {
         (self.status & STATUS_VINT_PENDING) != 0 && self.vint_enabled()
     }
@@ -651,34 +655,6 @@ impl Vdp {
         } else {
             ((self.registers[REG_WINDOW] as usize) & 0x3E) << 10
         }
-    }
-
-    pub(crate) fn is_window_area(&self, x: u16, y: u16) -> bool {
-        let h_pos = self.registers[REG_WINDOW_H_POS];
-        let v_pos = self.registers[REG_WINDOW_V_POS];
-
-        let h_point = (h_pos as u16 & 0x1F) * 16;
-        let v_point = (v_pos as u16 & 0x1F) * 8;
-
-        let h_dir = (h_pos & 0x80) != 0;
-        let v_dir = (v_pos & 0x80) != 0;
-
-        let in_h_window = if h_dir { x >= h_point } else { x < h_point };
-
-        let in_v_window = if v_dir { y >= v_point } else { y < v_point };
-
-        /* DO NOT CHANGE THIS TO &&. This MUST be || (union, not intersection).
-         *
-         * The Genesis VDP window plane replaces Plane A wherever EITHER the
-         * horizontal OR the vertical window condition is satisfied. This is
-         * the documented hardware behavior. Using && causes massive rendering
-         * corruption because the window area becomes too small, leaving
-         * Plane A visible where the window should be shown.
-         *
-         * This has been incorrectly "fixed" to && multiple times. Every time
-         * it breaks rendering. Leave it as ||.
-         */
-        in_h_window || in_v_window
     }
 
     pub fn set_region(&mut self, is_pal: bool) {
@@ -829,7 +805,7 @@ impl Debuggable for Vdp {
     }
 
     fn write_state(&mut self, state: &Value) {
-        let mut new_vdp: Vdp = match serde_json::from_value(state.clone()) {
+        let mut new_vdp: Vdp = match Vdp::deserialize(state) {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("Error deserializing VDP state: {}", e);
@@ -866,6 +842,9 @@ mod tests_control;
 mod tests_bulk_write;
 
 #[cfg(test)]
+mod tests_read;
+
+#[cfg(test)]
 mod tests_properties;
 
 #[cfg(test)]
@@ -882,3 +861,6 @@ mod tests_draw_row_refactor;
 
 #[cfg(test)]
 mod tests_decode_plane_size;
+
+#[cfg(test)]
+mod tests_getters;

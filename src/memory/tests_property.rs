@@ -8,8 +8,8 @@ proptest! {
         let mut bus = Bus::new();
         // Create dummy ROM with some pattern
         let mut rom = vec![0u8; 0x40000];
-        for i in 0..rom.len() {
-            rom[i] = (i & 0xFF) as u8;
+        for (i, byte) in rom.iter_mut().enumerate() {
+            *byte = (i & 0xFF) as u8;
         }
         bus.load_rom(&rom);
 
@@ -26,8 +26,8 @@ proptest! {
         let mut bus = Bus::new();
         // Create dummy ROM with some pattern
         let mut rom = vec![0u8; 0x40000];
-        for i in 0..rom.len() {
-            rom[i] = (i & 0xFF) as u8;
+        for (i, byte) in rom.iter_mut().enumerate() {
+            *byte = (i & 0xFF) as u8;
         }
         bus.load_rom(&rom);
 

@@ -1,4 +1,3 @@
-#![allow(unused_imports)]
 //! Z80 DD CB / FD CB (Indexed Bit Operations) Tests
 //!
 //! Tests for indexed bit operations at (IX+d) and (IY+d).

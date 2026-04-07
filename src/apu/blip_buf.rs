@@ -14,10 +14,10 @@ const RES: usize = 512;
 /// Band-limited step kernel (Pre-computed)
 static KERNEL: std::sync::LazyLock<[i32; KERNEL_SIZE * RES]> = std::sync::LazyLock::new(|| {
     let mut kernel = [0i32; KERNEL_SIZE * RES];
-    for (i, item) in kernel.iter_mut().enumerate().take(KERNEL_SIZE * RES) {
+    for (i, sample) in kernel.iter_mut().enumerate().take(KERNEL_SIZE * RES) {
         let x = (i as f64 / RES as f64) - (KERNEL_SIZE as f64 / 2.0);
         if x.abs() < 1e-9 {
-            *item = 32767;
+            *sample = 32767;
         } else {
             // Sinc function with Blackman window
             let sinc = (std::f64::consts::PI * x).sin() / (std::f64::consts::PI * x);
@@ -27,7 +27,7 @@ static KERNEL: std::sync::LazyLock<[i32; KERNEL_SIZE * RES]> = std::sync::LazyLo
             let window = a - b
                 * (2.0 * std::f64::consts::PI * i as f64 / (KERNEL_SIZE * RES) as f64).cos()
                 + c * (4.0 * std::f64::consts::PI * i as f64 / (KERNEL_SIZE * RES) as f64).cos();
-            *item = (sinc * window * 32767.0) as i32;
+            *sample = (sinc * window * 32767.0) as i32;
         }
     }
     kernel
@@ -37,6 +37,8 @@ static KERNEL: std::sync::LazyLock<[i32; KERNEL_SIZE * RES]> = std::sync::LazyLo
 pub struct BlipBuf {
     /// Internal integration buffer
     buffer: Vec<i32>,
+    /// Logical start of unread samples in the ring buffer
+    start: usize,
     /// Target sample rate (e.g. 44100)
     sample_rate: u32,
     /// Source clock rate (e.g. 53267 for FM, 3579545 for PSG)
@@ -47,17 +49,24 @@ pub struct BlipBuf {
     clock_ptr: f64,
     /// Current DC offset
     accumulator: i32,
+    /// Running integrated output state between read calls.
+    integrator: i32,
+    /// Total samples read (shifted out)
+    samples_read: u64,
 }
 
 impl BlipBuf {
     pub fn new(clock_rate: u32, sample_rate: u32) -> Self {
         Self {
             buffer: vec![0; (sample_rate as usize / 10) + KERNEL_SIZE + 2], // Large enough for >100ms
+            start: 0,
             sample_rate,
             clock_rate,
             last_clock: 0,
             clock_ptr: 0.0,
             accumulator: 0,
+            integrator: 0,
+            samples_read: 0,
         }
     }
 
@@ -69,7 +78,10 @@ impl BlipBuf {
     /// Clear the buffer
     pub fn clear(&mut self) {
         self.buffer.fill(0);
+        self.start = 0;
         self.accumulator = 0;
+        self.integrator = 0;
+        self.samples_read = 0;
     }
 
     /// Add a delta (amplitude change) at a specific clock time
@@ -79,19 +91,23 @@ impl BlipBuf {
         }
 
         let time_in_samples = (clock as f64 * self.sample_rate as f64) / self.clock_rate as f64;
-        let sample_idx = time_in_samples as usize;
-        let fract = time_in_samples - sample_idx as f64;
+        let absolute_sample_idx = time_in_samples.floor() as isize;
+        let fract = time_in_samples - absolute_sample_idx as f64;
 
-        if sample_idx + KERNEL_SIZE >= self.buffer.len() {
-            // Should not happen if read frequently, but safety first
+        let sample_idx = absolute_sample_idx - self.samples_read as isize;
+
+        if sample_idx < 0 || sample_idx as usize + KERNEL_SIZE >= self.buffer.len() {
+            // Out of bounds (e.g. buffer size overrun before a read)
             return;
         }
+        let sample_idx = sample_idx as usize;
 
         // Apply band-limited step
         let offset = (fract * RES as f64) as usize;
         for i in 0..KERNEL_SIZE {
+            let idx = (self.start + sample_idx + i) % self.buffer.len();
             let kernel_val = KERNEL[i * RES + offset];
-            self.buffer[sample_idx + i] += (delta * kernel_val) >> 15;
+            self.buffer[idx] += (delta * kernel_val) >> 15;
         }
 
         // Update DC accumulator for integration
@@ -102,15 +118,17 @@ impl BlipBuf {
     pub fn read_samples(&mut self, samples: &mut [i16]) -> usize {
         let count = samples.len().min(self.buffer.len() - KERNEL_SIZE);
 
-        let mut current = 0;
-        for (i, item) in samples.iter_mut().enumerate().take(count) {
-            current += self.buffer[i];
-            *item = (current.clamp(-32768, 32767)) as i16;
-            self.buffer[i] = 0;
+        let mut current = self.integrator;
+        for (i, sample) in samples.iter_mut().enumerate().take(count) {
+            let idx = (self.start + i) % self.buffer.len();
+            current += self.buffer[idx];
+            *sample = (current.clamp(-32768, 32767)) as i16;
+            self.buffer[idx] = 0;
         }
+        self.integrator = current;
 
-        // Shift remaining data (the "tails" of the kernels)
-        self.buffer.rotate_left(count);
+        self.start = (self.start + count) % self.buffer.len();
+        self.samples_read += count as u64;
 
         count
     }

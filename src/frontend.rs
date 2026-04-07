@@ -478,6 +478,11 @@ mod tests {
         rgb565_to_rgba8(&input, &mut short_output);
         assert_eq!(short_output, [255, 255, 255, 255]); // First pixel processed correctly
 
+        // Mismatched lengths: Output < 4 bytes (should not process at all due to chunks_exact_mut(4))
+        let mut very_short_output = [1, 2, 3];
+        rgb565_to_rgba8(&input, &mut very_short_output);
+        assert_eq!(very_short_output, [1, 2, 3]); // Should be entirely untouched
+
         // Mismatched lengths: Output too large (should leave remainder untouched)
         let input_short = [0x0000]; // 1 pixel (black)
         let mut long_output = [255u8; 8]; // Room for 2 pixels, initialized to white
@@ -524,6 +529,29 @@ mod tests {
         rgb565_to_rgba8(&[0xFFFE], &mut output);
         // b: (30 << 3) | (30 >> 2) = 240 | 7 = 247
         assert_eq!(output, [255, 255, 247, 255]);
+    }
+
+    #[test]
+    fn test_rgb565_to_rgba8_exhaustive() {
+        let all_pixels: Vec<u16> = (0..=65535).collect();
+        let mut output = vec![0u8; 65536 * 4];
+        rgb565_to_rgba8(&all_pixels, &mut output);
+
+        for (i, &pixel) in all_pixels.iter().enumerate() {
+            let chunk = &output[i * 4..(i + 1) * 4];
+            let r5 = ((pixel >> 11) & 0x1F) as u8;
+            let g6 = ((pixel >> 5) & 0x3F) as u8;
+            let b5 = (pixel & 0x1F) as u8;
+
+            let expected_r = (r5 << 3) | (r5 >> 2);
+            let expected_g = (g6 << 2) | (g6 >> 4);
+            let expected_b = (b5 << 3) | (b5 >> 2);
+
+            assert_eq!(chunk[0], expected_r);
+            assert_eq!(chunk[1], expected_g);
+            assert_eq!(chunk[2], expected_b);
+            assert_eq!(chunk[3], 255);
+        }
     }
 
     #[cfg(any(feature = "gui", feature = "test_headless"))]

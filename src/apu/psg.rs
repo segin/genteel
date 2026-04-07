@@ -3,6 +3,7 @@
 //! Refactored to use band-limited synthesis via BlipBuf for high quality.
 
 use crate::apu::blip_buf::BlipBuf;
+use crate::audio;
 use serde::{Deserialize, Serialize};
 
 /// Square wave tone channel
@@ -21,7 +22,7 @@ pub struct ToneChannel {
 }
 
 /// Noise channel
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct NoiseChannel {
     pub white_noise: bool,
     pub shift_rate: u8,
@@ -31,48 +32,47 @@ pub struct NoiseChannel {
     pub last_amp: i32,
 }
 
-impl Default for NoiseChannel {
-    fn default() -> Self {
-        Self {
-            white_noise: false,
-            shift_rate: 0,
-            volume: 0x0F,
-            lfsr: 0x4000, // 15-bit LFSR seed
-            counter: 0,
-            last_amp: 0,
-        }
-    }
-}
-
 /// SN76489 PSG chip state
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Psg {
     pub tones: [ToneChannel; 3],
     pub noise: NoiseChannel,
-    latch_channel: u8,
-    latch_volume: bool,
-    /// Total cycles elapsed
-    pub total_clocks: u64,
+    pub latch_channel: u8,
+    pub latch_volume: bool,
+    /// Total MCLK cycles elapsed
+    pub total_mclocks: u64,
+    /// MCLK debt for PSG clock
+    pub mclk_debt: u32,
     /// Band-limited synthesis buffer
     pub blip: BlipBuf,
 }
 
 impl Psg {
+    fn volume_to_amp(volume: u8) -> i32 {
+        if volume >= 0x0F {
+            0
+        } else {
+            (4095.0 / 10f32.powf(volume as f32 / 10.0)).round() as i32
+        }
+    }
+
     pub fn new() -> Self {
         let mut psg = Self {
-            tones: Default::default(),
-            noise: Default::default(),
+            tones: std::array::from_fn(|_| ToneChannel::default()),
+            noise: NoiseChannel {
+                volume: 0x0F,
+                lfsr: 0x4000,
+                ..Default::default()
+            },
             latch_channel: 0,
             latch_volume: false,
-            total_clocks: 1, // Start at 1 to allow delta at 0 if needed
-            blip: BlipBuf::new(3579545, 53267), // Clocked at ~3.58MHz, output at FM rate
+            total_mclocks: 1, // Start at 1 to allow delta at 0 if needed
+            mclk_debt: 0,
+            blip: BlipBuf::new(audio::NTSC_MCLK, audio::SAMPLE_RATE),
         };
         for tone in &mut psg.tones {
             tone.volume = 0x0F;
-            tone.last_amp = 0;
         }
-        psg.noise.volume = 0x0F;
-        psg.noise.last_amp = 0;
         psg
     }
 
@@ -85,6 +85,7 @@ impl Psg {
 
     pub fn write(&mut self, value: u8) {
         if (value & 0x80) != 0 {
+            // Latch/Control
             self.latch_channel = (value >> 5) & 0x03;
             self.latch_volume = (value & 0x10) != 0;
             let data = value & 0x0F;
@@ -93,21 +94,27 @@ impl Psg {
             } else {
                 self.write_frequency_low(self.latch_channel, data);
             }
-        } else if !self.latch_volume {
-            self.write_frequency_high(self.latch_channel, value & 0x3F);
+        } else {
+            // Data
+            let data = value & 0x3F;
+            if self.latch_volume {
+                self.write_volume(self.latch_channel, data & 0x0F);
+            } else {
+                self.write_frequency_high(self.latch_channel, data);
+            }
         }
     }
 
     pub fn update_channel_amp(&mut self, channel: u8) {
-        let clock = self.total_clocks;
+        let clock = self.total_mclocks;
         match channel {
             0..=2 => {
                 let (output, volume) = {
-                    let tone = &self.tones[channel as usize];
-                    (tone.output, tone.volume)
+                    let t = &self.tones[channel as usize];
+                    (t.output, t.volume)
                 };
-                let new_amp = if output && volume < 15 {
-                    VOLUME_TABLE[volume as usize] as i32
+                let new_amp = if output {
+                    Self::volume_to_amp(volume)
                 } else {
                     0
                 };
@@ -116,8 +123,9 @@ impl Psg {
                 self.tones[channel as usize].last_amp = new_amp;
             }
             3 => {
-                let new_amp = if (self.noise.lfsr & 1) != 0 && self.noise.volume < 15 {
-                    VOLUME_TABLE[self.noise.volume as usize] as i32
+                let (output, volume) = { (self.noise.lfsr & 1 != 0, self.noise.volume) };
+                let new_amp = if output {
+                    Self::volume_to_amp(volume)
                 } else {
                     0
                 };
@@ -130,27 +138,24 @@ impl Psg {
     }
 
     fn write_volume(&mut self, channel: u8, volume: u8) {
-        match channel {
-            0..=2 => self.tones[channel as usize].volume = volume,
-            3 => self.noise.volume = volume,
-            _ => {}
+        if channel < 3 {
+            self.tones[channel as usize].volume = volume;
+            self.update_channel_amp(channel);
+        } else {
+            self.noise.volume = volume;
+            self.update_channel_amp(3);
         }
-        self.update_channel_amp(channel);
     }
 
     fn write_frequency_low(&mut self, channel: u8, data: u8) {
-        match channel {
-            0..=2 => {
-                self.tones[channel as usize].frequency =
-                    (self.tones[channel as usize].frequency & 0x3F0) | (data as u16);
-            }
-            3 => {
-                self.noise.white_noise = (data & 0x04) != 0;
-                self.noise.shift_rate = data & 0x03;
-                self.noise.lfsr = 0x4000;
-                self.update_channel_amp(3);
-            }
-            _ => {}
+        if channel < 3 {
+            self.tones[channel as usize].frequency =
+                (self.tones[channel as usize].frequency & 0x3F0) | (data as u16);
+        } else {
+            self.noise.white_noise = (data & 0x04) != 0;
+            self.noise.shift_rate = data & 0x03;
+            self.noise.lfsr = 0x4000;
+            self.update_channel_amp(3);
         }
     }
 
@@ -161,8 +166,9 @@ impl Psg {
         }
     }
 
-    /// Step the PSG and populate BlipBuf with deltas
-    pub fn step_cycles(&mut self, cycles: u32) {
+    fn step_psg_clock(&mut self) {
+        self.total_mclocks += 15;
+
         let noise_freq = match self.noise.shift_rate {
             0 => 0x10,
             1 => 0x20,
@@ -171,41 +177,54 @@ impl Psg {
             _ => 0x10,
         };
 
+        // 1. Update Tones
+        for i in 0..3 {
+            let freq = if self.tones[i].frequency == 0 {
+                0x400
+            } else {
+                self.tones[i].frequency
+            };
+            if self.tones[i].counter > 0 {
+                self.tones[i].counter -= 1;
+            }
+            if self.tones[i].counter == 0 {
+                self.tones[i].output = !self.tones[i].output;
+                self.tones[i].counter = freq;
+                self.update_channel_amp(i as u8);
+            }
+        }
+
+        // 2. Update Noise
+        let n_freq = if noise_freq == 0 { 0x400 } else { noise_freq };
+        if self.noise.counter > 0 {
+            self.noise.counter -= 1;
+        }
+        if self.noise.counter == 0 {
+            self.noise.counter = n_freq;
+
+            let feedback = if self.noise.white_noise {
+                ((self.noise.lfsr & 1) ^ ((self.noise.lfsr >> 1) & 1)) & 1
+            } else {
+                self.noise.lfsr & 1
+            };
+            self.noise.lfsr = (self.noise.lfsr >> 1) | (feedback << 14);
+            self.update_channel_amp(3);
+        }
+    }
+
+    /// Step the PSG by a number of PSG clock ticks.
+    pub fn step_cycles(&mut self, cycles: u32) {
         for _ in 0..cycles {
-            // 1. Update Tones
-            for i in 0..3 {
-                let freq = if self.tones[i].frequency == 0 {
-                    0x400
-                } else {
-                    self.tones[i].frequency
-                };
-                if self.tones[i].counter > 0 {
-                    self.tones[i].counter -= 1;
-                }
-                if self.tones[i].counter == 0 {
-                    self.tones[i].output = !self.tones[i].output;
-                    self.tones[i].counter = freq;
-                    self.update_channel_amp(i as u8);
-                }
-            }
+            self.step_psg_clock();
+        }
+    }
 
-            // 2. Update Noise
-            let n_freq = if noise_freq == 0 { 0x400 } else { noise_freq };
-            if self.noise.counter > 0 {
-                self.noise.counter -= 1;
-            }
-            if self.noise.counter == 0 {
-                self.noise.counter = n_freq;
-
-                let feedback = if self.noise.white_noise {
-                    ((self.noise.lfsr & 1) ^ ((self.noise.lfsr >> 1) & 1)) & 1
-                } else {
-                    self.noise.lfsr & 1
-                };
-                self.noise.lfsr = (self.noise.lfsr >> 1) | (feedback << 14);
-                self.update_channel_amp(3);
-            }
-            self.total_clocks += 1;
+    /// Step the PSG using M68K cycles from the system bus.
+    pub fn step_m68k_cycles(&mut self, cycles: u32) {
+        self.mclk_debt += cycles * 7;
+        while self.mclk_debt >= 15 {
+            self.mclk_debt -= 15;
+            self.step_psg_clock();
         }
     }
 
@@ -220,8 +239,8 @@ impl Psg {
 
     pub fn get_channel_samples(&self) -> [i16; 4] {
         let mut s = [0i16; 4];
-        for (i, item) in s.iter_mut().enumerate().take(3) {
-            *item = self.tones[i].last_amp as i16;
+        for (i, sample) in s.iter_mut().enumerate().take(3) {
+            *sample = self.tones[i].last_amp as i16;
         }
         s[3] = self.noise.last_amp as i16;
         s
@@ -231,7 +250,7 @@ impl Psg {
     pub fn step(&mut self) -> i16 {
         self.step_cycles(1);
         let mut buf = [0i16; 1];
-        if self.blip.read_samples(&mut buf) > 0 {
+        if self.blip.read_samples(&mut buf[..]) > 0 {
             buf[0]
         } else {
             self.blip.read_instant()
@@ -240,17 +259,13 @@ impl Psg {
 
     pub fn generate_sample(&mut self) -> i16 {
         let mut buf = [0i16; 1];
-        if self.blip.read_samples(&mut buf) > 0 {
+        if self.blip.read_samples(&mut buf[..]) > 0 {
             buf[0]
         } else {
             self.blip.read_instant()
         }
     }
 }
-
-const VOLUME_TABLE: [i16; 16] = [
-    4095, 3253, 2584, 2052, 1630, 1295, 1028, 817, 649, 515, 409, 325, 258, 205, 163, 0,
-];
 
 impl Default for Psg {
     fn default() -> Self {

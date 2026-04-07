@@ -51,8 +51,8 @@ mod performance_tests {
         // Setup 64KB ROM
         let rom_size = 0x10000;
         let mut rom = vec![0; rom_size];
-        for i in 0..rom_size {
-            rom[i] = (i % 256) as u8;
+        for (i, byte) in rom.iter_mut().enumerate().take(rom_size) {
+            *byte = (i % 256) as u8;
         }
         bus.load_rom(&rom);
 

@@ -68,7 +68,7 @@ proptest! {
 
         // Set VRAM write mode
         vdp.write_control(0x4000 | (start_addr & 0x3FFF));
-        vdp.write_control(((start_addr >> 14) & 0x03) as u16);
+        vdp.write_control((start_addr >> 14) & 0x03);
 
         // Write data (triggers auto-increment)
         vdp.write_data(0x0000);

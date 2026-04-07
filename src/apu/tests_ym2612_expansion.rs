@@ -65,14 +65,14 @@ fn test_ym2612_dac_panning() {
     ym.write_addr(Bank::Bank1, 0xB6);
     ym.write_data_bank(Bank::Bank1, 0x80);
 
-    ym.step(1);
+    ym.step(24);
     assert!(ym.blip_l.read_instant() > 0, "Left should be positive");
     assert_eq!(ym.blip_r.read_instant(), 0, "Right should be zero");
 
     // Set Pan Right Only: 0x40
     ym.write_addr(Bank::Bank1, 0xB6);
     ym.write_data_bank(Bank::Bank1, 0x40);
-    ym.step(1);
+    ym.step(24);
     assert_eq!(ym.blip_l.read_instant(), 0, "Left should be zero");
     assert!(ym.blip_r.read_instant() > 0, "Right should be positive");
 }
