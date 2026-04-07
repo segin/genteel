@@ -1160,6 +1160,27 @@ impl Emulator {
         };
         let dma_pending = bus.vdp.command.dma_pending;
         let fifo_len = bus.vdp.fifo.len();
+        let mode3 = bus.vdp.registers[crate::vdp::REG_MODE3];
+        let mode4 = bus.vdp.registers[crate::vdp::REG_MODE4];
+        let reg2 = bus.vdp.registers[crate::vdp::REG_PLANE_A];
+        let reg4 = bus.vdp.registers[crate::vdp::REG_PLANE_B];
+        let reg16 = bus.vdp.registers[crate::vdp::REG_PLANE_SIZE];
+        let hscroll = bus.vdp.registers[crate::vdp::REG_HSCROLL];
+        let win_h = bus.vdp.registers[crate::vdp::REG_WINDOW_H_POS];
+        let win_v = bus.vdp.registers[crate::vdp::REG_WINDOW_V_POS];
+        let hs_base = bus.vdp.hscroll_address();
+        let plane_a = bus.vdp.plane_a_address();
+        let plane_b = bus.vdp.plane_b_address();
+        let window = bus.vdp.window_address();
+        let hs_word = |addr: usize| -> u16 {
+            let hi = bus.vdp.vram[addr & 0xFFFF];
+            let lo = bus.vdp.vram[(addr + 1) & 0xFFFF];
+            ((hi as u16) << 8) | (lo as u16)
+        };
+        let hs0a = hs_word(hs_base);
+        let hs0b = hs_word(hs_base + 2);
+        let hs80a = hs_word(hs_base + (80 * 4));
+        let hs80b = hs_word(hs_base + (80 * 4) + 2);
         let z80_pc = self.z80.pc;
         let z80_reset = if bus.z80_reset { "RST" } else { "RUN" };
         let z80_req = if bus.z80_bus_request { "BUS" } else { "---" };
@@ -1169,7 +1190,7 @@ impl Emulator {
             0
         };
         println_safe!(
-            "FRAME {:05} | 68k: PC={:06X} SR={:04X} | VDP: Disp={} DMA={} DMAP={} FIFO={} CRAM={:04X} | Z80: PC={:04X} OP={:02X} St={} Req={}",
+            "FRAME {:05} | 68k: PC={:06X} SR={:04X} | VDP: Disp={} DMA={} DMAP={} FIFO={} CRAM={:04X} M3={:02X} M4={:02X} R2={:02X} R4={:02X} R16={:02X} HS={:02X} WH={:02X} WV={:02X} PA={:04X} PB={:04X} WN={:04X} HS0A={:04X} HS0B={:04X} HS80A={:04X} HS80B={:04X} | Z80: PC={:04X} OP={:02X} St={} Req={}",
             frame_count,
             self.cpu.pc,
             self.cpu.sr,
@@ -1178,6 +1199,21 @@ impl Emulator {
             dma_pending,
             fifo_len,
             cram_val,
+            mode3,
+            mode4,
+            reg2,
+            reg4,
+            reg16,
+            hscroll,
+            win_h,
+            win_v,
+            plane_a,
+            plane_b,
+            window,
+            hs0a,
+            hs0b,
+            hs80a,
+            hs80b,
             z80_pc,
             z80_op,
             z80_reset,

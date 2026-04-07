@@ -329,6 +329,10 @@ struct FmChannel {
 }
 
 impl FmChannel {
+    fn clamp_output(sample: i32) -> i16 {
+        sample.clamp(-8192, 8191) as i16
+    }
+
     fn new() -> Self {
         Self {
             operators: std::array::from_fn(|_| FmOperator::new()),
@@ -384,6 +388,51 @@ impl FmChannel {
                     self.operators[3].compute_output(o3 >> 1, tl[3]),
                 )
             }
+            1 => {
+                let o2 = self.operators[1].compute_output(out1 >> 1, tl[1]);
+                let mod3 = (out1 as i32 + o2 as i32) >> 1;
+                let o3 = self.operators[2].compute_output(mod3 as i16, tl[2]);
+                (
+                    o2,
+                    o3,
+                    self.operators[3].compute_output(o3 >> 1, tl[3]),
+                )
+            }
+            2 => {
+                let o2 = self.operators[1].compute_output(out1 >> 1, tl[1]);
+                let o3 = self.operators[2].compute_output(o2 >> 1, tl[2]);
+                let mod4 = (out1 as i32 + o3 as i32) >> 1;
+                (
+                    o2,
+                    o3,
+                    self.operators[3].compute_output(mod4 as i16, tl[3]),
+                )
+            }
+            3 => {
+                let o2 = self.operators[1].compute_output(out1 >> 1, tl[1]);
+                let o3 = self.operators[2].compute_output(0, tl[2]);
+                let mod4 = (o2 as i32 + o3 as i32) >> 1;
+                (
+                    o2,
+                    o3,
+                    self.operators[3].compute_output(mod4 as i16, tl[3]),
+                )
+            }
+            4 => (
+                self.operators[1].compute_output(out1 >> 1, tl[1]),
+                self.operators[2].compute_output(0, tl[2]),
+                self.operators[3].compute_output(self.operators[2].last_output >> 1, tl[3]),
+            ),
+            5 => (
+                self.operators[1].compute_output(out1 >> 1, tl[1]),
+                self.operators[2].compute_output(out1 >> 1, tl[2]),
+                self.operators[3].compute_output(out1 >> 1, tl[3]),
+            ),
+            6 => (
+                self.operators[1].compute_output(out1 >> 1, tl[1]),
+                self.operators[2].compute_output(0, tl[2]),
+                self.operators[3].compute_output(0, tl[3]),
+            ),
             7 => (
                 self.operators[1].compute_output(0, tl[1]),
                 self.operators[2].compute_output(0, tl[2]),
@@ -397,11 +446,10 @@ impl FmChannel {
         self.operators[2].last_output = out3;
         self.operators[3].last_output = out4;
         let channel_out = match self.algorithm {
-            0 => out4,
-            7 => out1
-                .wrapping_add(out2)
-                .wrapping_add(out3)
-                .wrapping_add(out4),
+            0..=3 => out4,
+            4 => Self::clamp_output(out2 as i32 + out4 as i32),
+            5 | 6 => Self::clamp_output(out2 as i32 + out3 as i32 + out4 as i32),
+            7 => Self::clamp_output(out1 as i32 + out2 as i32 + out3 as i32 + out4 as i32),
             _ => out4,
         };
         self.last_sample = channel_out;
@@ -609,6 +657,28 @@ impl Ym2612 {
                     for i in 0..4 {
                         self.channels[c].operators[i].set_key_on((v & (0x10 << i)) != 0);
                     }
+                }
+            }
+            (_, 0xA0..=0xA2) => {
+                let c = (a - 0xA0) as usize + bank_idx * 3;
+                if c < 6 {
+                    self.channels[c].fnum_latch = v;
+                    self.channels[c].fnum = (self.channels[c].fnum & 0x0700) | v as u16;
+                }
+            }
+            (_, 0xA4..=0xA6) => {
+                let c = (a - 0xA4) as usize + bank_idx * 3;
+                if c < 6 {
+                    self.channels[c].block = (v >> 3) & 0x07;
+                    self.channels[c].fnum =
+                        (((v as u16) & 0x07) << 8) | self.channels[c].fnum_latch as u16;
+                }
+            }
+            (_, 0xB0..=0xB2) => {
+                let c = (a - 0xB0) as usize + bank_idx * 3;
+                if c < 6 {
+                    self.channels[c].feedback = (v >> 3) & 0x07;
+                    self.channels[c].algorithm = v & 0x07;
                 }
             }
             (Bank::Bank0, 0x27) => {

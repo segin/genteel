@@ -303,26 +303,21 @@ impl Vdp {
     }
 
     fn apply_color_transform(&self, color: u16, state: u8) -> u16 {
+        let r = (color >> 11) & 0x1F;
+        let g = (color >> 5) & 0x3F;
+        let b = color & 0x1F;
+
         match state {
             0 => {
-                // Shadow (halve brightness)
-                let r = ((color >> 11) & 0x1E) >> 1;
-                let g = ((color >> 6) & 0x1E) >> 1;
-                let b = ((color >> 1) & 0x1E) >> 1;
-                (r << 11) | (g << 6) | (b << 1)
+                // Shadow mode halves each channel.
+                ((r >> 1) << 11) | ((g >> 1) << 5) | (b >> 1)
             }
             2 => {
-                // Highlight (double brightness + offset)
-                let r = (color >> 11) & 0x1E;
-                let g = (color >> 6) & 0x1E;
-                let b = (color >> 1) & 0x1E;
-                let r2 = r + 0x10;
-                let r_final = if r2 > 0x1E { 0x1E } else { r2 };
-                let g2 = g + 0x10;
-                let g_final = if g2 > 0x1E { 0x1E } else { g2 };
-                let b2 = b + 0x10;
-                let b_final = if b2 > 0x1E { 0x1E } else { b2 };
-                (r_final << 11) | (g_final << 6) | (b_final << 1)
+                // Highlight mode moves halfway toward full intensity.
+                let r_hi = r + ((0x1F - r) >> 1);
+                let g_hi = g + ((0x3F - g) >> 1);
+                let b_hi = b + ((0x1F - b) >> 1);
+                (r_hi << 11) | (g_hi << 5) | b_hi
             }
             _ => color,
         }
@@ -461,8 +456,12 @@ impl RenderOps for Vdp {
         let mut buf_a = [0u8; 320];
         let mut buf_s = [0u8; 320];
 
-        self.render_plane(false, fetch_line, &mut buf_b);
-        self.render_plane(true, fetch_line, &mut buf_a);
+        if std::env::var("GENTEEL_DEBUG_PLANE").as_deref() != Ok("a") {
+            self.render_plane(false, fetch_line, &mut buf_b);
+        }
+        if std::env::var("GENTEEL_DEBUG_PLANE").as_deref() != Ok("b") {
+            self.render_plane(true, fetch_line, &mut buf_a);
+        }
         self.render_sprites(active_sprites, fetch_line, &mut buf_s);
 
         let composite_params = CompositeLineParams {
@@ -562,7 +561,6 @@ impl RenderOps for Vdp {
 
     fn render_tile(&self, params: &TileRenderParams, screen_x: &mut u16, line_buf: &mut [u8; 320]) {
         let current_x = *screen_x;
-        // Horizontal position in plane
         let scrolled_h = current_x.wrapping_sub(params.h_scroll);
         let pixel_h = scrolled_h & 0x07;
         let tile_h = ((scrolled_h >> 3) as usize) & params.plane_w_mask;
@@ -692,7 +690,7 @@ impl RenderOps for Vdp {
     /// Fetch Horizontal scroll value for the given line.
     /// Supports Full-screen, 8-pixel strip (Cell), and Per-line modes.
     /// H-scroll values in VRAM are 10-bit signed integers.
-    fn get_h_scroll(&self, is_plane_a: bool, fetch_line: u16) -> u16 {
+    fn get_h_scroll(&self, _is_plane_a: bool, fetch_line: u16) -> u16 {
         let mode3 = self.registers[REG_MODE3];
 
         // Horizontal Scroll (Bits 1-0 of Mode 3: 00=Full, 01=Invalid(Full), 10=Cell(8px), 11=Line)
@@ -701,12 +699,12 @@ impl RenderOps for Vdp {
 
         let hs_addr = match hs_mode {
             0x00 | 0x01 => hs_base,                                // Full screen
-            0x02 => hs_base + (((fetch_line as usize) >> 3) * 32), // 8-pixel high strips (Cell)
+            0x02 => hs_base + (((fetch_line as usize) >> 3) * 4), // 8-pixel high strips (Cell)
             0x03 => hs_base + ((fetch_line as usize) * 4),         // Per-line
             _ => hs_base,
         };
 
-        let final_hs_addr = if is_plane_a {
+        let final_hs_addr = if _is_plane_a {
             hs_addr
         } else {
             hs_addr.wrapping_add(2)
@@ -716,8 +714,7 @@ impl RenderOps for Vdp {
         let lo = self.vram[final_hs_addr.wrapping_add(1) & 0xFFFF];
 
         // H-scroll is 10-bit value (bits 0-9).
-        let val = ((hi as u16) << 8) | (lo as u16);
-        val & 0x03FF
+        (((hi as u16) << 8) | (lo as u16)) & 0x03FF
     }
 
     #[inline(always)]
@@ -776,7 +773,6 @@ impl RenderOps for Vdp {
                 byte & 0x0F
             };
 
-            // Write even if transparent! "Preserve priority bits even for transparent pixels"
             let final_val = (palette << 4) | col | pri_mask;
             line_buf[dest_idx + i as usize] = final_val;
         }
