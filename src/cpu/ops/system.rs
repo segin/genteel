@@ -667,4 +667,408 @@ mod tests {
         assert_eq!(cpu.sr & flags::SUPERVISOR, flags::SUPERVISOR);
         assert_eq!(cpu.sr & flags::INTERRUPT_MASK, flags::INTERRUPT_MASK);
     }
+
+    #[test]
+    fn test_exec_bsr_short() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        cpu.pc = 0x1002;
+        let initial_sp = cpu.a[7];
+
+        let cycles = exec_bsr(&mut cpu, 0x06, &mut memory);
+
+        assert_eq!(cycles, 18);
+        assert_eq!(cpu.pc, 0x1008);
+        assert_eq!(cpu.a[7], initial_sp - 4);
+        assert_eq!(memory.read_long(cpu.a[7]), 0x1002);
+    }
+
+    #[test]
+    fn test_exec_bsr_word() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        cpu.pc = 0x1002;
+        let initial_sp = cpu.a[7];
+        memory.write_word(0x1002, 0x0100);
+
+        let cycles = exec_bsr(&mut cpu, 0, &mut memory);
+
+        assert_eq!(cycles, 18);
+        assert_eq!(cpu.pc, 0x1102);
+        assert_eq!(cpu.a[7], initial_sp - 4);
+        assert_eq!(memory.read_long(cpu.a[7]), 0x1004); // Return address is instruction PC + 2
+    }
+
+    #[test]
+    fn test_exec_jsr() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        cpu.pc = 0x1000;
+        let initial_sp = cpu.a[7];
+
+        // JSR to Absolute Short (AddressingMode::AbsoluteShort)
+        let addr_mode = AddressingMode::AbsoluteShort;
+        // The word after the PC is the absolute short address
+        memory.write_word(0x1000, 0x2000);
+
+        let cycles = exec_jsr(&mut cpu, addr_mode, &mut memory);
+
+        assert_eq!(cycles, 12 + 8); // 12 + 8 for AbsoluteShort
+        assert_eq!(cpu.pc, 0x2000);
+        assert_eq!(cpu.a[7], initial_sp - 4);
+        assert_eq!(memory.read_long(cpu.a[7]), 0x1002);
+    }
+
+    #[test]
+    fn test_exec_rts() {
+        let (mut cpu, mut memory) = create_test_cpu();
+        let initial_sp = cpu.a[7];
+
+        cpu.a[7] = initial_sp - 4;
+        memory.write_long(cpu.a[7], 0x2000);
+
+        let cycles = exec_rts(&mut cpu, &mut memory);
+
+        assert_eq!(cycles, 16);
+        assert_eq!(cpu.pc, 0x2000);
+        assert_eq!(cpu.a[7], initial_sp);
+    }
+
+    #[test]
+    fn test_exec_bcc() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        // Condition true, short displacement
+        cpu.pc = 0x1002;
+        // Condition::Always true
+        let mut cycles = exec_bcc(&mut cpu, Condition::True, 0x06, &mut memory);
+        assert_eq!(cycles, 10);
+        assert_eq!(cpu.pc, 0x1008);
+
+        // Condition true, word displacement
+        cpu.pc = 0x1002;
+        memory.write_word(0x1002, 0x0100);
+        cycles = exec_bcc(&mut cpu, Condition::True, 0, &mut memory);
+        assert_eq!(cycles, 10);
+        assert_eq!(cpu.pc, 0x1102);
+
+        // Condition false, short displacement
+        cpu.pc = 0x1002;
+        // Condition::False
+        cycles = exec_bcc(&mut cpu, Condition::False, 0x06, &mut memory);
+        assert_eq!(cycles, 8);
+        assert_eq!(cpu.pc, 0x1002);
+
+        // Condition false, word displacement
+        cpu.pc = 0x1002;
+        memory.write_word(0x1002, 0x0100);
+        cycles = exec_bcc(&mut cpu, Condition::False, 0, &mut memory);
+        assert_eq!(cycles, 8);
+        assert_eq!(cpu.pc, 0x1004);
+    }
+
+    #[test]
+    fn test_exec_scc() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        // Condition true
+        let mut cycles = exec_scc(&mut cpu, Condition::True, AddressingMode::DataRegister(0), &mut memory);
+        assert_eq!(cycles, 4); // 4 + 0
+        assert_eq!(cpu.d[0] & 0xFF, 0xFF);
+
+        // Condition false
+        cycles = exec_scc(&mut cpu, Condition::False, AddressingMode::DataRegister(0), &mut memory);
+        assert_eq!(cycles, 4); // 4 + 0
+        assert_eq!(cpu.d[0] & 0xFF, 0x00);
+
+        // Memory addressing
+        cycles = exec_scc(&mut cpu, Condition::True, AddressingMode::AddressIndirect(0), &mut memory);
+        assert_eq!(cycles, 4 + 4 + 4); // base 4, EA calculation 4, write 4
+        assert_eq!(memory.read_byte(cpu.a[0]), 0xFF);
+    }
+
+    #[test]
+    fn test_exec_dbcc() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        // Condition true (branch not taken, loop terminates)
+        cpu.pc = 0x1000;
+        let mut cycles = exec_dbcc(&mut cpu, Condition::True, 0, &mut memory);
+        assert_eq!(cycles, 12);
+        assert_eq!(cpu.pc, 0x1002); // Skip displacement word
+
+        // Condition false, counter > 0 (branch taken)
+        cpu.pc = 0x1000;
+        cpu.d[0] = 0x00000005;
+        memory.write_word(0x1000, 0x0100);
+        cycles = exec_dbcc(&mut cpu, Condition::False, 0, &mut memory);
+        assert_eq!(cycles, 10);
+        assert_eq!(cpu.d[0] & 0xFFFF, 0x0004);
+        assert_eq!(cpu.pc, 0x1100);
+
+        // Condition false, counter == 0 before decrement (loop terminates, counter wraps to 0xFFFF)
+        cpu.pc = 0x1000;
+        cpu.d[0] = 0x00000000;
+        cycles = exec_dbcc(&mut cpu, Condition::False, 0, &mut memory);
+        assert_eq!(cycles, 14);
+        assert_eq!(cpu.d[0] & 0xFFFF, 0xFFFF);
+        assert_eq!(cpu.pc, 0x1002); // Skip displacement word
+    }
+
+    #[test]
+    fn test_exec_jmp() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        cpu.pc = 0x1000;
+
+        // JMP Absolute Short
+        memory.write_word(0x1000, 0x3000);
+        let cycles = exec_jmp(&mut cpu, AddressingMode::AbsoluteShort, &mut memory);
+
+        assert_eq!(cycles, 4 + 8); // 4 + ea calculation for absolute short
+        assert_eq!(cpu.pc, 0x3000);
+    }
+
+    #[test]
+    fn test_exec_link() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        let initial_sp = 0x2000;
+        cpu.a[7] = initial_sp;
+        cpu.a[0] = 0x12345678; // Old frame pointer
+
+        // Allocate 16 bytes on stack (-16)
+        let cycles = exec_link(&mut cpu, 0, -16, &mut memory);
+
+        assert_eq!(cycles, 16);
+        assert_eq!(cpu.a[7], initial_sp - 4 - 16); // Stack pointer decremented by 4 (push An) and then added displacement
+        assert_eq!(cpu.a[0], initial_sp - 4);      // An points to the pushed value
+        assert_eq!(memory.read_long(cpu.a[0]), 0x12345678); // Old An saved on stack
+    }
+
+    #[test]
+    fn test_exec_unlk() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        let old_sp = 0x2000;
+        let frame_pointer = old_sp - 4;
+        let new_sp = frame_pointer - 16;
+
+        cpu.a[7] = new_sp;
+        cpu.a[0] = frame_pointer;
+        memory.write_long(frame_pointer, 0x12345678); // Simulate old An
+
+        let cycles = exec_unlk(&mut cpu, 0, &mut memory);
+
+        assert_eq!(cycles, 12);
+        assert_eq!(cpu.a[7], old_sp);
+        assert_eq!(cpu.a[0], 0x12345678); // Old An restored
+    }
+
+    #[test]
+    fn test_exec_rte_supervisor() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        cpu.sr = flags::SUPERVISOR;
+        let initial_sp = 0x2000;
+        cpu.a[7] = initial_sp - 6;
+cpu.usp = initial_sp; // Also set USP to verify it gets updated properly if we switch, wait, if we switch to user mode, USP becomes active. So let's make SSP what we pop from, and when SR becomes 0x001F, a[7] will point to USP.
+
+        memory.write_word(cpu.a[7], 0x001F); // Old SR (all CCR flags set, user mode)
+        memory.write_long(cpu.a[7] + 2, 0x3000); // Old PC
+
+        let cycles = exec_rte(&mut cpu, &mut memory);
+
+        assert_eq!(cycles, 20);
+        assert_eq!(cpu.usp, initial_sp); // In user mode, a[7] is USP
+        assert_eq!(cpu.sr, 0x001F);
+        assert_eq!(cpu.pc, 0x3000);
+    }
+
+    #[test]
+    fn test_exec_rte_user() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        cpu.sr = 0x0000; // User mode
+        let initial_sp = 0x2000;
+        cpu.a[7] = initial_sp;
+        cpu.pc = 0x1000;
+
+        // Setup Privilege Violation vector (vector 8)
+        memory.write_long(8 * 4, 0x4000);
+
+        let cycles = exec_rte(&mut cpu, &mut memory);
+
+        assert_eq!(cycles, 34); // Privilege violation exception processing time
+        assert_eq!(cpu.pc, 0x4000);
+        assert_eq!(cpu.sr & flags::SUPERVISOR, flags::SUPERVISOR); // Switched to supervisor
+    }
+
+    #[test]
+    fn test_exec_reset_supervisor() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        cpu.sr = flags::SUPERVISOR;
+
+        let cycles = exec_reset(&mut cpu, &mut memory);
+
+        assert_eq!(cycles, 132); // RESET assertion duration
+    }
+
+    #[test]
+    fn test_exec_reset_user() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        cpu.sr = 0x0000; // User mode
+        cpu.pc = 0x1000;
+
+        // Setup Privilege Violation vector (vector 8)
+        memory.write_long(8 * 4, 0x4000);
+
+        let cycles = exec_reset(&mut cpu, &mut memory);
+
+        assert_eq!(cycles, 34); // Privilege violation exception processing time
+        assert_eq!(cpu.pc, 0x4000);
+        assert_eq!(cpu.sr & flags::SUPERVISOR, flags::SUPERVISOR); // Switched to supervisor
+    }
+
+    #[test]
+    fn test_exec_move_to_sr() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        cpu.sr = flags::SUPERVISOR;
+        let cycles = exec_move_to_sr(&mut cpu, AddressingMode::DataRegister(0), &mut memory);
+
+        assert_eq!(cycles, 12);
+        assert_eq!(cpu.sr, 0x0000); // d0 is 0
+
+        // Privilege violation
+        let cycles_user = exec_move_to_sr(&mut cpu, AddressingMode::DataRegister(0), &mut memory);
+        assert_eq!(cycles_user, 34);
+    }
+
+    #[test]
+    fn test_exec_move_from_sr() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        cpu.sr = 0x271F;
+        let cycles = exec_move_from_sr(&mut cpu, AddressingMode::DataRegister(0), &mut memory);
+
+        assert_eq!(cycles, 6);
+        assert_eq!(cpu.d[0] & 0xFFFF, 0x271F);
+    }
+
+    #[test]
+    fn test_exec_move_to_ccr() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        cpu.sr = 0x2700;
+        cpu.d[0] = 0x0000001F;
+        let cycles = exec_move_to_ccr(&mut cpu, AddressingMode::DataRegister(0), &mut memory);
+
+        assert_eq!(cycles, 12);
+        assert_eq!(cpu.sr, 0x271F); // Upper byte preserved, lower byte set
+    }
+
+    #[test]
+    fn test_exec_andi_to_ccr() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        cpu.sr = 0x271F;
+        cpu.pc = 0x1000;
+        memory.write_word(0x1000, 0x000A); // AND with 0x0A
+
+        let cycles = exec_andi_to_ccr(&mut cpu, &mut memory);
+
+        assert_eq!(cycles, 20);
+        assert_eq!(cpu.sr, 0x270A); // Upper preserved, lower ANDed
+        assert_eq!(cpu.pc, 0x1002);
+    }
+
+    #[test]
+    fn test_exec_andi_to_sr() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        cpu.sr = 0x271F;
+        cpu.pc = 0x1000;
+        memory.write_word(0x1000, 0x070A); // AND with 0x070A
+
+        let cycles = exec_andi_to_sr(&mut cpu, &mut memory);
+
+        assert_eq!(cycles, 20);
+        assert_eq!(cpu.sr, 0x070A); // Both bytes ANDed
+        assert_eq!(cpu.pc, 0x1002);
+
+        // Privilege violation
+        cpu.sr = 0x0000;
+        let cycles_user = exec_andi_to_sr(&mut cpu, &mut memory);
+        assert_eq!(cycles_user, 34);
+    }
+
+    #[test]
+    fn test_exec_ori_to_ccr() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        cpu.sr = 0x2705;
+        cpu.pc = 0x1000;
+        memory.write_word(0x1000, 0x000A); // OR with 0x0A
+
+        let cycles = exec_ori_to_ccr(&mut cpu, &mut memory);
+
+        assert_eq!(cycles, 20);
+        assert_eq!(cpu.sr, 0x270F);
+        assert_eq!(cpu.pc, 0x1002);
+    }
+
+    #[test]
+    fn test_exec_ori_to_sr() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        cpu.sr = 0x2005;
+        cpu.pc = 0x1000;
+        memory.write_word(0x1000, 0x070A); // OR with 0x070A
+
+        let cycles = exec_ori_to_sr(&mut cpu, &mut memory);
+
+        assert_eq!(cycles, 20);
+        assert_eq!(cpu.sr, 0x270F);
+        assert_eq!(cpu.pc, 0x1002);
+
+        // Privilege violation
+        cpu.sr = 0x0000;
+        let cycles_user = exec_ori_to_sr(&mut cpu, &mut memory);
+        assert_eq!(cycles_user, 34);
+    }
+
+    #[test]
+    fn test_exec_eori_to_ccr() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        cpu.sr = 0x270F;
+        cpu.pc = 0x1000;
+        memory.write_word(0x1000, 0x000A); // XOR with 0x0A
+
+        let cycles = exec_eori_to_ccr(&mut cpu, &mut memory);
+
+        assert_eq!(cycles, 20);
+        assert_eq!(cpu.sr, 0x2705);
+        assert_eq!(cpu.pc, 0x1002);
+    }
+
+    #[test]
+    fn test_exec_eori_to_sr() {
+        let (mut cpu, mut memory) = create_test_cpu();
+
+        cpu.sr = 0x270F;
+        cpu.pc = 0x1000;
+        memory.write_word(0x1000, 0x070A); // XOR with 0x070A
+
+        let cycles = exec_eori_to_sr(&mut cpu, &mut memory);
+
+        assert_eq!(cycles, 20);
+        assert_eq!(cpu.sr, 0x2005);
+        assert_eq!(cpu.pc, 0x1002);
+
+        // Privilege violation
+        cpu.sr = 0x0000;
+        let cycles_user = exec_eori_to_sr(&mut cpu, &mut memory);
+        assert_eq!(cycles_user, 34);
+    }
 }
