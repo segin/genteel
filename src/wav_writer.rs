@@ -11,6 +11,43 @@ pub type FileWavWriter = WavWriter<BufWriter<File>>;
 
 impl WavWriter<BufWriter<File>> {
     pub fn new(path: &str, sample_rate: u32, channels: u16) -> std::io::Result<Self> {
+        // Security: Restrict path to current directory or its subdirectories
+        let base_dir = std::env::current_dir()?.canonicalize()?;
+        let requested_path = std::path::Path::new(path);
+        let full_path = if requested_path.is_absolute() {
+            requested_path.to_path_buf()
+        } else {
+            base_dir.join(requested_path)
+        };
+
+        let parent = full_path.parent().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "Invalid path")
+        })?;
+
+        // Canonicalize parent if it exists, otherwise it's just base_dir
+        let canonical_parent = if parent.exists() {
+            parent.canonicalize()?
+        } else {
+            // If parent doesn't exist, we can't canonicalize it directly.
+            // For safety, we check the closest existing parent.
+            let mut current = parent;
+            while !current.exists() {
+                if let Some(p) = current.parent() {
+                    current = p;
+                } else {
+                    break;
+                }
+            }
+            current.canonicalize()?
+        };
+
+        if !canonical_parent.starts_with(&base_dir) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!("Access denied to path: {}. Audio dumps must be within the current directory.", path),
+            ));
+        }
+
         let file = File::create(path)?;
         let writer = BufWriter::new(file);
         Self::new_with_writer(writer, sample_rate, channels)
@@ -195,46 +232,45 @@ mod tests {
 
     #[test]
     fn test_wav_writer_new() {
-        let temp_dir = std::env::temp_dir();
-        let file_path = temp_dir.join("test_wav_writer_new.wav");
-        let file_path_str = file_path.to_str().unwrap();
+        let file_path = "test_wav_writer_new.wav";
 
         // Ensure file does not exist before test
-        let _ = std::fs::remove_file(&file_path);
+        let _ = std::fs::remove_file(file_path);
 
         {
-            let wav = WavWriter::new(file_path_str, 44100, 2).unwrap();
+            let wav = WavWriter::new(file_path, 44100, 2).unwrap();
             assert_eq!(wav.channels(), 2);
         } // wav dropped here, file is closed
 
         // Check that the file was actually created and exists
-        assert!(file_path.exists());
+        assert!(std::path::Path::new(file_path).exists());
 
         // Check basic file size to ensure headers were written
-        let metadata = std::fs::metadata(&file_path).unwrap();
+        let metadata = std::fs::metadata(file_path).unwrap();
         assert_eq!(metadata.len(), 44); // 44 bytes for an empty WAV file header
 
         // Clean up
-        std::fs::remove_file(&file_path).unwrap();
+        std::fs::remove_file(file_path).unwrap();
     }
 
     #[test]
     fn test_wav_writer_new_invalid_path() {
-        // Test with an invalid path that should fail to create a file
-        let invalid_path = "/this_directory_does_not_exist/test.wav";
+        // Test with an invalid path within the current directory that should fail to create a file
+        let invalid_path = "non_existent_dir/test.wav";
 
         let result = WavWriter::new(invalid_path, 44100, 2);
         match result {
-            Err(e) => assert_eq!(e.kind(), std::io::ErrorKind::NotFound),
+            Err(e) => assert!(
+                e.kind() == std::io::ErrorKind::NotFound || e.kind() == std::io::ErrorKind::PermissionDenied
+            ),
             _ => panic!("Expected error"),
         }
     }
 
     #[test]
     fn test_wav_writer_new_directory_error() {
-        // Test with a path that is an existing directory
-        let temp_dir = std::env::temp_dir();
-        let path_str = temp_dir.to_str().unwrap();
+        // Test with a path that is an existing directory within the project
+        let path_str = "src";
 
         let result = WavWriter::new(path_str, 44100, 2);
         assert!(result.is_err());
@@ -303,6 +339,30 @@ mod tests {
                 "WavWriter::channels() returned incorrect value for {} channels",
                 channels
             );
+        }
+    }
+
+    #[test]
+    fn test_wav_writer_new_path_traversal_protection() {
+        // Test with a path containing path traversal
+        let traversal_path = "../traversal_test.wav";
+        let result = WavWriter::new(traversal_path, 44100, 2);
+
+        match result {
+            Err(e) => assert_eq!(e.kind(), std::io::ErrorKind::PermissionDenied),
+            Ok(_) => panic!("Should have failed with PermissionDenied"),
+        }
+
+        // Verify file was NOT created
+        assert!(!std::path::Path::new(traversal_path).exists());
+
+        // Test with an absolute path outside the current directory (heuristic for unix/windows)
+        let absolute_path = if cfg!(windows) { "C:\\Windows\\test.wav" } else { "/etc/test.wav" };
+        let result = WavWriter::new(absolute_path, 44100, 2);
+
+        match result {
+            Err(e) => assert_eq!(e.kind(), std::io::ErrorKind::PermissionDenied),
+            Ok(_) => panic!("Should have failed with PermissionDenied"),
         }
     }
 }
