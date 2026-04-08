@@ -13,7 +13,6 @@ use std::sync::{Arc, Mutex};
 #[cfg(feature = "gui")]
 use winit::{
     event::{ElementState, Event, WindowEvent},
-    event_loop::EventLoop,
     keyboard::{KeyCode, PhysicalKey},
     window::WindowBuilder,
 };
@@ -280,6 +279,7 @@ pub struct Framework {
     #[cfg(feature = "gilrs")]
     pub gilrs: Option<Gilrs>,
     pub label_buffer: String,
+    pub waveform_points: Vec<egui::Pos2>,
 }
 
 #[cfg(feature = "gui")]
@@ -1979,7 +1979,16 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
         println!("Recording inputs to: {}", path);
         emulator.input.start_recording();
     }
-    let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
+    #[cfg(target_os = "linux")]
+    let event_loop = {
+        use winit::platform::x11::EventLoopBuilderExtX11;
+        let mut builder = winit::event_loop::EventLoopBuilder::new();
+        builder.with_any_thread(true);
+        builder.build()
+    }.map_err(|e: winit::error::EventLoopError| e.to_string())?;
+
+    #[cfg(not(target_os = "linux"))]
+    let event_loop = winit::event_loop::EventLoop::new().map_err(|e: winit::error::EventLoopError| e.to_string())?;
     let size = winit::dpi::LogicalSize::new(
         frontend::GENESIS_WIDTH as f64 * 3.0,
         frontend::GENESIS_HEIGHT as f64 * 3.0,
