@@ -1006,3 +1006,6 @@ mod tests_daa;
 
 // #[cfg(test)]
 // mod tests_ex_sp_hl_expanded;
+
+#[cfg(test)]
+mod tests_ed;
