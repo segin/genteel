@@ -7,6 +7,8 @@ pub mod psg;
 pub mod ym2612;
 
 #[cfg(test)]
+mod tests_blip_buf;
+#[cfg(test)]
 mod tests_psg_expansion;
 #[cfg(test)]
 mod tests_ym2612_expansion;
