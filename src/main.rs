@@ -51,7 +51,7 @@ struct Z80Change {
 }
 struct SystemContext<'a> {
     cpu: &'a mut Cpu,
-    bus: &'a mut Bus,
+    bus_rc: &'a Rc<RefCell<Bus>>,
     z80: &'a mut Z80<Z80Bus, Z80Bus>,
     z80_cycle_debt: &'a mut f32,
     z80_last_bus_req: &'a mut bool,
@@ -721,25 +721,26 @@ impl Emulator {
         let mclk = m68k_cycles * 7;
 
         let (z80_can_run, z80_is_reset, cycles_per_sample) = {
+            let bus = ctx.bus_rc.borrow();
             let prev = *ctx.z80_last_bus_req;
-            if ctx.debug && ctx.bus.z80_bus_request != prev {
+            if ctx.debug && bus.z80_bus_request != prev {
                 log::debug!(
                     "Bus Req Changed: {} -> {} at 68k PC={:06X}",
                     prev,
-                    ctx.bus.z80_bus_request,
+                    bus.z80_bus_request,
                     ctx.cpu.pc
                 );
             }
-            *ctx.z80_last_bus_req = ctx.bus.z80_bus_request;
+            *ctx.z80_last_bus_req = bus.z80_bus_request;
 
-            let z80_can_run = !ctx.bus.z80_reset && !ctx.bus.z80_bus_request;
-            let z80_is_reset = ctx.bus.z80_reset;
-            let master_clock = if ctx.bus.vdp.is_pal {
+            let z80_can_run = !bus.z80_reset && !bus.z80_bus_request;
+            let z80_is_reset = bus.z80_reset;
+            let master_clock = if bus.vdp.is_pal {
                 audio::PAL_MCLK
             } else {
                 audio::NTSC_MCLK
             };
-            let cycles_per_sample = master_clock as f32 / (ctx.bus.sample_rate as f32);
+            let cycles_per_sample = master_clock as f32 / (bus.sample_rate as f32);
             (z80_can_run, z80_is_reset, cycles_per_sample)
         };
 
@@ -764,30 +765,24 @@ impl Emulator {
         if z80_can_run {
             const Z80_CYCLES_PER_M68K_CYCLE: f32 = 3579545.0 / 7670453.0;
             *ctx.z80_cycle_debt += m68k_cycles as f32 * Z80_CYCLES_PER_M68K_CYCLE;
-            unsafe {
-                ctx.z80.memory.bind_bus(ctx.bus);
-                ctx.z80.io.bind_bus(ctx.bus);
-            }
 
             while *ctx.z80_cycle_debt >= 1.0 {
                 let cycles = ctx.z80.step();
                 *ctx.z80_cycle_debt -= cycles as f32;
             }
-
-            ctx.z80.memory.unbind_bus();
-            ctx.z80.io.unbind_bus();
         }
 
-        ctx.bus.apu.tick_cycles(m68k_cycles);
-        ctx.bus.audio_accumulator += mclk as f32;
+        let mut bus = ctx.bus_rc.borrow_mut();
+        bus.apu.tick_cycles(m68k_cycles);
+        bus.audio_accumulator += mclk as f32;
 
-        while ctx.bus.audio_accumulator >= cycles_per_sample {
-            let (l, r) = ctx.bus.apu.generate_sample();
-            if ctx.bus.audio_buffer.len() < 32768 {
-                ctx.bus.audio_buffer.push(l);
-                ctx.bus.audio_buffer.push(r);
+        while bus.audio_accumulator >= cycles_per_sample {
+            let (l, r) = bus.apu.generate_sample();
+            if bus.audio_buffer.len() < 32768 {
+                bus.audio_buffer.push(l);
+                bus.audio_buffer.push(r);
             }
-            ctx.bus.audio_accumulator -= cycles_per_sample;
+            bus.audio_accumulator -= cycles_per_sample;
         }
     }
 
@@ -798,7 +793,10 @@ impl Emulator {
         active_lines: u16,
     ) -> CpuBatchResult {
         const Z80_AUDIO_SYNC_SLICE: u32 = 32;
-        let (initial_req, initial_rst) = (ctx.bus.z80_bus_request, ctx.bus.z80_reset);
+        let (initial_req, initial_rst) = {
+            let bus = ctx.bus_rc.borrow();
+            (bus.z80_bus_request, bus.z80_reset)
+        };
         let mut pending_cycles = 0;
         let mut deferred_bus_cycles = 0;
         let mut deferred_audio_cycles = 0;
@@ -807,13 +805,14 @@ impl Emulator {
                 // Final sync for the batch
                 let trigger_vint = line == active_lines && pending_cycles < 10;
                 if deferred_bus_cycles > 0 {
-                    ctx.bus.tick(deferred_bus_cycles * 7);
-                    if ctx.bus.vdp.vblank_pending() {
+                    let mut bus = ctx.bus_rc.borrow_mut();
+                    bus.tick(deferred_bus_cycles * 7);
+                    if bus.vdp.vblank_pending() {
                         ctx.cpu.request_interrupt(6);
                     } else {
                         ctx.cpu.cancel_interrupt(6);
                     }
-                    if ctx.bus.vdp.hint_pending() {
+                    if bus.vdp.hint_pending() {
                         ctx.cpu.request_interrupt(4);
                     } else {
                         ctx.cpu.cancel_interrupt(4);
@@ -826,15 +825,18 @@ impl Emulator {
                 };
             }
 
-            let m68k_cycles = if ctx.bus.dma_active() {
-                2 // Yield 2 cycles to let the bus step during DMA
-            } else {
-                ctx.cpu.step_instruction(ctx.bus)
+            let m68k_cycles = {
+                let mut bus = ctx.bus_rc.borrow_mut();
+                if bus.dma_active() {
+                    2 // Yield 2 cycles to let the bus step during DMA
+                } else {
+                    ctx.cpu.step_instruction(&mut *bus)
+                }
             };
 
             match ctx.cpu.last_interrupt_level {
-                6 => ctx.bus.vdp.acknowledge_vint(),
-                4 => ctx.bus.vdp.acknowledge_hint(),
+                6 => ctx.bus_rc.borrow_mut().vdp.acknowledge_vint(),
+                4 => ctx.bus_rc.borrow_mut().vdp.acknowledge_hint(),
                 _ => {}
             }
 
@@ -842,17 +844,21 @@ impl Emulator {
             deferred_audio_cycles += m68k_cycles;
 
             let trigger_vint = line == active_lines && pending_cycles < 10;
-            if deferred_bus_cycles >= Z80_AUDIO_SYNC_SLICE || trigger_vint || ctx.bus.dma_active() {
-                ctx.bus.tick(deferred_bus_cycles * 7);
-                if ctx.bus.vdp.vblank_pending() {
-                    ctx.cpu.request_interrupt(6);
-                } else {
-                    ctx.cpu.cancel_interrupt(6);
-                }
-                if ctx.bus.vdp.hint_pending() {
-                    ctx.cpu.request_interrupt(4);
-                } else {
-                    ctx.cpu.cancel_interrupt(4);
+            let should_sync_audio = deferred_bus_cycles >= Z80_AUDIO_SYNC_SLICE || trigger_vint || ctx.bus_rc.borrow().dma_active();
+            if should_sync_audio {
+                {
+                    let mut bus = ctx.bus_rc.borrow_mut();
+                    bus.tick(deferred_bus_cycles * 7);
+                    if bus.vdp.vblank_pending() {
+                        ctx.cpu.request_interrupt(6);
+                    } else {
+                        ctx.cpu.cancel_interrupt(6);
+                    }
+                    if bus.vdp.hint_pending() {
+                        ctx.cpu.request_interrupt(4);
+                    } else {
+                        ctx.cpu.cancel_interrupt(4);
+                    }
                 }
                 Self::sync_audio_z80(ctx, deferred_audio_cycles, trigger_vint);
                 deferred_bus_cycles = 0;
@@ -860,10 +866,13 @@ impl Emulator {
             }
 
             // Check for Z80 state change (rare but needs early exit)
-            let (req, rst) = (ctx.bus.z80_bus_request, ctx.bus.z80_reset);
+            let (req, rst) = {
+                let bus = ctx.bus_rc.borrow();
+                (bus.z80_bus_request, bus.z80_reset)
+            };
             if req != initial_req || rst != initial_rst {
                 if deferred_bus_cycles > 0 {
-                    ctx.bus.tick(deferred_bus_cycles * 7);
+                    ctx.bus_rc.borrow_mut().tick(deferred_bus_cycles * 7);
                 }
                 if deferred_audio_cycles > 0 {
                     Self::sync_audio_z80(ctx, deferred_audio_cycles, false);
@@ -883,12 +892,11 @@ impl Emulator {
     fn run_cpu_loop(&mut self, line: u16, active_lines: u16) {
         const CYCLES_PER_LINE: u32 = 488;
         let mut cycles_scanline: u32 = 0;
-        let mut bus = self.bus.borrow_mut();
 
         // One context for the entire scanline loop
         let mut ctx = SystemContext {
             cpu: &mut self.cpu,
-            bus: &mut bus,
+            bus_rc: &self.bus,
             z80: &mut self.z80,
             z80_cycle_debt: &mut self.z80_cycle_debt,
             z80_last_bus_req: &mut self.z80_last_bus_req,
@@ -906,8 +914,9 @@ impl Emulator {
             cycles_scanline += result.cycles;
 
             if let Some(change) = result.z80_change {
-                ctx.bus.z80_bus_request = change.new_req;
-                ctx.bus.z80_reset = change.new_rst;
+                let mut bus = ctx.bus_rc.borrow_mut();
+                bus.z80_bus_request = change.new_req;
+                bus.z80_reset = change.new_rst;
             }
         }
     }
