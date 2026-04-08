@@ -864,3 +864,6 @@ mod tests_decode_plane_size;
 
 #[cfg(test)]
 mod tests_getters;
+
+#[cfg(test)]
+mod tests_constants;
