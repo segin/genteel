@@ -332,7 +332,6 @@ impl Framework {
             #[cfg(feature = "gilrs")]
             gilrs: init_gilrs(),
             label_buffer: String::with_capacity(64),
-            waveform_points: Vec::with_capacity(128),
         }
     }
     pub fn handle_event(
