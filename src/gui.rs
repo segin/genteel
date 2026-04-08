@@ -280,6 +280,7 @@ pub struct Framework {
     #[cfg(feature = "gilrs")]
     pub gilrs: Option<Gilrs>,
     pub label_buffer: String,
+    pub waveform_points: Vec<egui::Pos2>,
 }
 
 #[cfg(feature = "gui")]
