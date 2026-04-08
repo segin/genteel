@@ -280,6 +280,7 @@ pub struct Framework {
     #[cfg(feature = "gilrs")]
     pub gilrs: Option<Gilrs>,
     pub label_buffer: String,
+    pub waveform_points: Vec<egui::Pos2>,
 }
 
 #[cfg(feature = "gui")]
@@ -368,10 +369,10 @@ impl Framework {
         ui.colored_label(color, &*buffer);
     }
 
-    fn on_hover_text_fmt(&mut self, response: &egui::Response, args: std::fmt::Arguments) {
-        self.label_buffer.clear();
-        let _ = self.label_buffer.write_fmt(args);
-        response.clone().on_hover_text(&self.label_buffer);
+    fn on_hover_text_fmt(buffer: &mut String, response: &egui::Response, args: std::fmt::Arguments) {
+        buffer.clear();
+        let _ = buffer.write_fmt(args);
+        response.clone().on_hover_text(&*buffer);
     }
 
     pub fn pick_rom(&mut self) {
@@ -482,22 +483,22 @@ impl Framework {
     }
 
     pub fn prepare(&mut self, window: &winit::window::Window, debug_info: &DebugInfo) {
-
+        let ctx = self.egui_ctx.clone();
         let raw_input = self.egui_state.take_egui_input(window);
         ctx.begin_frame(raw_input);
 
         // Global shortcuts
         let ctrl = ctx.input(|i| i.modifiers.command);
-        if ctrl && ui.ctx().input(|i| i.key_pressed(egui::Key::O)) {
+        if ctrl && ctx.input(|i| i.key_pressed(egui::Key::O)) {
             self.gui_state.pick_rom_requested = true;
         }
-        if ctrl && ui.ctx().input(|i| i.key_pressed(egui::Key::R)) && debug_info.has_rom {
+        if ctrl && ctx.input(|i| i.key_pressed(egui::Key::R)) && debug_info.has_rom {
             self.gui_state.reset_requested = true;
         }
-        if ui.ctx().input(|i| i.key_pressed(egui::Key::F5)) && debug_info.has_rom {
+        if ctx.input(|i| i.key_pressed(egui::Key::F5)) && debug_info.has_rom {
             self.gui_state.save_requested = Some(0); // Default to slot 0
         }
-        if ui.ctx().input(|i| i.key_pressed(egui::Key::F8)) && debug_info.has_rom {
+        if ctx.input(|i| i.key_pressed(egui::Key::F8)) && debug_info.has_rom {
             self.gui_state.load_requested = Some(0); // Default to slot 0
         }
 
@@ -1070,7 +1071,8 @@ impl Framework {
                                 );
                                 ui.painter().rect_filled(rect, 0.0, color);
                                 if response.hovered() {
-                                    self.on_hover_text_fmt(
+                                    Self::on_hover_text_fmt(
+                                        &mut self.label_buffer,
                                         &response,
                                         format_args!(
                                             "Index: {}\nRaw: {:04X}\nRGB565: {:04X}",

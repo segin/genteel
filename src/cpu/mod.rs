@@ -6,9 +6,6 @@ pub mod decoder;
 pub mod instructions;
 pub mod ops;
 
-#[cfg(test)]
-pub mod test_utils;
-
 pub use addressing::EffectiveAddress;
 pub use decoder::{decode, Condition, Size};
 use instructions::{
@@ -779,8 +776,6 @@ impl Cpu {
 }
 
 #[cfg(test)]
-
-#[cfg(test)]
 mod bench_decoder;
 #[cfg(test)]
 mod tests_addressing;
@@ -820,3 +815,5 @@ mod tests_m68k_torture;
 mod tests_performance;
 #[cfg(test)]
 mod tests_security;
+#[cfg(test)]
+mod tests_system;
