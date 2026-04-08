@@ -778,6 +778,8 @@ impl Cpu {
     }
 }
 
+#[cfg(test)]
+pub mod test_utils;
 
 #[cfg(test)]
 mod bench_decoder;
