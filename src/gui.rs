@@ -2254,4 +2254,20 @@ mod tests {
             "Expected Gilrs initialization to fail gracefully when GENTEEL_TEST_FAIL_GILRS is set"
         );
     }
+
+    #[cfg(feature = "gilrs")]
+    #[test]
+    fn test_init_gilrs_with_builder_success() {
+        let builder = || Ok::<i32, String>(42);
+        let result = init_gilrs_with_builder(builder);
+        assert_eq!(result, Some(42));
+    }
+
+    #[cfg(feature = "gilrs")]
+    #[test]
+    fn test_init_gilrs_with_builder_error() {
+        let builder = || Err::<i32, String>("Initialization failed".to_string());
+        let result = init_gilrs_with_builder(builder);
+        assert_eq!(result, None);
+    }
 }
