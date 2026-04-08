@@ -977,6 +977,9 @@ mod tests_block;
 #[cfg(test)]
 mod tests_daa;
 
+#[cfg(test)]
+mod tests_index;
+
 // #[cfg(test)]
 // mod tests_halfcarry;
 
