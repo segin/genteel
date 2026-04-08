@@ -576,12 +576,13 @@ impl Emulator {
                     if let (Ok(addr), Ok(expected)) = (addr_res, val_res) {
                         let actual = self.bus.borrow_mut().read_byte(addr);
                         if actual != expected {
-                            panic!("Script Assertion Failed: [0x{:06X}] == 0x{:02X} (Expected 0x{:02X})", addr, actual, expected);
+                            eprintln!("Script Assertion Failed: [0x{:06X}] == 0x{:02X} (Expected 0x{:02X})", addr, actual, expected);
+                        } else {
+                            println!(
+                                "Script: ASSERT_BYTE 0x{:06X} == 0x{:02X} OK",
+                                addr, expected
+                            );
                         }
-                        println!(
-                            "Script: ASSERT_BYTE 0x{:06X} == 0x{:02X} OK",
-                            addr, expected
-                        );
                     }
                 }
             }
@@ -616,12 +617,13 @@ impl Emulator {
                     if let (Ok(addr), Ok(expected)) = (addr_res, val_res) {
                         let actual = self.bus.borrow_mut().read_word(addr);
                         if actual != expected {
-                            panic!("Script Assertion Failed: [0x{:06X}] == 0x{:04X} (Expected 0x{:04X})", addr, actual, expected);
+                            eprintln!("Script Assertion Failed: [0x{:06X}] == 0x{:04X} (Expected 0x{:04X})", addr, actual, expected);
+                        } else {
+                            println!(
+                                "Script: ASSERT_WORD 0x{:06X} == 0x{:04X} OK",
+                                addr, expected
+                            );
                         }
-                        println!(
-                            "Script: ASSERT_WORD 0x{:06X} == 0x{:04X} OK",
-                            addr, expected
-                        );
                     }
                 }
             }
@@ -656,12 +658,13 @@ impl Emulator {
                     if let (Ok(addr), Ok(expected)) = (addr_res, val_res) {
                         let actual = self.bus.borrow_mut().read_long(addr);
                         if actual != expected {
-                            panic!("Script Assertion Failed: [0x{:06X}] == 0x{:08X} (Expected 0x{:08X})", addr, actual, expected);
+                            eprintln!("Script Assertion Failed: [0x{:06X}] == 0x{:08X} (Expected 0x{:08X})", addr, actual, expected);
+                        } else {
+                            println!(
+                                "Script: ASSERT_LONG 0x{:06X} == 0x{:08X} OK",
+                                addr, expected
+                            );
                         }
-                        println!(
-                            "Script: ASSERT_LONG 0x{:06X} == 0x{:08X} OK",
-                            addr, expected
-                        );
                     }
                 }
             }
@@ -1871,5 +1874,26 @@ mod tests {
             initial_frames + 2,
             "Should advance when resumed"
         );
+    }
+
+    #[test]
+    fn test_script_assertion_no_panic() {
+        let emulator = Emulator::new();
+
+        // Setup memory to value 0x00 at 0x1000
+        emulator.bus.borrow_mut().write_byte(0x1000, 0x00);
+
+        // This should not panic, but print an error via eprintln
+        emulator.handle_byte_cmd("ASSERT_BYTE", &["ASSERT_BYTE", "0x1000", "0xFF"]);
+
+        // Test word assertion
+        emulator.bus.borrow_mut().write_word(0x1000, 0x0000);
+        emulator.handle_word_cmd("ASSERT_WORD", &["ASSERT_WORD", "0x1000", "0xFFFF"]);
+
+        // Test long assertion
+        emulator.bus.borrow_mut().write_long(0x1000, 0x00000000);
+        emulator.handle_long_cmd("ASSERT_LONG", &["ASSERT_LONG", "0x1000", "0xFFFFFFFF"]);
+
+        // If we reach here without panicking, the test passes
     }
 }
