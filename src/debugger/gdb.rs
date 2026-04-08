@@ -27,7 +27,7 @@ pub const AUTH_LOCKOUT_DURATION: Duration = Duration::from_secs(30);
 ///
 /// This function executes in constant time to prevent timing attacks when checking passwords.
 fn constant_time_eq(a: &str, b: &str) -> bool {
-    constant_time_eq::constant_time_eq(a.as_bytes(), b.as_bytes())
+    ::constant_time_eq::constant_time_eq(a.as_bytes(), b.as_bytes())
 }
 
 /// GDB stop reasons
