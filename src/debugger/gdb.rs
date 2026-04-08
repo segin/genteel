@@ -186,7 +186,8 @@ impl GdbServer {
             );
             Some(pwd)
         } else {
-            let token = format!("{:032x}", rand::random::<u128>());
+            use rand::RngExt;
+            let token = format!("{:032x}", rand::rng().random::<u128>());
             eprintln!(
                 "🔒 GDB Server listening on 127.0.0.1:{}. Protected with auto-generated token.",
                 port
