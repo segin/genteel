@@ -6,7 +6,6 @@ pub mod decoder;
 pub mod instructions;
 pub mod ops;
 
-#[cfg(test)]
 
 pub use addressing::EffectiveAddress;
 pub use decoder::{decode, Condition, Size};
