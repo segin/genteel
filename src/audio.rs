@@ -207,7 +207,7 @@ impl AudioOutput {
 /// Calculate samples needed per frame
 /// Genesis runs at ~60fps NTSC, so samples_per_frame = sample_rate / 60
 pub fn samples_per_frame() -> usize {
-    (SAMPLE_RATE / 60) as usize
+    (SAMPLE_RATE as f32 / 60.0).ceil() as usize
 }
 
 #[cfg(test)]
@@ -310,7 +310,7 @@ mod tests {
     #[test]
     fn test_samples_per_frame() {
         let spf = samples_per_frame();
-        assert_eq!(spf, 887); // 53267 / 60 = 887.78 -> 887
+        assert_eq!(spf, 888); // 53267 / 60 = 887.78 -> 888
     }
 
     #[test]
