@@ -779,7 +779,6 @@ impl Cpu {
 }
 
 #[cfg(test)]
-#[cfg(test)]
 mod bench_decoder;
 #[cfg(test)]
 mod tests_addressing;
