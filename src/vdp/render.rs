@@ -238,7 +238,7 @@ impl Vdp {
         }
     }
 
-    fn determine_top_layer(&self, px: &PixelLayerData) -> (u8, u8) {
+    pub(crate) fn determine_top_layer(&self, px: &PixelLayerData) -> (u8, u8) {
         let mut top_col = px.bg_color_idx;
         let mut top_layer = 0; // 0=BG, 1=B, 2=A, 3=S
 
@@ -265,7 +265,7 @@ impl Vdp {
         (top_col, top_layer)
     }
 
-    fn apply_shadow_highlight(&self, mut params: ShadowHighlightParams) -> (u8, u8) {
+    pub(crate) fn apply_shadow_highlight(&self, mut params: ShadowHighlightParams) -> (u8, u8) {
         if params.top_layer == 3 {
             if params.px.s_col == 0x3E {
                 params.top_col = params.px.bg_color_idx;
@@ -302,7 +302,7 @@ impl Vdp {
         (params.top_col, params.state)
     }
 
-    fn apply_color_transform(&self, color: u16, state: u8) -> u16 {
+    pub(crate) fn apply_color_transform(&self, color: u16, state: u8) -> u16 {
         let r = (color >> 11) & 0x1F;
         let g = (color >> 5) & 0x3F;
         let b = color & 0x1F;
