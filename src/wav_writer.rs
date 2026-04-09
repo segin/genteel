@@ -48,7 +48,7 @@ impl WavWriter<BufWriter<File>> {
             ));
         }
 
-        let file = File::create(path)?;
+        let file = File::create(full_path)?;
         let writer = BufWriter::new(file);
         Self::new_with_writer(writer, sample_rate, channels)
     }
