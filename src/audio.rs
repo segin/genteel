@@ -229,6 +229,40 @@ mod tests {
     }
 
     #[test]
+    fn test_create_audio_buffer_lock_state() {
+        let shared_buf = create_audio_buffer();
+
+        // Check initial ref counts
+        assert_eq!(Arc::strong_count(&shared_buf), 1);
+        assert_eq!(Arc::weak_count(&shared_buf), 0);
+
+        // Verify successful lock acquisition
+        let buf_lock = shared_buf.lock();
+        assert!(buf_lock.is_ok(), "Mutex should not be poisoned and should be lockable");
+
+        let buf = buf_lock.unwrap();
+        // Verify dimensions and capacity matches BUFFER_SIZE * 4 stereo (8)
+        assert_eq!(buf.buffer.len(), BUFFER_SIZE * 8);
+        assert_eq!(buf.available(), 0);
+        assert_eq!(buf.read_pos, 0);
+        assert_eq!(buf.write_pos, 0);
+
+        // Drop the lock so other threads could acquire it
+        drop(buf);
+
+        // Verify it can be shared and locked in a different thread
+        let buf_clone = Arc::clone(&shared_buf);
+        assert_eq!(Arc::strong_count(&shared_buf), 2);
+
+        let handle = std::thread::spawn(move || {
+            let buf_lock = buf_clone.lock();
+            assert!(buf_lock.is_ok(), "Mutex should be lockable from another thread");
+        });
+
+        handle.join().expect("Thread should not panic");
+    }
+
+    #[test]
     fn test_audio_buffer_new() {
         let buf = AudioBuffer::new(1024);
         assert_eq!(buf.available(), 0);
