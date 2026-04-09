@@ -8,8 +8,6 @@ use std::io::{BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::time::{Duration, Instant};
 
-use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
-
 /// Default GDB server port
 pub const DEFAULT_PORT: u16 = 1234;
 
@@ -27,57 +25,9 @@ pub const AUTH_LOCKOUT_DURATION: Duration = Duration::from_secs(30);
 
 /// Constant-time string comparison to prevent timing attacks
 ///
-/// This function executes in constant time relative to `MAX_PASSWORD_CHECK_LEN`
-/// regardless of the input lengths, unless the length exceeds the maximum.
-const MAX_PASSWORD_CHECK_LEN: usize = 4096;
-
+/// This function executes in constant time to prevent timing attacks when checking passwords.
 fn constant_time_eq(a: &str, b: &str) -> bool {
-    let a_bytes = a.as_bytes();
-    let b_bytes = b.as_bytes();
-
-    let a_len = a_bytes.len();
-    let b_len = b_bytes.len();
-
-    // Lengths must be equal and within the maximum check length.
-    // Use u64 casts since subtle implements ConstantTimeEq for u64 but not for usize.
-    let mut is_equal = (a_len as u64).ct_eq(&(b_len as u64));
-
-    // Also check that both lengths are within bounds.
-    let a_len_ok = (a_len <= MAX_PASSWORD_CHECK_LEN) as u8;
-    let b_len_ok = (b_len <= MAX_PASSWORD_CHECK_LEN) as u8;
-    is_equal &= Choice::from(a_len_ok);
-    is_equal &= Choice::from(b_len_ok);
-
-    let a_safe: &[u8] = if a_len > 0 { a_bytes } else { &[0] };
-    let b_safe: &[u8] = if b_len > 0 { b_bytes } else { &[0] };
-
-    for i in 0..MAX_PASSWORD_CHECK_LEN {
-        // Create a mask indicating if we are within the bounds of both strings.
-        // Boolean-to-integer casts are generally constant-time in Rust.
-        let within_bounds = (i < a_len && i < b_len) as u8;
-
-        // Retrieve bytes safely; if out of bounds, use a dummy value.
-        // We use branchless operations to avoid timing attacks.
-        // `unwrap_or(0)` is NOT constant-time and should be avoided.
-        let a_idx = i * (i < a_len) as usize;
-        let b_idx = i * (i < b_len) as usize;
-
-        let a_byte = a_safe[a_idx];
-        let b_byte = b_safe[b_idx];
-
-        // Compare current bytes.
-        let bytes_match = a_byte.ct_eq(&b_byte);
-
-        // Update the running equality check: if within bounds, we must match.
-        // If out of bounds, we ignore the comparison result (keep current is_equal).
-        is_equal &= Choice::conditional_select(
-            &Choice::from(1u8),
-            &bytes_match,
-            Choice::from(within_bounds),
-        );
-    }
-
-    is_equal.unwrap_u8() == 1
+    ::constant_time_eq::constant_time_eq(a.as_bytes(), b.as_bytes())
 }
 
 /// GDB stop reasons
@@ -186,7 +136,8 @@ impl GdbServer {
             );
             Some(pwd)
         } else {
-            let token = format!("{:032x}", rand::random::<u128>());
+            use rand::RngExt;
+            let token = format!("{:032x}", rand::rng().random::<u128>());
             eprintln!(
                 "🔒 GDB Server listening on 127.0.0.1:{}. Protected with auto-generated token.",
                 port
@@ -1667,12 +1618,6 @@ mod tests {
 
     #[test]
     fn test_constant_time_eq_length_agnostic() {
-        // Test passwords longer than MAX_PASSWORD_CHECK_LEN
-        let long_pass_a = "a".repeat(MAX_PASSWORD_CHECK_LEN + 1);
-        let long_pass_b = "a".repeat(MAX_PASSWORD_CHECK_LEN + 1);
-        // Should return false because we reject > MAX_PASSWORD_CHECK_LEN
-        assert!(!constant_time_eq(&long_pass_a, &long_pass_b));
-
         // Test passwords with same prefix but different lengths
         // "pass" vs "password"
         assert!(!constant_time_eq("pass", "password"));
@@ -1688,14 +1633,6 @@ mod tests {
 
         // "abc" vs "abd"
         assert!(!constant_time_eq("abc", "abd"));
-
-        // Max length boundary
-        let max_pass_a = "a".repeat(MAX_PASSWORD_CHECK_LEN);
-        let max_pass_b = "a".repeat(MAX_PASSWORD_CHECK_LEN);
-        assert!(constant_time_eq(&max_pass_a, &max_pass_b));
-
-        let max_pass_c = "b".repeat(MAX_PASSWORD_CHECK_LEN);
-        assert!(!constant_time_eq(&max_pass_a, &max_pass_c));
     }
 
     #[test]
