@@ -26,12 +26,13 @@ pixels = { version = "0.15", optional = true }
 cpal = { version = "0.15", optional = true }
 rodio = { version = "0.17", optional = true }
 gilrs = { version = "0.10", optional = true }
-rand = "0.10.0"
+rand = { version = "0.10.0", features = ["std_rng"] }
 egui = { version = "0.26", optional = true }
 egui-winit = { version = "0.26", optional = true, default-features = false, features = ["links"] }
 egui-wgpu = { version = "0.26", optional = true }
 rfd = { version = "0.14", optional = true }
 image = "0.25.9"
+constant_time_eq = "0.4.2"
 
 [dev-dependencies]
 criterion = "0.8.2"
