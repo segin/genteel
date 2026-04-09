@@ -159,3 +159,126 @@ fn test_movep_negative_displacement() {
     // D0 should be 0x00008899 (assuming upper word 0)
     assert_eq!(cpu.d[0], 0x00008899);
 }
+
+#[test]
+fn test_movep_word_odd_address_mem_to_reg() {
+    let (mut cpu, mut memory) = create_cpu();
+
+    // MOVEP.W d16(A0), D0
+    // A0 = 0x2001
+    // d16 = 2
+    // Addr = 0x2003
+    // Read from 0x2003 and 0x2005
+
+    cpu.a[0] = 0x2001;
+    cpu.d[0] = 0xFFFFFFFF;
+
+    // Set displacement
+    memory.write_word(cpu.pc, 0x0002);
+
+    // Set memory values
+    memory.write_byte(0x2003, 0x12);
+    memory.write_byte(0x2005, 0x34);
+
+    // Execute
+    let cycles = exec_movep(&mut cpu, Size::Word, 0, 0, false, &mut memory);
+
+    assert_eq!(cycles, 16);
+    assert_eq!(cpu.pc, 0x1002);
+    assert_eq!(cpu.d[0], 0xFFFF1234);
+}
+
+#[test]
+fn test_movep_word_odd_address_reg_to_mem() {
+    let (mut cpu, mut memory) = create_cpu();
+
+    // MOVEP.W D0, d16(A0)
+    // A0 = 0x3001
+    // d16 = 2
+    // Addr = 0x3003
+    // Write to 0x3003 and 0x3005
+
+    cpu.a[0] = 0x3001;
+    cpu.d[0] = 0x11223344;
+
+    // Set displacement
+    memory.write_word(cpu.pc, 0x0002);
+
+    // Clear memory area
+    memory.write_byte(0x3003, 0x00);
+    memory.write_byte(0x3005, 0x00);
+
+    // Execute
+    let cycles = exec_movep(&mut cpu, Size::Word, 0, 0, true, &mut memory);
+
+    assert_eq!(cycles, 16);
+    assert_eq!(cpu.pc, 0x1002);
+
+    assert_eq!(memory.read_byte(0x3003), 0x33);
+    assert_eq!(memory.read_byte(0x3005), 0x44);
+    assert_eq!(memory.read_byte(0x3002), 0x00);
+    assert_eq!(memory.read_byte(0x3004), 0x00);
+}
+
+#[test]
+fn test_movep_long_odd_address_mem_to_reg() {
+    let (mut cpu, mut memory) = create_cpu();
+
+    // MOVEP.L d16(A1), D1
+    // A1 = 0x4001
+    // d16 = 4
+    // Addr = 0x4005
+    // Read from 0x4005, 0x4007, 0x4009, 0x400B
+
+    cpu.a[1] = 0x4001;
+    cpu.d[1] = 0x00000000;
+
+    // Set displacement
+    memory.write_word(cpu.pc, 0x0004);
+
+    // Set memory values
+    memory.write_byte(0x4005, 0x99);
+    memory.write_byte(0x4007, 0x88);
+    memory.write_byte(0x4009, 0x77);
+    memory.write_byte(0x400B, 0x66);
+
+    // Execute
+    let cycles = exec_movep(&mut cpu, Size::Long, 1, 1, false, &mut memory);
+
+    assert_eq!(cycles, 24);
+    assert_eq!(cpu.pc, 0x1002);
+    assert_eq!(cpu.d[1], 0x99887766);
+}
+
+#[test]
+fn test_movep_long_odd_address_reg_to_mem() {
+    let (mut cpu, mut memory) = create_cpu();
+
+    // MOVEP.L D2, d16(A2)
+    // A2 = 0x5001
+    // d16 = 4
+    // Addr = 0x5005
+    // Write to 0x5005, 0x5007, 0x5009, 0x500B
+
+    cpu.a[2] = 0x5001;
+    cpu.d[2] = 0xAABBCCDD;
+
+    // Set displacement
+    memory.write_word(cpu.pc, 0x0004);
+
+    // Execute
+    let cycles = exec_movep(&mut cpu, Size::Long, 2, 2, true, &mut memory);
+
+    assert_eq!(cycles, 24);
+    assert_eq!(cpu.pc, 0x1002);
+
+    assert_eq!(memory.read_byte(0x5005), 0xAA);
+    assert_eq!(memory.read_byte(0x5007), 0xBB);
+    assert_eq!(memory.read_byte(0x5009), 0xCC);
+    assert_eq!(memory.read_byte(0x500B), 0xDD);
+
+    assert_eq!(memory.read_byte(0x5004), 0x00);
+    assert_eq!(memory.read_byte(0x5006), 0x00);
+    assert_eq!(memory.read_byte(0x5008), 0x00);
+    assert_eq!(memory.read_byte(0x500A), 0x00);
+}
