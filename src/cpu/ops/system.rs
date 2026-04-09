@@ -335,7 +335,7 @@ mod tests {
     use super::*;
     use crate::cpu::test_utils::create_cpu;
     use crate::cpu::flags;
-    use crate::cpu::decoder::{Condition, AddressingMode, Size};
+    use crate::cpu::decoder::{Condition, AddressingMode};
 
     #[test]
     fn test_exec_bsr_short() {
@@ -555,9 +555,15 @@ mod tests {
     fn test_exec_rte_user() {
         let (mut cpu, mut memory) = create_cpu();
 
-        cpu.sr = 0x0000; // User mode
-        let initial_sp = 0x2000;
-        cpu.a[7] = initial_sp;
+        // 1. Ensure in Supervisor Mode to swap stack pointers correctly
+        cpu.set_sr(flags::SUPERVISOR);
+        cpu.ssp = 0x8000;
+        cpu.a[7] = 0x8000;
+
+        // 2. Switch to User Mode
+        cpu.set_sr(0x0000);
+        let initial_usp = 0x7000;
+        cpu.a[7] = initial_usp;
         cpu.pc = 0x1000;
 
         // Setup Privilege Violation vector (vector 8)
@@ -585,7 +591,12 @@ mod tests {
     fn test_exec_reset_user() {
         let (mut cpu, mut memory) = create_cpu();
 
-        cpu.sr = 0x0000; // User mode
+        cpu.set_sr(flags::SUPERVISOR);
+        cpu.ssp = 0x8000;
+        cpu.a[7] = 0x8000;
+
+        cpu.set_sr(0x0000); // User mode
+        cpu.a[7] = 0x7000;
         cpu.pc = 0x1000;
 
         // Setup Privilege Violation vector (vector 8)
@@ -609,6 +620,13 @@ mod tests {
         assert_eq!(cpu.sr, 0x0000); // d0 is 0
 
         // Privilege violation
+        cpu.set_sr(flags::SUPERVISOR);
+        cpu.ssp = 0x8000;
+        cpu.a[7] = 0x8000;
+        cpu.set_sr(0x0000);
+        cpu.a[7] = 0x7000;
+
+        memory.write_long(8 * 4, 0x4000);
         let cycles_user = exec_move_to_sr(&mut cpu, AddressingMode::DataRegister(0), &mut memory);
         assert_eq!(cycles_user, 34);
     }
@@ -666,7 +684,13 @@ mod tests {
         assert_eq!(cpu.pc, 0x1002);
 
         // Privilege violation
-        cpu.sr = 0x0000;
+        cpu.set_sr(flags::SUPERVISOR);
+        cpu.ssp = 0x8000;
+        cpu.a[7] = 0x8000;
+        cpu.set_sr(0x0000);
+        cpu.a[7] = 0x7000;
+
+        memory.write_long(8 * 4, 0x4000);
         let cycles_user = exec_andi_to_sr(&mut cpu, &mut memory);
         assert_eq!(cycles_user, 34);
     }
@@ -701,7 +725,13 @@ mod tests {
         assert_eq!(cpu.pc, 0x1002);
 
         // Privilege violation
-        cpu.sr = 0x0000;
+        cpu.set_sr(flags::SUPERVISOR);
+        cpu.ssp = 0x8000;
+        cpu.a[7] = 0x8000;
+        cpu.set_sr(0x0000);
+        cpu.a[7] = 0x7000;
+
+        memory.write_long(8 * 4, 0x4000);
         let cycles_user = exec_ori_to_sr(&mut cpu, &mut memory);
         assert_eq!(cycles_user, 34);
     }
@@ -736,7 +766,13 @@ mod tests {
         assert_eq!(cpu.pc, 0x1002);
 
         // Privilege violation
-        cpu.sr = 0x0000;
+        cpu.set_sr(flags::SUPERVISOR);
+        cpu.ssp = 0x8000;
+        cpu.a[7] = 0x8000;
+        cpu.set_sr(0x0000);
+        cpu.a[7] = 0x7000;
+
+        memory.write_long(8 * 4, 0x4000);
         let cycles_user = exec_eori_to_sr(&mut cpu, &mut memory);
         assert_eq!(cycles_user, 34);
     }

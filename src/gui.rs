@@ -13,7 +13,6 @@ use std::sync::{Arc, Mutex};
 #[cfg(feature = "gui")]
 use winit::{
     event::{ElementState, Event, WindowEvent},
-    event_loop::EventLoop,
     keyboard::{KeyCode, PhysicalKey},
     window::WindowBuilder,
 };
