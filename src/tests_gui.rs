@@ -21,6 +21,24 @@ mod tests {
     }
 
     #[test]
+    fn test_gui_state_set_window_open() {
+        let mut gui_state = GuiState::new(InputMapping::Original);
+
+        // Test setting existing window to open
+        gui_state.set_window_open("M68k Status", true);
+        assert!(gui_state.is_window_open("M68k Status"));
+
+        // Test setting existing window to closed
+        gui_state.set_window_open("M68k Status", false);
+        assert!(!gui_state.is_window_open("M68k Status"));
+
+        // Test setting non-existent window to open (should be added)
+        assert!(!gui_state.is_window_open("Non Existent"));
+        gui_state.set_window_open("Non Existent", true);
+        assert!(gui_state.is_window_open("Non Existent"));
+    }
+
+    #[test]
     fn test_gui_state_serialization() {
         let mut state = GuiState::new(InputMapping::Original);
         state.set_window_open("Disassembly", true);
