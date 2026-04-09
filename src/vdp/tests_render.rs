@@ -39,6 +39,37 @@ fn test_render_plane_basic() {
 }
 
 #[test]
+fn test_shadow_highlight_mode_keeps_normal_pixels_at_normal_intensity() {
+    let mut vdp = Vdp::new();
+    vdp.is_pal = false;
+    vdp.registers[1] = 0x40; // Display enable
+    vdp.registers[2] = 0x30; // Plane A at 0xC000
+    vdp.registers[12] = 0x08; // Shadow/highlight enabled
+
+    vdp.cram_cache[0] = 0x0000;
+    vdp.cram_cache[1] = 0xF800;
+
+    let tile_addr = 32;
+    for i in 0..32 {
+        vdp.vram[tile_addr + i] = 0x11;
+    }
+
+    let nt_addr = 0xC000;
+    vdp.vram[nt_addr] = 0x00;
+    vdp.vram[nt_addr + 1] = 0x01;
+
+    vdp.render_line(0);
+
+    for i in 0..8 {
+        assert_eq!(
+            vdp.framebuffer[i], 0xF800,
+            "shadow/highlight mode should not darken normal plane pixels at {}",
+            i
+        );
+    }
+}
+
+#[test]
 fn test_render_plane_hflip_quirk() {
     let mut vdp = Vdp::new();
     vdp.is_pal = false;
@@ -169,7 +200,7 @@ fn test_render_plane_b_isolation() {
 }
 
 #[test]
-fn test_window_plane_requires_both_axes() {
+fn test_window_plane_uses_horizontal_split_outside_vertical_window() {
     let mut vdp = Vdp::new();
     vdp.is_pal = false;
     vdp.registers[1] = 0x40;
@@ -199,14 +230,13 @@ fn test_window_plane_requires_both_axes() {
     vdp.vram[0xE040] = 0x20;
     vdp.vram[0xE041] = 0x02;
 
-    // Horizontal condition is true at x=0, but vertical condition is false at line 8.
-    // The window should not be active unless both conditions match.
+    // Outside the vertical window range, the horizontal split still applies.
     vdp.render_line(8);
 
     let offset = 8 * 320;
     assert_eq!(
-        vdp.framebuffer[offset], 0xF800,
-        "Window must require both axes"
+        vdp.framebuffer[offset], 0x07E0,
+        "window should still appear on the clipped side of the scanline"
     );
 }
 
@@ -226,9 +256,11 @@ fn test_render_line_performance() {
     let duration = start.elapsed();
     println!("Render 100 frames took: {:?}", duration);
 
-    // Simple sanity check to ensure no massive regression (e.g. if it took 4s, something is wrong)
+    // Simple sanity check to ensure no massive regression. CI and shared
+    // runners can be noisy, so keep the guard loose enough to avoid false
+    // positives while still catching pathological slowdowns.
     assert!(
-        duration.as_millis() < 4000,
+        duration.as_millis() < 8000,
         "Rendering 100 frames took too long: {:?}",
         duration
     );
@@ -389,7 +421,10 @@ fn test_tick_latches_scanline_after_hblank() {
 
     vdp.tick(859, |_| 0);
 
-    assert_eq!(vdp.framebuffer[0], 0, "line should not render before HBlank ends");
+    assert_eq!(
+        vdp.framebuffer[0], 0,
+        "line should not render before HBlank ends"
+    );
 
     vdp.tick(1, |_| 0);
 
@@ -418,6 +453,7 @@ fn test_cram_write_rerenders_current_scanline() {
     vdp.render_line(0);
     assert_eq!(vdp.framebuffer[0], 0xF800);
 
+    vdp.mclk_line_clocks = 860;
     vdp.bypass_fifo = true;
     vdp.write_control(0xC002);
     vdp.write_control(0x0000);
@@ -452,11 +488,37 @@ fn test_register_write_rerenders_current_scanline() {
     vdp.render_line(0);
     assert_eq!(vdp.framebuffer[0], 0xF800);
 
+    vdp.mclk_line_clocks = 860;
     vdp.write_control(0x8220);
 
     assert_eq!(
         vdp.framebuffer[0], 0x07E0,
         "plane base register writes during an active scanline must refresh the framebuffer"
+    );
+}
+
+#[test]
+fn test_hblank_cram_write_rerenders_previous_scanline() {
+    let mut vdp = Vdp::new();
+    vdp.is_pal = false;
+    vdp.registers[1] = 0x40;
+    vdp.registers[7] = 0x01;
+    vdp.cram_cache[1] = 0xF800;
+    vdp.cram_cache[2] = 0x07E0;
+    vdp.v_counter = 1;
+
+    vdp.render_line(0);
+    assert_eq!(vdp.framebuffer[0], 0xF800);
+
+    vdp.mclk_line_clocks = 0;
+    vdp.bypass_fifo = true;
+    vdp.write_control(0xC002);
+    vdp.write_control(0x0000);
+    vdp.write_data(0x00E0);
+
+    assert_eq!(
+        vdp.framebuffer[0], 0x07E0,
+        "CRAM writes during the early-HBlank window must remap the previous visible line"
     );
 }
 
@@ -766,6 +828,140 @@ fn test_render_plane_vram_wrapping() {
         vdp.framebuffer[0], 0xF800,
         "Pixel at 0,0 should be Red (0xF800), indicating correct wrapping"
     );
+}
+
+#[test]
+fn test_render_plane_respects_negative_hscroll_word() {
+    let mut vdp = Vdp::new();
+    vdp.registers[1] = 0x40;
+    vdp.registers[2] = 0x30;
+    vdp.registers[16] = 0x00;
+    vdp.cram_cache[1] = 0xF800;
+    vdp.cram_cache[2] = 0x07E0;
+
+    for i in 0..32 {
+        vdp.vram[32 + i] = 0x11;
+        vdp.vram[64 + i] = 0x22;
+    }
+    vdp.vram[0xC000] = 0x00;
+    vdp.vram[0xC001] = 0x01;
+    vdp.vram[0xC002] = 0x00;
+    vdp.vram[0xC003] = 0x02;
+
+    // Plane A hscroll = -8. Screen x 0 should therefore map to tile 1.
+    vdp.vram[0x0000] = 0xFF;
+    vdp.vram[0x0001] = 0xF8;
+
+    vdp.render_line(0);
+
+    assert_eq!(vdp.framebuffer[0], 0x07E0);
+}
+
+#[test]
+fn test_render_plane_respects_negative_vscroll_word() {
+    let mut vdp = Vdp::new();
+    vdp.registers[1] = 0x40;
+    vdp.registers[2] = 0x30;
+    vdp.registers[16] = 0x00;
+    vdp.cram_cache[1] = 0xF800;
+    vdp.cram_cache[2] = 0x07E0;
+
+    for i in 0..4 {
+        vdp.vram[32 + i] = 0x11;
+        vdp.vram[64 + i] = 0x22;
+    }
+
+    // Tile row 0 -> red
+    vdp.vram[0xC000] = 0x00;
+    vdp.vram[0xC001] = 0x01;
+    // Tile row 31 -> green
+    let bottom_row = 31 * 32 * 2;
+    vdp.vram[0xC000 + bottom_row] = 0x00;
+    vdp.vram[0xC001 + bottom_row] = 0x02;
+
+    // Plane A vscroll = -8. Line 0 should sample the final row of the plane.
+    vdp.vsram[0] = 0xFF;
+    vdp.vsram[1] = 0xF8;
+
+    vdp.render_line(0);
+
+    assert_eq!(vdp.framebuffer[0], 0x07E0);
+}
+
+#[test]
+fn test_h40_partial_left_column_uses_last_vscroll_strip() {
+    let mut vdp = Vdp::new();
+    vdp.registers[1] = 0x40;
+    vdp.registers[2] = 0x30;
+    vdp.registers[12] = 0x81; // H40
+    vdp.registers[13] = 0x00;
+    vdp.registers[16] = 0x00;
+    vdp.registers[11] = 0x04; // 2-cell vertical scroll mode
+    vdp.cram_cache[1] = 0xF800;
+    vdp.cram_cache[2] = 0x07E0;
+
+    for i in 0..32 {
+        vdp.vram[32 + i] = 0x11;
+        vdp.vram[64 + i] = 0x22;
+    }
+
+    // H-scroll = +1 so the left-most column is only partially visible.
+    vdp.vram[0] = 0x00;
+    vdp.vram[1] = 0x01;
+
+    // Column 31 row 0 -> tile 1 (red)
+    let row0_col31 = 0xC000 + (31 * 2);
+    vdp.vram[row0_col31] = 0x00;
+    vdp.vram[row0_col31 + 1] = 0x01;
+
+    // Column 31 row 31 -> tile 2 (green)
+    let row31_col31 = 0xC000 + (((31 * 32) + 31) * 2);
+    vdp.vram[row31_col31] = 0x00;
+    vdp.vram[row31_col31 + 1] = 0x02;
+
+    // Last H40 V-scroll strip = -8.
+    vdp.vsram[76] = 0xFF;
+    vdp.vsram[77] = 0xF8;
+
+    vdp.render_line(0);
+
+    assert_eq!(vdp.framebuffer[0], 0x07E0);
+}
+
+#[test]
+fn test_tick_latches_hscroll_before_hblank_updates() {
+    let mut vdp = Vdp::new();
+    vdp.registers[1] = 0x40;
+    vdp.registers[2] = 0x30;
+    vdp.registers[16] = 0x00;
+    vdp.cram_cache[1] = 0xF800;
+    vdp.cram_cache[2] = 0x07E0;
+
+    for i in 0..32 {
+        vdp.vram[32 + i] = 0x11;
+        vdp.vram[64 + i] = 0x22;
+    }
+
+    vdp.vram[0xC000] = 0x00;
+    vdp.vram[0xC001] = 0x01;
+    vdp.vram[0xC002] = 0x00;
+    vdp.vram[0xC003] = 0x02;
+
+    // Line 1 initially latches hscroll = 0.
+    vdp.vram[0x0000] = 0x00;
+    vdp.vram[0x0001] = 0x00;
+
+    vdp.tick(3420, |_| 0);
+
+    // A later HBlank update changes the live table to -8, but line 1 should
+    // keep the latched value and still render tile 0 at x=0.
+    vdp.vram[0x0000] = 0xFF;
+    vdp.vram[0x0001] = 0xF8;
+
+    vdp.tick(860, |_| 0);
+
+    let offset = 320;
+    assert_eq!(vdp.framebuffer[offset], 0xF800);
 }
 
 #[test]

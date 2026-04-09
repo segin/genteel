@@ -730,9 +730,9 @@ impl Emulator {
             let z80_can_run = !bus.z80_reset && !bus.z80_bus_request;
             let z80_is_reset = bus.z80_reset;
             let cycles_per_sample = if bus.vdp.is_pal {
-                audio::PAL_MCLK as f32 / audio::SAMPLE_RATE as f32
+                audio::PAL_MCLK as f32 / bus.sample_rate as f32
             } else {
-                audio::NTSC_MCLK as f32 / audio::SAMPLE_RATE as f32
+                audio::NTSC_MCLK as f32 / bus.sample_rate as f32
             };
             (z80_can_run, z80_is_reset, cycles_per_sample)
         };
@@ -771,7 +771,8 @@ impl Emulator {
         } else {
             Region::Ntsc
         };
-        bus.apu.set_timing(region, audio::SAMPLE_RATE);
+        let output_sample_rate = bus.sample_rate;
+        bus.apu.set_timing(region, output_sample_rate);
         bus.apu.tick_cycles(m68k_cycles);
         bus.audio_accumulator += mclk as f32;
 
@@ -932,11 +933,13 @@ impl Emulator {
         // Keep a few frames of slack so transient frontend stalls do not
         // collapse audio into repeated whole-frame dropouts.
         const MAX_BUFFERED_AUDIO_FRAMES: usize = 8;
-        let max_samples = audio::samples_per_frame() * 2 * MAX_BUFFERED_AUDIO_FRAMES;
+        let max_samples =
+            audio::samples_per_frame_for_rate(bus.sample_rate) * 2 * MAX_BUFFERED_AUDIO_FRAMES;
         let needed = self.audio_buffer.len() + bus.audio_buffer.len();
         if needed > max_samples {
             let to_drop = needed - max_samples;
-            self.audio_buffer.drain(..to_drop.min(self.audio_buffer.len()));
+            self.audio_buffer
+                .drain(..to_drop.min(self.audio_buffer.len()));
         }
         self.audio_buffer.extend(bus.audio_buffer.iter());
         bus.audio_buffer.clear();

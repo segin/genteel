@@ -110,7 +110,7 @@ pub trait RenderOps {
         fetch_line: u16,
         line_buf: &mut [u8; 320],
     );
-    fn get_v_scroll(&self, is_plane_a: bool, tile_h: usize) -> u16;
+    fn get_v_scroll(&self, is_plane_a: bool, tile_h: usize, fetch_line: u16) -> u16;
     fn get_h_scroll(&self, is_plane_a: bool, fetch_line: u16) -> u16;
     fn fetch_nametable_entry(
         &self,
@@ -198,8 +198,6 @@ impl Vdp {
             let a_trans = (a_col & 0x0F) == 0;
             let s_trans = (s_col & 0x0F) == 0;
 
-            let any_high = b_pri || a_pri || s_pri;
-
             let px = PixelLayerData {
                 bg_color_idx: params.bg_color_idx,
                 s_pri,
@@ -218,7 +216,7 @@ impl Vdp {
             if !sh_enabled {
                 self.framebuffer[params.line_offset + x] = self.cram_cache[top_col as usize];
             } else {
-                let mut state = if any_high { 1 } else { 0 };
+                let mut state = 1;
 
                 let sh_params = ShadowHighlightParams {
                     top_layer,
@@ -503,7 +501,7 @@ impl RenderOps for Vdp {
             let v_point = (v_pos as u16 & 0x1F) * 8;
             let win_h_dir = (h_pos & 0x80) != 0;
             let v_dir = (v_pos & 0x80) != 0;
-            let win_in_v = if v_dir {
+            let win_full_line = if v_dir {
                 fetch_line >= v_point
             } else {
                 fetch_line < v_point
@@ -535,15 +533,19 @@ impl RenderOps for Vdp {
             };
 
             while screen_x < screen_width {
-                let in_h = if win_h_dir {
-                    screen_x >= win_h_point
-                } else {
-                    screen_x < win_h_point
-                };
-                let params = if in_h && win_in_v {
+                let params = if win_full_line {
                     &win_params
                 } else {
-                    &plane_params
+                    let in_h = if win_h_dir {
+                        screen_x >= win_h_point
+                    } else {
+                        screen_x < win_h_point
+                    };
+                    if in_h {
+                        &win_params
+                    } else {
+                        &plane_params
+                    }
                 };
                 self.render_tile(params, &mut screen_x, line_buf);
             }
@@ -575,7 +577,14 @@ impl RenderOps for Vdp {
         // Fetch V-scroll for this specific column (per-column VS support)
         // If not using scroll (e.g. Window plane), V-scroll is 0.
         let v_scroll = if params.enable_v_scroll {
-            self.get_v_scroll(params.is_plane_a, (current_x >> 3) as usize)
+            let mode3 = self.registers[REG_MODE3];
+            let tile_column =
+                if self.h40_mode() && (mode3 & 0x04) != 0 && current_x == 0 && pixel_h != 0 {
+                    38
+                } else {
+                    (current_x >> 3) as usize
+                };
+            self.get_v_scroll(params.is_plane_a, tile_column, params.fetch_line)
         } else {
             0
         };
@@ -674,9 +683,14 @@ impl RenderOps for Vdp {
     }
     /// Fetch Vertical scroll value for the given column.
     /// Supports both Full-screen and 2-cell (16-pixel) strip modes.
-    /// V-scroll values in VSRAM are 10-bit signed integers.
-    fn get_v_scroll(&self, is_plane_a: bool, tile_h: usize) -> u16 {
-        let mode3 = self.registers[REG_MODE3];
+    /// V-scroll values in VSRAM are stored as signed words. We preserve the
+    /// raw register contents so wraparound matches hardware behavior.
+    fn get_v_scroll(&self, is_plane_a: bool, tile_h: usize, fetch_line: u16) -> u16 {
+        let (mode3, vsram) = if self.latched_scroll_valid && self.latched_scroll_line == fetch_line {
+            (self.latched_mode3, &self.latched_vsram)
+        } else {
+            (self.registers[REG_MODE3], &self.vsram)
+        };
 
         // Vertical Scroll (Bits 2 of Mode 3: 0=Full Screen, 1=2-Cell Strips)
         if (mode3 & 0x04) != 0 {
@@ -684,22 +698,31 @@ impl RenderOps for Vdp {
             // Entry 0: Plane A Cell 0-1, Entry 1: Plane B Cell 0-1, etc.
             let strip_idx = tile_h >> 1;
             let vs_addr = (strip_idx * 4) + (if is_plane_a { 0 } else { 2 });
-            if vs_addr + 1 < self.vsram.len() {
-                (((self.vsram[vs_addr] as u16) << 8) | (self.vsram[vs_addr + 1] as u16)) & 0x03FF
+            if vs_addr + 1 < vsram.len() {
+                ((vsram[vs_addr] as u16) << 8) | (vsram[vs_addr + 1] as u16)
             } else {
                 0
             }
         } else {
             // Full Screen
             let vs_addr = if is_plane_a { 0 } else { 2 };
-            (((self.vsram[vs_addr] as u16) << 8) | (self.vsram[vs_addr + 1] as u16)) & 0x03FF
+            ((vsram[vs_addr] as u16) << 8) | (vsram[vs_addr + 1] as u16)
         }
     }
 
     /// Fetch Horizontal scroll value for the given line.
     /// Supports Full-screen, 8-pixel strip (Cell), and Per-line modes.
-    /// H-scroll values in VRAM are 10-bit signed integers.
+    /// H-scroll values are stored as raw words. We keep the full register
+    /// contents so negative scroll values wrap the same way as hardware.
     fn get_h_scroll(&self, _is_plane_a: bool, fetch_line: u16) -> u16 {
+        if self.latched_scroll_valid && self.latched_scroll_line == fetch_line {
+            return if _is_plane_a {
+                self.latched_hscroll_a
+            } else {
+                self.latched_hscroll_b
+            };
+        }
+
         let mode3 = self.registers[REG_MODE3];
 
         // Horizontal Scroll (Bits 1-0 of Mode 3: 00=Full, 01=Invalid(Full), 10=Cell(8px), 11=Line)
@@ -722,8 +745,7 @@ impl RenderOps for Vdp {
         let hi = self.vram[final_hs_addr & 0xFFFF];
         let lo = self.vram[final_hs_addr.wrapping_add(1) & 0xFFFF];
 
-        // H-scroll is 10-bit value (bits 0-9).
-        (((hi as u16) << 8) | (lo as u16)) & 0x03FF
+        ((hi as u16) << 8) | (lo as u16)
     }
 
     #[inline(always)]

@@ -4,6 +4,8 @@
 //! Uses a ring buffer to transfer samples from emulation thread to audio callback.
 
 #[cfg(feature = "gui")]
+use cpal::traits::{DeviceTrait, HostTrait};
+#[cfg(feature = "gui")]
 use rodio::Source;
 use std::sync::{Arc, Mutex};
 
@@ -25,6 +27,9 @@ pub const BUFFER_SIZE: usize = 512;
 #[cfg(feature = "gui")]
 struct EmulatorSource {
     buffer: SharedAudioBuffer,
+    sample_rate: u32,
+    staging: Vec<f32>,
+    staging_index: usize,
 }
 
 #[cfg(feature = "gui")]
@@ -32,16 +37,19 @@ impl Iterator for EmulatorSource {
     type Item = f32;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut buf = self.buffer.lock().ok()?;
-        if buf.available > 0 {
-            let i16_sample = buf.buffer[buf.read_pos];
-            buf.read_pos = (buf.read_pos + 1) % buf.buffer.len();
-            buf.available -= 1;
-            Some(i16_sample as f32 / 32768.0)
-        } else {
-            // Underflow - return silence instead of None to keep the stream alive
-            Some(0.0)
+        if self.staging_index >= self.staging.len() {
+            self.staging.resize(BUFFER_SIZE * 2, 0.0);
+            if let Ok(mut buf) = self.buffer.lock() {
+                buf.pop_f32(&mut self.staging);
+            } else {
+                self.staging.fill(0.0);
+            }
+            self.staging_index = 0;
         }
+
+        let sample = self.staging[self.staging_index];
+        self.staging_index += 1;
+        Some(sample)
     }
 }
 
@@ -56,7 +64,7 @@ impl Source for EmulatorSource {
     }
 
     fn sample_rate(&self) -> u32 {
-        SAMPLE_RATE
+        self.sample_rate
     }
 
     fn total_duration(&self) -> Option<std::time::Duration> {
@@ -90,22 +98,36 @@ impl AudioBuffer {
 
     /// Push samples into the buffer
     pub fn push(&mut self, samples: &[i16]) {
-        let samples_to_write = std::cmp::min(samples.len(), self.buffer.len() - self.available);
-        if samples_to_write == 0 {
+        if self.buffer.is_empty() || samples.is_empty() {
             return;
         }
 
-        let first_chunk_len = std::cmp::min(samples_to_write, self.buffer.len() - self.write_pos);
+        let capacity = self.buffer.len();
+        let samples = if samples.len() > capacity {
+            &samples[samples.len() - capacity..]
+        } else {
+            samples
+        };
+
+        let overflow = samples
+            .len()
+            .saturating_sub(capacity.saturating_sub(self.available));
+        if overflow > 0 {
+            self.read_pos = (self.read_pos + overflow) % capacity;
+            self.available -= overflow;
+        }
+
+        let samples_to_write = samples.len();
+        let first_chunk_len = std::cmp::min(samples_to_write, capacity - self.write_pos);
         self.buffer[self.write_pos..self.write_pos + first_chunk_len]
             .copy_from_slice(&samples[..first_chunk_len]);
 
         let second_chunk_len = samples_to_write - first_chunk_len;
         if second_chunk_len > 0 {
-            self.buffer[..second_chunk_len]
-                .copy_from_slice(&samples[first_chunk_len..samples_to_write]);
+            self.buffer[..second_chunk_len].copy_from_slice(&samples[first_chunk_len..]);
         }
 
-        self.write_pos = (self.write_pos + samples_to_write) % self.buffer.len();
+        self.write_pos = (self.write_pos + samples_to_write) % capacity;
         self.available += samples_to_write;
     }
 
@@ -167,7 +189,7 @@ pub type SharedAudioBuffer = Arc<Mutex<AudioBuffer>>;
 
 /// Create a new shared audio buffer
 pub fn create_audio_buffer() -> SharedAudioBuffer {
-    Arc::new(Mutex::new(AudioBuffer::new(BUFFER_SIZE * 16)))
+    Arc::new(Mutex::new(AudioBuffer::new(BUFFER_SIZE * 64)))
 }
 
 /// Audio output stream wrapper
@@ -183,13 +205,49 @@ pub struct AudioOutput {
 impl AudioOutput {
     /// Create a new audio output using rodio
     pub fn new(buffer: SharedAudioBuffer) -> Result<Self, String> {
-        let (stream, handle) = rodio::OutputStream::try_default()
-            .map_err(|e| format!("Failed to open audio output: {}", e))?;
+        let host = cpal::default_host();
+
+        let mut stream_and_rate = None;
+
+        if let Some(device) = host.default_output_device() {
+            if let Ok(config) = device.default_output_config() {
+                if let Ok((stream, handle)) =
+                    rodio::OutputStream::try_from_device_config(&device, config.clone())
+                {
+                    stream_and_rate = Some((stream, handle, config.sample_rate().0));
+                }
+            }
+        }
+
+        if stream_and_rate.is_none() {
+            if let Ok(devices) = host.output_devices() {
+                for device in devices {
+                    let Ok(config) = device.default_output_config() else {
+                        continue;
+                    };
+                    let Ok((stream, handle)) =
+                        rodio::OutputStream::try_from_device_config(&device, config.clone())
+                    else {
+                        continue;
+                    };
+                    stream_and_rate = Some((stream, handle, config.sample_rate().0));
+                    break;
+                }
+            }
+        }
+
+        let (stream, handle, sample_rate) = stream_and_rate
+            .ok_or_else(|| "Failed to open audio output on any available device".to_string())?;
 
         let sink = rodio::Sink::try_new(&handle)
             .map_err(|e| format!("Failed to create audio sink: {}", e))?;
 
-        let source = EmulatorSource { buffer };
+        let source = EmulatorSource {
+            buffer,
+            sample_rate,
+            staging: Vec::new(),
+            staging_index: 0,
+        };
 
         // Use rodio's automatic resampling and channel mixing
         sink.append(source);
@@ -199,7 +257,7 @@ impl AudioOutput {
             _stream: stream,
             _handle: handle,
             _sink: sink,
-            sample_rate: SAMPLE_RATE,
+            sample_rate,
         })
     }
 }
@@ -208,6 +266,10 @@ impl AudioOutput {
 /// Genesis runs at ~60fps NTSC, so samples_per_frame = sample_rate / 60
 pub fn samples_per_frame() -> usize {
     (SAMPLE_RATE as f32 / 60.0).ceil() as usize
+}
+
+pub fn samples_per_frame_for_rate(sample_rate: u32) -> usize {
+    (sample_rate as f32 / 60.0).ceil() as usize
 }
 
 #[cfg(test)]
@@ -220,9 +282,9 @@ mod tests {
         let shared_buf = create_audio_buffer();
         let buf = shared_buf.lock().unwrap();
 
-        // capacity is BUFFER_SIZE * 16 (512 * 16 = 8192)
-        // internal buffer length is capacity * 2 for stereo (8192 * 2 = 16384)
-        assert_eq!(buf.buffer.len(), BUFFER_SIZE * 32);
+        // capacity is BUFFER_SIZE * 64 (512 * 64 = 32768)
+        // internal buffer length is capacity * 2 for stereo (32768 * 2 = 65536)
+        assert_eq!(buf.buffer.len(), BUFFER_SIZE * 128);
         assert_eq!(buf.available(), 0);
         assert_eq!(buf.read_pos, 0);
         assert_eq!(buf.write_pos, 0);
@@ -238,11 +300,14 @@ mod tests {
 
         // Verify successful lock acquisition
         let buf_lock = shared_buf.lock();
-        assert!(buf_lock.is_ok(), "Mutex should not be poisoned and should be lockable");
+        assert!(
+            buf_lock.is_ok(),
+            "Mutex should not be poisoned and should be lockable"
+        );
 
         let buf = buf_lock.unwrap();
-        // Verify dimensions and capacity matches BUFFER_SIZE * 16 stereo (32)
-        assert_eq!(buf.buffer.len(), BUFFER_SIZE * 32);
+        // Verify dimensions and capacity matches BUFFER_SIZE * 64 stereo (128)
+        assert_eq!(buf.buffer.len(), BUFFER_SIZE * 128);
         assert_eq!(buf.available(), 0);
         assert_eq!(buf.read_pos, 0);
         assert_eq!(buf.write_pos, 0);
@@ -256,7 +321,10 @@ mod tests {
 
         let handle = std::thread::spawn(move || {
             let buf_lock = buf_clone.lock();
-            assert!(buf_lock.is_ok(), "Mutex should be lockable from another thread");
+            assert!(
+                buf_lock.is_ok(),
+                "Mutex should be lockable from another thread"
+            );
         });
 
         handle.join().expect("Thread should not panic");
@@ -273,9 +341,9 @@ mod tests {
         let shared_buf = create_audio_buffer();
         let buf = shared_buf.lock().unwrap();
 
-        // BUFFER_SIZE is 512, capacity passed to AudioBuffer::new is BUFFER_SIZE * 16.
+        // BUFFER_SIZE is 512, capacity passed to AudioBuffer::new is BUFFER_SIZE * 64.
         // Inside AudioBuffer::new, buffer length is capacity * 2.
-        assert_eq!(buf.buffer.len(), BUFFER_SIZE * 16 * 2);
+        assert_eq!(buf.buffer.len(), BUFFER_SIZE * 64 * 2);
         assert_eq!(buf.available(), 0);
         assert_eq!(buf.write_pos, 0);
         assert_eq!(buf.read_pos, 0);
@@ -568,14 +636,54 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_push_overflow_keeps_newest_samples() {
+        let mut buf = AudioBuffer::new(2);
+        buf.push(&[1, 2, 3, 4, 5, 6]);
+
+        let mut out = [0i16; 4];
+        buf.pop(&mut out);
+
+        assert_eq!(out, [3, 4, 5, 6]);
+    }
+
+    #[test]
+    fn test_push_overflow_discards_oldest_buffered_samples() {
+        let mut buf = AudioBuffer::new(2);
+        buf.push(&[10, 20, 30]);
+        buf.push(&[40, 50, 60]);
+
+        let mut out = [0i16; 4];
+        buf.pop(&mut out);
+
+        assert_eq!(out, [30, 40, 50, 60]);
+    }
+
     // Reference implementation (old slow loop) for property testing
     fn push_reference(buffer: &mut AudioBuffer, samples: &[i16]) {
+        if buffer.buffer.is_empty() || samples.is_empty() {
+            return;
+        }
+
+        let capacity = buffer.buffer.len();
+        let samples = if samples.len() > capacity {
+            &samples[samples.len() - capacity..]
+        } else {
+            samples
+        };
+
+        let overflow = samples
+            .len()
+            .saturating_sub(capacity.saturating_sub(buffer.available));
+        if overflow > 0 {
+            buffer.read_pos = (buffer.read_pos + overflow) % capacity;
+            buffer.available -= overflow;
+        }
+
         for &sample in samples {
-            if buffer.available < buffer.buffer.len() {
-                buffer.buffer[buffer.write_pos] = sample;
-                buffer.write_pos = (buffer.write_pos + 1) % buffer.buffer.len();
-                buffer.available += 1;
-            }
+            buffer.buffer[buffer.write_pos] = sample;
+            buffer.write_pos = (buffer.write_pos + 1) % capacity;
+            buffer.available += 1;
         }
     }
 

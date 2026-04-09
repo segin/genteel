@@ -2138,6 +2138,9 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
             None
         }
     };
+    if let Some(output) = &audio_output {
+        emulator.bus.borrow_mut().sample_rate = output.sample_rate;
+    }
     let _audio_output = audio_output;
     // Input and Timing state
     let mut input = crate::input::FrameInput::default();

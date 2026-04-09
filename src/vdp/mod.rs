@@ -168,6 +168,10 @@ fn default_rendered_scanlines() -> [bool; 240] {
     [false; 240]
 }
 
+fn default_latched_vsram() -> [u8; 80] {
+    [0; 80]
+}
+
 /// VDP Command State Machine
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct CommandState {
@@ -232,6 +236,19 @@ pub struct Vdp {
 
     #[serde(skip, default = "default_rendered_scanlines")]
     rendered_scanlines: [bool; 240],
+
+    #[serde(skip, default = "default_latched_vsram")]
+    pub(crate) latched_vsram: [u8; 80],
+    #[serde(skip, default)]
+    pub(crate) latched_mode3: u8,
+    #[serde(skip, default)]
+    pub(crate) latched_hscroll_a: u16,
+    #[serde(skip, default)]
+    pub(crate) latched_hscroll_b: u16,
+    #[serde(skip, default)]
+    pub(crate) latched_scroll_line: u16,
+    #[serde(skip, default)]
+    pub(crate) latched_scroll_valid: bool,
 }
 
 impl Default for Vdp {
@@ -266,6 +283,12 @@ impl Vdp {
             framebuffer: vec![0; 320 * 240],
             sat: [0; 0x400],
             rendered_scanlines: [false; 240],
+            latched_vsram: [0; 80],
+            latched_mode3: 0,
+            latched_hscroll_a: 0,
+            latched_hscroll_b: 0,
+            latched_scroll_line: 0,
+            latched_scroll_valid: false,
         };
         vdp.reset();
         vdp
@@ -296,8 +319,41 @@ impl Vdp {
         self.line_counter = 0;
         self.hint_pending = false;
         self.rendered_scanlines.fill(false);
+        self.latched_scroll_valid = false;
         self.reconstruct_cram_cache();
         self.sync_sat_cache();
+    }
+
+    fn compute_hscroll_words(&self, fetch_line: u16, mode3: u8) -> (u16, u16) {
+        let hs_mode = mode3 & 0x03;
+        let hs_base = self.hscroll_address();
+        let hs_addr = match hs_mode {
+            0x00 | 0x01 => hs_base,
+            0x02 => hs_base + (((fetch_line as usize) >> 3) * 4),
+            0x03 => hs_base + ((fetch_line as usize) * 4),
+            _ => hs_base,
+        };
+
+        let read_word = |addr: usize, vram: &[u8; 0x10000]| -> u16 {
+            let hi = vram[addr & 0xFFFF];
+            let lo = vram[(addr.wrapping_add(1)) & 0xFFFF];
+            ((hi as u16) << 8) | (lo as u16)
+        };
+
+        (
+            read_word(hs_addr, &self.vram),
+            read_word(hs_addr.wrapping_add(2), &self.vram),
+        )
+    }
+
+    pub(crate) fn latch_scroll_state_for_line(&mut self, line: u16) {
+        self.latched_mode3 = self.registers[REG_MODE3];
+        self.latched_vsram = self.vsram;
+        let (a, b) = self.compute_hscroll_words(line, self.latched_mode3);
+        self.latched_hscroll_a = a;
+        self.latched_hscroll_b = b;
+        self.latched_scroll_line = line;
+        self.latched_scroll_valid = true;
     }
 
     pub fn set_pal(&mut self, is_pal: bool) {
@@ -646,9 +702,8 @@ impl Vdp {
 
     pub fn read_hv_counter(&self) -> u16 {
         let h = if self.mclk_line_clocks < Self::ACTIVE_DISPLAY_START_MCLK {
-            (0xE4
-                + ((self.mclk_line_clocks * (0xFF - 0xE4))
-                    / Self::ACTIVE_DISPLAY_START_MCLK)) as u8
+            (0xE4 + ((self.mclk_line_clocks * (0xFF - 0xE4)) / Self::ACTIVE_DISPLAY_START_MCLK))
+                as u8
         } else {
             let active_clocks = 3420 - Self::ACTIVE_DISPLAY_START_MCLK;
             let offset = self.mclk_line_clocks - Self::ACTIVE_DISPLAY_START_MCLK;
@@ -680,12 +735,22 @@ impl Vdp {
     }
 
     pub(crate) fn redraw_current_scanline_if_visible(&mut self) {
-        let line = self.v_counter as usize;
-        if line < self.screen_height() as usize
-            && self.display_enabled()
-            && self.rendered_scanlines[line]
-        {
-            self.render_line(self.v_counter);
+        if !self.display_enabled() {
+            return;
+        }
+
+        let line = if self.mclk_line_clocks < Self::ACTIVE_DISPLAY_START_MCLK {
+            if self.v_counter == 0 {
+                return;
+            }
+            self.v_counter - 1
+        } else {
+            self.v_counter
+        };
+
+        let line_idx = line as usize;
+        if line_idx < self.screen_height() as usize && self.rendered_scanlines[line_idx] {
+            self.render_line(line);
         }
     }
 
@@ -760,6 +825,10 @@ impl Vdp {
     where
         F: FnMut(u32) -> u16,
     {
+        if !self.latched_scroll_valid {
+            self.latch_scroll_state_for_line(self.v_counter);
+        }
+
         let prev_line_clocks = self.mclk_line_clocks;
         self.mclk_line_clocks += mclk;
 
@@ -795,6 +864,7 @@ impl Vdp {
             self.mclk_line_clocks -= 3420;
             let frame_lines = if self.is_pal { 313 } else { 262 };
             self.v_counter = (self.v_counter + 1) % frame_lines;
+            self.latch_scroll_state_for_line(self.v_counter);
 
             let active_lines = self.screen_height();
             self.hint_pending = false;
