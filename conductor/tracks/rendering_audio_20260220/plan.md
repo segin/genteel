@@ -24,6 +24,6 @@
     - [x] Add `image` crate dependency.
     - [x] Implement `save_screenshot` in `Emulator`.
     - [x] Add `--screenshot <path>` and improved `--headless` CLI support.
-- [ ] Task: Verify overall system stability and performance.
+- [x] Task: Verify overall system stability and performance. 27e067d
 - [ ] Task: Fix any remaining rendering or audio artifacts.
 - [ ] Task: Conductor - User Manual Verification 'Phase 3: Final Integration and Testing' (Protocol in workflow.md)
