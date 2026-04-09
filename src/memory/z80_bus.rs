@@ -16,59 +16,25 @@ use serde::{Deserialize, Serialize};
 pub struct Z80Bus {
     /// Reference to the main Genesis bus.
     bus: SharedBus,
-
-    /// Optional raw pointer to a borrowed bus to avoid RefCell double borrows
-    /// during active emulation cycles where the caller already holds a borrow.
-    #[serde(skip)]
-    borrowed_bus: Option<std::ptr::NonNull<Bus>>,
 }
 
 impl Z80Bus {
     /// Create a new Z80 bus adapter
     pub fn new(bus: SharedBus) -> Self {
-        Self {
-            bus,
-            borrowed_bus: None,
-        }
+        Self { bus }
     }
 }
 
 impl Z80Bus {
-    /// Temporarily bind an already-borrowed Bus reference to this adapter.
-    /// This avoids RefCell double borrows during synchronization.
-    ///
-    /// # Safety
-    ///
-    /// The caller must ensure the borrowed `Bus` outlives the binding and
-    /// remains exclusively accessible through this adapter until `unbind_bus`
-    /// is called.
-    pub unsafe fn bind_bus(&mut self, bus: &mut Bus) {
-        self.borrowed_bus = Some(std::ptr::NonNull::from(bus));
-    }
-
-    /// Unbind the borrowed Bus reference.
-    pub fn unbind_bus(&mut self) {
-        self.borrowed_bus = None;
-    }
-
     /// The value written becomes the upper bits of the 68k address
     pub fn set_bank(&mut self, value: u8) {
-        if let Some(mut bus) = self.borrowed_bus {
-            unsafe { bus.as_mut().write_byte(0xA06000, value) };
-        } else {
-            self.bus.bus.borrow_mut().write_byte(0xA06000, value);
-        }
+        self.bus.bus.borrow_mut().write_byte(0xA06000, value);
     }
 
     /// Reset bank register to 0
     pub fn reset_bank(&mut self) {
-        if let Some(mut bus) = self.borrowed_bus {
-            let bus_ref = unsafe { bus.as_mut() };
-            bus_ref.z80_bank_addr = 0;
-        } else {
-            let mut bus = self.bus.bus.borrow_mut();
-            bus.z80_bank_addr = 0;
-        }
+        let mut bus = self.bus.bus.borrow_mut();
+        bus.z80_bank_addr = 0;
     }
 
     /// Internal helper to read byte from Bus (deduplicated logic)
@@ -152,19 +118,11 @@ impl Z80Bus {
 
 impl MemoryInterface for Z80Bus {
     fn read_byte(&mut self, address: u32) -> u8 {
-        if let Some(mut bus) = self.borrowed_bus {
-            unsafe { Self::read_byte_from_bus(bus.as_mut(), address) }
-        } else {
-            Self::read_byte_from_bus(&mut self.bus.bus.borrow_mut(), address)
-        }
+        Self::read_byte_from_bus(&mut self.bus.bus.borrow_mut(), address)
     }
 
     fn write_byte(&mut self, address: u32, value: u8) {
-        if let Some(mut bus) = self.borrowed_bus {
-            unsafe { Self::write_byte_to_bus(bus.as_mut(), address, value) }
-        } else {
-            Self::write_byte_to_bus(&mut self.bus.bus.borrow_mut(), address, value)
-        }
+        Self::write_byte_to_bus(&mut self.bus.bus.borrow_mut(), address, value)
     }
 
     fn read_word(&mut self, address: u32) -> u16 {
