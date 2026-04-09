@@ -385,6 +385,7 @@ impl Vdp {
                 self.cram[idx * 2] = (value & 0xFF) as u8;
                 self.cram[idx * 2 + 1] = (value >> 8) as u8;
                 self.cram_cache[idx] = Self::genesis_color_to_rgb565(value);
+                self.redraw_current_scanline_if_visible();
             }
             VSRAM_WRITE => {
                 let idx = (addr as usize) % 80;
@@ -392,6 +393,7 @@ impl Vdp {
                 if idx + 1 < 80 {
                     self.vsram[idx + 1] = (value & 0xFF) as u8;
                 }
+                self.redraw_current_scanline_if_visible();
             }
             _ => {}
         }
@@ -485,6 +487,23 @@ impl Vdp {
                 let val = (value & 0xFF) as u8;
                 if reg < NUM_REGISTERS {
                     self.registers[reg] = val;
+                    if matches!(
+                        reg,
+                        REG_MODE1
+                            | REG_MODE2
+                            | REG_PLANE_A
+                            | REG_WINDOW
+                            | REG_PLANE_B
+                            | REG_BG_COLOR
+                            | REG_MODE3
+                            | REG_MODE4
+                            | REG_HSCROLL
+                            | REG_PLANE_SIZE
+                            | REG_WINDOW_H_POS
+                            | REG_WINDOW_V_POS
+                    ) {
+                        self.redraw_current_scanline_if_visible();
+                    }
                 }
                 return;
             }
@@ -655,6 +674,16 @@ impl Vdp {
 
         if (vram_addr & sat_base_mask) == sat_base {
             self.sat[vram_addr & sat_addr_mask] = value;
+        }
+    }
+
+    pub(crate) fn redraw_current_scanline_if_visible(&mut self) {
+        let line = self.v_counter as usize;
+        if line < self.screen_height() as usize
+            && self.display_enabled()
+            && self.rendered_scanlines[line]
+        {
+            self.render_line(self.v_counter);
         }
     }
 

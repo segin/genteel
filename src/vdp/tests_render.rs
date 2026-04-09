@@ -404,6 +404,59 @@ fn test_tick_latches_scanline_at_line_start() {
 }
 
 #[test]
+fn test_cram_write_rerenders_current_scanline() {
+    let mut vdp = Vdp::new();
+    vdp.is_pal = false;
+    vdp.registers[1] = 0x40;
+    vdp.registers[7] = 0x01;
+    vdp.cram_cache[1] = 0xF800;
+
+    vdp.render_line(0);
+    assert_eq!(vdp.framebuffer[0], 0xF800);
+
+    vdp.bypass_fifo = true;
+    vdp.write_control(0xC002);
+    vdp.write_control(0x0000);
+    vdp.write_data(0x00E0);
+
+    assert_eq!(
+        vdp.framebuffer[0], vdp.cram_cache[1],
+        "CRAM writes during an active scanline must refresh the framebuffer"
+    );
+    assert_ne!(vdp.framebuffer[0], 0xF800);
+}
+
+#[test]
+fn test_register_write_rerenders_current_scanline() {
+    let mut vdp = Vdp::new();
+    vdp.is_pal = false;
+    vdp.registers[1] = 0x40;
+    vdp.registers[2] = 0x30;
+    vdp.registers[16] = 0x00;
+    vdp.cram_cache[1] = 0xF800;
+    vdp.cram_cache[2] = 0x07E0;
+
+    for i in 0..32 {
+        vdp.vram[32 + i] = 0x11;
+        vdp.vram[64 + i] = 0x22;
+    }
+    vdp.vram[0xC000] = 0x00;
+    vdp.vram[0xC001] = 0x01;
+    vdp.vram[0x8000] = 0x00;
+    vdp.vram[0x8001] = 0x02;
+
+    vdp.render_line(0);
+    assert_eq!(vdp.framebuffer[0], 0xF800);
+
+    vdp.write_control(0x8220);
+
+    assert_eq!(
+        vdp.framebuffer[0], 0x07E0,
+        "plane base register writes during an active scanline must refresh the framebuffer"
+    );
+}
+
+#[test]
 fn test_sprite_hflip() {
     let mut vdp = Vdp::new();
     vdp.is_pal = false;
