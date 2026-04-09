@@ -241,6 +241,8 @@ impl Default for Vdp {
 }
 
 impl Vdp {
+    const ACTIVE_DISPLAY_START_MCLK: u32 = 860;
+
     pub fn new() -> Self {
         let mut vdp = Self {
             vram: [0; 0x10000],
@@ -643,14 +645,14 @@ impl Vdp {
     }
 
     pub fn read_hv_counter(&self) -> u16 {
-        // Approximate Genesis HV counter mapping for H40 mode
-        let h = if self.mclk_line_clocks < 2560 {
-            // Active area: map 0-2560 to 0x00-0xB6
-            ((self.mclk_line_clocks * 0xB6) / 2560) as u8
+        let h = if self.mclk_line_clocks < Self::ACTIVE_DISPLAY_START_MCLK {
+            (0xE4
+                + ((self.mclk_line_clocks * (0xFF - 0xE4))
+                    / Self::ACTIVE_DISPLAY_START_MCLK)) as u8
         } else {
-            // HBlank area: map 2560-3420 to 0xE4-0xFF
-            let offset = self.mclk_line_clocks - 2560;
-            (0xE4 + ((offset * (0xFF - 0xE4)) / (3420 - 2560))) as u8
+            let active_clocks = 3420 - Self::ACTIVE_DISPLAY_START_MCLK;
+            let offset = self.mclk_line_clocks - Self::ACTIVE_DISPLAY_START_MCLK;
+            ((offset * 0xB6) / active_clocks) as u8
         };
 
         let v = (self.v_counter & 0xFF) as u8;
@@ -778,7 +780,9 @@ impl Vdp {
 
         let process_limit = std::cmp::min(curr_slot, total_slots as u32);
 
-        if prev_line_clocks == 0 {
+        if prev_line_clocks < Self::ACTIVE_DISPLAY_START_MCLK
+            && self.mclk_line_clocks >= Self::ACTIVE_DISPLAY_START_MCLK
+        {
             self.render_scanline_if_needed(self.v_counter);
         }
 
@@ -818,21 +822,22 @@ impl Vdp {
                 self.rendered_scanlines.fill(false);
             }
 
-            self.render_scanline_if_needed(self.v_counter);
-
             let next_line_curr_slot = if is_h40 {
                 (self.mclk_line_clocks * 210) / 3420
             } else {
                 self.mclk_line_clocks / 20
             };
+            if self.mclk_line_clocks >= Self::ACTIVE_DISPLAY_START_MCLK {
+                self.render_scanline_if_needed(self.v_counter);
+            }
             for slot_idx in 0..next_line_curr_slot {
                 self.process_slot(slot_idx as usize, is_h40, &mut read_bus_word);
             }
         }
 
-        // HBlank status flag based on H counter approximation (mclk_line_clocks)
-        // HBlank starts roughly 75-80% through the line clocks
-        if self.mclk_line_clocks >= 2600 {
+        // Line clock 0 begins in HBlank. Visible fetch begins once the line
+        // has advanced past the HBlank window.
+        if self.mclk_line_clocks < Self::ACTIVE_DISPLAY_START_MCLK {
             self.status |= STATUS_HBLANK;
         } else {
             self.status &= !STATUS_HBLANK;

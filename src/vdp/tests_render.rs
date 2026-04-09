@@ -373,7 +373,7 @@ fn test_tick_renders_completed_scanline() {
 }
 
 #[test]
-fn test_tick_latches_scanline_at_line_start() {
+fn test_tick_latches_scanline_after_hblank() {
     let mut vdp = Vdp::new();
     vdp.is_pal = false;
     vdp.registers[1] = 0x40;
@@ -387,11 +387,15 @@ fn test_tick_latches_scanline_at_line_start() {
     vdp.vram[0xC000] = 0x00;
     vdp.vram[0xC001] = 0x01;
 
+    vdp.tick(859, |_| 0);
+
+    assert_eq!(vdp.framebuffer[0], 0, "line should not render before HBlank ends");
+
     vdp.tick(1, |_| 0);
 
     assert_eq!(
         vdp.framebuffer[0], 0xF800,
-        "tick should render the active scanline at line start"
+        "tick should render the active scanline when visible fetch begins"
     );
 
     vdp.cram_cache[1] = 0x07E0;

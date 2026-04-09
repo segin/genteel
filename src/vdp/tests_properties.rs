@@ -231,7 +231,7 @@ mod unit_tests {
     fn test_vdp_hv_counter() {
         let mut vdp = Vdp::new();
         // Set state to midway through active area
-        vdp.mclk_line_clocks = 1280; // 2560 / 2
+        vdp.mclk_line_clocks = 860 + 1280; // HBlank (860) + half of active area (2560 / 2)
         vdp.v_counter = 0x00AB;
 
         let hv = vdp.read_hv_counter();
