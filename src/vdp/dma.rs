@@ -62,6 +62,7 @@ impl DmaOps for Vdp {
         if len > 0 {
             // First write is always LSB
             self.vram[addr as usize] = fill_lsb;
+            self.mirror_sat_byte(addr as usize, fill_lsb);
             addr = addr.wrapping_add(inc);
 
             // Remaining writes are MSB
@@ -86,9 +87,11 @@ impl DmaOps for Vdp {
                     addr = addr.wrapping_add(remaining_len as u16);
                 } else if inc == 0 {
                     self.vram[addr as usize] = fill_msb;
+                    self.mirror_sat_byte(addr as usize, fill_msb);
                 } else {
                     for _ in 0..remaining_len {
                         self.vram[addr as usize] = fill_msb;
+                        self.mirror_sat_byte(addr as usize, fill_msb);
                         addr = addr.wrapping_add(inc);
                     }
                 }
@@ -115,6 +118,7 @@ impl DmaOps for Vdp {
                 for _ in 0..len {
                     let val = self.vram[source as usize];
                     self.vram[dest as usize] = val;
+                    self.mirror_sat_byte(dest as usize, val);
                     source = source.wrapping_add(1);
                     dest = dest.wrapping_add(inc);
                 }
@@ -158,6 +162,7 @@ impl DmaOps for Vdp {
 
                 if (self.command.code & 0x0F) == VRAM_WRITE {
                     self.vram[addr as usize] = val;
+                    self.mirror_sat_byte(addr as usize, val);
                 }
 
                 self.command.address = addr.wrapping_add(inc);
@@ -169,6 +174,7 @@ impl DmaOps for Vdp {
                 if (self.command.code & 0x0F) == VRAM_WRITE {
                     let val = self.vram[source as usize];
                     self.vram[addr as usize] = val;
+                    self.mirror_sat_byte(addr as usize, val);
                 }
 
                 let next_source = source.wrapping_add(1);
@@ -189,6 +195,8 @@ impl DmaOps for Vdp {
                         if idx < self.vram.len() {
                             self.vram[idx] = (val >> 8) as u8;
                             self.vram[idx ^ 1] = (val & 0xFF) as u8;
+                            self.mirror_sat_byte(idx, (val >> 8) as u8);
+                            self.mirror_sat_byte(idx ^ 1, (val & 0xFF) as u8);
                         }
                     }
                     CRAM_WRITE => {

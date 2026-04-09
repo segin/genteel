@@ -21,10 +21,38 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ym2612::{Bank, Ym2612};
 
+fn default_region() -> Region {
+    Region::Ntsc
+}
+
+fn default_sample_rate() -> u32 {
+    crate::audio::SAMPLE_RATE
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum Region {
+    #[default]
+    Ntsc,
+    Pal,
+}
+
+impl Region {
+    pub fn master_clock(self) -> u32 {
+        match self {
+            Region::Ntsc => crate::audio::NTSC_MCLK,
+            Region::Pal => crate::audio::PAL_MCLK,
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Apu {
     pub psg: Psg,
     pub fm: Ym2612,
+    #[serde(default = "default_region")]
+    pub region: Region,
+    #[serde(default = "default_sample_rate")]
+    pub sample_rate: u32,
     #[serde(skip, default = "default_channel_buffers")]
     pub channel_buffers: [[i16; 128]; 10],
     #[serde(skip)]
@@ -43,17 +71,43 @@ impl Apu {
     }
 
     pub fn new() -> Self {
-        Self {
+        let mut apu = Self {
             psg: Psg::new(),
             fm: Ym2612::new(),
+            region: Region::Ntsc,
+            sample_rate: crate::audio::SAMPLE_RATE,
             channel_buffers: [[0; 128]; 10],
             buffer_idx: 0,
-        }
+        };
+        apu.set_timing(Region::Ntsc, crate::audio::SAMPLE_RATE);
+        apu
     }
 
     pub fn reset(&mut self) {
         self.psg.reset();
         self.fm.reset();
+    }
+
+    /// Configure the APU timing for the current region and output sample rate.
+    pub fn set_timing(&mut self, region: Region, sample_rate: u32) {
+        if self.region == region && self.sample_rate == sample_rate {
+            return;
+        }
+        self.region = region;
+        self.sample_rate = sample_rate;
+        let master_clock = region.master_clock();
+        self.psg.set_timing(master_clock, sample_rate);
+        self.fm.set_timing(master_clock, sample_rate);
+    }
+
+    /// Update only the active video region while preserving the current output rate.
+    pub fn set_region(&mut self, region: Region) {
+        self.set_timing(region, self.sample_rate);
+    }
+
+    /// Update only the output sample rate while preserving the current region.
+    pub fn set_sample_rate(&mut self, sample_rate: u32) {
+        self.set_timing(self.region, sample_rate);
     }
 
     pub fn write_psg(&mut self, data: u8) {
@@ -124,6 +178,7 @@ impl Default for Apu {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audio;
 
     #[test]
     fn test_initialization() {
@@ -302,5 +357,21 @@ mod tests {
             0,
             "Right audio should be zero due to panning"
         );
+    }
+
+    #[test]
+    fn test_apu_set_timing_updates_all_subsystems() {
+        let mut apu = Apu::new();
+
+        apu.set_timing(Region::Pal, 48_000);
+
+        assert_eq!(apu.region, Region::Pal);
+        assert_eq!(apu.sample_rate, 48_000);
+        assert_eq!(apu.psg.master_clock, audio::PAL_MCLK);
+        assert_eq!(apu.fm.master_clock, audio::PAL_MCLK);
+        assert_eq!(apu.psg.blip.clock_rate(), audio::PAL_MCLK);
+        assert_eq!(apu.fm.blip_l.clock_rate(), audio::PAL_MCLK);
+        assert_eq!(apu.psg.blip.sample_rate(), 48_000);
+        assert_eq!(apu.fm.blip_l.sample_rate(), 48_000);
     }
 }

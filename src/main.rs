@@ -31,8 +31,7 @@ const MAX_STATE_SIZE: u64 = 25 * 1024 * 1024;
 /// Maximum SRAM size in bytes (2MB) to prevent OOM/DoS
 const MAX_SRAM_SIZE: u64 = 2 * 1024 * 1024;
 
-use crate::vdp::RenderOps;
-use apu::Apu;
+use apu::{Apu, Region};
 use cpu::Cpu;
 use debugger::{GdbMemory, GdbRegisters, GdbServer, StopReason};
 use frontend::InputMapping;
@@ -705,12 +704,7 @@ impl Emulator {
         self.handle_interrupts();
     }
     fn vdp_scanline_setup(&mut self, line: u16, _active_lines: u16) {
-        let mut bus = self.bus.borrow_mut();
-
-        // Process scanline if within framebuffer bounds (320x240)
-        if line < 240 {
-            bus.vdp.render_line(line);
-        }
+        let _ = (line, _active_lines);
     }
 
     fn sync_audio_z80(ctx: &mut SystemContext, m68k_cycles: u32, trigger_vint: bool) {
@@ -735,12 +729,11 @@ impl Emulator {
 
             let z80_can_run = !bus.z80_reset && !bus.z80_bus_request;
             let z80_is_reset = bus.z80_reset;
-            let master_clock = if bus.vdp.is_pal {
-                audio::PAL_MCLK
+            let cycles_per_sample = if bus.vdp.is_pal {
+                audio::PAL_MCLK as f32 / audio::SAMPLE_RATE as f32
             } else {
-                audio::NTSC_MCLK
+                audio::NTSC_MCLK as f32 / audio::SAMPLE_RATE as f32
             };
-            let cycles_per_sample = master_clock as f32 / (bus.sample_rate as f32);
             (z80_can_run, z80_is_reset, cycles_per_sample)
         };
 
@@ -773,6 +766,12 @@ impl Emulator {
         }
 
         let mut bus = ctx.bus_rc.borrow_mut();
+        let region = if bus.vdp.is_pal {
+            Region::Pal
+        } else {
+            Region::Ntsc
+        };
+        bus.apu.set_timing(region, audio::SAMPLE_RATE);
         bus.apu.tick_cycles(m68k_cycles);
         bus.audio_accumulator += mclk as f32;
 
@@ -844,7 +843,9 @@ impl Emulator {
             deferred_audio_cycles += m68k_cycles;
 
             let trigger_vint = line == active_lines && pending_cycles < 10;
-            let should_sync_audio = deferred_bus_cycles >= Z80_AUDIO_SYNC_SLICE || trigger_vint || ctx.bus_rc.borrow().dma_active();
+            let should_sync_audio = deferred_bus_cycles >= Z80_AUDIO_SYNC_SLICE
+                || trigger_vint
+                || ctx.bus_rc.borrow().dma_active();
             if should_sync_audio {
                 {
                     let mut bus = ctx.bus_rc.borrow_mut();

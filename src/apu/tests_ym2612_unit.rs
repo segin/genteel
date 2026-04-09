@@ -1,4 +1,5 @@
 use super::ym2612::{Bank, Ym2612};
+use crate::audio;
 
 #[test]
 fn test_ym2612_initialization() {
@@ -67,4 +68,18 @@ fn test_ym2612_timers() {
 
     ym.step(200);
     assert_ne!(ym.read_status() & 0x02, 0); // Timer B expired
+}
+
+#[test]
+fn test_ym2612_set_timing_updates_blip_rates() {
+    let mut ym = Ym2612::new();
+
+    ym.set_timing(audio::PAL_MCLK, 48_000);
+
+    assert_eq!(ym.master_clock, audio::PAL_MCLK);
+    assert_eq!(ym.sample_rate, 48_000);
+    assert_eq!(ym.blip_l.clock_rate(), audio::PAL_MCLK);
+    assert_eq!(ym.blip_r.clock_rate(), audio::PAL_MCLK);
+    assert_eq!(ym.blip_l.sample_rate(), 48_000);
+    assert_eq!(ym.blip_r.sample_rate(), 48_000);
 }

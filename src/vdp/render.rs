@@ -33,7 +33,6 @@ impl<'a> Iterator for SpriteIterator<'a> {
             return None;
         }
 
-        // Check SAT boundary
         if self.sat_base + (self.next_idx as usize * 8) + 8 > self.vram.len() {
             return None;
         }
@@ -104,7 +103,7 @@ pub trait RenderOps {
     fn render_line(&mut self, line: u16);
     fn render_plane(&self, is_plane_a: bool, fetch_line: u16, line_buf: &mut [u8; 320]);
     fn render_tile(&self, params: &TileRenderParams, screen_x: &mut u16, line_buf: &mut [u8; 320]);
-    fn get_active_sprites(&self, line: u16, sprites: &mut [SpriteAttributes]) -> usize;
+    fn get_active_sprites(&mut self, line: u16, sprites: &mut [SpriteAttributes]) -> usize;
     fn render_sprites(
         &self,
         sprites: &[SpriteAttributes],
@@ -333,11 +332,15 @@ fn render_sprite_scanline(
 ) {
     let sprite_v_px = (attr.v_size as u16) * 8;
 
-    let py = line.wrapping_sub(attr.v_pos);
+    let py = (line as i32) - (attr.v_pos as i16 as i32);
+    if py < 0 || py >= sprite_v_px as i32 {
+        return;
+    }
+
     let fetch_py = if attr.v_flip {
-        (sprite_v_px - 1) - py
+        (sprite_v_px - 1) - (py as u16)
     } else {
-        py
+        py as u16
     };
 
     let tile_v_offset = fetch_py / 8;
@@ -373,12 +376,12 @@ fn render_sprite_scanline(
         // We already checked row_addr + 4 <= 0x10000. Using unwrap() increases safety and eliminates the unsafe block.
         let patterns: [u8; 4] = vram[row_addr..row_addr + 4].try_into().unwrap();
 
-        let base_screen_x = attr.h_pos.wrapping_add(tile_h_offset * 8);
+        let base_screen_x = (attr.h_pos as i16 as i32) + (tile_h_offset as i32 * 8);
 
         // Optimization: If the entire 8-pixel block is visible, skip per-pixel checks.
-        if (base_screen_x as u32) + 8 <= screen_width as u32 {
+        if base_screen_x >= 0 && base_screen_x + 8 <= screen_width as i32 {
             for i in 0..8 {
-                let screen_x = base_screen_x.wrapping_add(i);
+                let screen_x = base_screen_x + i;
                 let eff_col = if attr.h_flip { 7 - i } else { i };
 
                 let byte = patterns[(eff_col as usize) / 2];
@@ -403,8 +406,8 @@ fn render_sprite_scanline(
             }
         } else {
             for i in 0..8 {
-                let screen_x = base_screen_x.wrapping_add(i);
-                if screen_x >= screen_width {
+                let screen_x = base_screen_x + i;
+                if screen_x < 0 || screen_x >= screen_width as i32 {
                     continue;
                 }
 
@@ -435,6 +438,8 @@ impl RenderOps for Vdp {
             return;
         }
 
+        self.sync_sat_cache();
+
         let draw_line = line;
         let fetch_line = line;
         let line_offset = (draw_line as usize) * 320;
@@ -445,6 +450,7 @@ impl RenderOps for Vdp {
 
         if !self.display_enabled() || line >= self.screen_height() {
             self.framebuffer[line_offset..line_offset + 320].fill(bg_color_val);
+            self.rendered_scanlines[line as usize] = true;
             return;
         }
 
@@ -473,6 +479,7 @@ impl RenderOps for Vdp {
             buf_s: &buf_s,
         };
         self.composite_line(&composite_params);
+        self.rendered_scanlines[line as usize] = true;
     }
 
     fn render_plane(&self, is_plane_a: bool, fetch_line: u16, line_buf: &mut [u8; 320]) {
@@ -533,7 +540,7 @@ impl RenderOps for Vdp {
                 } else {
                     screen_x < win_h_point
                 };
-                let params = if in_h || win_in_v {
+                let params = if in_h && win_in_v {
                     &win_params
                 } else {
                     &plane_params
@@ -601,21 +608,22 @@ impl RenderOps for Vdp {
         *screen_x = current_x + pixels_to_process;
     }
 
-    fn get_active_sprites(&self, line: u16, sprites: &mut [SpriteAttributes]) -> usize {
+    fn get_active_sprites(&mut self, line: u16, sprites: &mut [SpriteAttributes]) -> usize {
+        self.sync_sat_cache();
+
         let mut count = 0;
         let mut pixels = 0;
 
-        let sat_base = self.sprite_table_address();
         let max_sprites = if self.h40_mode() { 80 } else { 64 };
         let line_limit = if self.h40_mode() { 20 } else { 16 };
         let pixel_limit = if self.h40_mode() { 320 } else { 256 };
 
         let iter = SpriteIterator {
-            vram: &self.vram,
+            vram: &self.sat,
             next_idx: 0,
             count: 0,
             max_sprites,
-            sat_base,
+            sat_base: 0,
         };
 
         for attr in iter {
@@ -627,8 +635,9 @@ impl RenderOps for Vdp {
                 // but for our buffer we can just skip it visually
             }
 
-            // Handle wrapping v_pos (top clipping) correctly using wrapping subtraction
-            if line.wrapping_sub(attr.v_pos) < sprite_v_px {
+            let sprite_top = attr.v_pos as i16 as i32;
+            let line_i = line as i32;
+            if line_i >= sprite_top && line_i < sprite_top + sprite_v_px as i32 {
                 // If the sprite falls on this scanline, add it
                 if count < sprites.len() {
                     sprites[count] = attr;
@@ -698,9 +707,9 @@ impl RenderOps for Vdp {
         let hs_base = self.hscroll_address();
 
         let hs_addr = match hs_mode {
-            0x00 | 0x01 => hs_base,                                // Full screen
+            0x00 | 0x01 => hs_base,                               // Full screen
             0x02 => hs_base + (((fetch_line as usize) >> 3) * 4), // 8-pixel high strips (Cell)
-            0x03 => hs_base + ((fetch_line as usize) * 4),         // Per-line
+            0x03 => hs_base + ((fetch_line as usize) * 4),        // Per-line
             _ => hs_base,
         };
 

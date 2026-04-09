@@ -70,9 +70,31 @@ impl BlipBuf {
         }
     }
 
+    /// Return the source clock rate used when scheduling deltas.
+    pub fn clock_rate(&self) -> u32 {
+        self.clock_rate
+    }
+
+    /// Return the output sample rate used by the buffer.
+    pub fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
     /// Set the source clock rate
     pub fn set_clock_rate(&mut self, rate: u32) {
         self.clock_rate = rate;
+    }
+
+    /// Reconfigure both source and output timing.
+    ///
+    /// This clears any queued transitions because they were scheduled
+    /// against the previous timing domain.
+    pub fn set_timing(&mut self, clock_rate: u32, sample_rate: u32) {
+        self.clock_rate = clock_rate;
+        self.sample_rate = sample_rate;
+        self.buffer
+            .resize((sample_rate as usize / 10) + KERNEL_SIZE + 2, 0);
+        self.clear();
     }
 
     /// Clear the buffer

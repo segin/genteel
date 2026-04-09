@@ -160,6 +160,14 @@ fn default_framebuffer() -> Vec<u16> {
     vec![0; 320 * 240]
 }
 
+fn default_sat() -> [u8; 0x400] {
+    [0; 0x400]
+}
+
+fn default_rendered_scanlines() -> [bool; 240] {
+    [false; 240]
+}
+
 /// VDP Command State Machine
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct CommandState {
@@ -218,6 +226,12 @@ pub struct Vdp {
 
     #[serde(skip, default = "default_framebuffer")]
     pub framebuffer: Vec<u16>,
+
+    #[serde(skip, default = "default_sat")]
+    pub sat: [u8; 0x400],
+
+    #[serde(skip, default = "default_rendered_scanlines")]
+    rendered_scanlines: [bool; 240],
 }
 
 impl Default for Vdp {
@@ -248,6 +262,8 @@ impl Vdp {
             fifo_full: false,
             bypass_fifo: false,
             framebuffer: vec![0; 320 * 240],
+            sat: [0; 0x400],
+            rendered_scanlines: [false; 240],
         };
         vdp.reset();
         vdp
@@ -277,7 +293,9 @@ impl Vdp {
         self.h_counter = 0;
         self.line_counter = 0;
         self.hint_pending = false;
+        self.rendered_scanlines.fill(false);
         self.reconstruct_cram_cache();
+        self.sync_sat_cache();
     }
 
     pub fn set_pal(&mut self, is_pal: bool) {
@@ -358,6 +376,8 @@ impl Vdp {
                 if idx < self.vram.len() {
                     self.vram[idx] = (value >> 8) as u8;
                     self.vram[idx ^ 1] = (value & 0xFF) as u8;
+                    self.mirror_sat_byte(idx, (value >> 8) as u8);
+                    self.mirror_sat_byte(idx ^ 1, (value & 0xFF) as u8);
                 }
             }
             CRAM_WRITE => {
@@ -618,6 +638,26 @@ impl Vdp {
         ((v as u16) << 8) | (h as u16)
     }
 
+    pub(crate) fn sync_sat_cache(&mut self) {
+        let base = self.sprite_table_address();
+        for (i, byte) in self.sat.iter_mut().enumerate() {
+            *byte = self.vram[(base + i) & 0xFFFF];
+        }
+    }
+
+    pub(crate) fn mirror_sat_byte(&mut self, vram_addr: usize, value: u8) {
+        let sat_base = self.sprite_table_address();
+        let (sat_base_mask, sat_addr_mask) = if self.h40_mode() {
+            (0xFC00usize, 0x03FFusize)
+        } else {
+            (0xFE00usize, 0x01FFusize)
+        };
+
+        if (vram_addr & sat_base_mask) == sat_base {
+            self.sat[vram_addr & sat_addr_mask] = value;
+        }
+    }
+
     pub fn set_v_counter(&mut self, v: u16) {
         self.v_counter = v;
     }
@@ -710,7 +750,15 @@ impl Vdp {
         // Handle line wrapping (3420 MCLK per line)
         if self.mclk_line_clocks >= 3420 {
             self.mclk_line_clocks -= 3420;
-            self.v_counter = (self.v_counter + 1) % 262; // NTSC: 262 lines
+            let completed_line = self.v_counter;
+            let frame_lines = if self.is_pal { 313 } else { 262 };
+            self.v_counter = (self.v_counter + 1) % frame_lines;
+
+            if completed_line < self.screen_height()
+                && !self.rendered_scanlines[completed_line as usize]
+            {
+                self.render_line(completed_line);
+            }
 
             let active_lines = self.screen_height();
             self.hint_pending = false;
@@ -732,6 +780,10 @@ impl Vdp {
                 }
             } else {
                 self.line_counter = self.registers[REG_H_INT_COUNTER] as u16;
+            }
+
+            if self.v_counter == 0 {
+                self.rendered_scanlines.fill(false);
             }
 
             let next_line_curr_slot = if is_h40 {

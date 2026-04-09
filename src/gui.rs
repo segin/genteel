@@ -368,7 +368,11 @@ impl Framework {
         ui.colored_label(color, &*buffer);
     }
 
-    fn on_hover_text_fmt(buffer: &mut String, response: &egui::Response, args: std::fmt::Arguments) {
+    fn on_hover_text_fmt(
+        buffer: &mut String,
+        response: &egui::Response,
+        args: std::fmt::Arguments,
+    ) {
         buffer.clear();
         let _ = buffer.write_fmt(args);
         response.clone().on_hover_text(&*buffer);
@@ -645,7 +649,6 @@ impl Framework {
 
     fn render_about_window(&mut self) {
         if self.gui_state.show_about {
-
             egui::Window::new("About Genteel")
                 .open(&mut self.gui_state.show_about)
                 .show(&self.egui_ctx, |ui| {
@@ -692,17 +695,35 @@ impl Framework {
                 .show(&self.egui_ctx, |ui| {
                     let dt = ui.ctx().input(|i| i.stable_dt);
                     let fps = if dt > 0.0 { 1.0 / dt } else { 0.0 };
-                    Self::label_fmt(&mut self.label_buffer, ui, format_args!("Frontend FPS: {:.1}", fps));
-                    Self::label_fmt(&mut self.label_buffer, ui, format_args!("Frame Time: {:.2}ms", dt * 1000.0));
+                    Self::label_fmt(
+                        &mut self.label_buffer,
+                        ui,
+                        format_args!("Frontend FPS: {:.1}", fps),
+                    );
+                    Self::label_fmt(
+                        &mut self.label_buffer,
+                        ui,
+                        format_args!("Frame Time: {:.2}ms", dt * 1000.0),
+                    );
                     ui.separator();
-                    Self::label_fmt(&mut self.label_buffer,
+                    Self::label_fmt(
+                        &mut self.label_buffer,
                         ui,
                         format_args!("Internal Frames: {}", debug_info.frame_count),
                     );
-                    Self::label_fmt(&mut self.label_buffer, ui, format_args!("M68k PC: {:06X}", debug_info.m68k_pc));
-                    Self::label_fmt(&mut self.label_buffer, ui, format_args!("Z80 PC: {:04X}", debug_info.z80_pc));
+                    Self::label_fmt(
+                        &mut self.label_buffer,
+                        ui,
+                        format_args!("M68k PC: {:06X}", debug_info.m68k_pc),
+                    );
+                    Self::label_fmt(
+                        &mut self.label_buffer,
+                        ui,
+                        format_args!("Z80 PC: {:04X}", debug_info.z80_pc),
+                    );
                     ui.separator();
-                    Self::label_fmt(&mut self.label_buffer,
+                    Self::label_fmt(
+                        &mut self.label_buffer,
                         ui,
                         format_args!(
                             "VDP Display: {}",
@@ -713,15 +734,18 @@ impl Framework {
                             }
                         ),
                     );
-                    Self::label_fmt(&mut self.label_buffer,
+                    Self::label_fmt(
+                        &mut self.label_buffer,
                         ui,
                         format_args!("VDP Status: {:04X}", debug_info.vdp_status),
                     );
-                    Self::label_fmt(&mut self.label_buffer,
+                    Self::label_fmt(
+                        &mut self.label_buffer,
                         ui,
                         format_args!("BG Color Index: {}", debug_info.bg_color_index),
                     );
-                    Self::label_fmt(&mut self.label_buffer,
+                    Self::label_fmt(
+                        &mut self.label_buffer,
                         ui,
                         format_args!("CRAM[0] (RGB565): {:04X}", debug_info.cram[0]),
                     );
@@ -745,7 +769,11 @@ impl Framework {
                                 ui.label("No gamepads connected");
                             } else {
                                 for (id, name) in gamepads {
-                                    Self::label_fmt(&mut self.label_buffer, ui, format_args!("{}: {}", id, name));
+                                    Self::label_fmt(
+                                        &mut self.label_buffer,
+                                        ui,
+                                        format_args!("{}: {}", id, name),
+                                    );
                                 }
                             }
                         } else {
@@ -849,11 +877,20 @@ impl Framework {
             egui::Window::new("M68k Status")
                 .open(&mut open)
                 .show(&self.egui_ctx, |ui| {
-                    Self::label_fmt(&mut self.label_buffer, ui, format_args!("PC: {:06X}", debug_info.m68k_pc));
-                    Self::label_fmt(&mut self.label_buffer, ui, format_args!("SR: {:04X}", debug_info.m68k_sr));
+                    Self::label_fmt(
+                        &mut self.label_buffer,
+                        ui,
+                        format_args!("PC: {:06X}", debug_info.m68k_pc),
+                    );
+                    Self::label_fmt(
+                        &mut self.label_buffer,
+                        ui,
+                        format_args!("SR: {:04X}", debug_info.m68k_sr),
+                    );
                     let sr = debug_info.m68k_sr;
                     ui.horizontal(|ui| {
-                        Self::label_fmt(&mut self.label_buffer,
+                        Self::label_fmt(
+                            &mut self.label_buffer,
                             ui,
                             format_args!(
                                 "Flags: [ {} {} {} {} {} ]",
@@ -883,8 +920,16 @@ impl Framework {
                         }
                     });
                     ui.separator();
-                    Self::label_fmt(&mut self.label_buffer, ui, format_args!("USP: {:08X}", debug_info.m68k_usp));
-                    Self::label_fmt(&mut self.label_buffer, ui, format_args!("SSP: {:08X}", debug_info.m68k_ssp));
+                    Self::label_fmt(
+                        &mut self.label_buffer,
+                        ui,
+                        format_args!("USP: {:08X}", debug_info.m68k_usp),
+                    );
+                    Self::label_fmt(
+                        &mut self.label_buffer,
+                        ui,
+                        format_args!("SSP: {:08X}", debug_info.m68k_ssp),
+                    );
                 });
             if !open {
                 self.gui_state.set_window_open("M68k Status", false);
@@ -899,16 +944,26 @@ impl Framework {
             egui::Window::new("Z80 Status")
                 .open(&mut open)
                 .show(&self.egui_ctx, |ui| {
-                    Self::label_fmt(&mut self.label_buffer, ui, format_args!("PC: {:04X}", debug_info.z80_pc));
-                    Self::label_fmt(&mut self.label_buffer, ui, format_args!("SP: {:04X}", debug_info.z80_sp));
-                    Self::label_fmt(&mut self.label_buffer,
+                    Self::label_fmt(
+                        &mut self.label_buffer,
+                        ui,
+                        format_args!("PC: {:04X}", debug_info.z80_pc),
+                    );
+                    Self::label_fmt(
+                        &mut self.label_buffer,
+                        ui,
+                        format_args!("SP: {:04X}", debug_info.z80_sp),
+                    );
+                    Self::label_fmt(
+                        &mut self.label_buffer,
                         ui,
                         format_args!("MEMPTR (WZ): {:04X}", debug_info.z80_memptr),
                     );
                     ui.separator();
                     let f = debug_info.z80_f;
                     ui.horizontal(|ui| {
-                        Self::label_fmt(&mut self.label_buffer,
+                        Self::label_fmt(
+                            &mut self.label_buffer,
                             ui,
                             format_args!(
                                 "Flags: [ {} {} {} {} {} {} {} {} ]",
@@ -976,8 +1031,16 @@ impl Framework {
                         columns[0].label(&buf);
                     });
                     ui.separator();
-                    Self::label_fmt(&mut self.label_buffer, ui, format_args!("IM: {}", debug_info.z80_im));
-                    Self::label_fmt(&mut self.label_buffer, ui, format_args!("IFF1: {}", debug_info.z80_iff1));
+                    Self::label_fmt(
+                        &mut self.label_buffer,
+                        ui,
+                        format_args!("IM: {}", debug_info.z80_im),
+                    );
+                    Self::label_fmt(
+                        &mut self.label_buffer,
+                        ui,
+                        format_args!("IFF1: {}", debug_info.z80_iff1),
+                    );
                 });
             if !open {
                 self.gui_state.set_window_open("Z80 Status", false);
@@ -999,13 +1062,15 @@ impl Framework {
                             for (addr, instr) in &debug_info.m68k_disasm {
                                 let is_current = *addr == debug_info.m68k_pc;
                                 if is_current {
-                                    Self::colored_label_fmt(&mut self.label_buffer,
+                                    Self::colored_label_fmt(
+                                        &mut self.label_buffer,
                                         ui,
                                         egui::Color32::YELLOW,
                                         format_args!("-> {:06X}: {:?}", addr, instr),
                                     );
                                 } else {
-                                    Self::label_fmt(&mut self.label_buffer,
+                                    Self::label_fmt(
+                                        &mut self.label_buffer,
                                         ui,
                                         format_args!("   {:06X}: {:?}", addr, instr),
                                     );
@@ -1020,7 +1085,8 @@ impl Framework {
                             for (addr, byte) in &debug_info.z80_disasm {
                                 let is_current = *addr == debug_info.z80_pc;
                                 if is_current {
-                                    Self::colored_label_fmt(&mut self.label_buffer,
+                                    Self::colored_label_fmt(
+                                        &mut self.label_buffer,
                                         ui,
                                         egui::Color32::YELLOW,
                                         format_args!(
@@ -1029,7 +1095,8 @@ impl Framework {
                                         ),
                                     );
                                 } else {
-                                    Self::label_fmt(&mut self.label_buffer,
+                                    Self::label_fmt(
+                                        &mut self.label_buffer,
                                         ui,
                                         format_args!(
                                             "   {:04X}: {}",
@@ -1055,7 +1122,11 @@ impl Framework {
                 .show(&self.egui_ctx, |ui| {
                     for palette in 0..4 {
                         ui.horizontal(|ui| {
-                            Self::label_fmt(&mut self.label_buffer, ui, format_args!("Pal {}:", palette));
+                            Self::label_fmt(
+                                &mut self.label_buffer,
+                                ui,
+                                format_args!("Pal {}:", palette),
+                            );
                             for i in 0..16 {
                                 let idx = palette * 16 + i;
                                 let color565 = debug_info.cram[idx];
@@ -1171,13 +1242,34 @@ impl Framework {
                             ui.end_row();
 
                             for attr in iter {
-                                Self::label_fmt(&mut self.label_buffer, ui, format_args!("{}", attr.index));
-                                Self::label_fmt(&mut self.label_buffer, ui, format_args!("{},{}", attr.h_pos, attr.v_pos));
-                                Self::label_fmt(&mut self.label_buffer, ui, format_args!("{}x{}", attr.h_size, attr.v_size));
-                                Self::label_fmt(&mut self.label_buffer, ui, format_args!("{:03X}", attr.base_tile));
-                                Self::label_fmt(&mut self.label_buffer, ui, format_args!("{}", attr.palette));
+                                Self::label_fmt(
+                                    &mut self.label_buffer,
+                                    ui,
+                                    format_args!("{}", attr.index),
+                                );
+                                Self::label_fmt(
+                                    &mut self.label_buffer,
+                                    ui,
+                                    format_args!("{},{}", attr.h_pos, attr.v_pos),
+                                );
+                                Self::label_fmt(
+                                    &mut self.label_buffer,
+                                    ui,
+                                    format_args!("{}x{}", attr.h_size, attr.v_size),
+                                );
+                                Self::label_fmt(
+                                    &mut self.label_buffer,
+                                    ui,
+                                    format_args!("{:03X}", attr.base_tile),
+                                );
+                                Self::label_fmt(
+                                    &mut self.label_buffer,
+                                    ui,
+                                    format_args!("{}", attr.palette),
+                                );
                                 ui.label(if attr.priority { "H" } else { "L" });
-                                Self::label_fmt(&mut self.label_buffer,
+                                Self::label_fmt(
+                                    &mut self.label_buffer,
                                     ui,
                                     format_args!(
                                         "{}{}",
@@ -1185,7 +1277,11 @@ impl Framework {
                                         if attr.v_flip { "V" } else { "-" }
                                     ),
                                 );
-                                Self::label_fmt(&mut self.label_buffer, ui, format_args!("{}", attr.link));
+                                Self::label_fmt(
+                                    &mut self.label_buffer,
+                                    ui,
+                                    format_args!("{}", attr.link),
+                                );
                                 ui.end_row();
                             }
                         });
@@ -2036,10 +2132,7 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
     // Audio setup
     let audio_buffer = audio::create_audio_buffer();
     let audio_output = match audio::AudioOutput::new(audio_buffer.clone()) {
-        Ok(output) => {
-            emulator.bus.borrow_mut().sample_rate = output.sample_rate;
-            Some(output)
-        }
+        Ok(output) => Some(output),
         Err(e) => {
             eprintln!("Warning: Failed to initialize audio: {}", e);
             None

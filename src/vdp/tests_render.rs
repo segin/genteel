@@ -1,5 +1,5 @@
-use super::*;
 use super::render::{PixelLayerData, ShadowHighlightParams};
+use super::*;
 
 #[test]
 fn test_render_plane_basic() {
@@ -169,6 +169,48 @@ fn test_render_plane_b_isolation() {
 }
 
 #[test]
+fn test_window_plane_requires_both_axes() {
+    let mut vdp = Vdp::new();
+    vdp.is_pal = false;
+    vdp.registers[1] = 0x40;
+    vdp.registers[2] = 0x30; // Plane A base 0xC000
+    vdp.registers[3] = 0x38; // Window base 0xE000
+    vdp.registers[16] = 0x00;
+    vdp.registers[17] = 0x01; // Window starts at x = 16
+    vdp.registers[18] = 0x01; // Window starts at y = 8
+
+    vdp.cram_cache[1] = 0xF800; // Plane A red
+    vdp.cram_cache[17] = 0x07E0; // Window green
+
+    for i in 0..32 {
+        vdp.vram[32 + i] = 0x11; // Tile 1
+        vdp.vram[64 + i] = 0x11; // Tile 2
+    }
+
+    // Plane A points at Tile 1.
+    vdp.vram[0xC000] = 0x00;
+    vdp.vram[0xC001] = 0x01;
+    vdp.vram[0xC040] = 0x00;
+    vdp.vram[0xC041] = 0x01;
+
+    // Window plane points at Tile 2.
+    vdp.vram[0xE000] = 0x20;
+    vdp.vram[0xE001] = 0x02;
+    vdp.vram[0xE040] = 0x20;
+    vdp.vram[0xE041] = 0x02;
+
+    // Horizontal condition is true at x=0, but vertical condition is false at line 8.
+    // The window should not be active unless both conditions match.
+    vdp.render_line(8);
+
+    let offset = 8 * 320;
+    assert_eq!(
+        vdp.framebuffer[offset], 0xF800,
+        "Window must require both axes"
+    );
+}
+
+#[test]
 fn test_render_line_performance() {
     let mut vdp = Vdp::new();
     vdp.is_pal = false;
@@ -241,6 +283,93 @@ fn test_sprite_rendering_correctness() {
     assert_eq!(vdp.framebuffer[2], 0x00F, "Pixel 2 (Blue)");
     assert_eq!(vdp.framebuffer[3], 0xFFF, "Pixel 3 (White)");
     assert_eq!(vdp.framebuffer[4], 0x000, "Pixel 4 (Transparent)");
+}
+
+#[test]
+fn test_sprite_left_edge_clipping() {
+    let mut vdp = Vdp::new();
+    vdp.is_pal = false;
+    vdp.registers[1] = 0x40;
+    vdp.registers[12] = 0x81; // H40 mode
+    vdp.registers[5] = 0x6A; // SAT at 0xD400
+    vdp.registers[7] = 0x00;
+
+    vdp.cram_cache[0] = 0x0000;
+    vdp.cram_cache[1] = 0xF800;
+
+    // Tile 1: solid color 1.
+    for i in 0..32 {
+        vdp.vram[32 + i] = 0x11;
+    }
+
+    let sat_base = 0xD400;
+    // Sprite at y=0, x=-4 (stored value 124).
+    vdp.vram[sat_base] = 0x00;
+    vdp.vram[sat_base + 1] = 0x80;
+    vdp.vram[sat_base + 2] = 0x00;
+    vdp.vram[sat_base + 3] = 0x00;
+    vdp.vram[sat_base + 4] = 0x00;
+    vdp.vram[sat_base + 5] = 0x01;
+    vdp.vram[sat_base + 6] = 0x00;
+    vdp.vram[sat_base + 7] = 0x7C;
+
+    vdp.render_line(0);
+
+    assert_eq!(
+        vdp.framebuffer[0], 0xF800,
+        "Sprite should clip into column 0"
+    );
+    assert_eq!(
+        vdp.framebuffer[3], 0xF800,
+        "Sprite should cover the visible edge"
+    );
+}
+
+#[test]
+fn test_sat_cache_sync_tracks_vram() {
+    let mut vdp = Vdp::new();
+    vdp.registers[12] = 0x81;
+    vdp.registers[5] = 0x6A;
+
+    let sat_base = 0xD400;
+    vdp.vram[sat_base + 1] = 0x80;
+    vdp.sync_sat_cache();
+    assert_eq!(vdp.sat[1], 0x80);
+
+    vdp.vram[sat_base + 1] = 0x81;
+    assert_eq!(
+        vdp.sat[1], 0x80,
+        "SAT mirror should not change until resynced"
+    );
+
+    vdp.sync_sat_cache();
+    assert_eq!(
+        vdp.sat[1], 0x81,
+        "SAT mirror should reflect the latest VRAM data"
+    );
+}
+
+#[test]
+fn test_tick_renders_completed_scanline() {
+    let mut vdp = Vdp::new();
+    vdp.is_pal = false;
+    vdp.registers[1] = 0x40;
+    vdp.registers[2] = 0x30;
+    vdp.registers[16] = 0x00;
+    vdp.cram_cache[1] = 0xF800;
+
+    for i in 0..32 {
+        vdp.vram[32 + i] = 0x11;
+    }
+    vdp.vram[0xC000] = 0x00;
+    vdp.vram[0xC001] = 0x01;
+
+    vdp.tick(3420, |_| 0);
+
+    assert_eq!(
+        vdp.framebuffer[0], 0xF800,
+        "tick should render the scanline when it completes"
+    );
 }
 
 #[test]
@@ -675,7 +804,10 @@ fn test_apply_shadow_highlight_highlight() {
 
     let (new_top_col, new_state) = vdp.apply_shadow_highlight(params);
     assert_eq!(new_top_col, 2, "Underlying color should be revealed");
-    assert_eq!(new_state, 0, "State should be changed from shadow to normal (0)");
+    assert_eq!(
+        new_state, 0,
+        "State should be changed from shadow to normal (0)"
+    );
 
     // Now test the color transform
     // In `apply_color_transform`, color is r=11..15, g=5..10, b=0..4.
@@ -696,7 +828,10 @@ fn test_apply_shadow_highlight_highlight() {
     let g_highlight = (highlighted >> 5) & 0x3F;
 
     assert_eq!(g_shadow, g_normal >> 1, "Shadow should halve intensity");
-    assert!(g_highlight > g_normal, "Highlight should increase intensity");
+    assert!(
+        g_highlight > g_normal,
+        "Highlight should increase intensity"
+    );
 }
 
 #[test]
@@ -764,7 +899,10 @@ fn test_fetch_nametable_entry() {
     vdp.vram[0xC10B] = 0x23;
 
     let entry = vdp.fetch_nametable_entry(base, 2, 5, plane_w);
-    assert_eq!(entry, 0xD123, "Fetched nametable entry does not match expected");
+    assert_eq!(
+        entry, 0xD123,
+        "Fetched nametable entry does not match expected"
+    );
 }
 
 #[test]
@@ -796,5 +934,8 @@ fn test_get_active_sprites_h40_limits() {
     let mut buffer = [SpriteAttributes::default(); 80];
     let count = vdp.get_active_sprites(10, &mut buffer);
 
-    assert_eq!(count, 20, "H40 mode should limit to 20 active sprites per line");
+    assert_eq!(
+        count, 20,
+        "H40 mode should limit to 20 active sprites per line"
+    );
 }

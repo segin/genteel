@@ -57,7 +57,7 @@ Provide a simple block diagram or a clear text-based description of the major co
 
 ### 3.1. Emulator Core
 Name: Emulator / System Loop
-Description: Coordinates the main emulation loop, steps the M68k CPU, steps the Z80 co-processor, updates VDP state, checks for H/V interrupts, and manages bus contention.
+Description: Coordinates the main emulation loop, steps the M68k CPU, steps the Z80 co-processor, advances the bus/VDP/APU timing, checks for H/V interrupts, and manages bus contention. The outer loop no longer pre-renders scanlines; completed active scanlines are rendered from the VDP timing path at line end.
 Technologies: Rust
 
 ### 3.2. M68k CPU
@@ -67,12 +67,12 @@ Technologies: Rust
 
 ### 3.3. Audio Processing Unit (APU)
 Name: APU (`src/apu/`)
-Description: Contains the implementation of the Zilog Z80 sound co-processor, the Yamaha YM2612 FM synthesizer, and the Texas Instruments SN76489 PSG. The Z80 implementation handles architectural nuances like MEMPTR (WZ Register), R Register wrapping, and EI interrupt shadowing.
+Description: Contains the implementation of the Zilog Z80 sound co-processor, the Yamaha YM2612 FM synthesizer, and the Texas Instruments SN76489 PSG. The APU timing is configurable by video region and output sample rate, with both PSG and YM2612 clocking derived from the active Genesis master clock through the shared `Apu::set_timing` path. The Z80 implementation handles architectural nuances like MEMPTR (WZ Register), R Register wrapping, and EI interrupt shadowing.
 Technologies: Rust
 
 ### 3.4. Video Display Processor (VDP)
 Name: VDP (`src/vdp/`)
-Description: Responsible for rendering the graphics. It manages video RAM (VRAM), sprites, backgrounds, and generates the video output.
+Description: Responsible for rendering the graphics. It manages video RAM (VRAM), sprites, backgrounds, and generates the video output. Scanline completion is timing-driven inside `Vdp::tick`, and the renderer uses an internal Sprite Attribute Table mirror to evaluate sprites instead of treating VRAM as the sole source of visible sprite state.
 Technologies: Rust
 
 ### 3.5. Memory & Bus
@@ -144,6 +144,7 @@ Code Quality Tools: `cargo clippy`, `cargo fmt`, `make audit` (custom audit scri
 - **Controller Support**: 3-button and 6-button controller support implemented.
 - **GDB Support**: Basic RSP support with breakpoints and inspection implemented.
 - **Accuracy Improvements**: Moved VBlank/HBlank/LineCounter management into VDP `tick` for better cycle accuracy.
+- **Accuracy Improvements**: Rendering ownership is now centered in `Vdp::tick` for completed scanlines, with SAT mirroring for sprite evaluation and region-aware APU timing configuration.
 - **32X Expansion**: Future goal (dual SH2 cores, Master/Slave sync, 32X VDP).
 
 ## 10. Project Identification
@@ -151,7 +152,7 @@ Code Quality Tools: `cargo clippy`, `cargo fmt`, `make audit` (custom audit scri
 Project Name: genteel
 Repository URL: https://github.com/segin/genteel
 Primary Contact/Team: N/A
-Date of Last Update: 2026-02-25 (Major Update: Core Fixes & Scripting Expansion)
+Date of Last Update: 2026-04-08 (Timing Update: VDP scanline completion moved into VDP timing path, SAT mirroring added, APU timing made region/sample-rate configurable)
 
 ## 11. Glossary / Acronyms
 

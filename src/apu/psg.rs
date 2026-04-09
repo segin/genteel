@@ -6,6 +6,14 @@ use crate::apu::blip_buf::BlipBuf;
 use crate::audio;
 use serde::{Deserialize, Serialize};
 
+fn default_master_clock() -> u32 {
+    audio::NTSC_MCLK
+}
+
+fn default_sample_rate() -> u32 {
+    audio::SAMPLE_RATE
+}
+
 /// Square wave tone channel
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ToneChannel {
@@ -39,6 +47,10 @@ pub struct Psg {
     pub noise: NoiseChannel,
     pub latch_channel: u8,
     pub latch_volume: bool,
+    #[serde(default = "default_master_clock")]
+    pub master_clock: u32,
+    #[serde(default = "default_sample_rate")]
+    pub sample_rate: u32,
     /// Total MCLK cycles elapsed
     pub total_mclocks: u64,
     /// MCLK debt for PSG clock
@@ -66,9 +78,11 @@ impl Psg {
             },
             latch_channel: 0,
             latch_volume: false,
-            total_mclocks: 1, // Start at 1 to allow delta at 0 if needed
+            master_clock: default_master_clock(),
+            sample_rate: default_sample_rate(),
+            total_mclocks: 0,
             mclk_debt: 0,
-            blip: BlipBuf::new(audio::NTSC_MCLK, audio::SAMPLE_RATE),
+            blip: BlipBuf::new(default_master_clock(), default_sample_rate()),
         };
         for tone in &mut psg.tones {
             tone.volume = 0x0F;
@@ -77,10 +91,17 @@ impl Psg {
     }
 
     pub fn reset(&mut self) {
-        let blip = self.blip.clone();
+        let master_clock = self.master_clock;
+        let sample_rate = self.sample_rate;
         *self = Self::new();
-        self.blip = blip;
-        self.blip.clear();
+        self.set_timing(master_clock, sample_rate);
+    }
+
+    /// Reconfigure PSG timing for the active video region and output sample rate.
+    pub fn set_timing(&mut self, master_clock: u32, sample_rate: u32) {
+        self.master_clock = master_clock;
+        self.sample_rate = sample_rate;
+        self.blip.set_timing(master_clock, sample_rate);
     }
 
     pub fn write(&mut self, value: u8) {
@@ -276,6 +297,7 @@ impl Default for Psg {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audio;
 
     #[test]
     fn test_psg_initialization() {
@@ -362,5 +384,17 @@ mod tests {
 
         let samples = psg.get_channel_samples();
         assert_eq!(samples, [100, 200, 300, 400]);
+    }
+
+    #[test]
+    fn test_psg_set_timing_updates_blip_rates() {
+        let mut psg = Psg::new();
+
+        psg.set_timing(audio::PAL_MCLK, 48_000);
+
+        assert_eq!(psg.master_clock, audio::PAL_MCLK);
+        assert_eq!(psg.sample_rate, 48_000);
+        assert_eq!(psg.blip.clock_rate(), audio::PAL_MCLK);
+        assert_eq!(psg.blip.sample_rate(), 48_000);
     }
 }

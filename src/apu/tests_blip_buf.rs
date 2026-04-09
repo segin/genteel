@@ -87,3 +87,19 @@ fn test_sinc_filtering_fractional_offset() {
     assert_eq!(samples[9], 937);
     assert_eq!(samples[15], 990); // Eventually settles near 1000
 }
+
+#[test]
+fn test_set_timing_updates_rates_and_clears_state() {
+    let mut blip = BlipBuf::new(3579545, 44100);
+    blip.add_delta(0, 500);
+    assert_eq!(blip.read_instant(), 500);
+
+    blip.set_timing(53203424, 48000);
+
+    assert_eq!(blip.clock_rate(), 53203424);
+    assert_eq!(blip.sample_rate(), 48000);
+    assert_eq!(blip.read_instant(), 0);
+
+    blip.add_delta(0, 250);
+    assert_eq!(blip.read_instant(), 250);
+}

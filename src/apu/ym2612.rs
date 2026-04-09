@@ -3,8 +3,17 @@
 //! Refactored to use band-limited synthesis via BlipBuf for high quality.
 
 use crate::apu::blip_buf::BlipBuf;
+use crate::audio;
 use serde::{Deserialize, Serialize};
 use std::sync::LazyLock;
+
+fn default_master_clock() -> u32 {
+    audio::NTSC_MCLK
+}
+
+fn default_sample_rate() -> u32 {
+    audio::SAMPLE_RATE
+}
 
 /* ========================================================================= */
 /*  Lookup Tables                                                            */
@@ -392,31 +401,19 @@ impl FmChannel {
                 let o2 = self.operators[1].compute_output(out1 >> 1, tl[1]);
                 let mod3 = (out1 as i32 + o2 as i32) >> 1;
                 let o3 = self.operators[2].compute_output(mod3 as i16, tl[2]);
-                (
-                    o2,
-                    o3,
-                    self.operators[3].compute_output(o3 >> 1, tl[3]),
-                )
+                (o2, o3, self.operators[3].compute_output(o3 >> 1, tl[3]))
             }
             2 => {
                 let o2 = self.operators[1].compute_output(out1 >> 1, tl[1]);
                 let o3 = self.operators[2].compute_output(o2 >> 1, tl[2]);
                 let mod4 = (out1 as i32 + o3 as i32) >> 1;
-                (
-                    o2,
-                    o3,
-                    self.operators[3].compute_output(mod4 as i16, tl[3]),
-                )
+                (o2, o3, self.operators[3].compute_output(mod4 as i16, tl[3]))
             }
             3 => {
                 let o2 = self.operators[1].compute_output(out1 >> 1, tl[1]);
                 let o3 = self.operators[2].compute_output(0, tl[2]);
                 let mod4 = (o2 as i32 + o3 as i32) >> 1;
-                (
-                    o2,
-                    o3,
-                    self.operators[3].compute_output(mod4 as i16, tl[3]),
-                )
+                (o2, o3, self.operators[3].compute_output(mod4 as i16, tl[3]))
             }
             4 => (
                 self.operators[1].compute_output(out1 >> 1, tl[1]),
@@ -476,6 +473,10 @@ pub struct Ym2612 {
     dac_val: u8,
     dac_en: bool,
     env_counter: u16,
+    #[serde(default = "default_master_clock")]
+    pub master_clock: u32,
+    #[serde(default = "default_sample_rate")]
+    pub sample_rate: u32,
     pub total_clocks: u64,
     pub blip_l: BlipBuf,
     pub blip_r: BlipBuf,
@@ -504,9 +505,11 @@ impl Ym2612 {
             dac_val: 0x80,
             dac_en: false,
             env_counter: 0,
+            master_clock: default_master_clock(),
+            sample_rate: default_sample_rate(),
             total_clocks: 0,
-            blip_l: BlipBuf::new(crate::audio::NTSC_MCLK, crate::audio::SAMPLE_RATE),
-            blip_r: BlipBuf::new(crate::audio::NTSC_MCLK, crate::audio::SAMPLE_RATE),
+            blip_l: BlipBuf::new(default_master_clock(), default_sample_rate()),
+            blip_r: BlipBuf::new(default_master_clock(), default_sample_rate()),
             last_left: 0,
             last_right: 0,
             total_mclocks: 0,
@@ -520,10 +523,18 @@ impl Ym2612 {
     }
 
     pub fn reset(&mut self) {
-        let (bl, br) = (self.blip_l.clone(), self.blip_r.clone());
+        let master_clock = self.master_clock;
+        let sample_rate = self.sample_rate;
         *self = Self::new();
-        self.blip_l = bl;
-        self.blip_r = br;
+        self.set_timing(master_clock, sample_rate);
+    }
+
+    /// Reconfigure YM2612 timing for the active video region and output sample rate.
+    pub fn set_timing(&mut self, master_clock: u32, sample_rate: u32) {
+        self.master_clock = master_clock;
+        self.sample_rate = sample_rate;
+        self.blip_l.set_timing(master_clock, sample_rate);
+        self.blip_r.set_timing(master_clock, sample_rate);
     }
 
     pub fn read_status(&self) -> u8 {
