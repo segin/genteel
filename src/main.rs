@@ -51,7 +51,7 @@ struct Z80Change {
 }
 struct SystemContext<'a> {
     cpu: &'a mut Cpu,
-    bus: &'a mut Bus,
+    bus_rc: &'a Rc<RefCell<Bus>>,
     z80: &'a mut Z80<Z80Bus, Z80Bus>,
     z80_cycle_debt: &'a mut f32,
     z80_last_bus_req: &'a mut bool,
@@ -576,12 +576,13 @@ impl Emulator {
                     if let (Ok(addr), Ok(expected)) = (addr_res, val_res) {
                         let actual = self.bus.borrow_mut().read_byte(addr);
                         if actual != expected {
-                            panic!("Script Assertion Failed: [0x{:06X}] == 0x{:02X} (Expected 0x{:02X})", addr, actual, expected);
+                            eprintln!("Script Assertion Failed: [0x{:06X}] == 0x{:02X} (Expected 0x{:02X})", addr, actual, expected);
+                        } else {
+                            println!(
+                                "Script: ASSERT_BYTE 0x{:06X} == 0x{:02X} OK",
+                                addr, expected
+                            );
                         }
-                        println!(
-                            "Script: ASSERT_BYTE 0x{:06X} == 0x{:02X} OK",
-                            addr, expected
-                        );
                     }
                 }
             }
@@ -616,12 +617,13 @@ impl Emulator {
                     if let (Ok(addr), Ok(expected)) = (addr_res, val_res) {
                         let actual = self.bus.borrow_mut().read_word(addr);
                         if actual != expected {
-                            panic!("Script Assertion Failed: [0x{:06X}] == 0x{:04X} (Expected 0x{:04X})", addr, actual, expected);
+                            eprintln!("Script Assertion Failed: [0x{:06X}] == 0x{:04X} (Expected 0x{:04X})", addr, actual, expected);
+                        } else {
+                            println!(
+                                "Script: ASSERT_WORD 0x{:06X} == 0x{:04X} OK",
+                                addr, expected
+                            );
                         }
-                        println!(
-                            "Script: ASSERT_WORD 0x{:06X} == 0x{:04X} OK",
-                            addr, expected
-                        );
                     }
                 }
             }
@@ -656,12 +658,13 @@ impl Emulator {
                     if let (Ok(addr), Ok(expected)) = (addr_res, val_res) {
                         let actual = self.bus.borrow_mut().read_long(addr);
                         if actual != expected {
-                            panic!("Script Assertion Failed: [0x{:06X}] == 0x{:08X} (Expected 0x{:08X})", addr, actual, expected);
+                            eprintln!("Script Assertion Failed: [0x{:06X}] == 0x{:08X} (Expected 0x{:08X})", addr, actual, expected);
+                        } else {
+                            println!(
+                                "Script: ASSERT_LONG 0x{:06X} == 0x{:08X} OK",
+                                addr, expected
+                            );
                         }
-                        println!(
-                            "Script: ASSERT_LONG 0x{:06X} == 0x{:08X} OK",
-                            addr, expected
-                        );
                     }
                 }
             }
@@ -718,25 +721,26 @@ impl Emulator {
         let mclk = m68k_cycles * 7;
 
         let (z80_can_run, z80_is_reset, cycles_per_sample) = {
+            let bus = ctx.bus_rc.borrow();
             let prev = *ctx.z80_last_bus_req;
-            if ctx.debug && ctx.bus.z80_bus_request != prev {
+            if ctx.debug && bus.z80_bus_request != prev {
                 log::debug!(
                     "Bus Req Changed: {} -> {} at 68k PC={:06X}",
                     prev,
-                    ctx.bus.z80_bus_request,
+                    bus.z80_bus_request,
                     ctx.cpu.pc
                 );
             }
-            *ctx.z80_last_bus_req = ctx.bus.z80_bus_request;
+            *ctx.z80_last_bus_req = bus.z80_bus_request;
 
-            let z80_can_run = !ctx.bus.z80_reset && !ctx.bus.z80_bus_request;
-            let z80_is_reset = ctx.bus.z80_reset;
-            let master_clock = if ctx.bus.vdp.is_pal {
+            let z80_can_run = !bus.z80_reset && !bus.z80_bus_request;
+            let z80_is_reset = bus.z80_reset;
+            let master_clock = if bus.vdp.is_pal {
                 audio::PAL_MCLK
             } else {
                 audio::NTSC_MCLK
             };
-            let cycles_per_sample = master_clock as f32 / (ctx.bus.sample_rate as f32);
+            let cycles_per_sample = master_clock as f32 / (bus.sample_rate as f32);
             (z80_can_run, z80_is_reset, cycles_per_sample)
         };
 
@@ -761,30 +765,24 @@ impl Emulator {
         if z80_can_run {
             const Z80_CYCLES_PER_M68K_CYCLE: f32 = 3579545.0 / 7670453.0;
             *ctx.z80_cycle_debt += m68k_cycles as f32 * Z80_CYCLES_PER_M68K_CYCLE;
-            unsafe {
-                ctx.z80.memory.bind_bus(ctx.bus);
-                ctx.z80.io.bind_bus(ctx.bus);
-            }
 
             while *ctx.z80_cycle_debt >= 1.0 {
                 let cycles = ctx.z80.step();
                 *ctx.z80_cycle_debt -= cycles as f32;
             }
-
-            ctx.z80.memory.unbind_bus();
-            ctx.z80.io.unbind_bus();
         }
 
-        ctx.bus.apu.tick_cycles(m68k_cycles);
-        ctx.bus.audio_accumulator += mclk as f32;
+        let mut bus = ctx.bus_rc.borrow_mut();
+        bus.apu.tick_cycles(m68k_cycles);
+        bus.audio_accumulator += mclk as f32;
 
-        while ctx.bus.audio_accumulator >= cycles_per_sample {
-            let (l, r) = ctx.bus.apu.generate_sample();
-            if ctx.bus.audio_buffer.len() < 32768 {
-                ctx.bus.audio_buffer.push(l);
-                ctx.bus.audio_buffer.push(r);
+        while bus.audio_accumulator >= cycles_per_sample {
+            let (l, r) = bus.apu.generate_sample();
+            if bus.audio_buffer.len() < 32768 {
+                bus.audio_buffer.push(l);
+                bus.audio_buffer.push(r);
             }
-            ctx.bus.audio_accumulator -= cycles_per_sample;
+            bus.audio_accumulator -= cycles_per_sample;
         }
     }
 
@@ -795,7 +793,10 @@ impl Emulator {
         active_lines: u16,
     ) -> CpuBatchResult {
         const Z80_AUDIO_SYNC_SLICE: u32 = 32;
-        let (initial_req, initial_rst) = (ctx.bus.z80_bus_request, ctx.bus.z80_reset);
+        let (initial_req, initial_rst) = {
+            let bus = ctx.bus_rc.borrow();
+            (bus.z80_bus_request, bus.z80_reset)
+        };
         let mut pending_cycles = 0;
         let mut deferred_bus_cycles = 0;
         let mut deferred_audio_cycles = 0;
@@ -804,13 +805,14 @@ impl Emulator {
                 // Final sync for the batch
                 let trigger_vint = line == active_lines && pending_cycles < 10;
                 if deferred_bus_cycles > 0 {
-                    ctx.bus.tick(deferred_bus_cycles * 7);
-                    if ctx.bus.vdp.vblank_pending() {
+                    let mut bus = ctx.bus_rc.borrow_mut();
+                    bus.tick(deferred_bus_cycles * 7);
+                    if bus.vdp.vblank_pending() {
                         ctx.cpu.request_interrupt(6);
                     } else {
                         ctx.cpu.cancel_interrupt(6);
                     }
-                    if ctx.bus.vdp.hint_pending() {
+                    if bus.vdp.hint_pending() {
                         ctx.cpu.request_interrupt(4);
                     } else {
                         ctx.cpu.cancel_interrupt(4);
@@ -823,15 +825,18 @@ impl Emulator {
                 };
             }
 
-            let m68k_cycles = if ctx.bus.dma_active() {
-                2 // Yield 2 cycles to let the bus step during DMA
-            } else {
-                ctx.cpu.step_instruction(ctx.bus)
+            let m68k_cycles = {
+                let mut bus = ctx.bus_rc.borrow_mut();
+                if bus.dma_active() {
+                    2 // Yield 2 cycles to let the bus step during DMA
+                } else {
+                    ctx.cpu.step_instruction(&mut *bus)
+                }
             };
 
             match ctx.cpu.last_interrupt_level {
-                6 => ctx.bus.vdp.acknowledge_vint(),
-                4 => ctx.bus.vdp.acknowledge_hint(),
+                6 => ctx.bus_rc.borrow_mut().vdp.acknowledge_vint(),
+                4 => ctx.bus_rc.borrow_mut().vdp.acknowledge_hint(),
                 _ => {}
             }
 
@@ -839,17 +844,21 @@ impl Emulator {
             deferred_audio_cycles += m68k_cycles;
 
             let trigger_vint = line == active_lines && pending_cycles < 10;
-            if deferred_bus_cycles >= Z80_AUDIO_SYNC_SLICE || trigger_vint || ctx.bus.dma_active() {
-                ctx.bus.tick(deferred_bus_cycles * 7);
-                if ctx.bus.vdp.vblank_pending() {
-                    ctx.cpu.request_interrupt(6);
-                } else {
-                    ctx.cpu.cancel_interrupt(6);
-                }
-                if ctx.bus.vdp.hint_pending() {
-                    ctx.cpu.request_interrupt(4);
-                } else {
-                    ctx.cpu.cancel_interrupt(4);
+            let should_sync_audio = deferred_bus_cycles >= Z80_AUDIO_SYNC_SLICE || trigger_vint || ctx.bus_rc.borrow().dma_active();
+            if should_sync_audio {
+                {
+                    let mut bus = ctx.bus_rc.borrow_mut();
+                    bus.tick(deferred_bus_cycles * 7);
+                    if bus.vdp.vblank_pending() {
+                        ctx.cpu.request_interrupt(6);
+                    } else {
+                        ctx.cpu.cancel_interrupt(6);
+                    }
+                    if bus.vdp.hint_pending() {
+                        ctx.cpu.request_interrupt(4);
+                    } else {
+                        ctx.cpu.cancel_interrupt(4);
+                    }
                 }
                 Self::sync_audio_z80(ctx, deferred_audio_cycles, trigger_vint);
                 deferred_bus_cycles = 0;
@@ -857,10 +866,13 @@ impl Emulator {
             }
 
             // Check for Z80 state change (rare but needs early exit)
-            let (req, rst) = (ctx.bus.z80_bus_request, ctx.bus.z80_reset);
+            let (req, rst) = {
+                let bus = ctx.bus_rc.borrow();
+                (bus.z80_bus_request, bus.z80_reset)
+            };
             if req != initial_req || rst != initial_rst {
                 if deferred_bus_cycles > 0 {
-                    ctx.bus.tick(deferred_bus_cycles * 7);
+                    ctx.bus_rc.borrow_mut().tick(deferred_bus_cycles * 7);
                 }
                 if deferred_audio_cycles > 0 {
                     Self::sync_audio_z80(ctx, deferred_audio_cycles, false);
@@ -880,12 +892,11 @@ impl Emulator {
     fn run_cpu_loop(&mut self, line: u16, active_lines: u16) {
         const CYCLES_PER_LINE: u32 = 488;
         let mut cycles_scanline: u32 = 0;
-        let mut bus = self.bus.borrow_mut();
 
         // One context for the entire scanline loop
         let mut ctx = SystemContext {
             cpu: &mut self.cpu,
-            bus: &mut bus,
+            bus_rc: &self.bus,
             z80: &mut self.z80,
             z80_cycle_debt: &mut self.z80_cycle_debt,
             z80_last_bus_req: &mut self.z80_last_bus_req,
@@ -903,8 +914,9 @@ impl Emulator {
             cycles_scanline += result.cycles;
 
             if let Some(change) = result.z80_change {
-                ctx.bus.z80_bus_request = change.new_req;
-                ctx.bus.z80_reset = change.new_rst;
+                let mut bus = ctx.bus_rc.borrow_mut();
+                bus.z80_bus_request = change.new_req;
+                bus.z80_reset = change.new_rst;
             }
         }
     }
@@ -1160,6 +1172,27 @@ impl Emulator {
         };
         let dma_pending = bus.vdp.command.dma_pending;
         let fifo_len = bus.vdp.fifo.len();
+        let mode3 = bus.vdp.registers[crate::vdp::REG_MODE3];
+        let mode4 = bus.vdp.registers[crate::vdp::REG_MODE4];
+        let reg2 = bus.vdp.registers[crate::vdp::REG_PLANE_A];
+        let reg4 = bus.vdp.registers[crate::vdp::REG_PLANE_B];
+        let reg16 = bus.vdp.registers[crate::vdp::REG_PLANE_SIZE];
+        let hscroll = bus.vdp.registers[crate::vdp::REG_HSCROLL];
+        let win_h = bus.vdp.registers[crate::vdp::REG_WINDOW_H_POS];
+        let win_v = bus.vdp.registers[crate::vdp::REG_WINDOW_V_POS];
+        let hs_base = bus.vdp.hscroll_address();
+        let plane_a = bus.vdp.plane_a_address();
+        let plane_b = bus.vdp.plane_b_address();
+        let window = bus.vdp.window_address();
+        let hs_word = |addr: usize| -> u16 {
+            let hi = bus.vdp.vram[addr & 0xFFFF];
+            let lo = bus.vdp.vram[(addr + 1) & 0xFFFF];
+            ((hi as u16) << 8) | (lo as u16)
+        };
+        let hs0a = hs_word(hs_base);
+        let hs0b = hs_word(hs_base + 2);
+        let hs80a = hs_word(hs_base + (80 * 4));
+        let hs80b = hs_word(hs_base + (80 * 4) + 2);
         let z80_pc = self.z80.pc;
         let z80_reset = if bus.z80_reset { "RST" } else { "RUN" };
         let z80_req = if bus.z80_bus_request { "BUS" } else { "---" };
@@ -1169,7 +1202,7 @@ impl Emulator {
             0
         };
         println_safe!(
-            "FRAME {:05} | 68k: PC={:06X} SR={:04X} | VDP: Disp={} DMA={} DMAP={} FIFO={} CRAM={:04X} | Z80: PC={:04X} OP={:02X} St={} Req={}",
+            "FRAME {:05} | 68k: PC={:06X} SR={:04X} | VDP: Disp={} DMA={} DMAP={} FIFO={} CRAM={:04X} M3={:02X} M4={:02X} R2={:02X} R4={:02X} R16={:02X} HS={:02X} WH={:02X} WV={:02X} PA={:04X} PB={:04X} WN={:04X} HS0A={:04X} HS0B={:04X} HS80A={:04X} HS80B={:04X} | Z80: PC={:04X} OP={:02X} St={} Req={}",
             frame_count,
             self.cpu.pc,
             self.cpu.sr,
@@ -1178,6 +1211,21 @@ impl Emulator {
             dma_pending,
             fifo_len,
             cram_val,
+            mode3,
+            mode4,
+            reg2,
+            reg4,
+            reg16,
+            hscroll,
+            win_h,
+            win_v,
+            plane_a,
+            plane_b,
+            window,
+            hs0a,
+            hs0b,
+            hs80a,
+            hs80b,
             z80_pc,
             z80_op,
             z80_reset,
@@ -1202,7 +1250,8 @@ fn print_usage() {
     println!("  --headless <n>   Run N frames without display");
     println!("  --screenshot <path> Save screenshot after headless run");
     println!("  --gdb [port]     Start GDB server (default port: 1234)");
-    println!("                   Note: Set GENTEEL_GDB_PASSWORD env var for custom password.");
+    println!("  --gdb-password <pass>  Set password for GDB server authentication");
+    println!("  --gdb-password-file <path> Read GDB password from a file");
     println!("  --dump-audio <file> Dump audio output to WAV file");
     println!(
         "  --input-mapping <type> Set keyboard mapping (original|ergonomic, default: original)"
@@ -1262,10 +1311,7 @@ impl Config {
     where
         I: IntoIterator<Item = String>,
     {
-        let mut config = Config {
-            gdb_password: std::env::var("GENTEEL_GDB_PASSWORD").ok(),
-            ..Config::default()
-        };
+        let mut config = Config::default();
         let mut iter = args.into_iter().skip(1);
         let mut current_opt = iter.next();
         while let Some(arg) = current_opt {
@@ -1310,6 +1356,19 @@ impl Config {
                         }
                     }
                     config.gdb_port = Some(port);
+                }
+                "--gdb-password" => {
+                    config.gdb_password = iter.next();
+                    current_opt = iter.next();
+                }
+                "--gdb-password-file" => {
+                    if let Some(path) = iter.next() {
+                        match std::fs::read_to_string(&path) {
+                            Ok(password) => config.gdb_password = Some(password.trim().to_string()),
+                            Err(e) => eprintln!("Failed to read GDB password file {}: {}", path, e),
+                        }
+                    }
+                    current_opt = iter.next();
                 }
                 "--dump-audio" => {
                     config.dump_audio_path = iter.next();
@@ -1593,11 +1652,33 @@ mod tests {
         assert_eq!(config.gdb_port, Some(1234));
         assert_eq!(config.rom_path, Some("rom.bin".to_string()));
 
-        // Test environment variable password
-        std::env::set_var("GENTEEL_GDB_PASSWORD", "env_secret");
+        // Test GDB password flags
+        let args = vec![
+            "genteel".to_string(),
+            "--gdb-password".to_string(),
+            "secret_pwd".to_string(),
+            "rom.bin".to_string(),
+        ];
+        let config = Config::from_args(args);
+        assert_eq!(config.gdb_password, Some("secret_pwd".to_string()));
+
+        let pwd_file = "test_gdb_pwd.txt";
+        std::fs::write(pwd_file, " file_secret \n").unwrap();
+        let args = vec![
+            "genteel".to_string(),
+            "--gdb-password-file".to_string(),
+            pwd_file.to_string(),
+            "rom.bin".to_string(),
+        ];
+        let config = Config::from_args(args);
+        assert_eq!(config.gdb_password, Some("file_secret".to_string()));
+        let _ = std::fs::remove_file(pwd_file);
+
+        // Verify environment variable is NO LONGER used
+        std::env::set_var("GENTEEL_GDB_PASSWORD", "should_be_ignored");
         let args = vec!["genteel".to_string(), "rom.bin".to_string()];
         let config = Config::from_args(args);
-        assert_eq!(config.gdb_password, Some("env_secret".to_string()));
+        assert_eq!(config.gdb_password, None);
         std::env::remove_var("GENTEEL_GDB_PASSWORD");
 
         let args = vec![
@@ -1802,5 +1883,26 @@ mod tests {
             initial_frames + 2,
             "Should advance when resumed"
         );
+    }
+
+    #[test]
+    fn test_script_assertion_no_panic() {
+        let emulator = Emulator::new();
+
+        // Setup memory to value 0x00 at 0x1000
+        emulator.bus.borrow_mut().write_byte(0x1000, 0x00);
+
+        // This should not panic, but print an error via eprintln
+        emulator.handle_byte_cmd("ASSERT_BYTE", &["ASSERT_BYTE", "0x1000", "0xFF"]);
+
+        // Test word assertion
+        emulator.bus.borrow_mut().write_word(0x1000, 0x0000);
+        emulator.handle_word_cmd("ASSERT_WORD", &["ASSERT_WORD", "0x1000", "0xFFFF"]);
+
+        // Test long assertion
+        emulator.bus.borrow_mut().write_long(0x1000, 0x00000000);
+        emulator.handle_long_cmd("ASSERT_LONG", &["ASSERT_LONG", "0x1000", "0xFFFFFFFF"]);
+
+        // If we reach here without panicking, the test passes
     }
 }

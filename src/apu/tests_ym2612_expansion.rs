@@ -1,5 +1,25 @@
 use super::ym2612::{Bank, Ym2612};
 
+fn configure_basic_tone(ym: &mut Ym2612, bank: Bank, offset: u8, algorithm: u8) {
+    ym.write_addr(bank, 0xA4 + offset);
+    ym.write_data_bank(bank, 0x22);
+    ym.write_addr(bank, 0xA0 + offset);
+    ym.write_data_bank(bank, 0x55);
+
+    ym.write_addr(bank, 0xB0 + offset);
+    ym.write_data_bank(bank, algorithm & 0x07);
+
+    for op_off in [0u8, 4, 8, 12] {
+        ym.write_addr(bank, 0x40 + offset + op_off);
+        ym.write_data_bank(bank, 0x00);
+        ym.write_addr(bank, 0x50 + offset + op_off);
+        ym.write_data_bank(bank, 0x1F);
+    }
+
+    ym.write_addr(Bank::Bank0, 0x28);
+    ym.write_data_bank(Bank::Bank0, 0xF0);
+}
+
 #[test]
 fn test_ym2612_all_channels_enable() {
     let mut ym = Ym2612::new();
@@ -48,6 +68,54 @@ fn test_ym2612_all_channels_enable() {
     assert!(
         saw_nonzero,
         "Samples should be non-zero when channels are active"
+    );
+}
+
+#[test]
+fn test_ym2612_algorithm_4_has_parallel_carrier_output() {
+    let mut ym = Ym2612::new();
+    configure_basic_tone(&mut ym, Bank::Bank0, 0, 0x04);
+
+    // Mute operator 4 so only operator 2 can contribute if the routing is correct.
+    ym.write_addr(Bank::Bank0, 0x40 + 12);
+    ym.write_data_bank(Bank::Bank0, 0x7F);
+
+    let mut saw_nonzero = false;
+    for _ in 0..2000 {
+        ym.step(1);
+        if ym.generate_channel_samples()[0] != 0 {
+            saw_nonzero = true;
+            break;
+        }
+    }
+
+    assert!(
+        saw_nonzero,
+        "Algorithm 4 should still output through operator 2 when operator 4 is muted"
+    );
+}
+
+#[test]
+fn test_ym2612_algorithm_6_has_multiple_carriers() {
+    let mut ym = Ym2612::new();
+    configure_basic_tone(&mut ym, Bank::Bank0, 0, 0x06);
+
+    // Mute operator 4 so operators 2 and 3 must still be audible.
+    ym.write_addr(Bank::Bank0, 0x40 + 12);
+    ym.write_data_bank(Bank::Bank0, 0x7F);
+
+    let mut saw_nonzero = false;
+    for _ in 0..2000 {
+        ym.step(1);
+        if ym.generate_channel_samples()[0] != 0 {
+            saw_nonzero = true;
+            break;
+        }
+    }
+
+    assert!(
+        saw_nonzero,
+        "Algorithm 6 should still output through operators 2 and 3 when operator 4 is muted"
     );
 }
 

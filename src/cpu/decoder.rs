@@ -1484,4 +1484,11 @@ mod tests {
             })
         );
     }
+
+    #[test]
+    fn test_decode_all_opcodes_no_panic() {
+        for opcode in 0..=u16::MAX {
+            let _ = decode(opcode);
+        }
+    }
 }
