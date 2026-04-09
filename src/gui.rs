@@ -280,6 +280,7 @@ pub struct Framework {
     #[cfg(feature = "gilrs")]
     pub gilrs: Option<Gilrs>,
     pub label_buffer: String,
+    pub waveform_points: Vec<egui::Pos2>,
 }
 
 #[cfg(feature = "gui")]
@@ -350,27 +351,27 @@ impl Framework {
         self.screen_descriptor.pixels_per_point = scale_factor;
     }
 
-    fn label_fmt(&mut self, ui: &mut egui::Ui, args: std::fmt::Arguments) {
-        self.label_buffer.clear();
-        let _ = self.label_buffer.write_fmt(args);
-        ui.label(&self.label_buffer);
+    fn label_fmt(buffer: &mut String, ui: &mut egui::Ui, args: std::fmt::Arguments) {
+        buffer.clear();
+        let _ = buffer.write_fmt(args);
+        ui.label(&*buffer);
     }
 
     fn colored_label_fmt(
-        &mut self,
+        buffer: &mut String,
         ui: &mut egui::Ui,
         color: egui::Color32,
         args: std::fmt::Arguments,
     ) {
-        self.label_buffer.clear();
-        let _ = self.label_buffer.write_fmt(args);
-        ui.colored_label(color, &self.label_buffer);
+        buffer.clear();
+        let _ = buffer.write_fmt(args);
+        ui.colored_label(color, &*buffer);
     }
 
-    fn on_hover_text_fmt(&mut self, response: &egui::Response, args: std::fmt::Arguments) {
-        self.label_buffer.clear();
-        let _ = self.label_buffer.write_fmt(args);
-        response.clone().on_hover_text(&self.label_buffer);
+    fn on_hover_text_fmt(buffer: &mut String, response: &egui::Response, args: std::fmt::Arguments) {
+        buffer.clear();
+        let _ = buffer.write_fmt(args);
+        response.clone().on_hover_text(&*buffer);
     }
 
     pub fn pick_rom(&mut self) {
@@ -487,16 +488,16 @@ impl Framework {
 
         // Global shortcuts
         let ctrl = ctx.input(|i| i.modifiers.command);
-        if ctrl && self.egui_ctx.input(|i| i.key_pressed(egui::Key::O)) {
+        if ctrl && ctx.input(|i| i.key_pressed(egui::Key::O)) {
             self.gui_state.pick_rom_requested = true;
         }
-        if ctrl && self.egui_ctx.input(|i| i.key_pressed(egui::Key::R)) && debug_info.has_rom {
+        if ctrl && ctx.input(|i| i.key_pressed(egui::Key::R)) && debug_info.has_rom {
             self.gui_state.reset_requested = true;
         }
-        if self.egui_ctx.input(|i| i.key_pressed(egui::Key::F5)) && debug_info.has_rom {
+        if ctx.input(|i| i.key_pressed(egui::Key::F5)) && debug_info.has_rom {
             self.gui_state.save_requested = Some(0); // Default to slot 0
         }
-        if self.egui_ctx.input(|i| i.key_pressed(egui::Key::F8)) && debug_info.has_rom {
+        if ctx.input(|i| i.key_pressed(egui::Key::F8)) && debug_info.has_rom {
             self.gui_state.load_requested = Some(0); // Default to slot 0
         }
 
@@ -523,8 +524,8 @@ impl Framework {
 
     fn render_top_menu_bar(&mut self, debug_info: &DebugInfo) {
         // Draw the GUI
-        let ctx = self.egui_ctx.clone();
-        egui::TopBottomPanel::top("menubar_container").show(&ctx, |ui| {
+
+        egui::TopBottomPanel::top("menubar_container").show(&self.egui_ctx, |ui| {
             egui::menu::bar(ui, |ui| {
                 ui.menu_button("File", |ui| {
                     if ui
@@ -644,10 +645,10 @@ impl Framework {
 
     fn render_about_window(&mut self) {
         if self.gui_state.show_about {
-            let ctx = self.egui_ctx.clone();
+
             egui::Window::new("About Genteel")
                 .open(&mut self.gui_state.show_about)
-                .show(&ctx, |ui| {
+                .show(&self.egui_ctx, |ui| {
                     ui.vertical_centered(|ui| {
                         ui.heading("Genteel");
                         ui.label(format!("Version: {}", genteel::VERSION));
@@ -685,23 +686,23 @@ impl Framework {
     fn render_performance_debug_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Performance & Debug") {
             let mut open = true;
-            let ctx = self.egui_ctx.clone();
+
             egui::Window::new("Performance & Debug")
                 .open(&mut open)
-                .show(&ctx, |ui| {
-                    let dt = self.egui_ctx.input(|i| i.stable_dt);
+                .show(&self.egui_ctx, |ui| {
+                    let dt = ui.ctx().input(|i| i.stable_dt);
                     let fps = if dt > 0.0 { 1.0 / dt } else { 0.0 };
-                    self.label_fmt(ui, format_args!("Frontend FPS: {:.1}", fps));
-                    self.label_fmt(ui, format_args!("Frame Time: {:.2}ms", dt * 1000.0));
+                    Self::label_fmt(&mut self.label_buffer, ui, format_args!("Frontend FPS: {:.1}", fps));
+                    Self::label_fmt(&mut self.label_buffer, ui, format_args!("Frame Time: {:.2}ms", dt * 1000.0));
                     ui.separator();
-                    self.label_fmt(
+                    Self::label_fmt(&mut self.label_buffer,
                         ui,
                         format_args!("Internal Frames: {}", debug_info.frame_count),
                     );
-                    self.label_fmt(ui, format_args!("M68k PC: {:06X}", debug_info.m68k_pc));
-                    self.label_fmt(ui, format_args!("Z80 PC: {:04X}", debug_info.z80_pc));
+                    Self::label_fmt(&mut self.label_buffer, ui, format_args!("M68k PC: {:06X}", debug_info.m68k_pc));
+                    Self::label_fmt(&mut self.label_buffer, ui, format_args!("Z80 PC: {:04X}", debug_info.z80_pc));
                     ui.separator();
-                    self.label_fmt(
+                    Self::label_fmt(&mut self.label_buffer,
                         ui,
                         format_args!(
                             "VDP Display: {}",
@@ -712,15 +713,15 @@ impl Framework {
                             }
                         ),
                     );
-                    self.label_fmt(
+                    Self::label_fmt(&mut self.label_buffer,
                         ui,
                         format_args!("VDP Status: {:04X}", debug_info.vdp_status),
                     );
-                    self.label_fmt(
+                    Self::label_fmt(&mut self.label_buffer,
                         ui,
                         format_args!("BG Color Index: {}", debug_info.bg_color_index),
                     );
-                    self.label_fmt(
+                    Self::label_fmt(&mut self.label_buffer,
                         ui,
                         format_args!("CRAM[0] (RGB565): {:04X}", debug_info.cram[0]),
                     );
@@ -744,7 +745,7 @@ impl Framework {
                                 ui.label("No gamepads connected");
                             } else {
                                 for (id, name) in gamepads {
-                                    self.label_fmt(ui, format_args!("{}: {}", id, name));
+                                    Self::label_fmt(&mut self.label_buffer, ui, format_args!("{}: {}", id, name));
                                 }
                             }
                         } else {
@@ -761,10 +762,10 @@ impl Framework {
     fn render_settings_window(&mut self) {
         if self.gui_state.is_window_open("Settings") {
             let mut open = true;
-            let ctx = self.egui_ctx.clone();
+
             egui::Window::new("Settings")
                 .open(&mut open)
-                .show(&ctx, |ui| {
+                .show(&self.egui_ctx, |ui| {
                     ui.heading("Video");
                     if ui
                         .checkbox(&mut self.gui_state.integer_scaling, "Integer Pixel Scaling")
@@ -813,10 +814,10 @@ impl Framework {
     fn render_execution_control_window(&mut self) {
         if self.gui_state.is_window_open("Execution Control") {
             let mut open = true;
-            let ctx = self.egui_ctx.clone();
+
             egui::Window::new("Execution Control")
                 .open(&mut open)
-                .show(&ctx, |ui| {
+                .show(&self.egui_ctx, |ui| {
                     ui.horizontal(|ui| {
                         if self.gui_state.paused {
                             if ui.button("▶ Resume").clicked() {
@@ -844,15 +845,15 @@ impl Framework {
     fn render_m68k_status_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("M68k Status") {
             let mut open = true;
-            let ctx = self.egui_ctx.clone();
+
             egui::Window::new("M68k Status")
                 .open(&mut open)
-                .show(&ctx, |ui| {
-                    self.label_fmt(ui, format_args!("PC: {:06X}", debug_info.m68k_pc));
-                    self.label_fmt(ui, format_args!("SR: {:04X}", debug_info.m68k_sr));
+                .show(&self.egui_ctx, |ui| {
+                    Self::label_fmt(&mut self.label_buffer, ui, format_args!("PC: {:06X}", debug_info.m68k_pc));
+                    Self::label_fmt(&mut self.label_buffer, ui, format_args!("SR: {:04X}", debug_info.m68k_sr));
                     let sr = debug_info.m68k_sr;
                     ui.horizontal(|ui| {
-                        self.label_fmt(
+                        Self::label_fmt(&mut self.label_buffer,
                             ui,
                             format_args!(
                                 "Flags: [ {} {} {} {} {} ]",
@@ -882,8 +883,8 @@ impl Framework {
                         }
                     });
                     ui.separator();
-                    self.label_fmt(ui, format_args!("USP: {:08X}", debug_info.m68k_usp));
-                    self.label_fmt(ui, format_args!("SSP: {:08X}", debug_info.m68k_ssp));
+                    Self::label_fmt(&mut self.label_buffer, ui, format_args!("USP: {:08X}", debug_info.m68k_usp));
+                    Self::label_fmt(&mut self.label_buffer, ui, format_args!("SSP: {:08X}", debug_info.m68k_ssp));
                 });
             if !open {
                 self.gui_state.set_window_open("M68k Status", false);
@@ -894,20 +895,20 @@ impl Framework {
     fn render_z80_status_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Z80 Status") {
             let mut open = true;
-            let ctx = self.egui_ctx.clone();
+
             egui::Window::new("Z80 Status")
                 .open(&mut open)
-                .show(&ctx, |ui| {
-                    self.label_fmt(ui, format_args!("PC: {:04X}", debug_info.z80_pc));
-                    self.label_fmt(ui, format_args!("SP: {:04X}", debug_info.z80_sp));
-                    self.label_fmt(
+                .show(&self.egui_ctx, |ui| {
+                    Self::label_fmt(&mut self.label_buffer, ui, format_args!("PC: {:04X}", debug_info.z80_pc));
+                    Self::label_fmt(&mut self.label_buffer, ui, format_args!("SP: {:04X}", debug_info.z80_sp));
+                    Self::label_fmt(&mut self.label_buffer,
                         ui,
                         format_args!("MEMPTR (WZ): {:04X}", debug_info.z80_memptr),
                     );
                     ui.separator();
                     let f = debug_info.z80_f;
                     ui.horizontal(|ui| {
-                        self.label_fmt(
+                        Self::label_fmt(&mut self.label_buffer,
                             ui,
                             format_args!(
                                 "Flags: [ {} {} {} {} {} {} {} {} ]",
@@ -975,8 +976,8 @@ impl Framework {
                         columns[0].label(&buf);
                     });
                     ui.separator();
-                    self.label_fmt(ui, format_args!("IM: {}", debug_info.z80_im));
-                    self.label_fmt(ui, format_args!("IFF1: {}", debug_info.z80_iff1));
+                    Self::label_fmt(&mut self.label_buffer, ui, format_args!("IM: {}", debug_info.z80_im));
+                    Self::label_fmt(&mut self.label_buffer, ui, format_args!("IFF1: {}", debug_info.z80_iff1));
                 });
             if !open {
                 self.gui_state.set_window_open("Z80 Status", false);
@@ -987,10 +988,10 @@ impl Framework {
     fn render_disassembly_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Disassembly") {
             let mut open = true;
-            let ctx = self.egui_ctx.clone();
+
             egui::Window::new("Disassembly")
                 .open(&mut open)
-                .show(&ctx, |ui| {
+                .show(&self.egui_ctx, |ui| {
                     ui.heading("M68k Disassembly");
                     egui::ScrollArea::vertical()
                         .id_source("m68k_disasm")
@@ -998,13 +999,13 @@ impl Framework {
                             for (addr, instr) in &debug_info.m68k_disasm {
                                 let is_current = *addr == debug_info.m68k_pc;
                                 if is_current {
-                                    self.colored_label_fmt(
+                                    Self::colored_label_fmt(&mut self.label_buffer,
                                         ui,
                                         egui::Color32::YELLOW,
                                         format_args!("-> {:06X}: {:?}", addr, instr),
                                     );
                                 } else {
-                                    self.label_fmt(
+                                    Self::label_fmt(&mut self.label_buffer,
                                         ui,
                                         format_args!("   {:06X}: {:?}", addr, instr),
                                     );
@@ -1019,7 +1020,7 @@ impl Framework {
                             for (addr, byte) in &debug_info.z80_disasm {
                                 let is_current = *addr == debug_info.z80_pc;
                                 if is_current {
-                                    self.colored_label_fmt(
+                                    Self::colored_label_fmt(&mut self.label_buffer,
                                         ui,
                                         egui::Color32::YELLOW,
                                         format_args!(
@@ -1028,7 +1029,7 @@ impl Framework {
                                         ),
                                     );
                                 } else {
-                                    self.label_fmt(
+                                    Self::label_fmt(&mut self.label_buffer,
                                         ui,
                                         format_args!(
                                             "   {:04X}: {}",
@@ -1048,13 +1049,13 @@ impl Framework {
     fn render_palette_viewer_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Palette Viewer") {
             let mut open = true;
-            let ctx = self.egui_ctx.clone();
+
             egui::Window::new("Palette Viewer")
                 .open(&mut open)
-                .show(&ctx, |ui| {
+                .show(&self.egui_ctx, |ui| {
                     for palette in 0..4 {
                         ui.horizontal(|ui| {
-                            self.label_fmt(ui, format_args!("Pal {}:", palette));
+                            Self::label_fmt(&mut self.label_buffer, ui, format_args!("Pal {}:", palette));
                             for i in 0..16 {
                                 let idx = palette * 16 + i;
                                 let color565 = debug_info.cram[idx];
@@ -1069,7 +1070,8 @@ impl Framework {
                                 );
                                 ui.painter().rect_filled(rect, 0.0, color);
                                 if response.hovered() {
-                                    self.on_hover_text_fmt(
+                                    Self::on_hover_text_fmt(
+                                        &mut self.label_buffer,
                                         &response,
                                         format_args!(
                                             "Index: {}\nRaw: {:04X}\nRGB565: {:04X}",
@@ -1090,10 +1092,10 @@ impl Framework {
     fn render_tile_viewer_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Tile Viewer") {
             let mut open = true;
-            let ctx = self.egui_ctx.clone();
+
             egui::Window::new("Tile Viewer")
                 .open(&mut open)
-                .show(&ctx, |ui| {
+                .show(&self.egui_ctx, |ui| {
                     // Render tiles to a buffer
                     let image = std::sync::Arc::make_mut(&mut self.tile_viewer_image);
                     for tile_idx in 0..2048 {
@@ -1140,10 +1142,10 @@ impl Framework {
     fn render_sprite_viewer_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Sprite Viewer") {
             let mut open = true;
-            let ctx = self.egui_ctx.clone();
+
             egui::Window::new("Sprite Viewer")
                 .open(&mut open)
-                .show(&ctx, |ui| {
+                .show(&self.egui_ctx, |ui| {
                     let sat_base = ((debug_info.vdp_registers[5] as usize) & 0x7F) << 9;
                     let h40 = (debug_info.vdp_registers[12] & 0x81) == 0x81;
                     let max_sprites = if h40 { 80 } else { 64 };
@@ -1169,13 +1171,13 @@ impl Framework {
                             ui.end_row();
 
                             for attr in iter {
-                                self.label_fmt(ui, format_args!("{}", attr.index));
-                                self.label_fmt(ui, format_args!("{},{}", attr.h_pos, attr.v_pos));
-                                self.label_fmt(ui, format_args!("{}x{}", attr.h_size, attr.v_size));
-                                self.label_fmt(ui, format_args!("{:03X}", attr.base_tile));
-                                self.label_fmt(ui, format_args!("{}", attr.palette));
+                                Self::label_fmt(&mut self.label_buffer, ui, format_args!("{}", attr.index));
+                                Self::label_fmt(&mut self.label_buffer, ui, format_args!("{},{}", attr.h_pos, attr.v_pos));
+                                Self::label_fmt(&mut self.label_buffer, ui, format_args!("{}x{}", attr.h_size, attr.v_size));
+                                Self::label_fmt(&mut self.label_buffer, ui, format_args!("{:03X}", attr.base_tile));
+                                Self::label_fmt(&mut self.label_buffer, ui, format_args!("{}", attr.palette));
                                 ui.label(if attr.priority { "H" } else { "L" });
-                                self.label_fmt(
+                                Self::label_fmt(&mut self.label_buffer,
                                     ui,
                                     format_args!(
                                         "{}{}",
@@ -1183,7 +1185,7 @@ impl Framework {
                                         if attr.v_flip { "V" } else { "-" }
                                     ),
                                 );
-                                self.label_fmt(ui, format_args!("{}", attr.link));
+                                Self::label_fmt(&mut self.label_buffer, ui, format_args!("{}", attr.link));
                                 ui.end_row();
                             }
                         });
@@ -1198,10 +1200,10 @@ impl Framework {
     fn render_scroll_plane_viewer_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Scroll Plane Viewer") {
             let mut open = true;
-            let ctx = self.egui_ctx.clone();
+
             egui::Window::new("Scroll Plane Viewer")
                 .open(&mut open)
-                .show(&ctx, |ui| {
+                .show(&self.egui_ctx, |ui| {
                     let size_bits = debug_info.vdp_registers[crate::vdp::REG_PLANE_SIZE];
                     let (plane_w, plane_h) = crate::vdp::Vdp::decode_plane_size(size_bits);
 
@@ -1327,10 +1329,10 @@ impl Framework {
     fn render_vdp_memory_hex_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("VDP Memory Hex") {
             let mut open = true;
-            let ctx = self.egui_ctx.clone();
+
             egui::Window::new("VDP Memory Hex")
                 .open(&mut open)
-                .show(&ctx, |ui| {
+                .show(&self.egui_ctx, |ui| {
                     ui.collapsing("VRAM", |ui| {
                         egui::ScrollArea::vertical()
                             .id_source("vram_hex")
@@ -1420,10 +1422,10 @@ impl Framework {
     fn render_memory_viewer_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Memory Viewer") {
             let mut open = true;
-            let ctx = self.egui_ctx.clone();
+
             egui::Window::new("Memory Viewer")
                 .open(&mut open)
-                .show(&ctx, |ui| {
+                .show(&self.egui_ctx, |ui| {
                     ui.collapsing("Work RAM (M68k)", |ui| {
                         egui::ScrollArea::vertical()
                             .id_source("wram_hex")
@@ -1495,10 +1497,10 @@ impl Framework {
     fn render_sound_chip_visualizer_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Sound Chip Visualizer") {
             let mut open = true;
-            let ctx = self.egui_ctx.clone();
+
             egui::Window::new("Sound Chip Visualizer")
                 .open(&mut open)
-                .show(&ctx, |ui| {
+                .show(&self.egui_ctx, |ui| {
                     ui.collapsing("SN76489 PSG", |ui| {
                         for i in 0..3 {
                             ui.horizontal(|ui| {
@@ -1591,10 +1593,10 @@ impl Framework {
     fn render_audio_channel_waveforms_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Audio Channel Waveforms") {
             let mut open = true;
-            let ctx = self.egui_ctx.clone();
+
             egui::Window::new("Audio Channel Waveforms")
                 .open(&mut open)
-                .show(&ctx, |ui| {
+                .show(&self.egui_ctx, |ui| {
                     for ch in 0..10 {
                         let label = if ch < 6 {
                             format!("FM {}", ch + 1)
@@ -1634,10 +1636,10 @@ impl Framework {
     fn render_controller_viewer_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("Controller Viewer") {
             let mut open = true;
-            let ctx = self.egui_ctx.clone();
+
             egui::Window::new("Controller Viewer")
                 .open(&mut open)
-                .show(&ctx, |ui| {
+                .show(&self.egui_ctx, |ui| {
                     for (i, (state, c_type)) in [
                         (debug_info.port1_state, debug_info.port1_type),
                         (debug_info.port2_state, debug_info.port2_type),
@@ -1705,10 +1707,10 @@ impl Framework {
     fn render_state_browser_window(&mut self, debug_info: &DebugInfo) {
         if self.gui_state.is_window_open("State Browser") {
             let mut open = true;
-            let ctx = self.egui_ctx.clone();
+
             egui::Window::new("State Browser")
                 .open(&mut open)
-                .show(&ctx, |ui| {
+                .show(&self.egui_ctx, |ui| {
                     if let Some(path) = &debug_info.current_rom_path {
                         egui::Grid::new("state_browser_grid")
                             .striped(true)
@@ -1978,7 +1980,17 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
         println!("Recording inputs to: {}", path);
         emulator.input.start_recording();
     }
-    let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
+    #[cfg(target_os = "linux")]
+    let event_loop = {
+        use winit::platform::x11::EventLoopBuilderExtX11;
+        let mut builder = winit::event_loop::EventLoopBuilder::new();
+        builder.with_any_thread(true);
+        builder.build()
+    }
+    .map_err(|e| e.to_string())?;
+
+    #[cfg(not(target_os = "linux"))]
+    let event_loop = winit::event_loop::EventLoop::new().map_err(|e| e.to_string())?;
     let size = winit::dpi::LogicalSize::new(
         frontend::GENESIS_WIDTH as f64 * 3.0,
         frontend::GENESIS_HEIGHT as f64 * 3.0,
@@ -2252,5 +2264,21 @@ mod tests {
             result.is_none(),
             "Expected Gilrs initialization to fail gracefully when GENTEEL_TEST_FAIL_GILRS is set"
         );
+    }
+
+    #[cfg(feature = "gilrs")]
+    #[test]
+    fn test_init_gilrs_with_builder_success() {
+        let builder = || Ok::<i32, String>(42);
+        let result = init_gilrs_with_builder(builder);
+        assert_eq!(result, Some(42));
+    }
+
+    #[cfg(feature = "gilrs")]
+    #[test]
+    fn test_init_gilrs_with_builder_error() {
+        let builder = || Err::<i32, String>("Initialization failed".to_string());
+        let result = init_gilrs_with_builder(builder);
+        assert_eq!(result, None);
     }
 }
