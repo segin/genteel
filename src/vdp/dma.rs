@@ -164,6 +164,11 @@ impl DmaOps for Vdp {
                     self.vram[addr as usize] = val;
                     self.mirror_sat_byte(addr as usize, val);
                 }
+                if (self.command.code & 0x0F) == CRAM_WRITE
+                    || (self.command.code & 0x0F) == VSRAM_WRITE
+                {
+                    self.redraw_current_scanline_if_visible();
+                }
 
                 self.command.address = addr.wrapping_add(inc);
             }
@@ -175,6 +180,11 @@ impl DmaOps for Vdp {
                     let val = self.vram[source as usize];
                     self.vram[addr as usize] = val;
                     self.mirror_sat_byte(addr as usize, val);
+                }
+                if (self.command.code & 0x0F) == CRAM_WRITE
+                    || (self.command.code & 0x0F) == VSRAM_WRITE
+                {
+                    self.redraw_current_scanline_if_visible();
                 }
 
                 let next_source = source.wrapping_add(1);
@@ -204,6 +214,7 @@ impl DmaOps for Vdp {
                         self.cram[idx * 2] = (val & 0xFF) as u8;
                         self.cram[idx * 2 + 1] = (val >> 8) as u8;
                         self.cram_cache[idx] = Self::genesis_color_to_rgb565(val);
+                        self.redraw_current_scanline_if_visible();
                     }
                     VSRAM_WRITE => {
                         let idx = (addr as usize) % 80;
@@ -211,6 +222,7 @@ impl DmaOps for Vdp {
                         if idx + 1 < 80 {
                             self.vsram[idx + 1] = (val & 0xFF) as u8;
                         }
+                        self.redraw_current_scanline_if_visible();
                     }
                     _ => {}
                 }

@@ -115,3 +115,31 @@ fn test_set_timing_same_values_is_noop() {
     assert_eq!(blip.sample_rate(), 44100);
     assert_eq!(blip.read_instant(), 500);
 }
+
+#[test]
+fn test_long_running_delta_schedule_does_not_drift_out_of_window() {
+    let clock_rate = 53_267;
+    let sample_rate = 53_267;
+    let mut blip = BlipBuf::new(clock_rate, sample_rate);
+
+    let mut sample = [0i16; 1];
+    for clock in 0..(sample_rate as u64 * 3) {
+        blip.add_delta(clock, 1);
+        assert_eq!(blip.read_samples(&mut sample), 1);
+    }
+
+    assert_eq!(blip.read_instant(), 32767);
+}
+
+#[test]
+fn test_clear_resets_timebase() {
+    let mut blip = BlipBuf::new(53_267, 53_267);
+    let mut sample = [0i16; 1];
+
+    blip.add_delta(10_000, 1000);
+    assert_eq!(blip.read_samples(&mut sample), 1);
+    blip.clear();
+
+    blip.add_delta(0, 500);
+    assert_eq!(blip.read_instant(), 500);
+}

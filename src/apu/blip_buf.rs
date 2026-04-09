@@ -51,8 +51,6 @@ pub struct BlipBuf {
     accumulator: i32,
     /// Running integrated output state between read calls.
     integrator: i32,
-    /// Total samples read (shifted out)
-    samples_read: u64,
 }
 
 impl BlipBuf {
@@ -66,7 +64,6 @@ impl BlipBuf {
             clock_ptr: 0.0,
             accumulator: 0,
             integrator: 0,
-            samples_read: 0,
         }
     }
 
@@ -104,9 +101,10 @@ impl BlipBuf {
     pub fn clear(&mut self) {
         self.buffer.fill(0);
         self.start = 0;
+        self.last_clock = 0;
+        self.clock_ptr = 0.0;
         self.accumulator = 0;
         self.integrator = 0;
-        self.samples_read = 0;
     }
 
     /// Add a delta (amplitude change) at a specific clock time
@@ -115,17 +113,18 @@ impl BlipBuf {
             return;
         }
 
-        let time_in_samples = (clock as f64 * self.sample_rate as f64) / self.clock_rate as f64;
-        let absolute_sample_idx = time_in_samples.floor() as isize;
-        let fract = time_in_samples - absolute_sample_idx as f64;
+        let clock_delta = clock.saturating_sub(self.last_clock);
+        self.last_clock = clock;
 
-        let sample_idx = absolute_sample_idx - self.samples_read as isize;
+        let samples_per_clock = self.sample_rate as f64 / self.clock_rate as f64;
+        let time_in_samples = self.clock_ptr + clock_delta as f64 * samples_per_clock;
+        let sample_idx = time_in_samples.floor() as usize;
+        let fract = time_in_samples - sample_idx as f64;
 
-        if sample_idx < 0 || sample_idx as usize + KERNEL_SIZE >= self.buffer.len() {
-            // Out of bounds (e.g. buffer size overrun before a read)
+        if sample_idx + KERNEL_SIZE >= self.buffer.len() {
+            // Out of bounds (producer ran too far ahead of the consumer)
             return;
         }
-        let sample_idx = sample_idx as usize;
 
         // Apply band-limited step
         let offset = (fract * RES as f64) as usize;
@@ -137,6 +136,7 @@ impl BlipBuf {
 
         // Update DC accumulator for integration
         self.accumulator += delta;
+        self.clock_ptr = time_in_samples;
     }
 
     /// Read generated samples into a buffer
@@ -153,7 +153,7 @@ impl BlipBuf {
         self.integrator = current;
 
         self.start = (self.start + count) % self.buffer.len();
-        self.samples_read += count as u64;
+        self.clock_ptr = (self.clock_ptr - count as f64).max(0.0);
 
         count
     }

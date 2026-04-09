@@ -167,7 +167,7 @@ pub type SharedAudioBuffer = Arc<Mutex<AudioBuffer>>;
 
 /// Create a new shared audio buffer
 pub fn create_audio_buffer() -> SharedAudioBuffer {
-    Arc::new(Mutex::new(AudioBuffer::new(BUFFER_SIZE * 4)))
+    Arc::new(Mutex::new(AudioBuffer::new(BUFFER_SIZE * 16)))
 }
 
 /// Audio output stream wrapper
@@ -220,9 +220,9 @@ mod tests {
         let shared_buf = create_audio_buffer();
         let buf = shared_buf.lock().unwrap();
 
-        // capacity is BUFFER_SIZE * 4 (512 * 4 = 2048)
-        // internal buffer length is capacity * 2 for stereo (2048 * 2 = 4096)
-        assert_eq!(buf.buffer.len(), BUFFER_SIZE * 8);
+        // capacity is BUFFER_SIZE * 16 (512 * 16 = 8192)
+        // internal buffer length is capacity * 2 for stereo (8192 * 2 = 16384)
+        assert_eq!(buf.buffer.len(), BUFFER_SIZE * 32);
         assert_eq!(buf.available(), 0);
         assert_eq!(buf.read_pos, 0);
         assert_eq!(buf.write_pos, 0);
@@ -241,8 +241,8 @@ mod tests {
         assert!(buf_lock.is_ok(), "Mutex should not be poisoned and should be lockable");
 
         let buf = buf_lock.unwrap();
-        // Verify dimensions and capacity matches BUFFER_SIZE * 4 stereo (8)
-        assert_eq!(buf.buffer.len(), BUFFER_SIZE * 8);
+        // Verify dimensions and capacity matches BUFFER_SIZE * 16 stereo (32)
+        assert_eq!(buf.buffer.len(), BUFFER_SIZE * 32);
         assert_eq!(buf.available(), 0);
         assert_eq!(buf.read_pos, 0);
         assert_eq!(buf.write_pos, 0);
@@ -273,9 +273,9 @@ mod tests {
         let shared_buf = create_audio_buffer();
         let buf = shared_buf.lock().unwrap();
 
-        // BUFFER_SIZE is 512, capacity passed to AudioBuffer::new is BUFFER_SIZE * 4.
+        // BUFFER_SIZE is 512, capacity passed to AudioBuffer::new is BUFFER_SIZE * 16.
         // Inside AudioBuffer::new, buffer length is capacity * 2.
-        assert_eq!(buf.buffer.len(), BUFFER_SIZE * 4 * 2);
+        assert_eq!(buf.buffer.len(), BUFFER_SIZE * 16 * 2);
         assert_eq!(buf.available(), 0);
         assert_eq!(buf.write_pos, 0);
         assert_eq!(buf.read_pos, 0);

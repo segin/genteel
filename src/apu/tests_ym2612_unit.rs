@@ -1,3 +1,4 @@
+use super::blip_buf::BlipBuf;
 use super::ym2612::{Bank, Ym2612};
 use crate::audio;
 
@@ -97,4 +98,17 @@ fn test_ym2612_set_timing_same_values_is_noop() {
     assert_eq!(ym.sample_rate, audio::SAMPLE_RATE);
     assert_eq!(ym.blip_l.read_instant(), 1234);
     assert_eq!(ym.blip_r.read_instant(), -1234);
+}
+
+#[test]
+fn test_ym2612_generate_sample_drains_right_channel_even_when_left_is_silent() {
+    let mut ym = Ym2612::new();
+    ym.blip_l = BlipBuf::new(44_100, 44_100);
+    ym.blip_r = BlipBuf::new(44_100, 44_100);
+    ym.blip_r.add_delta(0, 1000);
+
+    let (left, right) = ym.generate_sample();
+
+    assert_eq!(left, 0);
+    assert_eq!(right, 0);
 }

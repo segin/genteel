@@ -929,10 +929,16 @@ impl Emulator {
         if let Some(writer) = &mut self.wav_writer {
             let _ = writer.write_samples(&bus.audio_buffer);
         }
-        // Move samples to emulator buffer for frontend consumption
-        if self.audio_buffer.len() < audio::samples_per_frame() * 2 {
-            self.audio_buffer.extend(bus.audio_buffer.iter());
+        // Keep a few frames of slack so transient frontend stalls do not
+        // collapse audio into repeated whole-frame dropouts.
+        const MAX_BUFFERED_AUDIO_FRAMES: usize = 8;
+        let max_samples = audio::samples_per_frame() * 2 * MAX_BUFFERED_AUDIO_FRAMES;
+        let needed = self.audio_buffer.len() + bus.audio_buffer.len();
+        if needed > max_samples {
+            let to_drop = needed - max_samples;
+            self.audio_buffer.drain(..to_drop.min(self.audio_buffer.len()));
         }
+        self.audio_buffer.extend(bus.audio_buffer.iter());
         bus.audio_buffer.clear();
     }
     fn handle_interrupts(&mut self) {

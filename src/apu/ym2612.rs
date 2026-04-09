@@ -734,12 +734,17 @@ impl Ym2612 {
     pub fn generate_sample(&mut self) -> (i16, i16) {
         let mut l = [0i16; 1];
         let mut r = [0i16; 1];
-        if self.blip_l.read_samples(&mut l[..]) > 0 {
-            self.blip_r.read_samples(&mut r[..]);
-            (l[0], r[0])
+        let left = if self.blip_l.read_samples(&mut l[..]) > 0 {
+            l[0]
         } else {
-            (self.blip_l.read_instant(), self.blip_r.read_instant())
-        }
+            self.blip_l.read_instant()
+        };
+        let right = if self.blip_r.read_samples(&mut r[..]) > 0 {
+            r[0]
+        } else {
+            self.blip_r.read_instant()
+        };
+        (left, right)
     }
 
     pub fn generate_channel_samples(&mut self) -> [i16; 6] {
