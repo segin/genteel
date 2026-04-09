@@ -103,3 +103,15 @@ fn test_set_timing_updates_rates_and_clears_state() {
     blip.add_delta(0, 250);
     assert_eq!(blip.read_instant(), 250);
 }
+
+#[test]
+fn test_set_timing_same_values_is_noop() {
+    let mut blip = BlipBuf::new(3579545, 44100);
+    blip.add_delta(0, 500);
+
+    blip.set_timing(3579545, 44100);
+
+    assert_eq!(blip.clock_rate(), 3579545);
+    assert_eq!(blip.sample_rate(), 44100);
+    assert_eq!(blip.read_instant(), 500);
+}

@@ -90,6 +90,9 @@ impl BlipBuf {
     /// This clears any queued transitions because they were scheduled
     /// against the previous timing domain.
     pub fn set_timing(&mut self, clock_rate: u32, sample_rate: u32) {
+        if self.clock_rate == clock_rate && self.sample_rate == sample_rate {
+            return;
+        }
         self.clock_rate = clock_rate;
         self.sample_rate = sample_rate;
         self.buffer

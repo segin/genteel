@@ -531,6 +531,15 @@ impl Ym2612 {
 
     /// Reconfigure YM2612 timing for the active video region and output sample rate.
     pub fn set_timing(&mut self, master_clock: u32, sample_rate: u32) {
+        if self.master_clock == master_clock
+            && self.sample_rate == sample_rate
+            && self.blip_l.clock_rate() == master_clock
+            && self.blip_r.clock_rate() == master_clock
+            && self.blip_l.sample_rate() == sample_rate
+            && self.blip_r.sample_rate() == sample_rate
+        {
+            return;
+        }
         self.master_clock = master_clock;
         self.sample_rate = sample_rate;
         self.blip_l.set_timing(master_clock, sample_rate);

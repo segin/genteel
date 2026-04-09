@@ -83,3 +83,18 @@ fn test_ym2612_set_timing_updates_blip_rates() {
     assert_eq!(ym.blip_l.sample_rate(), 48_000);
     assert_eq!(ym.blip_r.sample_rate(), 48_000);
 }
+
+#[test]
+fn test_ym2612_set_timing_same_values_is_noop() {
+    let mut ym = Ym2612::new();
+
+    ym.blip_l.add_delta(0, 1234);
+    ym.blip_r.add_delta(0, -1234);
+
+    ym.set_timing(audio::NTSC_MCLK, audio::SAMPLE_RATE);
+
+    assert_eq!(ym.master_clock, audio::NTSC_MCLK);
+    assert_eq!(ym.sample_rate, audio::SAMPLE_RATE);
+    assert_eq!(ym.blip_l.read_instant(), 1234);
+    assert_eq!(ym.blip_r.read_instant(), -1234);
+}

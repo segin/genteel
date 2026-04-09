@@ -90,9 +90,6 @@ impl Apu {
 
     /// Configure the APU timing for the current region and output sample rate.
     pub fn set_timing(&mut self, region: Region, sample_rate: u32) {
-        if self.region == region && self.sample_rate == sample_rate {
-            return;
-        }
         self.region = region;
         self.sample_rate = sample_rate;
         let master_clock = region.master_clock();
@@ -373,5 +370,27 @@ mod tests {
         assert_eq!(apu.fm.blip_l.clock_rate(), audio::PAL_MCLK);
         assert_eq!(apu.psg.blip.sample_rate(), 48_000);
         assert_eq!(apu.fm.blip_l.sample_rate(), 48_000);
+    }
+
+    #[test]
+    fn test_apu_set_timing_repairs_stale_child_timing() {
+        let mut apu = Apu::new();
+
+        apu.psg.master_clock = 1;
+        apu.psg.sample_rate = 1;
+        apu.fm.master_clock = 1;
+        apu.fm.sample_rate = 1;
+
+        apu.set_timing(Region::Ntsc, audio::SAMPLE_RATE);
+
+        assert_eq!(apu.region, Region::Ntsc);
+        assert_eq!(apu.sample_rate, audio::SAMPLE_RATE);
+        assert_eq!(apu.psg.master_clock, audio::NTSC_MCLK);
+        assert_eq!(apu.psg.sample_rate, audio::SAMPLE_RATE);
+        assert_eq!(apu.fm.master_clock, audio::NTSC_MCLK);
+        assert_eq!(apu.fm.sample_rate, audio::SAMPLE_RATE);
+        assert_eq!(apu.psg.blip.clock_rate(), audio::NTSC_MCLK);
+        assert_eq!(apu.fm.blip_l.clock_rate(), audio::NTSC_MCLK);
+        assert_eq!(apu.fm.blip_r.clock_rate(), audio::NTSC_MCLK);
     }
 }

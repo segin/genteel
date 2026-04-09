@@ -658,6 +658,12 @@ impl Vdp {
         }
     }
 
+    fn render_scanline_if_needed(&mut self, line: u16) {
+        if line < self.screen_height() && !self.rendered_scanlines[line as usize] {
+            self.render_line(line);
+        }
+    }
+
     pub fn set_v_counter(&mut self, v: u16) {
         self.v_counter = v;
     }
@@ -743,6 +749,10 @@ impl Vdp {
 
         let process_limit = std::cmp::min(curr_slot, total_slots as u32);
 
+        if prev_line_clocks == 0 {
+            self.render_scanline_if_needed(self.v_counter);
+        }
+
         for slot_idx in prev_slot..process_limit {
             self.process_slot(slot_idx as usize, is_h40, &mut read_bus_word);
         }
@@ -750,15 +760,8 @@ impl Vdp {
         // Handle line wrapping (3420 MCLK per line)
         if self.mclk_line_clocks >= 3420 {
             self.mclk_line_clocks -= 3420;
-            let completed_line = self.v_counter;
             let frame_lines = if self.is_pal { 313 } else { 262 };
             self.v_counter = (self.v_counter + 1) % frame_lines;
-
-            if completed_line < self.screen_height()
-                && !self.rendered_scanlines[completed_line as usize]
-            {
-                self.render_line(completed_line);
-            }
 
             let active_lines = self.screen_height();
             self.hint_pending = false;
@@ -785,6 +788,8 @@ impl Vdp {
             if self.v_counter == 0 {
                 self.rendered_scanlines.fill(false);
             }
+
+            self.render_scanline_if_needed(self.v_counter);
 
             let next_line_curr_slot = if is_h40 {
                 (self.mclk_line_clocks * 210) / 3420

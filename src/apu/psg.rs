@@ -99,6 +99,13 @@ impl Psg {
 
     /// Reconfigure PSG timing for the active video region and output sample rate.
     pub fn set_timing(&mut self, master_clock: u32, sample_rate: u32) {
+        if self.master_clock == master_clock
+            && self.sample_rate == sample_rate
+            && self.blip.clock_rate() == master_clock
+            && self.blip.sample_rate() == sample_rate
+        {
+            return;
+        }
         self.master_clock = master_clock;
         self.sample_rate = sample_rate;
         self.blip.set_timing(master_clock, sample_rate);
@@ -396,5 +403,21 @@ mod tests {
         assert_eq!(psg.sample_rate, 48_000);
         assert_eq!(psg.blip.clock_rate(), audio::PAL_MCLK);
         assert_eq!(psg.blip.sample_rate(), 48_000);
+    }
+
+    #[test]
+    fn test_psg_set_timing_same_values_is_noop() {
+        let mut psg = Psg::new();
+        psg.tones[0].output = true;
+        psg.tones[0].volume = 0;
+        psg.tones[0].last_amp = 0;
+        psg.update_channel_amp(0);
+        assert!(psg.blip.read_instant() > 0);
+
+        psg.set_timing(audio::NTSC_MCLK, audio::SAMPLE_RATE);
+
+        assert_eq!(psg.master_clock, audio::NTSC_MCLK);
+        assert_eq!(psg.sample_rate, audio::SAMPLE_RATE);
+        assert!(psg.blip.read_instant() > 0);
     }
 }
