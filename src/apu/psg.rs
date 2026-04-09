@@ -272,3 +272,95 @@ impl Default for Psg {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_psg_initialization() {
+        let psg = Psg::new();
+        for tone in &psg.tones {
+            assert_eq!(tone.volume, 0x0F);
+            assert_eq!(tone.frequency, 0);
+        }
+        assert_eq!(psg.noise.volume, 0x0F);
+        assert_eq!(psg.noise.lfsr, 0x4000);
+        assert_eq!(psg.latch_channel, 0);
+        assert_eq!(psg.latch_volume, false);
+    }
+
+    #[test]
+    fn test_psg_reset() {
+        let mut psg = Psg::new();
+        psg.write(0x8A); // Change some state (latch channel 0, freq low)
+        psg.write(0x01); // freq high
+        psg.write(0x90); // Vol channel 0
+
+        psg.reset();
+
+        for tone in &psg.tones {
+            assert_eq!(tone.volume, 0x0F);
+            assert_eq!(tone.frequency, 0);
+        }
+        assert_eq!(psg.latch_channel, 0);
+    }
+
+    #[test]
+    fn test_psg_write_latch_frequency() {
+        let mut psg = Psg::new();
+        // Channel 0, Frequency write
+        // 1000_1010 => Latch=1, Ch=0, Type=Freq, Data=1010
+        psg.write(0x8A);
+        assert_eq!(psg.latch_channel, 0);
+        assert_eq!(psg.latch_volume, false);
+        assert_eq!(psg.tones[0].frequency, 0xA);
+
+        // Second byte: Data write
+        // 0000_0001 => Latch=0, Data=0001
+        psg.write(0x01);
+        assert_eq!(psg.tones[0].frequency, 0x1A); // (1 << 4) | 0xA
+    }
+
+    #[test]
+    fn test_psg_write_latch_volume() {
+        let mut psg = Psg::new();
+        // Channel 1, Volume write
+        // 1011_0100 => Latch=1, Ch=1, Type=Vol, Data=0100
+        psg.write(0xB4);
+        assert_eq!(psg.latch_channel, 1);
+        assert_eq!(psg.latch_volume, true);
+        assert_eq!(psg.tones[1].volume, 4);
+
+        // Data write to volume latch
+        // 0000_0011 => Latch=0, Data=0011
+        psg.write(0x03);
+        assert_eq!(psg.tones[1].volume, 3);
+    }
+
+    #[test]
+    fn test_psg_step_m68k_cycles() {
+        let mut psg = Psg::new();
+        psg.step_m68k_cycles(1);
+        assert_eq!(psg.mclk_debt, 7); // 1 * 7
+
+        psg.step_m68k_cycles(1);
+        assert_eq!(psg.mclk_debt, 14); // 7 + 7 = 14
+
+        psg.step_m68k_cycles(1);
+        // debt was 14, adds 7 (total 21). While loop subtracts 15 => 6
+        assert_eq!(psg.mclk_debt, 6);
+    }
+
+    #[test]
+    fn test_psg_get_channel_samples() {
+        let mut psg = Psg::new();
+        psg.tones[0].last_amp = 100;
+        psg.tones[1].last_amp = 200;
+        psg.tones[2].last_amp = 300;
+        psg.noise.last_amp = 400;
+
+        let samples = psg.get_channel_samples();
+        assert_eq!(samples, [100, 200, 300, 400]);
+    }
+}

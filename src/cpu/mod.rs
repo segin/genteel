@@ -779,9 +779,6 @@ impl Cpu {
 }
 
 #[cfg(test)]
-pub mod test_utils;
-
-#[cfg(test)]
 mod bench_decoder;
 #[cfg(test)]
 mod tests_addressing;
@@ -821,3 +818,5 @@ mod tests_m68k_torture;
 mod tests_performance;
 #[cfg(test)]
 mod tests_security;
+#[cfg(test)]
+mod tests_system;

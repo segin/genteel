@@ -1,4 +1,5 @@
 use super::*;
+use super::render::{PixelLayerData, ShadowHighlightParams};
 
 #[test]
 fn test_render_plane_basic() {
@@ -619,4 +620,181 @@ fn test_sprite_fully_oob_rendering() {
 
     // This should not panic.
     vdp.render_line(0);
+}
+
+#[test]
+fn test_apply_shadow_highlight_basic() {
+    let vdp = Vdp::new();
+    let px = PixelLayerData {
+        bg_color_idx: 0,
+        s_pri: true,
+        s_trans: false,
+        s_col: 0x3E, // Shadow operator
+        a_pri: false,
+        a_trans: false,
+        a_col: 1, // Underlying color
+        b_pri: false,
+        b_trans: true,
+        b_col: 0,
+    };
+
+    let params = ShadowHighlightParams {
+        top_layer: 3,
+        top_col: 0x3E,
+        state: 0, // Normal
+        px: &px,
+    };
+
+    let (new_top_col, new_state) = vdp.apply_shadow_highlight(params);
+    assert_eq!(new_top_col, 1, "Underlying color should be revealed");
+    assert_eq!(new_state, 1, "State should be changed to shadow (1)");
+}
+
+#[test]
+fn test_apply_shadow_highlight_highlight() {
+    let vdp = Vdp::new();
+    let px = PixelLayerData {
+        bg_color_idx: 0,
+        s_pri: true,
+        s_trans: false,
+        s_col: 0x3F, // Highlight operator
+        a_pri: false,
+        a_trans: false,
+        a_col: 2, // Underlying color
+        b_pri: false,
+        b_trans: true,
+        b_col: 0,
+    };
+
+    let params = ShadowHighlightParams {
+        top_layer: 3,
+        top_col: 0x3F,
+        state: 1, // Shadow
+        px: &px,
+    };
+
+    let (new_top_col, new_state) = vdp.apply_shadow_highlight(params);
+    assert_eq!(new_top_col, 2, "Underlying color should be revealed");
+    assert_eq!(new_state, 0, "State should be changed from shadow to normal (0)");
+
+    // Now test the color transform
+    // In `apply_color_transform`, color is r=11..15, g=5..10, b=0..4.
+    // Let's create a known mid-level green color (0x10) to test both halving and increasing.
+    let color = 0b00000_010000_00000; // Partial Green
+
+    // Test the specific state mapping logic from the source code:
+    // state 0 = shadow (halves intensity)
+    // state 1 = normal (unmodified)
+    // state 2 = highlight (halfway towards max)
+    let shadowed = vdp.apply_color_transform(color, 0); // Shadow is state 0
+    let normal = vdp.apply_color_transform(color, 1); // Normal is state 1 or any other
+    let highlighted = vdp.apply_color_transform(color, 2); // Highlight is state 2
+
+    // Extract the green channel (bits 5-10)
+    let g_shadow = (shadowed >> 5) & 0x3F;
+    let g_normal = (normal >> 5) & 0x3F;
+    let g_highlight = (highlighted >> 5) & 0x3F;
+
+    assert_eq!(g_shadow, g_normal >> 1, "Shadow should halve intensity");
+    assert!(g_highlight > g_normal, "Highlight should increase intensity");
+}
+
+#[test]
+fn test_determine_top_layer() {
+    let vdp = Vdp::new();
+
+    // Test Sprite priority
+    let px1 = PixelLayerData {
+        bg_color_idx: 0,
+        s_pri: true,
+        s_trans: false,
+        s_col: 10,
+        a_pri: true,
+        a_trans: false,
+        a_col: 5,
+        b_pri: true,
+        b_trans: false,
+        b_col: 2,
+    };
+
+    let (top_col, top_layer) = vdp.determine_top_layer(&px1);
+    assert_eq!(top_col, 10, "Sprite should win priority");
+    assert_eq!(top_layer, 3, "Sprite is layer 3");
+
+    // Test Plane A priority over Plane B when both are low priority
+    let px2 = PixelLayerData {
+        bg_color_idx: 0,
+        s_pri: false,
+        s_trans: true,
+        s_col: 0,
+        a_pri: false,
+        a_trans: false,
+        a_col: 5,
+        b_pri: false,
+        b_trans: false,
+        b_col: 2,
+    };
+
+    let (top_col, top_layer) = vdp.determine_top_layer(&px2);
+    assert_eq!(top_col, 5, "Plane A should win over Plane B");
+    assert_eq!(top_layer, 2, "Plane A is layer 2");
+}
+
+#[test]
+fn test_fetch_nametable_entry() {
+    let mut vdp = Vdp::new();
+
+    // Nametable entry format is 2 bytes per entry
+    // Let's set Plane A base to 0xC000
+    let base = 0xC000;
+
+    // Let's configure a 64x32 plane size
+    let plane_w = 64;
+
+    // We want to read tile (x=5, y=2)
+    // Addr = Base + (y * plane_w + x) * 2
+    // Addr = 0xC000 + (2 * 64 + 5) * 2 = 0xC000 + (133) * 2 = 0xC000 + 266 = 0xC10A
+
+    // Write entry to VRAM at 0xC10A:
+    // High byte: Priority 1, Pal 2, V-Flip 1, H-Flip 0 -> 0x8000 | 0x4000 | 0x1000 = 0xD000
+    // Low byte: Tile index 0x0123
+    // Entry = 0xD123
+
+    vdp.vram[0xC10A] = 0xD1;
+    vdp.vram[0xC10B] = 0x23;
+
+    let entry = vdp.fetch_nametable_entry(base, 2, 5, plane_w);
+    assert_eq!(entry, 0xD123, "Fetched nametable entry does not match expected");
+}
+
+#[test]
+fn test_get_active_sprites_h40_limits() {
+    let mut vdp = Vdp::new();
+    vdp.registers[12] = 0x81; // H40 Mode
+    vdp.registers[5] = 0x6A; // SAT at 0xD400
+
+    let sat_base = 0xD400;
+
+    // In H40, line limit is 20 sprites, max sprites is 80.
+    // Let's create 25 sprites on line 10.
+    // They are linked linearly: 0 -> 1 -> 2 ... -> 24 -> 0
+    for i in 0..25 {
+        let addr = sat_base + (i * 8);
+        vdp.vram[addr] = 0x00;
+        vdp.vram[addr + 1] = 128 + 10; // Y = 10
+
+        vdp.vram[addr + 2] = 0x00; // 1x1 size
+
+        // Link to next, but last links to 0
+        if i == 24 {
+            vdp.vram[addr + 3] = 0;
+        } else {
+            vdp.vram[addr + 3] = (i + 1) as u8;
+        }
+    }
+
+    let mut buffer = [SpriteAttributes::default(); 80];
+    let count = vdp.get_active_sprites(10, &mut buffer);
+
+    assert_eq!(count, 20, "H40 mode should limit to 20 active sprites per line");
 }
