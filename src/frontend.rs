@@ -633,4 +633,173 @@ mod tests {
             );
         }
     }
+
+    #[cfg(any(feature = "gui", feature = "test_headless"))]
+    #[test]
+    fn test_key_to_button_original() {
+        use winit::keyboard::NamedKey;
+        let mapping = InputMapping::Original;
+
+        // Named keys
+        assert_eq!(
+            key_to_button(&Key::Named(NamedKey::ArrowUp), mapping),
+            Some(("up", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Named(NamedKey::ArrowDown), mapping),
+            Some(("down", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Named(NamedKey::ArrowLeft), mapping),
+            Some(("left", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Named(NamedKey::ArrowRight), mapping),
+            Some(("right", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Named(NamedKey::Enter), mapping),
+            Some(("start", true))
+        );
+
+        // Character keys (case insensitive)
+        assert_eq!(
+            key_to_button(&Key::Character("z".into()), mapping),
+            Some(("a", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("Z".into()), mapping),
+            Some(("a", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("x".into()), mapping),
+            Some(("b", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("X".into()), mapping),
+            Some(("b", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("c".into()), mapping),
+            Some(("c", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("C".into()), mapping),
+            Some(("c", true))
+        );
+
+        // Unmapped keys
+        assert_eq!(key_to_button(&Key::Character("a".into()), mapping), None);
+        assert_eq!(key_to_button(&Key::Named(NamedKey::Space), mapping), None);
+    }
+
+    #[cfg(any(feature = "gui", feature = "test_headless"))]
+    #[test]
+    fn test_key_to_button_ergonomic() {
+        use winit::keyboard::NamedKey;
+        let mapping = InputMapping::Ergonomic;
+
+        // Directional keys (WASD)
+        assert_eq!(
+            key_to_button(&Key::Character("w".into()), mapping),
+            Some(("up", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("W".into()), mapping),
+            Some(("up", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("s".into()), mapping),
+            Some(("down", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("S".into()), mapping),
+            Some(("down", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("a".into()), mapping),
+            Some(("left", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("A".into()), mapping),
+            Some(("left", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("d".into()), mapping),
+            Some(("right", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("D".into()), mapping),
+            Some(("right", true))
+        );
+
+        // Action keys (JKL -> ABC, case insensitive)
+        assert_eq!(
+            key_to_button(&Key::Character("j".into()), mapping),
+            Some(("a", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("J".into()), mapping),
+            Some(("a", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("k".into()), mapping),
+            Some(("b", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("K".into()), mapping),
+            Some(("b", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("l".into()), mapping),
+            Some(("c", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("L".into()), mapping),
+            Some(("c", true))
+        );
+
+        // Action keys (UIO -> XYZ, case insensitive)
+        assert_eq!(
+            key_to_button(&Key::Character("u".into()), mapping),
+            Some(("x", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("U".into()), mapping),
+            Some(("x", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("i".into()), mapping),
+            Some(("y", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("I".into()), mapping),
+            Some(("y", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("o".into()), mapping),
+            Some(("z", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("O".into()), mapping),
+            Some(("z", true))
+        );
+
+        // System buttons
+        assert_eq!(
+            key_to_button(&Key::Named(NamedKey::Enter), mapping),
+            Some(("start", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Named(NamedKey::Space), mapping),
+            Some(("mode", true))
+        );
+
+        // Unmapped keys
+        assert_eq!(key_to_button(&Key::Character("q".into()), mapping), None);
+        assert_eq!(
+            key_to_button(&Key::Named(NamedKey::ArrowUp), mapping),
+            None
+        );
+    }
 }
