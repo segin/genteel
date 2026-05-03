@@ -68,7 +68,7 @@ pub enum PlaneTab {
 }
 
 #[cfg(feature = "gui")]
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct WindowState {
     pub open: bool,
 }
