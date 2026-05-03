@@ -527,17 +527,34 @@ impl Emulator {
         if parts.len() > 1 {
             let raw_path = parts[1];
             // Security: Sanitize path to prevent arbitrary file writes
-            // Only allow saving to current directory by using only the file name component
-            let path = std::path::Path::new(raw_path)
+            // 1. Only allow saving to current directory by using only the file name component
+            let file_name = std::path::Path::new(raw_path)
                 .file_name()
                 .and_then(|s| s.to_str())
                 .unwrap_or("screenshot.png");
+
+            // 2. Enforce .png extension to prevent writing to non-image files
+            let mut path_buf = std::path::PathBuf::from(file_name);
+            if path_buf.extension().and_then(|s| s.to_str()) != Some("png") {
+                path_buf.set_extension("png");
+            }
+            let sanitized_path = path_buf.to_string_lossy().into_owned();
+            let path = &sanitized_path;
 
             if path != raw_path {
                 eprintln!(
                     "Script Warning: Sanitized screenshot path '{}' to '{}'",
                     raw_path, path
                 );
+            }
+
+            // 3. Prevent overwriting existing files to protect local data
+            if std::path::Path::new(path).exists() {
+                eprintln!(
+                    "Script Error: Refusing to overwrite existing file: {}",
+                    path
+                );
+                return;
             }
 
             if let Err(e) = self.save_screenshot(path) {
@@ -1767,41 +1784,71 @@ mod tests {
     #[test]
     fn test_screenshot_path_sanitization() {
         let mut emulator = Emulator::new();
-        let path = "/tmp/genteel_exploit.png";
-        let sanitized_path = "genteel_exploit.png";
+
+        // 1. Test directory traversal and extension enforcement
+        let exploit_path = "/tmp/genteel_exploit.txt";
+        let expected_path = "genteel_exploit.png";
 
         // Ensure files don't exist
-        if std::path::Path::new(path).exists() {
-            let _ = std::fs::remove_file(path);
+        if std::path::Path::new(exploit_path).exists() {
+            let _ = std::fs::remove_file(exploit_path);
         }
-        if std::path::Path::new(sanitized_path).exists() {
-            let _ = std::fs::remove_file(sanitized_path);
+        if std::path::Path::new(expected_path).exists() {
+            let _ = std::fs::remove_file(expected_path);
         }
 
-        // Construct input with command
         let input = crate::input::FrameInput {
-            command: Some(format!("SCREENSHOT {}", path)),
+            command: Some(format!("SCREENSHOT {}", exploit_path)),
             ..Default::default()
         };
 
         emulator.step_frame(Some(&input));
 
-        // Check vulnerability is fixed
-        if std::path::Path::new(path).exists() {
-            let _ = std::fs::remove_file(path);
-            panic!("Vulnerability still present: file created at {}", path);
+        // Check directory traversal is blocked
+        if std::path::Path::new(exploit_path).exists() {
+            let _ = std::fs::remove_file(exploit_path);
+            panic!(
+                "Vulnerability still present: file created at {}",
+                exploit_path
+            );
         }
 
-        // Check sanitized behavior
-        if std::path::Path::new(sanitized_path).exists() {
-            // Success: created at sanitized path
-            let _ = std::fs::remove_file(sanitized_path);
+        // Check sanitized behavior and extension enforcement
+        if std::path::Path::new(expected_path).exists() {
+            let _ = std::fs::remove_file(expected_path);
         } else {
             panic!(
                 "Sanitization failed: file not created at {}",
-                sanitized_path
+                expected_path
             );
         }
+
+        // 2. Test overwrite prevention
+        let protected_file = "protected.txt";
+        let protected_content = "original content";
+        std::fs::write(protected_file, protected_content).unwrap();
+
+        // Try to overwrite it by requesting a screenshot with that name
+        // (even if we request .png, if we request protected.txt it should be sanitized to protected.txt.png if we are not careful,
+        // or if we request protected.txt it will be sanitized to protected.png.
+        // Let's test with a name that won't be changed by sanitization to be sure we test overwrite prevention logic)
+        let screenshot_name = "test_exists.png";
+        std::fs::write(screenshot_name, "do not overwrite").unwrap();
+
+        let input2 = crate::input::FrameInput {
+            command: Some(format!("SCREENSHOT {}", screenshot_name)),
+            ..Default::default()
+        };
+
+        emulator.step_frame(Some(&input2));
+
+        // Content should still be "do not overwrite"
+        let content = std::fs::read_to_string(screenshot_name).unwrap();
+        assert_eq!(content, "do not overwrite", "Overwrite prevention failed!");
+
+        // Cleanup
+        let _ = std::fs::remove_file(protected_file);
+        let _ = std::fs::remove_file(screenshot_name);
     }
 
     #[test]
