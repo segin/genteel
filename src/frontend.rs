@@ -3,7 +3,6 @@
 //! Provides cross-platform windowing, input handling, and rendering
 //! for the Genesis emulator using pure Rust libraries.
 
-use std::path::PathBuf;
 #[cfg(any(feature = "gui", feature = "test_headless"))]
 use winit::keyboard::{Key, KeyCode};
 
@@ -18,45 +17,7 @@ pub enum InputMapping {
     Ergonomic,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PsgToneInfo {
-    pub frequency: u16,
-    pub volume: u8,
-}
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PsgNoiseInfo {
-    pub volume: u8,
-    pub white: bool,
-    pub rate: u8,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DebugInfo {
-    pub frame_count: u64,
-    pub m68k_pc: u32,
-    pub z80_pc: u16,
-    pub display_enabled: bool,
-    pub vdp_status: u16,
-    pub bg_color_index: usize,
-    pub cram: Vec<u16>,
-    pub cram_raw: Vec<u16>,
-    pub vram: Vec<u8>,
-    pub vsram: Vec<u8>,
-    pub wram: Vec<u8>,
-    pub z80_ram: Vec<u8>,
-    pub psg_tone: [PsgToneInfo; 3],
-    pub psg_noise: PsgNoiseInfo,
-    pub vdp_registers: [u8; 24],
-    pub m68k_disasm: Vec<(u32, String)>,
-    pub z80_disasm: Vec<(u16, String)>,
-    pub port1_type: crate::io::ControllerType,
-    pub port2_type: crate::io::ControllerType,
-    pub has_rom: bool,
-    pub current_rom_path: Option<PathBuf>,
-}
-
-use serde::{Deserialize, Serialize};
 
 /// Key mapping for player 1 (Physical KeyCode)
 #[cfg(any(feature = "gui", feature = "test_headless"))]
