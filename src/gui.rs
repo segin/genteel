@@ -103,6 +103,51 @@ pub struct GuiState {
 }
 
 #[cfg(feature = "gui")]
+fn get_gui_config_path() -> PathBuf {
+    if let Ok(path) = std::env::var("GENTEEL_GUI_CONFIG") {
+        return PathBuf::from(path);
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(app_data) = std::env::var("APPDATA") {
+            return PathBuf::from(app_data).join("genteel").join("gui_config.json");
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(home) = std::env::var("HOME") {
+            return PathBuf::from(home)
+                .join("Library")
+                .join("Application Support")
+                .join("genteel")
+                .join("gui_config.json");
+        }
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        if let Ok(config_home) = std::env::var("XDG_CONFIG_HOME") {
+            if !config_home.is_empty() {
+                return PathBuf::from(config_home).join("genteel").join("gui_config.json");
+            }
+        }
+        if let Ok(home) = std::env::var("HOME") {
+            return PathBuf::from(home).join(".config").join("genteel").join("gui_config.json");
+        }
+    }
+
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            return exe_dir.join("gui_config.json");
+        }
+    }
+
+    PathBuf::from("gui_config.json")
+}
+
+#[cfg(feature = "gui")]
 impl GuiState {
     pub fn new(input_mapping: InputMapping) -> Self {
         let mut state = Self {
@@ -128,7 +173,8 @@ impl GuiState {
     }
 
     pub fn load_or_default(input_mapping: InputMapping) -> Self {
-        if let Ok(file) = std::fs::File::open("gui_config.json") {
+        let config_path = get_gui_config_path();
+        if let Ok(file) = std::fs::File::open(&config_path) {
             if let Ok(metadata) = file.metadata() {
                 if metadata.len() <= MAX_GUI_CONFIG_SIZE {
                     use std::io::Read;
@@ -180,7 +226,11 @@ impl GuiState {
 
     pub fn save(&self) {
         if let Ok(json) = serde_json::to_string_pretty(self) {
-            let _ = std::fs::write("gui_config.json", json);
+            let path = get_gui_config_path();
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = std::fs::write(path, json);
         }
     }
 
@@ -2376,5 +2426,26 @@ mod tests {
         let builder = || Err::<i32, String>("Initialization failed".to_string());
         let result = init_gilrs_with_builder(builder);
         assert_eq!(result, None);
+    }
+
+    #[cfg(feature = "gui")]
+    #[test]
+    fn test_get_gui_config_path_env_override() {
+        let test_path = "custom_config_path.json";
+        std::env::set_var("GENTEEL_GUI_CONFIG", test_path);
+        let path = get_gui_config_path();
+        std::env::remove_var("GENTEEL_GUI_CONFIG");
+        assert_eq!(path, PathBuf::from(test_path));
+    }
+
+    #[cfg(feature = "gui")]
+    #[test]
+    fn test_get_gui_config_path_default() {
+        // Clear env var just in case
+        std::env::remove_var("GENTEEL_GUI_CONFIG");
+        let path = get_gui_config_path();
+
+        // It should at least end with gui_config.json
+        assert!(path.to_str().unwrap().ends_with("gui_config.json"));
     }
 }
