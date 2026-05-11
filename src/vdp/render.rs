@@ -686,7 +686,8 @@ impl RenderOps for Vdp {
     /// V-scroll values in VSRAM are stored as signed words. We preserve the
     /// raw register contents so wraparound matches hardware behavior.
     fn get_v_scroll(&self, is_plane_a: bool, tile_h: usize, fetch_line: u16) -> u16 {
-        let (mode3, vsram) = if self.latched_scroll_valid && self.latched_scroll_line == fetch_line {
+        let (mode3, vsram) = if self.latched_scroll_valid && self.latched_scroll_line == fetch_line
+        {
             (self.latched_mode3, &self.latched_vsram)
         } else {
             (self.registers[REG_MODE3], &self.vsram)

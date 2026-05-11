@@ -104,6 +104,9 @@ mod tests {
         let result = crate::gui::run(emulator, None);
 
         // We expect an error because there is no display server available in this headless environment
-        assert!(result.is_err(), "Expected run to fail without a display server");
+        assert!(
+            result.is_err(),
+            "Expected run to fail without a display server"
+        );
     }
 }
