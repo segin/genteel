@@ -122,9 +122,20 @@ pub fn key_to_button(key: &Key, mapping: InputMapping) -> Option<(&'static str, 
             Key::Character(s) if s == "x" || s == "X" => Some(("b", true)),
             Key::Character(s) if s == "c" || s == "C" => Some(("c", true)),
             Key::Named(winit::keyboard::NamedKey::Enter) => Some(("start", true)),
+            // 6-button extension
+            Key::Character(s) if s == "a" || s == "A" => Some(("x", true)),
+            Key::Character(s) if s == "s" || s == "S" => Some(("y", true)),
+            Key::Character(s) if s == "d" || s == "D" => Some(("z", true)),
+            Key::Character(s) if s == "q" || s == "Q" => Some(("mode", true)),
             _ => None,
         },
         InputMapping::Ergonomic => match key {
+            // Player 1 - D-pad (WASD physical or Arrow keys)
+            Key::Named(winit::keyboard::NamedKey::ArrowUp) => Some(("up", true)),
+            Key::Named(winit::keyboard::NamedKey::ArrowDown) => Some(("down", true)),
+            Key::Named(winit::keyboard::NamedKey::ArrowLeft) => Some(("left", true)),
+            Key::Named(winit::keyboard::NamedKey::ArrowRight) => Some(("right", true)),
+
             Key::Character(s) if s == "w" || s == "W" => Some(("up", true)),
             Key::Character(s) if s == "s" || s == "S" => Some(("down", true)),
             Key::Character(s) if s == "a" || s == "A" => Some(("left", true)),
@@ -632,5 +643,115 @@ mod tests {
                 mapping, keycode
             );
         }
+    }
+
+    #[cfg(any(feature = "gui", feature = "test_headless"))]
+    #[test]
+    fn test_keycode_to_button_mode_isolation() {
+        // Test keys that should ONLY work in Ergonomic mode
+        assert_eq!(
+            keycode_to_button(KeyCode::KeyW, InputMapping::Original),
+            None
+        );
+        assert_eq!(
+            keycode_to_button(KeyCode::KeyJ, InputMapping::Original),
+            None
+        );
+        assert_eq!(
+            keycode_to_button(KeyCode::Space, InputMapping::Original),
+            None
+        );
+
+        // Test keys that should ONLY work in Original mode
+        // (Wait, Original mode 6-button uses ASDA, which Ergonomic uses for WASD.
+        // So they overlap but with different meanings.)
+        assert_eq!(
+            keycode_to_button(KeyCode::KeyA, InputMapping::Original),
+            Some(("x", true))
+        );
+        assert_eq!(
+            keycode_to_button(KeyCode::KeyA, InputMapping::Ergonomic),
+            Some(("left", true))
+        );
+
+        // Test a key that is unmapped in both
+        assert_eq!(
+            keycode_to_button(KeyCode::KeyM, InputMapping::Original),
+            None
+        );
+        assert_eq!(
+            keycode_to_button(KeyCode::KeyM, InputMapping::Ergonomic),
+            None
+        );
+    }
+
+    #[cfg(any(feature = "gui", feature = "test_headless"))]
+    #[test]
+    fn test_key_to_button_comprehensive() {
+        use winit::keyboard::NamedKey;
+
+        // Test Original Mapping
+        let mapping = InputMapping::Original;
+        assert_eq!(
+            key_to_button(&Key::Named(NamedKey::ArrowUp), mapping),
+            Some(("up", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("z".into()), mapping),
+            Some(("a", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("Z".into()), mapping),
+            Some(("a", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Named(NamedKey::Enter), mapping),
+            Some(("start", true))
+        );
+
+        // 6-button (These are currently expected to FAIL before we fix the bug)
+        assert_eq!(
+            key_to_button(&Key::Character("a".into()), mapping),
+            Some(("x", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("s".into()), mapping),
+            Some(("y", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("d".into()), mapping),
+            Some(("z", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("q".into()), mapping),
+            Some(("mode", true))
+        );
+
+        // Test Ergonomic Mapping
+        let mapping = InputMapping::Ergonomic;
+        assert_eq!(
+            key_to_button(&Key::Character("w".into()), mapping),
+            Some(("up", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("j".into()), mapping),
+            Some(("a", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Named(NamedKey::Space), mapping),
+            Some(("mode", true))
+        );
+
+        // Ergonomic also supports arrows (This is also expected to FAIL before we fix it)
+        assert_eq!(
+            key_to_button(&Key::Named(NamedKey::ArrowDown), mapping),
+            Some(("down", true))
+        );
+
+        // Case insensitivity
+        assert_eq!(
+            key_to_button(&Key::Character("W".into()), mapping),
+            Some(("up", true))
+        );
     }
 }
