@@ -479,6 +479,8 @@ impl Emulator {
 
         let p1 = frame_input.p1;
         let p2 = frame_input.p2;
+        let command = frame_input.command.clone();
+        drop(frame_input);
 
         {
             let mut bus = self.bus.borrow_mut();
@@ -491,7 +493,7 @@ impl Emulator {
         }
 
         // Handle commands (e.g., SCREENSHOT <path>)
-        if let Some(cmd) = &frame_input.command {
+        if let Some(cmd) = &command {
             self.execute_script_command(cmd);
         }
 

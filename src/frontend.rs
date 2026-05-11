@@ -648,7 +648,7 @@ mod tests {
     #[cfg(any(feature = "gui", feature = "test_headless"))]
     #[test]
     fn test_keycode_to_button_mode_isolation() {
-        // Test keys that should ONLY work in Ergonomic mode
+        // Keys that only resolve in Ergonomic mode
         assert_eq!(
             keycode_to_button(KeyCode::KeyW, InputMapping::Original),
             None
@@ -662,9 +662,7 @@ mod tests {
             None
         );
 
-        // Test keys that should ONLY work in Original mode
-        // (Wait, Original mode 6-button uses ASDA, which Ergonomic uses for WASD.
-        // So they overlap but with different meanings.)
+        // KeyA is mapped in both modes but to different buttons
         assert_eq!(
             keycode_to_button(KeyCode::KeyA, InputMapping::Original),
             Some(("x", true))
@@ -674,7 +672,7 @@ mod tests {
             Some(("left", true))
         );
 
-        // Test a key that is unmapped in both
+        // Unmapped in both modes
         assert_eq!(
             keycode_to_button(KeyCode::KeyM, InputMapping::Original),
             None
@@ -690,12 +688,29 @@ mod tests {
     fn test_key_to_button_comprehensive() {
         use winit::keyboard::NamedKey;
 
-        // Test Original Mapping
+        // Original mapping
         let mapping = InputMapping::Original;
         assert_eq!(
             key_to_button(&Key::Named(NamedKey::ArrowUp), mapping),
             Some(("up", true))
         );
+        assert_eq!(
+            key_to_button(&Key::Named(NamedKey::ArrowDown), mapping),
+            Some(("down", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Named(NamedKey::ArrowLeft), mapping),
+            Some(("left", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Named(NamedKey::ArrowRight), mapping),
+            Some(("right", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Named(NamedKey::Enter), mapping),
+            Some(("start", true))
+        );
+        // Action keys (case insensitive)
         assert_eq!(
             key_to_button(&Key::Character("z".into()), mapping),
             Some(("a", true))
@@ -705,13 +720,28 @@ mod tests {
             Some(("a", true))
         );
         assert_eq!(
-            key_to_button(&Key::Named(NamedKey::Enter), mapping),
-            Some(("start", true))
+            key_to_button(&Key::Character("x".into()), mapping),
+            Some(("b", true))
         );
-
-        // 6-button (These are currently expected to FAIL before we fix the bug)
+        assert_eq!(
+            key_to_button(&Key::Character("X".into()), mapping),
+            Some(("b", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("c".into()), mapping),
+            Some(("c", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("C".into()), mapping),
+            Some(("c", true))
+        );
+        // 6-button extension
         assert_eq!(
             key_to_button(&Key::Character("a".into()), mapping),
+            Some(("x", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("A".into()), mapping),
             Some(("x", true))
         );
         assert_eq!(
@@ -726,32 +756,71 @@ mod tests {
             key_to_button(&Key::Character("q".into()), mapping),
             Some(("mode", true))
         );
+        // Unmapped in Original mode
+        assert_eq!(key_to_button(&Key::Named(NamedKey::Space), mapping), None);
 
-        // Test Ergonomic Mapping
+        // Ergonomic mapping
         let mapping = InputMapping::Ergonomic;
         assert_eq!(
             key_to_button(&Key::Character("w".into()), mapping),
             Some(("up", true))
         );
         assert_eq!(
+            key_to_button(&Key::Character("W".into()), mapping),
+            Some(("up", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("s".into()), mapping),
+            Some(("down", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("a".into()), mapping),
+            Some(("left", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("d".into()), mapping),
+            Some(("right", true))
+        );
+        assert_eq!(
             key_to_button(&Key::Character("j".into()), mapping),
             Some(("a", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("J".into()), mapping),
+            Some(("a", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("k".into()), mapping),
+            Some(("b", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("l".into()), mapping),
+            Some(("c", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("u".into()), mapping),
+            Some(("x", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("i".into()), mapping),
+            Some(("y", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("o".into()), mapping),
+            Some(("z", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Named(NamedKey::Enter), mapping),
+            Some(("start", true))
         );
         assert_eq!(
             key_to_button(&Key::Named(NamedKey::Space), mapping),
             Some(("mode", true))
         );
-
-        // Ergonomic also supports arrows (This is also expected to FAIL before we fix it)
+        // Ergonomic also supports arrows
         assert_eq!(
             key_to_button(&Key::Named(NamedKey::ArrowDown), mapping),
             Some(("down", true))
-        );
-
-        // Case insensitivity
-        assert_eq!(
-            key_to_button(&Key::Character("W".into()), mapping),
-            Some(("up", true))
         );
     }
 }

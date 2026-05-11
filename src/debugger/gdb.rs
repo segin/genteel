@@ -7,7 +7,7 @@ use std::collections::HashSet;
 use std::io::{BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::time::{Duration, Instant};
-use subtle::{Choice, ConstantTimeEq};
+use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
 /// Default GDB server port
 pub const DEFAULT_PORT: u16 = 1234;
@@ -31,6 +31,7 @@ const MAX_PASSWORD_CHECK_LEN: usize = 128;
 ///
 /// This function executes in constant time to prevent timing attacks when checking passwords.
 /// It iterates up to MAX_PASSWORD_CHECK_LEN to ensure timing is independent of string length.
+#[cfg(test)]
 fn constant_time_eq(a: &str, b: &str) -> bool {
     let a_bytes = a.as_bytes();
     let b_bytes = b.as_bytes();
@@ -801,8 +802,11 @@ impl GdbServer {
             for i in 0..MAX_PASSWORD_CHECK_LEN {
                 let in_provided = Choice::from((i < provided_bytes.len()) as u8);
                 // Selection of the byte to compare is branching-free
-                let b_provided =
-                    u8::conditional_select(&0, &provided_bytes.get(i).copied().unwrap_or(0), in_provided);
+                let b_provided = u8::conditional_select(
+                    &0,
+                    &provided_bytes.get(i).copied().unwrap_or(0),
+                    in_provided,
+                );
                 let b_correct = self.password_bytes[i];
 
                 matches &= b_provided.ct_eq(&b_correct);
