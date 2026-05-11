@@ -168,10 +168,6 @@ fn default_rendered_scanlines() -> [bool; 240] {
     [false; 240]
 }
 
-fn default_latched_vsram() -> [u8; 80] {
-    [0; 80]
-}
-
 /// VDP Command State Machine
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct CommandState {
@@ -237,7 +233,7 @@ pub struct Vdp {
     #[serde(skip, default = "default_rendered_scanlines")]
     rendered_scanlines: [bool; 240],
 
-    #[serde(skip, default = "default_latched_vsram")]
+    #[serde(skip, default)]
     pub(crate) latched_vsram: [u8; 80],
     #[serde(skip, default)]
     pub(crate) latched_mode3: u8,
