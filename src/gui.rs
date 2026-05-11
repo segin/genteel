@@ -237,10 +237,10 @@ pub struct DebugInfo {
     pub bg_color_index: u8,
     pub cram: [u16; 64],
     pub cram_raw: [u16; 64],
-    pub vram: [u8; 0x10000],
+    pub vram: Option<[u8; 0x10000]>,
     pub vsram: [u8; 80],
-    pub wram: [u8; 0x10000],
-    pub z80_ram: [u8; 0x2000],
+    pub wram: Option<[u8; 0x10000]>,
+    pub z80_ram: Option<[u8; 0x2000]>,
     pub ym2612_regs: [[u8; 256]; 2],
     pub psg_tone: [crate::apu::psg::ToneChannel; 3],
     pub psg_noise: crate::apu::psg::NoiseChannel,
@@ -1166,26 +1166,28 @@ impl Framework {
             egui::Window::new("Tile Viewer")
                 .open(&mut open)
                 .show(&self.egui_ctx, |ui| {
-                    // Render tiles to a buffer
-                    let image = std::sync::Arc::make_mut(&mut self.tile_viewer_image);
-                    for tile_idx in 0..2048 {
-                        let tile_x = (tile_idx % 16) * 8;
-                        let tile_y = (tile_idx / 16) * 8;
+                    if let Some(vram) = &debug_info.vram {
+                        // Render tiles to a buffer
+                        let image = std::sync::Arc::make_mut(&mut self.tile_viewer_image);
+                        for tile_idx in 0..2048 {
+                            let tile_x = (tile_idx % 16) * 8;
+                            let tile_y = (tile_idx / 16) * 8;
 
-                        for y in 0..8 {
-                            let row_addr = tile_idx * 32 + y * 4;
-                            for x in 0..8 {
-                                let byte = debug_info.vram[row_addr + (x / 2)];
-                                let color_idx = if x % 2 == 0 { byte >> 4 } else { byte & 0x0F };
+                            for y in 0..8 {
+                                let row_addr = tile_idx * 32 + y * 4;
+                                for x in 0..8 {
+                                    let byte = vram[row_addr + (x / 2)];
+                                    let color_idx = if x % 2 == 0 { byte >> 4 } else { byte & 0x0F };
 
-                                // Use first palette (0-15)
+                                    // Use first palette (0-15)
                                 let color565 = debug_info.cram[color_idx as usize];
                                 let r = (((color565 >> 11) & 0x1F) << 3) as u8;
                                 let g = (((color565 >> 5) & 0x3F) << 2) as u8;
                                 let b = ((color565 & 0x1F) << 3) as u8;
 
-                                let pixel_idx = (tile_y + y) * 128 + (tile_x + x);
-                                image.pixels[pixel_idx] = egui::Color32::from_rgb(r, g, b);
+                                    let pixel_idx = (tile_y + y) * 128 + (tile_x + x);
+                                    image.pixels[pixel_idx] = egui::Color32::from_rgb(r, g, b);
+                                }
                             }
                         }
                     }
@@ -1216,19 +1218,20 @@ impl Framework {
             egui::Window::new("Sprite Viewer")
                 .open(&mut open)
                 .show(&self.egui_ctx, |ui| {
-                    let sat_base = ((debug_info.vdp_registers[5] as usize) & 0x7F) << 9;
-                    let h40 = (debug_info.vdp_registers[12] & 0x81) == 0x81;
-                    let max_sprites = if h40 { 80 } else { 64 };
+                    if let Some(vram) = &debug_info.vram {
+                        let sat_base = ((debug_info.vdp_registers[5] as usize) & 0x7F) << 9;
+                        let h40 = (debug_info.vdp_registers[12] & 0x81) == 0x81;
+                        let max_sprites = if h40 { 80 } else { 64 };
 
-                    let iter = crate::vdp::SpriteIterator {
-                        vram: &debug_info.vram[..],
-                        next_idx: 0,
-                        count: 0,
-                        max_sprites,
-                        sat_base,
-                    };
+                        let iter = crate::vdp::SpriteIterator {
+                            vram: &vram[..],
+                            next_idx: 0,
+                            count: 0,
+                            max_sprites,
+                            sat_base,
+                        };
 
-                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        egui::ScrollArea::vertical().show(ui, |ui| {
                         egui::Grid::new("sprite_grid").striped(true).show(ui, |ui| {
                             ui.label("Idx");
                             ui.label("Pos");
@@ -1285,7 +1288,8 @@ impl Framework {
                             }
                         });
                     });
-                });
+                }
+            });
             if !open {
                 self.gui_state.set_window_open("Sprite Viewer", false);
             }
@@ -1335,48 +1339,50 @@ impl Framework {
                                         texture_opt: &mut Option<egui::TextureHandle>,
                                         image_arc: &mut std::sync::Arc<egui::ColorImage>,
                                         id: &str| {
-                        let image = std::sync::Arc::make_mut(image_arc);
-                        let expected_size = [plane_w * 8, plane_h * 8];
-                        if image.size != expected_size {
-                            *image =
-                                egui::ColorImage::new(expected_size, egui::Color32::TRANSPARENT);
-                        } else {
-                            image.pixels.fill(egui::Color32::TRANSPARENT);
-                        }
+                        if let Some(vram) = &debug_info.vram {
+                            let image = std::sync::Arc::make_mut(image_arc);
+                            let expected_size = [plane_w * 8, plane_h * 8];
+                            if image.size != expected_size {
+                                *image = egui::ColorImage::new(
+                                    expected_size,
+                                    egui::Color32::TRANSPARENT,
+                                );
+                            } else {
+                                image.pixels.fill(egui::Color32::TRANSPARENT);
+                            }
 
-                        for ty in 0..plane_h {
-                            for tx in 0..plane_w {
-                                let entry_addr = base + (ty * plane_w + tx) * 2;
-                                let entry = u16::from_be_bytes([
-                                    debug_info.vram[entry_addr],
-                                    debug_info.vram[entry_addr + 1],
-                                ]);
-                                let tile_idx = entry & 0x07FF;
-                                let palette = ((entry >> 13) & 0x03) as usize;
-                                let v_flip = (entry & 0x1000) != 0;
-                                let h_flip = (entry & 0x0800) != 0;
+                            for ty in 0..plane_h {
+                                for tx in 0..plane_w {
+                                    let entry_addr = base + (ty * plane_w + tx) * 2;
+                                    let entry = u16::from_be_bytes([
+                                        vram[entry_addr],
+                                        vram[entry_addr + 1],
+                                    ]);
+                                    let tile_idx = entry & 0x07FF;
+                                    let palette = ((entry >> 13) & 0x03) as usize;
+                                    let v_flip = (entry & 0x1000) != 0;
+                                    let h_flip = (entry & 0x0800) != 0;
 
-                                for py in 0..8 {
-                                    let row_addr = tile_idx as usize * 32
-                                        + (if v_flip { 7 - py } else { py }) * 4;
-                                    for px in 0..8 {
-                                        let byte = debug_info.vram
-                                            [row_addr + (if h_flip { 7 - px } else { px }) / 2];
-                                        let color_idx =
-                                            if (if h_flip { 7 - px } else { px }) % 2 == 0 {
-                                                byte >> 4
-                                            } else {
-                                                byte & 0x0F
-                                            };
+                                    for py in 0..8 {
+                                        let row_addr = tile_idx as usize * 32
+                                            + (if v_flip { 7 - py } else { py }) * 4;
+                                        for px in 0..8 {
+                                            let h_idx = if h_flip { 7 - px } else { px };
+                                            let byte = vram[row_addr + h_idx / 2];
+                                            let color_idx =
+                                                if h_idx % 2 == 0 { byte >> 4 } else { byte & 0x0F };
 
-                                        let color565 =
-                                            debug_info.cram[palette * 16 + color_idx as usize];
-                                        let r = (((color565 >> 11) & 0x1F) << 3) as u8;
-                                        let g = (((color565 >> 5) & 0x3F) << 2) as u8;
-                                        let b = ((color565 & 0x1F) << 3) as u8;
+                                            let color565 =
+                                                debug_info.cram[palette * 16 + color_idx as usize];
+                                            let r = (((color565 >> 11) & 0x1F) << 3) as u8;
+                                            let g = (((color565 >> 5) & 0x3F) << 2) as u8;
+                                            let b = ((color565 & 0x1F) << 3) as u8;
 
-                                        let pixel_idx = (ty * 8 + py) * plane_w * 8 + (tx * 8 + px);
-                                        image.pixels[pixel_idx] = egui::Color32::from_rgb(r, g, b);
+                                            let pixel_idx =
+                                                (ty * 8 + py) * plane_w * 8 + (tx * 8 + px);
+                                            image.pixels[pixel_idx] =
+                                                egui::Color32::from_rgb(r, g, b);
+                                        }
                                     }
                                 }
                             }
@@ -1428,36 +1434,38 @@ impl Framework {
             egui::Window::new("VDP Memory Hex")
                 .open(&mut open)
                 .show(&self.egui_ctx, |ui| {
-                    ui.collapsing("VRAM", |ui| {
-                        egui::ScrollArea::vertical()
-                            .id_source("vram_hex")
-                            .show_rows(
-                                ui,
-                                ui.text_style_height(&egui::TextStyle::Monospace),
-                                0x10000 / 16,
-                                |ui, row_range| {
-                                    egui::Grid::new("vram_grid").show(ui, |ui| {
-                                        let mut l_buffer = String::with_capacity(64);
-                                        for row in row_range {
-                                            let addr = row * 16;
-                                            l_buffer.clear();
-                                            let _ = write!(&mut l_buffer, "{:04X}:", addr);
-                                            ui.label(egui::RichText::new(&l_buffer).monospace());
+                    if let Some(vram) = &debug_info.vram {
+                        ui.collapsing("VRAM", |ui| {
+                            egui::ScrollArea::vertical()
+                                .id_source("vram_hex")
+                                .show_rows(
+                                    ui,
+                                    ui.text_style_height(&egui::TextStyle::Monospace),
+                                    0x10000 / 16,
+                                    |ui, row_range| {
+                                        egui::Grid::new("vram_grid").show(ui, |ui| {
+                                            let mut l_buffer = String::with_capacity(64);
+                                            for row in row_range {
+                                                let addr = row * 16;
+                                                l_buffer.clear();
+                                                let _ = write!(&mut l_buffer, "{:04X}:", addr);
+                                                ui.label(egui::RichText::new(&l_buffer).monospace());
 
-                                            l_buffer.clear();
-                                            for i in 0..16 {
-                                                l_buffer.push_str(
-                                                    HEX_LOOKUP[debug_info.vram[addr + i] as usize],
-                                                );
-                                                l_buffer.push(' ');
+                                                l_buffer.clear();
+                                                for i in 0..16 {
+                                                    l_buffer.push_str(
+                                                        HEX_LOOKUP[vram[addr + i] as usize],
+                                                    );
+                                                    l_buffer.push(' ');
+                                                }
+                                                ui.label(egui::RichText::new(&l_buffer).monospace());
+                                                ui.end_row();
                                             }
-                                            ui.label(egui::RichText::new(&l_buffer).monospace());
-                                            ui.end_row();
-                                        }
-                                    });
-                                },
-                            );
-                    });
+                                        });
+                                    },
+                                );
+                        });
+                    }
                     ui.collapsing("CRAM", |ui| {
                         egui::Grid::new("cram_grid").show(ui, |ui| {
                             let mut l_buffer = String::with_capacity(64);
@@ -1521,67 +1529,68 @@ impl Framework {
             egui::Window::new("Memory Viewer")
                 .open(&mut open)
                 .show(&self.egui_ctx, |ui| {
-                    ui.collapsing("Work RAM (M68k)", |ui| {
-                        egui::ScrollArea::vertical()
-                            .id_source("wram_hex")
-                            .show_rows(
-                                ui,
-                                ui.text_style_height(&egui::TextStyle::Monospace),
-                                0x10000 / 16,
-                                |ui, row_range| {
-                                    egui::Grid::new("wram_grid").show(ui, |ui| {
-                                        let mut l_buffer = String::with_capacity(64);
-                                        for row in row_range {
-                                            let addr = row * 16;
-                                            l_buffer.clear();
-                                            let _ = write!(&mut l_buffer, "{:04X}:", addr);
-                                            ui.label(egui::RichText::new(&l_buffer).monospace());
+                    if let Some(wram) = &debug_info.wram {
+                        ui.collapsing("Work RAM (M68k)", |ui| {
+                            egui::ScrollArea::vertical()
+                                .id_source("wram_hex")
+                                .show_rows(
+                                    ui,
+                                    ui.text_style_height(&egui::TextStyle::Monospace),
+                                    0x10000 / 16,
+                                    |ui, row_range| {
+                                        egui::Grid::new("wram_grid").show(ui, |ui| {
+                                            let mut l_buffer = String::with_capacity(64);
+                                            for row in row_range {
+                                                let addr = row * 16;
+                                                l_buffer.clear();
+                                                let _ = write!(&mut l_buffer, "{:04X}:", addr);
+                                                ui.label(egui::RichText::new(&l_buffer).monospace());
 
-                                            l_buffer.clear();
-                                            for i in 0..16 {
-                                                l_buffer.push_str(
-                                                    HEX_LOOKUP[debug_info.wram[addr + i] as usize],
-                                                );
-                                                l_buffer.push(' ');
+                                                l_buffer.clear();
+                                                for i in 0..16 {
+                                                    l_buffer.push_str(HEX_LOOKUP[wram[addr + i] as usize]);
+                                                    l_buffer.push(' ');
+                                                }
+                                                ui.label(egui::RichText::new(&l_buffer).monospace());
+                                                ui.end_row();
                                             }
-                                            ui.label(egui::RichText::new(&l_buffer).monospace());
-                                            ui.end_row();
-                                        }
-                                    });
-                                },
-                            );
-                    });
-                    ui.collapsing("Z80 RAM", |ui| {
-                        egui::ScrollArea::vertical()
-                            .id_source("z80_ram_hex")
-                            .show_rows(
-                                ui,
-                                ui.text_style_height(&egui::TextStyle::Monospace),
-                                0x2000 / 16,
-                                |ui, row_range| {
-                                    egui::Grid::new("z80_ram_grid").show(ui, |ui| {
-                                        let mut l_buffer = String::with_capacity(64);
-                                        for row in row_range {
-                                            let addr = row * 16;
-                                            l_buffer.clear();
-                                            let _ = write!(&mut l_buffer, "{:04X}:", addr);
-                                            ui.label(egui::RichText::new(&l_buffer).monospace());
+                                        });
+                                    },
+                                );
+                        });
+                    }
+                    if let Some(z80_ram) = &debug_info.z80_ram {
+                        ui.collapsing("Z80 RAM", |ui| {
+                            egui::ScrollArea::vertical()
+                                .id_source("z80_ram_hex")
+                                .show_rows(
+                                    ui,
+                                    ui.text_style_height(&egui::TextStyle::Monospace),
+                                    0x2000 / 16,
+                                    |ui, row_range| {
+                                        egui::Grid::new("z80_ram_grid").show(ui, |ui| {
+                                            let mut l_buffer = String::with_capacity(64);
+                                            for row in row_range {
+                                                let addr = row * 16;
+                                                l_buffer.clear();
+                                                let _ = write!(&mut l_buffer, "{:04X}:", addr);
+                                                ui.label(egui::RichText::new(&l_buffer).monospace());
 
-                                            l_buffer.clear();
-                                            for i in 0..16 {
-                                                l_buffer.push_str(
-                                                    HEX_LOOKUP
-                                                        [debug_info.z80_ram[addr + i] as usize],
-                                                );
-                                                l_buffer.push(' ');
+                                                l_buffer.clear();
+                                                for i in 0..16 {
+                                                    l_buffer.push_str(
+                                                        HEX_LOOKUP[z80_ram[addr + i] as usize],
+                                                    );
+                                                    l_buffer.push(' ');
+                                                }
+                                                ui.label(egui::RichText::new(&l_buffer).monospace());
+                                                ui.end_row();
                                             }
-                                            ui.label(egui::RichText::new(&l_buffer).monospace());
-                                            ui.end_row();
-                                        }
-                                    });
-                                },
-                            );
-                    });
+                                        });
+                                    },
+                                );
+                        });
+                    }
                 });
             if !open {
                 self.gui_state.set_window_open("Memory Viewer", false);
@@ -1925,6 +1934,7 @@ impl Framework {
 #[cfg(feature = "gui")]
 fn collect_debug_info(
     emulator: &mut Emulator,
+    gui_state: &GuiState,
     force_red: bool,
     pixels_frame: &mut [u8],
 ) -> DebugInfo {
@@ -1959,10 +1969,31 @@ fn collect_debug_info(
         *value = u16::from_be_bytes([bus.vdp.cram[i * 2], bus.vdp.cram[i * 2 + 1]]);
     }
 
-    let mut wram = [0u8; 0x10000];
-    wram.copy_from_slice(&bus.work_ram);
-    let mut z80_ram = [0u8; 0x2000];
-    z80_ram.copy_from_slice(&bus.z80_ram);
+    let wram = if gui_state.is_window_open("Memory Viewer") {
+        let mut wram = [0u8; 0x10000];
+        wram.copy_from_slice(&bus.work_ram);
+        Some(wram)
+    } else {
+        None
+    };
+
+    let z80_ram = if gui_state.is_window_open("Memory Viewer") {
+        let mut z80_ram = [0u8; 0x2000];
+        z80_ram.copy_from_slice(&bus.z80_ram);
+        Some(z80_ram)
+    } else {
+        None
+    };
+
+    let vram = if gui_state.is_window_open("VDP Memory Hex")
+        || gui_state.is_window_open("Tile Viewer")
+        || gui_state.is_window_open("Sprite Viewer")
+        || gui_state.is_window_open("Scroll Plane Viewer")
+    {
+        Some(bus.vdp.vram)
+    } else {
+        None
+    };
 
     let info = DebugInfo {
         m68k_pc: emulator.cpu.pc,
@@ -1997,7 +2028,7 @@ fn collect_debug_info(
         bg_color_index: bus.vdp.registers[7],
         cram: bus.vdp.cram_cache,
         cram_raw,
-        vram: bus.vdp.vram,
+        vram,
         vsram: bus.vdp.vsram,
         wram,
         z80_ram,
@@ -2300,8 +2331,12 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                             emulator.audio_buffer.clear();
 
                             // Collect debug info and render
-                            let debug_info =
-                                collect_debug_info(&mut emulator, force_red, pixels.frame_mut());
+                            let debug_info = collect_debug_info(
+                                &mut emulator,
+                                &framework.gui_state,
+                                force_red,
+                                pixels.frame_mut(),
+                            );
 
                             // Update egui
                             framework.prepare(window, &debug_info);
