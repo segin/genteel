@@ -19,7 +19,7 @@ fn test_draw_full_tile_row_refactor() {
     // 0x0000.
     let entry = 0x0000;
     let pixel_v = 0; // Top row of tile
-    let dest_idx = 0; // Start of framebuffer
+    let dest_idx = 0; // Start of scanline
 
     let mut line_buf = [0u8; 320];
     vdp.draw_full_tile_row(entry, pixel_v, dest_idx, &mut line_buf);
@@ -33,9 +33,9 @@ fn test_draw_full_tile_row_refactor() {
 #[test]
 fn test_draw_full_tile_row_bounds_safe() {
     let vdp = Vdp::new();
-    // Try to draw at end of framebuffer
-    let dest_idx = vdp.framebuffer.len() - 4; // Not enough space for 8 pixels
-                                              // Should not panic
+    // Try to draw at end of scanline
+    let dest_idx = 316; // Not enough space for 8 pixels in 320-byte line_buf
+                        // Should not panic
     let mut line_buf = [0u8; 320];
     vdp.draw_full_tile_row(0, 0, dest_idx, &mut line_buf);
 }
