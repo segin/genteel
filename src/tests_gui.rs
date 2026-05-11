@@ -1,10 +1,25 @@
 #[cfg(all(feature = "gui", test))]
 mod tests {
     use crate::frontend::InputMapping;
-    use crate::gui::GuiState;
+    use crate::gui::{GuiState, WindowState};
     use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
     use std::thread;
+
+    #[test]
+    fn test_window_state_default() {
+        let state = WindowState::default();
+        assert!(!state.open);
+    }
+
+    #[test]
+    fn test_window_state_modification() {
+        let mut state = WindowState::default();
+        state.open = true;
+        assert!(state.open);
+        state.open = false;
+        assert!(!state.open);
+    }
 
     #[test]
     fn test_gui_state_window_management() {
