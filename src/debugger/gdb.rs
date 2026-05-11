@@ -7,6 +7,7 @@ use std::collections::HashSet;
 use std::io::{BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::time::{Duration, Instant};
+use subtle::{Choice, ConstantTimeEq};
 
 /// Default GDB server port
 pub const DEFAULT_PORT: u16 = 1234;
@@ -18,16 +19,44 @@ pub const MAX_PACKET_SIZE: usize = 4096;
 pub const MAX_BREAKPOINTS: usize = 1024;
 
 /// Maximum number of failed authentication attempts
-pub const MAX_AUTH_ATTEMPTS: u32 = 5;
+pub const MAX_AUTH_ATTEMPTS: u32 = 10;
 
 /// Duration for authentication lockout
-pub const AUTH_LOCKOUT_DURATION: Duration = Duration::from_secs(30);
+pub const AUTH_LOCKOUT_DURATION: Duration = Duration::from_secs(10);
+
+/// Maximum password length for constant-time comparison to prevent timing attacks
+const MAX_PASSWORD_CHECK_LEN: usize = 128;
 
 /// Constant-time string comparison to prevent timing attacks
 ///
 /// This function executes in constant time to prevent timing attacks when checking passwords.
+/// It iterates up to MAX_PASSWORD_CHECK_LEN to ensure timing is independent of string length.
 fn constant_time_eq(a: &str, b: &str) -> bool {
-    ::constant_time_eq::constant_time_eq(a.as_bytes(), b.as_bytes())
+    let a_bytes = a.as_bytes();
+    let b_bytes = b.as_bytes();
+
+    let mut result = Choice::from(1u8);
+
+    // Check lengths in constant time
+    result &= (a_bytes.len() as u64).ct_eq(&(b_bytes.len() as u64));
+
+    for i in 0..MAX_PASSWORD_CHECK_LEN {
+        // Use Choice::conditional_select to avoid branching on the length of a/b
+        let in_a = Choice::from((i < a_bytes.len()) as u8);
+        let in_b = Choice::from((i < b_bytes.len()) as u8);
+
+        let a_byte = u8::conditional_select(&0, &a_bytes.get(i).copied().unwrap_or(0), in_a);
+        let b_byte = u8::conditional_select(&0, &b_bytes.get(i).copied().unwrap_or(0), in_b);
+
+        result &= a_byte.ct_eq(&b_byte);
+    }
+
+    // If either string is longer than MAX_PASSWORD_CHECK_LEN, it's not a match
+    // (and we don't want to expose the actual length if it's large)
+    result &= Choice::from((a_bytes.len() <= MAX_PASSWORD_CHECK_LEN) as u8);
+    result &= Choice::from((b_bytes.len() <= MAX_PASSWORD_CHECK_LEN) as u8);
+
+    result.unwrap_u8() == 1
 }
 
 /// GDB stop reasons
@@ -113,8 +142,12 @@ pub struct GdbServer {
     pub stop_reason: StopReason,
     /// No-ack mode enabled
     no_ack_mode: bool,
-    /// Optional password for authentication
+    /// Optional password for authentication (plain text for monitor display)
     password: Option<String>,
+    /// Pre-padded password bytes for constant-time comparison
+    password_bytes: [u8; MAX_PASSWORD_CHECK_LEN],
+    /// Actual length of the password
+    password_len: usize,
     /// Whether the client is authenticated
     authenticated: bool,
     /// Number of failed authentication attempts
@@ -149,6 +182,15 @@ impl GdbServer {
             Some(token)
         };
 
+        let mut password_bytes = [0u8; MAX_PASSWORD_CHECK_LEN];
+        let mut password_len = 0;
+        if let Some(ref pwd) = final_password {
+            let bytes = pwd.as_bytes();
+            password_len = bytes.len();
+            let copy_len = password_len.min(MAX_PASSWORD_CHECK_LEN);
+            password_bytes[..copy_len].copy_from_slice(&bytes[..copy_len]);
+        }
+
         // Always start unauthenticated to enforce token check
         let authenticated = false;
 
@@ -159,6 +201,8 @@ impl GdbServer {
             stop_reason: StopReason::Halted,
             no_ack_mode: false,
             password: final_password,
+            password_bytes,
+            password_len,
             authenticated,
             auth_failed_attempts: 0,
             auth_lockout_until: None,
@@ -747,8 +791,27 @@ impl GdbServer {
             }
         }
 
-        if let Some(ref correct_pass) = self.password {
-            if constant_time_eq(provided_pass.trim(), correct_pass) {
+        if self.password.is_some() {
+            let provided_bytes = provided_pass.trim().as_bytes();
+            let mut matches = Choice::from(1u8);
+
+            // Compare lengths in constant time
+            matches &= (provided_bytes.len() as u64).ct_eq(&(self.password_len as u64));
+
+            for i in 0..MAX_PASSWORD_CHECK_LEN {
+                let in_provided = Choice::from((i < provided_bytes.len()) as u8);
+                // Selection of the byte to compare is branching-free
+                let b_provided =
+                    u8::conditional_select(&0, &provided_bytes.get(i).copied().unwrap_or(0), in_provided);
+                let b_correct = self.password_bytes[i];
+
+                matches &= b_provided.ct_eq(&b_correct);
+            }
+
+            // Also ensure provided password is not longer than our buffer
+            matches &= Choice::from((provided_bytes.len() <= MAX_PASSWORD_CHECK_LEN) as u8);
+
+            if matches.unwrap_u8() == 1 {
                 self.authenticated = true;
                 self.auth_failed_attempts = 0;
                 self.auth_lockout_until = None;
@@ -865,6 +928,8 @@ mod tests {
             stop_reason: StopReason::Halted,
             no_ack_mode: false,
             password: None,
+            password_bytes: [0u8; MAX_PASSWORD_CHECK_LEN],
+            password_len: 0,
             authenticated: true,
             auth_failed_attempts: 0,
             auth_lockout_until: None,
@@ -1735,5 +1800,33 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(10));
 
         assert_eq!(server.receive_packet(), None);
+    }
+
+    #[test]
+    fn test_constant_time_eq_robustness() {
+        // Test strings of varying lengths
+        assert!(constant_time_eq("abc", "abc"));
+        assert!(!constant_time_eq("abc", "abcd"));
+        assert!(!constant_time_eq("abcd", "abc"));
+
+        // Test empty strings
+        assert!(constant_time_eq("", ""));
+        assert!(!constant_time_eq("", "a"));
+        assert!(!constant_time_eq("a", ""));
+
+        // Test strings at MAX_PASSWORD_CHECK_LEN
+        let long_str = "A".repeat(MAX_PASSWORD_CHECK_LEN);
+        let long_str_copy = "A".repeat(MAX_PASSWORD_CHECK_LEN);
+        let long_str_diff = "A".repeat(MAX_PASSWORD_CHECK_LEN - 1) + "B";
+
+        assert!(constant_time_eq(&long_str, &long_str_copy));
+        assert!(!constant_time_eq(&long_str, &long_str_diff));
+
+        // Test strings exceeding MAX_PASSWORD_CHECK_LEN
+        let too_long = "A".repeat(MAX_PASSWORD_CHECK_LEN + 1);
+        let too_long_copy = "A".repeat(MAX_PASSWORD_CHECK_LEN + 1);
+
+        // Should return false even if they are equal, because they exceed the checked length
+        assert!(!constant_time_eq(&too_long, &too_long_copy));
     }
 }
