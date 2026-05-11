@@ -13,7 +13,7 @@ fn main() {
             input.command = Some(format!("COMMAND {}", i));
         }
         input.p1.a = i % 2 == 0;
-        manager.record(input);
+        manager.record(&input);
         manager.advance_frame();
     }
     let script: InputScript = manager.stop_recording();

@@ -284,9 +284,9 @@ impl InputManager {
     }
 
     /// Record input for current frame
-    pub fn record(&mut self, input: FrameInput) {
+    pub fn record(&mut self, input: &FrameInput) {
         if self.recording {
-            self.recorded.push((self.current_frame, input));
+            self.recorded.push((self.current_frame, input.clone()));
         }
     }
 
@@ -410,19 +410,19 @@ mod tests {
         // Frame 0: Press A
         let mut input0 = FrameInput::default();
         input0.p1.a = true;
-        manager.record(input0.clone());
+        manager.record(&input0);
         manager.advance_frame();
 
         // Frame 1: Press B
         let mut input1 = FrameInput::default();
         input1.p1.b = true;
-        manager.record(input1.clone());
+        manager.record(&input1);
         manager.advance_frame();
 
         // Frame 2: Press Start
         let mut input2 = FrameInput::default();
         input2.p1.start = true;
-        manager.record(input2.clone());
+        manager.record(&input2);
         // Don't advance frame after last record
 
         // Stop recording

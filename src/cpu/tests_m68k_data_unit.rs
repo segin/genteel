@@ -4,7 +4,10 @@
 
 use crate::cpu::decoder::{AddressingMode, Size};
 use crate::cpu::flags;
-use crate::cpu::ops::data::{exec_move, exec_movea, exec_moveq, exec_lea, exec_pea, exec_exg, exec_movep, exec_swap, exec_ext, exec_movem};
+use crate::cpu::ops::data::{
+    exec_exg, exec_ext, exec_lea, exec_move, exec_movea, exec_movem, exec_movep, exec_moveq,
+    exec_pea, exec_swap,
+};
 use crate::cpu::test_utils::create_cpu;
 use crate::memory::MemoryInterface;
 
@@ -223,7 +226,13 @@ fn test_move_immediate() {
 fn test_exec_movea_word() {
     let (mut cpu, mut memory) = create_cpu();
     cpu.d[0] = 0xFFFF; // -1
-    exec_movea(&mut cpu, Size::Word, AddressingMode::DataRegister(0), 1, &mut memory);
+    exec_movea(
+        &mut cpu,
+        Size::Word,
+        AddressingMode::DataRegister(0),
+        1,
+        &mut memory,
+    );
     assert_eq!(cpu.a[1], 0xFFFFFFFF); // Sign extended
 }
 
@@ -231,7 +240,13 @@ fn test_exec_movea_word() {
 fn test_exec_movea_long() {
     let (mut cpu, mut memory) = create_cpu();
     cpu.d[0] = 0x87654321;
-    exec_movea(&mut cpu, Size::Long, AddressingMode::DataRegister(0), 2, &mut memory);
+    exec_movea(
+        &mut cpu,
+        Size::Long,
+        AddressingMode::DataRegister(0),
+        2,
+        &mut memory,
+    );
     assert_eq!(cpu.a[2], 0x87654321);
 }
 
@@ -415,7 +430,13 @@ fn test_exec_movem_to_memory_predec() {
     cpu.d[0] = 0x11111111;
     cpu.a[0] = 0x22222222;
 
-    exec_movem(&mut cpu, Size::Long, true, AddressingMode::AddressPreDecrement(7), &mut memory);
+    exec_movem(
+        &mut cpu,
+        Size::Long,
+        true,
+        AddressingMode::AddressPreDecrement(7),
+        &mut memory,
+    );
 
     assert_eq!(cpu.a[7], 0x7FF8);
     // Reversed order: A0 (high addr) then D0 (low addr)
@@ -434,7 +455,13 @@ fn test_exec_movem_to_memory_normal() {
     cpu.d[0] = 0x11111111;
     cpu.d[1] = 0x22222222;
 
-    exec_movem(&mut cpu, Size::Long, true, AddressingMode::AddressIndirect(0), &mut memory);
+    exec_movem(
+        &mut cpu,
+        Size::Long,
+        true,
+        AddressingMode::AddressIndirect(0),
+        &mut memory,
+    );
 
     assert_eq!(memory.read_long(0x1000), 0x11111111);
     assert_eq!(memory.read_long(0x1004), 0x22222222);
@@ -453,7 +480,13 @@ fn test_exec_movem_from_memory_postinc() {
     memory.write_long(0x1004, 0x22222222);
     memory.write_long(0x1008, 0x33333333);
 
-    exec_movem(&mut cpu, Size::Long, false, AddressingMode::AddressPostIncrement(0), &mut memory);
+    exec_movem(
+        &mut cpu,
+        Size::Long,
+        false,
+        AddressingMode::AddressPostIncrement(0),
+        &mut memory,
+    );
 
     assert_eq!(cpu.d[0], 0x11111111);
     assert_eq!(cpu.d[1], 0x22222222);
