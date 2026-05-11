@@ -1,12 +1,9 @@
 use super::*;
-use crate::memory::Memory;
-
-#[cfg(test)]
-use crate::z80::test_utils::TestIo;
+use crate::z80::test_utils::create_z80;
 
 #[test]
 fn test_reset_behavior() {
-    let mut z80 = Z80::new();
+    let mut z80 = create_z80(&[][..]);
 
     // 1. Modify fields that SHOULD be reset
     z80.a = 0xAA;
