@@ -608,16 +608,15 @@ impl RenderOps for Vdp {
                 scanline_width: screen_width,
             };
 
-            // H40 window/Plane-A boundary glitch (G10):
-            // On real hardware, the VDP pre-fetches the next tile's nametable
-            // entry one slot ahead. When the rendered region transitions from
-            // the window plane back to plane A (left-anchored window with
-            // win_h_dir == false), the in-flight window entry is reused for
-            // the first plane-A tile, producing the classic "Mickey Mania
-            // logo wobble" artifact. We approximate by drawing one extra
-            // tile with the window's parameters at the boundary, only in
-            // H40 mode with a non-zero H-scroll (the same trigger as G5).
-            let glitch_enabled = h40_mode && h_scroll != 0 && !win_h_dir;
+            // H40 window/Plane-A boundary glitch (G10/R6):
+            // The hardware artifact only occurs once per line (the first
+            // window->plane-A transition) and only when the window doesn't
+            // span the entire line. We additionally require the transition
+            // boundary to fall on a tile-aligned screen X — the pre-fetch
+            // race that causes the glitch only happens when the window
+            // boundary coincides with a fetch slot boundary.
+            let glitch_enabled = h40_mode && h_scroll != 0 && !win_h_dir && !win_full_line;
+            let mut glitch_fired = false;
             let mut prev_in_window = win_full_line
                 || if win_h_dir {
                     screen_x >= win_h_point
@@ -633,9 +632,15 @@ impl RenderOps for Vdp {
                     screen_x < win_h_point
                 };
 
-                if glitch_enabled && prev_in_window && !now_in_window {
+                if glitch_enabled
+                    && !glitch_fired
+                    && prev_in_window
+                    && !now_in_window
+                    && (screen_x & 0x07) == 0
+                {
                     // Boundary glitch: one extra window tile before plane A.
                     self.render_tile(&win_params, &mut screen_x, line_buf);
+                    glitch_fired = true;
                     if screen_x >= screen_width {
                         break;
                     }
