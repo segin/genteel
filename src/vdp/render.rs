@@ -101,6 +101,11 @@ pub struct TileRenderParams {
 
 pub trait RenderOps {
     fn render_line(&mut self, line: u16);
+    /// Re-render only pixels [start_x .. screen_width] of `line` using the
+    /// current VDP state. Pixels at [0 .. start_x] are left untouched so
+    /// they retain whatever state they were drawn with previously
+    /// (segmented mid-line render for road-gradient effects).
+    fn render_line_from(&mut self, line: u16, start_x: u16);
     fn render_plane(&self, is_plane_a: bool, fetch_line: u16, line_buf: &mut [u8; 320]);
     fn render_tile(&self, params: &TileRenderParams, screen_x: &mut u16, line_buf: &mut [u8; 320]);
     fn get_active_sprites(&mut self, line: u16, sprites: &mut [SpriteAttributes]) -> usize;
@@ -162,6 +167,9 @@ pub struct CompositeLineParams<'a> {
     pub buf_b: &'a [u8; 320],
     pub buf_a: &'a [u8; 320],
     pub buf_s: &'a [u8; 320],
+    /// Inclusive start pixel for composite (used for mid-line segmented
+    /// re-render). Defaults to 0 for a full-line composite.
+    pub start_x: usize,
 }
 
 impl Vdp {
@@ -169,7 +177,7 @@ impl Vdp {
         let sh_enabled = (self.registers[REG_MODE4] & 0x08) != 0;
         let mask_col0 = (self.registers[REG_MODE1] & 0x20) != 0;
 
-        for x in 0..320 {
+        for x in params.start_x..320 {
             if mask_col0 && x < 8 {
                 self.framebuffer[params.line_offset + x] = params.bg_color_val;
                 continue;
@@ -484,9 +492,68 @@ impl RenderOps for Vdp {
             buf_b: &buf_b,
             buf_a: &buf_a,
             buf_s: &buf_s,
+            start_x: 0,
         };
         self.composite_line(&composite_params);
         self.rendered_scanlines[line as usize] = true;
+        // Reset the per-line split marker so subsequent mid-line writes can
+        // segment from pixel 0.
+        self.line_split_x = 0;
+    }
+
+    fn render_line_from(&mut self, line: u16, start_x: u16) {
+        let width = self.screen_width();
+        if line >= self.screen_height() || start_x >= width {
+            return;
+        }
+
+        self.ensure_sat_cache();
+
+        let fetch_line = line;
+        let line_offset = (line as usize) * 320;
+
+        let (pal_line, color_idx) = self.bg_color();
+        let bg_color_val = self.get_cram_color(pal_line, color_idx);
+        let bg_color_idx = (pal_line << 4) | color_idx;
+
+        if !self.display_enabled() {
+            // Mid-line display-disable: pixels [start_x..width] become BG.
+            let start = line_offset + start_x as usize;
+            let end = line_offset + width as usize;
+            self.framebuffer[start..end].fill(bg_color_val);
+            return;
+        }
+
+        // We re-render the full plane/sprite buffers but composite only the
+        // [start_x..320] range back into the framebuffer.
+        let mut sprite_buffer = [SpriteAttributes::default(); 80];
+        let sprite_count = self.get_active_sprites(fetch_line, &mut sprite_buffer);
+        let active_sprites = &sprite_buffer[..sprite_count];
+
+        let mut buf_b = [0u8; 320];
+        let mut buf_a = [0u8; 320];
+        let mut buf_s = [0u8; 320];
+
+        if std::env::var("GENTEEL_DEBUG_PLANE").as_deref() != Ok("a") {
+            self.render_plane(false, fetch_line, &mut buf_b);
+        }
+        if std::env::var("GENTEEL_DEBUG_PLANE").as_deref() != Ok("b") {
+            self.render_plane(true, fetch_line, &mut buf_a);
+        }
+        if self.render_sprites(active_sprites, fetch_line, &mut buf_s) {
+            self.status |= STATUS_COLLISION;
+        }
+
+        let composite_params = CompositeLineParams {
+            line_offset,
+            bg_color_idx,
+            bg_color_val,
+            buf_b: &buf_b,
+            buf_a: &buf_a,
+            buf_s: &buf_s,
+            start_x: start_x as usize,
+        };
+        self.composite_line(&composite_params);
     }
 
     fn render_plane(&self, is_plane_a: bool, fetch_line: u16, line_buf: &mut [u8; 320]) {

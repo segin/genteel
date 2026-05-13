@@ -271,6 +271,14 @@ pub struct Vdp {
     /// VINT is "due" on the current line; same deferred-assertion model.
     #[serde(skip, default)]
     pub(crate) vint_due: bool,
+    /// Mid-line segmented-render watermark. Pixels at x < line_split_x for the
+    /// current scanline have already been committed to the framebuffer with the
+    /// state at the time they were drawn. A mid-line CRAM/VSRAM/register write
+    /// advances this watermark to the current MCLK's pixel position and
+    /// re-renders pixels [watermark..320] with the new state. Reset to 0 at
+    /// each fresh line render.
+    #[serde(skip, default)]
+    pub(crate) line_split_x: u16,
 }
 
 impl Default for Vdp {
@@ -323,6 +331,7 @@ impl Vdp {
             sat_cache_valid: false,
             hint_due: false,
             vint_due: false,
+            line_split_x: 0,
         };
         vdp.reset();
         vdp
@@ -826,6 +835,31 @@ impl Vdp {
         }
     }
 
+    /// Map current MCLK within an active scanline to a pixel-x position.
+    /// Used for the mid-line segmented re-render (R1/R2).
+    ///   * Before active display: returns 0 (no pixels emitted yet).
+    ///   * Past active display end: returns scanline width (no remaining pixels).
+    pub(crate) fn mid_line_pixel_x(&self) -> u16 {
+        let width = self.screen_width();
+        if self.mclk_line_clocks < Self::ACTIVE_DISPLAY_START_MCLK {
+            return 0;
+        }
+        let active_end = 3420;
+        if self.mclk_line_clocks >= active_end {
+            return width;
+        }
+        let elapsed = self.mclk_line_clocks - Self::ACTIVE_DISPLAY_START_MCLK;
+        let active_span = active_end - Self::ACTIVE_DISPLAY_START_MCLK;
+        // Linear map MCLK -> pixel within the active region.
+        let x = (elapsed * width as u32) / active_span;
+        x.min(width as u32) as u16
+    }
+
+    /// Mid-line CRAM/VSRAM/register write hook: instead of atomically
+    /// re-rendering the whole scanline (which clobbered all earlier pixels
+    /// drawn with the previous state — fatal for road-gradient effects),
+    /// commit only pixels [line_split_x .. screen_width] with the new state
+    /// and advance the watermark to the current MCLK's pixel position.
     pub(crate) fn redraw_current_scanline_if_visible(&mut self) {
         if !self.display_enabled() {
             return;
@@ -841,9 +875,20 @@ impl Vdp {
         };
 
         let line_idx = line as usize;
-        if line_idx < self.screen_height() as usize && self.rendered_scanlines[line_idx] {
-            self.render_line(line);
+        if line_idx >= self.screen_height() as usize || !self.rendered_scanlines[line_idx] {
+            return;
         }
+
+        let split_x = self.mid_line_pixel_x();
+        if split_x >= self.screen_width() {
+            // Line fully emitted; nothing to repaint.
+            return;
+        }
+        // Pixels at [0..split_x] are "emitted" by the scan beam already and
+        // must stay put. Pixels at [split_x..screen_width] are still in
+        // flight and reflect the current state — re-render them.
+        self.line_split_x = split_x;
+        self.render_line_from(line, split_x);
     }
 
     fn render_scanline_if_needed(&mut self, line: u16) {
@@ -979,6 +1024,8 @@ impl Vdp {
             // happens in two passes during HBlank/active display; we
             // approximate with a single line-boundary snapshot.
             self.sync_sat_cache();
+            // New line: reset the mid-line render watermark.
+            self.line_split_x = 0;
 
             let active_lines = self.screen_height();
             self.hint_pending = false;

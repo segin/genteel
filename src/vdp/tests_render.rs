@@ -1463,6 +1463,70 @@ fn test_h40_window_plane_a_boundary_glitches() {
     }
 }
 
+/// Road Rash II raster-effect regression: a mid-line CRAM write must NOT
+/// retroactively repaint pixels that were already drawn with the previous
+/// palette. Pixels left of the MCLK position keep the old palette; pixels
+/// right of it get the new palette.
+#[test]
+fn test_mid_line_cram_write_segments_the_scanline() {
+    let mut vdp = Vdp::new();
+    vdp.is_pal = false;
+    vdp.registers[1] = 0x40; // display enable
+    vdp.registers[2] = 0x30; // Plane A @ 0xC000
+    vdp.registers[REG_MODE4] = 0x81; // H40 (320px)
+    vdp.registers[REG_PLANE_SIZE] = 0x00;
+
+    // CRAM index 1 = bright red initially.
+    vdp.cram_cache[1] = 0xF800;
+
+    // Tile 1: all color index 1.
+    let tile_addr = 32usize;
+    for i in 0..32 {
+        vdp.vram[tile_addr + i] = 0x11;
+    }
+
+    // Fill row 0 of Plane A with tile 1.
+    for col in 0..40 {
+        let nt = 0xC000 + col * 2;
+        vdp.vram[nt] = 0x00;
+        vdp.vram[nt + 1] = 0x01;
+    }
+
+    // Render line 0 at MCLK 860 (the active-display start).
+    vdp.mclk_line_clocks = 860;
+    vdp.render_line(0);
+    // All 320 pixels should be red.
+    for x in 0..320 {
+        assert_eq!(vdp.framebuffer[x], 0xF800, "initial render @ x={}", x);
+    }
+
+    // Advance MCLK to roughly the middle of active display, then perform a
+    // mid-line CRAM update: change palette entry 1 to green.
+    vdp.mclk_line_clocks = 860 + 1280; // half-way through active span
+    let split_x = vdp.mid_line_pixel_x();
+    assert!(split_x > 0 && split_x < 320);
+
+    vdp.cram_cache[1] = 0x07E0;
+    vdp.redraw_current_scanline_if_visible();
+
+    // Left side (before split): still red.
+    for x in 0..(split_x as usize) {
+        assert_eq!(
+            vdp.framebuffer[x], 0xF800,
+            "pixel x={} (left of split {}) must keep old red palette",
+            x, split_x
+        );
+    }
+    // Right side (from split onward): now green.
+    for x in (split_x as usize)..320 {
+        assert_eq!(
+            vdp.framebuffer[x], 0x07E0,
+            "pixel x={} (right of split {}) must reflect new green palette",
+            x, split_x
+        );
+    }
+}
+
 /// SAT cache (LSU) latches at line boundary. A mid-line write to the
 /// SAT region of VRAM must not be visible to the SAT cache until the
 /// next line wrap re-latches it.
