@@ -106,6 +106,17 @@ impl DmaOps for Vdp {
 
         let mode = self.registers[REG_DMA_SRC_HI] & DMA_MODE_MASK;
 
+        // Charge 68k stall cycles for the duration of the DMA. Rough
+        // calibration at ~2 CPU cycles per DMA operation slot, doubled
+        // for Copy (which needs both a VRAM read and a VRAM write per
+        // byte).
+        let stall = match mode {
+            DMA_MODE_FILL => len.saturating_mul(2),
+            DMA_MODE_COPY => len.saturating_mul(4),
+            _ => len.saturating_mul(2),
+        };
+        self.dma_stall_cycles = self.dma_stall_cycles.saturating_add(stall);
+
         match mode {
             DMA_MODE_FILL => {
                 self.perform_dma_fill(len);

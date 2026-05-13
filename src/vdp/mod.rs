@@ -253,6 +253,10 @@ pub struct Vdp {
     /// Used to gate the X=0 sprite mask trigger.
     #[serde(skip, default)]
     pub(crate) prev_line_sprite_overflow: bool,
+    /// 68k stall cycles owed by the most recent DMA operation. Drained by the
+    /// Bus through `take_dma_stall_cycles`.
+    #[serde(skip, default)]
+    pub dma_stall_cycles: u32,
 }
 
 impl Default for Vdp {
@@ -294,6 +298,7 @@ impl Vdp {
             latched_scroll_line: 0,
             latched_scroll_valid: false,
             prev_line_sprite_overflow: false,
+            dma_stall_cycles: 0,
         };
         vdp.reset();
         vdp
@@ -326,8 +331,16 @@ impl Vdp {
         self.rendered_scanlines.fill(false);
         self.latched_scroll_valid = false;
         self.prev_line_sprite_overflow = false;
+        self.dma_stall_cycles = 0;
         self.reconstruct_cram_cache();
         self.sync_sat_cache();
+    }
+
+    /// Return and clear DMA stall cycles owed to the 68k.
+    pub fn take_dma_stall_cycles(&mut self) -> u32 {
+        let c = self.dma_stall_cycles;
+        self.dma_stall_cycles = 0;
+        c
     }
 
     fn compute_hscroll_words(&self, fetch_line: u16, mode3: u8) -> (u16, u16) {

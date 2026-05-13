@@ -231,3 +231,33 @@ fn test_dma_copy_wrap_around() {
         assert_eq!(vdp.vram[i], 0xFF, "Mismatch at index 0x{:04X}", i);
     }
 }
+
+/// DMA Fill should charge 2 cycles per byte of stall to the 68k.
+#[test]
+fn test_dma_fill_charges_stall_cycles() {
+    let mut vdp = Vdp::new();
+    vdp.registers[REG_DMA_LEN_LO] = 0x10; // 16 bytes
+    vdp.registers[REG_DMA_LEN_HI] = 0x00;
+    vdp.registers[REG_DMA_SRC_HI] = DMA_MODE_FILL;
+    vdp.command.dma_pending = true;
+    vdp.command.code = VRAM_WRITE;
+
+    let _ = vdp.execute_dma();
+    assert_eq!(vdp.take_dma_stall_cycles(), 16 * 2);
+    // Drained.
+    assert_eq!(vdp.take_dma_stall_cycles(), 0);
+}
+
+/// DMA Copy should charge 4 cycles per byte (read + write).
+#[test]
+fn test_dma_copy_charges_stall_cycles() {
+    let mut vdp = Vdp::new();
+    vdp.registers[REG_DMA_LEN_LO] = 0x08; // 8 bytes
+    vdp.registers[REG_DMA_LEN_HI] = 0x00;
+    vdp.registers[REG_DMA_SRC_HI] = DMA_MODE_COPY;
+    vdp.command.dma_pending = true;
+    vdp.command.code = VRAM_WRITE;
+
+    let _ = vdp.execute_dma();
+    assert_eq!(vdp.take_dma_stall_cycles(), 8 * 4);
+}
