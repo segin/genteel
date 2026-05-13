@@ -579,17 +579,28 @@ impl RenderOps for Vdp {
         let pixel_h = scrolled_h & 0x07;
         let tile_h = ((scrolled_h >> 3) as usize) & params.plane_w_mask;
 
-        // Fetch V-scroll for this specific column (per-column VS support)
+        // Fetch V-scroll for this specific column (per-column VS support).
         // If not using scroll (e.g. Window plane), V-scroll is 0.
+        //
+        // H40 column-0 VSRAM-AND quirk:
+        //   In H40 mode with 2-cell V-scroll enabled and non-zero H-scroll,
+        //   the VDP pre-fetches the V-scroll entry for column "-1" of the
+        //   previous frame. The bus settles to the bitwise AND of the last
+        //   two strip entries (strips 18 and 19, i.e. cells 36-37 and 38-39).
+        //   Cells 0 and 1 (current_x < 16) both share this value because
+        //   they map to strip 0 which is what gets overridden.
         let v_scroll = if params.enable_v_scroll {
             let mode3 = self.registers[REG_MODE3];
-            let tile_column =
-                if self.h40_mode() && (mode3 & 0x04) != 0 && current_x == 0 && pixel_h != 0 {
-                    38
-                } else {
-                    (current_x >> 3) as usize
-                };
-            self.get_v_scroll(params.is_plane_a, tile_column, params.fetch_line)
+            let two_cell_mode = (mode3 & 0x04) != 0;
+            let h40 = self.h40_mode();
+            if h40 && two_cell_mode && current_x < 16 && params.h_scroll != 0 {
+                let vs_strip19 = self.get_v_scroll(params.is_plane_a, 38, params.fetch_line);
+                let vs_strip18 = self.get_v_scroll(params.is_plane_a, 36, params.fetch_line);
+                vs_strip19 & vs_strip18
+            } else {
+                let tile_column = (current_x >> 3) as usize;
+                self.get_v_scroll(params.is_plane_a, tile_column, params.fetch_line)
+            }
         } else {
             0
         };

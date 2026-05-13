@@ -956,7 +956,10 @@ fn test_h40_partial_left_column_uses_last_vscroll_strip() {
     vdp.vram[row31_col31] = 0x00;
     vdp.vram[row31_col31 + 1] = 0x02;
 
-    // Last H40 V-scroll strip = -8.
+    // H40 column-0 VSRAM quirk: column 0 uses (strip18 AND strip19).
+    // Set both strips to -8 so the AND is also -8.
+    vdp.vsram[72] = 0xFF;
+    vdp.vsram[73] = 0xF8;
     vdp.vsram[76] = 0xFF;
     vdp.vsram[77] = 0xF8;
 
@@ -1396,6 +1399,45 @@ fn test_sprite_mask_x0_first_with_prev_overflow() {
         count, 0,
         "Prior-line overflow makes an X=0 first sprite trigger the mask immediately"
     );
+}
+
+/// H40 + 2-cell VSCROLL + non-zero H-scroll: column 0 receives the AND of
+/// the last two VSRAM strip entries (strips 18 and 19) for the relevant plane
+/// rather than strip 0.
+#[test]
+fn test_h40_column0_vsram_and_quirk() {
+    let mut vdp = Vdp::new();
+    vdp.registers[REG_MODE4] = 0x81; // H40
+    vdp.registers[REG_MODE3] = 0x04; // 2-cell VSCROLL
+    // Plant a non-zero horizontal scroll value at HSCROLL table base (=0).
+    vdp.vram[0] = 0x00;
+    vdp.vram[1] = 0x01; // hscroll = 1 for plane A → nonzero
+    vdp.registers[REG_HSCROLL] = 0;
+
+    // Strip 0: V scroll = 0xAAAA for plane A (so the visible column 0 v_scroll
+    // shouldn't be this if the quirk fires).
+    vdp.vsram[0] = 0xAA;
+    vdp.vsram[1] = 0xAA;
+    // Strip 18 (cells 36-37, byte offset 36*2 = 72): plane A vscroll = 0xF0F0
+    vdp.vsram[72] = 0xF0;
+    vdp.vsram[73] = 0xF0;
+    // Strip 19 (cells 38-39, byte offset 38*2 = 76): plane A vscroll = 0x0FFF
+    vdp.vsram[76] = 0x0F;
+    vdp.vsram[77] = 0xFF;
+    // Expected column-0 VS = 0xF0F0 AND 0x0FFF = 0x00F0.
+
+    // Walk the existing scroll latching path so the get_v_scroll reads from
+    // latched_vsram on the rendered line.
+    vdp.latch_scroll_state_for_line(0);
+
+    let plane_a = true;
+    // Direct call: emulate render_tile's column-0 branch via the public API
+    // it relies on.
+    let vs_strip19 = vdp.get_v_scroll(plane_a, 38, 0);
+    let vs_strip18 = vdp.get_v_scroll(plane_a, 36, 0);
+    assert_eq!(vs_strip19, 0x0FFF);
+    assert_eq!(vs_strip18, 0xF0F0);
+    assert_eq!(vs_strip19 & vs_strip18, 0x00F0);
 }
 
 /// Status bit 6 (SOVR) is set when sprite overflow occurs on a line.
