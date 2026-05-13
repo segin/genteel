@@ -232,32 +232,64 @@ fn test_dma_copy_wrap_around() {
     }
 }
 
-/// DMA Fill should charge 2 cycles per byte of stall to the 68k.
+/// DMA Fill during active display: 2 cycles per byte of 68k stall.
 #[test]
-fn test_dma_fill_charges_stall_cycles() {
+fn test_dma_fill_charges_stall_cycles_active_display() {
     let mut vdp = Vdp::new();
     vdp.registers[REG_DMA_LEN_LO] = 0x10; // 16 bytes
     vdp.registers[REG_DMA_LEN_HI] = 0x00;
     vdp.registers[REG_DMA_SRC_HI] = DMA_MODE_FILL;
     vdp.command.dma_pending = true;
     vdp.command.code = VRAM_WRITE;
+    // Ensure we're NOT in VBlank.
+    vdp.status &= !STATUS_VBLANK;
 
     let _ = vdp.execute_dma();
     assert_eq!(vdp.take_dma_stall_cycles(), 16 * 2);
-    // Drained.
     assert_eq!(vdp.take_dma_stall_cycles(), 0);
 }
 
-/// DMA Copy should charge 4 cycles per byte (read + write).
+/// DMA Fill during VBlank: 1 cycle per 4 bytes (8x cheaper).
 #[test]
-fn test_dma_copy_charges_stall_cycles() {
+fn test_dma_fill_charges_stall_cycles_vblank() {
+    let mut vdp = Vdp::new();
+    vdp.registers[REG_DMA_LEN_LO] = 0x10; // 16 bytes
+    vdp.registers[REG_DMA_LEN_HI] = 0x00;
+    vdp.registers[REG_DMA_SRC_HI] = DMA_MODE_FILL;
+    vdp.command.dma_pending = true;
+    vdp.command.code = VRAM_WRITE;
+    vdp.status |= STATUS_VBLANK;
+
+    let _ = vdp.execute_dma();
+    assert_eq!(vdp.take_dma_stall_cycles(), 16 / 4);
+}
+
+/// DMA Copy during active display: 4 cycles per byte (read + write).
+#[test]
+fn test_dma_copy_charges_stall_cycles_active_display() {
     let mut vdp = Vdp::new();
     vdp.registers[REG_DMA_LEN_LO] = 0x08; // 8 bytes
     vdp.registers[REG_DMA_LEN_HI] = 0x00;
     vdp.registers[REG_DMA_SRC_HI] = DMA_MODE_COPY;
     vdp.command.dma_pending = true;
     vdp.command.code = VRAM_WRITE;
+    vdp.status &= !STATUS_VBLANK;
 
     let _ = vdp.execute_dma();
     assert_eq!(vdp.take_dma_stall_cycles(), 8 * 4);
+}
+
+/// DMA Copy during VBlank: 1 cycle per 2 bytes.
+#[test]
+fn test_dma_copy_charges_stall_cycles_vblank() {
+    let mut vdp = Vdp::new();
+    vdp.registers[REG_DMA_LEN_LO] = 0x08; // 8 bytes
+    vdp.registers[REG_DMA_LEN_HI] = 0x00;
+    vdp.registers[REG_DMA_SRC_HI] = DMA_MODE_COPY;
+    vdp.command.dma_pending = true;
+    vdp.command.code = VRAM_WRITE;
+    vdp.status |= STATUS_VBLANK;
+
+    let _ = vdp.execute_dma();
+    assert_eq!(vdp.take_dma_stall_cycles(), 8 / 2);
 }

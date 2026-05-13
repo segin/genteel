@@ -104,14 +104,27 @@ impl DmaOps for Vdp {
 
         let mode = self.registers[REG_DMA_SRC_HI] & DMA_MODE_MASK;
 
-        // Charge 68k stall cycles for the duration of the DMA. Rough
-        // calibration at ~2 CPU cycles per DMA operation slot, doubled
-        // for Copy (which needs both a VRAM read and a VRAM write per
-        // byte).
-        let stall = match mode {
-            DMA_MODE_FILL => len.saturating_mul(2),
-            DMA_MODE_COPY => len.saturating_mul(4),
-            _ => len.saturating_mul(2),
+        // Charge 68k stall cycles for the duration of the DMA. Slot
+        // availability differs by ~7x between active display (~14 slots
+        // per line) and VBlank (~167 slots per line), so the stall
+        // calibration differs accordingly. Calibration:
+        //   active display: Fill=2/byte, Copy=4/byte, Mem->VDP=2/word
+        //   VBlank:         Fill=1 per 4 bytes, Copy=1 per 2 bytes,
+        //                   Mem->VDP=1 per 4 words
+        // (i.e. 8x cheaper in VBlank, matching the slot-availability ratio).
+        let in_vblank = (self.status & STATUS_VBLANK) != 0;
+        let stall = if in_vblank {
+            match mode {
+                DMA_MODE_FILL => len / 4,
+                DMA_MODE_COPY => len / 2,
+                _ => len / 4,
+            }
+        } else {
+            match mode {
+                DMA_MODE_FILL => len.saturating_mul(2),
+                DMA_MODE_COPY => len.saturating_mul(4),
+                _ => len.saturating_mul(2),
+            }
         };
         self.dma_stall_cycles = self.dma_stall_cycles.saturating_add(stall);
 
