@@ -439,7 +439,11 @@ impl RenderOps for Vdp {
             return;
         }
 
-        self.sync_sat_cache();
+        // SAT cache (LSU) is latched at the line boundary by `tick`; do not
+        // refresh here so mid-line VRAM writes to the SAT region don't take
+        // effect until next line, matching hardware. Cold-start case (cache
+        // never latched yet) falls back to an initial sync.
+        self.ensure_sat_cache();
 
         let draw_line = line;
         let fetch_line = line;
@@ -634,7 +638,8 @@ impl RenderOps for Vdp {
     }
 
     fn get_active_sprites(&mut self, line: u16, sprites: &mut [SpriteAttributes]) -> usize {
-        self.sync_sat_cache();
+        // Cold-start sync only. Production latches at line boundary in `tick`.
+        self.ensure_sat_cache();
 
         let max_sprites = if self.h40_mode() { 80 } else { 64 };
         let line_limit = if self.h40_mode() { 20 } else { 16 };

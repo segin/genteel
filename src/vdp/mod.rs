@@ -257,6 +257,12 @@ pub struct Vdp {
     /// Bus through `take_dma_stall_cycles`.
     #[serde(skip, default)]
     pub dma_stall_cycles: u32,
+    /// Whether the SAT cache is initialized. `tick` latches it at each
+    /// line boundary and clears this flag only on reset. Rendering paths
+    /// lazily sync if not yet valid (so a freshly constructed VDP doesn't
+    /// render with an empty SAT cache).
+    #[serde(skip, default)]
+    pub(crate) sat_cache_valid: bool,
 }
 
 impl Default for Vdp {
@@ -299,6 +305,7 @@ impl Vdp {
             latched_scroll_valid: false,
             prev_line_sprite_overflow: false,
             dma_stall_cycles: 0,
+            sat_cache_valid: false,
         };
         vdp.reset();
         vdp
@@ -333,7 +340,9 @@ impl Vdp {
         self.prev_line_sprite_overflow = false;
         self.dma_stall_cycles = 0;
         self.reconstruct_cram_cache();
-        self.sync_sat_cache();
+        // SAT cache stays invalid; first render or first tick line wrap
+        // will latch it from VRAM.
+        self.sat_cache_valid = false;
     }
 
     /// Return and clear DMA stall cycles owed to the 68k.
@@ -453,8 +462,9 @@ impl Vdp {
                 if idx < self.vram.len() {
                     self.vram[idx] = (value >> 8) as u8;
                     self.vram[idx ^ 1] = (value & 0xFF) as u8;
-                    self.mirror_sat_byte(idx, (value >> 8) as u8);
-                    self.mirror_sat_byte(idx ^ 1, (value & 0xFF) as u8);
+                    // Writes to the SAT region during active display do NOT
+                    // update the SAT cache (LSU latches it once per line at
+                    // HBlank). Cache refresh happens at the next line wrap.
                 }
             }
             CRAM_WRITE => {
@@ -786,18 +796,16 @@ impl Vdp {
         for (i, byte) in self.sat.iter_mut().enumerate() {
             *byte = self.vram[(base + i) & 0xFFFF];
         }
+        self.sat_cache_valid = true;
     }
 
-    pub(crate) fn mirror_sat_byte(&mut self, vram_addr: usize, value: u8) {
-        let sat_base = self.sprite_table_address();
-        let (sat_base_mask, sat_addr_mask) = if self.h40_mode() {
-            (0xFC00usize, 0x03FFusize)
-        } else {
-            (0xFE00usize, 0x01FFusize)
-        };
-
-        if (vram_addr & sat_base_mask) == sat_base {
-            self.sat[vram_addr & sat_addr_mask] = value;
+    /// Used by render paths to ensure the SAT cache has at least been
+    /// initialized once. Production code latches at line boundary in
+    /// `tick`; this catches the cold-start case (and tests that build
+    /// VRAM directly without ticking).
+    pub(crate) fn ensure_sat_cache(&mut self) {
+        if !self.sat_cache_valid {
+            self.sync_sat_cache();
         }
     }
 
@@ -932,6 +940,10 @@ impl Vdp {
             let frame_lines = if self.is_pal { 313 } else { 262 };
             self.v_counter = (self.v_counter + 1) % frame_lines;
             self.latch_scroll_state_for_line(self.v_counter);
+            // Latch the SAT cache (LSU) from VRAM. On real hardware this
+            // happens in two passes during HBlank/active display; we
+            // approximate with a single line-boundary snapshot.
+            self.sync_sat_cache();
 
             let active_lines = self.screen_height();
             self.hint_pending = false;

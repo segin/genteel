@@ -1401,6 +1401,48 @@ fn test_sprite_mask_x0_first_with_prev_overflow() {
     );
 }
 
+/// SAT cache (LSU) latches at line boundary. A mid-line write to the
+/// SAT region of VRAM must not be visible to the SAT cache until the
+/// next line wrap re-latches it.
+#[test]
+fn test_sat_cache_latches_at_line_boundary() {
+    let mut vdp = Vdp::new();
+    vdp.registers[REG_MODE2] = MODE2_DISPLAY_ENABLE;
+    vdp.registers[REG_MODE4] = 0x81; // H40
+    vdp.registers[REG_SPRITE_TABLE] = 0x6A; // SAT @ 0xD400
+    let sat_base = 0xD400;
+
+    // Write sprite 0 directly to VRAM, then force a latch.
+    vdp.vram[sat_base] = 0x00;
+    vdp.vram[sat_base + 1] = 138; // raw Y = 138 -> on-screen Y = 10
+    vdp.vram[sat_base + 2] = 0x00;
+    vdp.vram[sat_base + 3] = 0;
+    vdp.vram[sat_base + 6] = 0x00;
+    vdp.vram[sat_base + 7] = 168; // raw X = 168 -> on-screen X = 40
+    vdp.sync_sat_cache();
+
+    let captured_y_before = vdp.sat[1];
+    assert_eq!(captured_y_before, 138);
+
+    // Mid-line VRAM write to the SAT region: change Y to something else.
+    vdp.vram[sat_base + 1] = 0xAA;
+
+    // SAT cache must still reflect the latched value, not the new VRAM.
+    assert_eq!(
+        vdp.sat[1], 138,
+        "Mid-line VRAM write to SAT region must not update the cache"
+    );
+
+    // Tick a full line to trigger the line-boundary re-latch.
+    // 3420 MCLK = full line.
+    vdp.tick(3420, |_| 0);
+
+    assert_eq!(
+        vdp.sat[1], 0xAA,
+        "Line-boundary tick must re-latch the SAT cache from VRAM"
+    );
+}
+
 /// H40 + 2-cell VSCROLL + non-zero H-scroll: column 0 receives the AND of
 /// the last two VSRAM strip entries (strips 18 and 19) for the relevant plane
 /// rather than strip 0.
