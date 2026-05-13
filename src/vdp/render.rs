@@ -109,7 +109,7 @@ pub trait RenderOps {
         sprites: &[SpriteAttributes],
         fetch_line: u16,
         line_buf: &mut [u8; 320],
-    );
+    ) -> bool;
     fn get_v_scroll(&self, is_plane_a: bool, tile_h: usize, fetch_line: u16) -> u16;
     fn get_h_scroll(&self, is_plane_a: bool, fetch_line: u16) -> u16;
     fn fetch_nametable_entry(
@@ -327,6 +327,7 @@ fn render_sprite_scanline(
     line: u16,
     attr: &SpriteAttributes,
     screen_width: u16,
+    collision: &mut bool,
 ) {
     let sprite_v_px = (attr.v_size as u16) * 8;
 
@@ -393,11 +394,10 @@ fn render_sprite_scanline(
                 if color_idx != 0 {
                     let addr = (attr.palette << 4) | color_idx;
                     let pri_mask = if attr.priority { 0x80 } else { 0x00 };
-                    // Only write if not already occupied by a higher-priority sprite (in this case we draw in reverse order, so we overwrite, wait actually sprite 0 is highest priority.
-                    // If we draw in reverse order (sprites.iter().rev()), the highest priority sprite is drawn last and overwrites.
-                    // Wait, S/H operators only apply if they are the TOP sprite pixel.
-                    // By drawing in reverse order, the last drawn pixel is the top one.
                     if let Some(pixel) = line_buf.get_mut(screen_x as usize) {
+                        if (*pixel & 0x0F) != 0 {
+                            *collision = true;
+                        }
                         *pixel = addr | pri_mask;
                     }
                 }
@@ -422,6 +422,9 @@ fn render_sprite_scanline(
                     let addr = (attr.palette << 4) | color_idx;
                     let pri_mask = if attr.priority { 0x80 } else { 0x00 };
                     if let Some(pixel) = line_buf.get_mut(screen_x as usize) {
+                        if (*pixel & 0x0F) != 0 {
+                            *collision = true;
+                        }
                         *pixel = addr | pri_mask;
                     }
                 }
@@ -466,7 +469,9 @@ impl RenderOps for Vdp {
         if std::env::var("GENTEEL_DEBUG_PLANE").as_deref() != Ok("b") {
             self.render_plane(true, fetch_line, &mut buf_a);
         }
-        self.render_sprites(active_sprites, fetch_line, &mut buf_s);
+        if self.render_sprites(active_sprites, fetch_line, &mut buf_s) {
+            self.status |= STATUS_COLLISION;
+        }
 
         let composite_params = CompositeLineParams {
             line_offset,
@@ -683,6 +688,9 @@ impl RenderOps for Vdp {
         }
 
         self.prev_line_sprite_overflow = overflow_this_line;
+        if overflow_this_line {
+            self.status |= STATUS_SOVR;
+        }
         visible_added
     }
 
@@ -691,14 +699,23 @@ impl RenderOps for Vdp {
         sprites: &[SpriteAttributes],
         fetch_line: u16,
         line_buf: &mut [u8; 320],
-    ) {
+    ) -> bool {
         let screen_width = self.screen_width();
+        let mut collision = false;
 
         // Render in reverse order so that sprites with lower indices (higher priority)
         // are drawn last and appear on top.
         for attr in sprites.iter().rev() {
-            render_sprite_scanline(&self.vram, line_buf, fetch_line, attr, screen_width);
+            render_sprite_scanline(
+                &self.vram,
+                line_buf,
+                fetch_line,
+                attr,
+                screen_width,
+                &mut collision,
+            );
         }
+        collision
     }
     /// Fetch Vertical scroll value for the given column.
     /// Supports both Full-screen and 2-cell (16-pixel) strip modes.

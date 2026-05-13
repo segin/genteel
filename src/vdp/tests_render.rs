@@ -1343,6 +1343,64 @@ fn test_sprite_mask_x0_first_with_prev_overflow() {
     );
 }
 
+/// Status bit 6 (SOVR) is set when sprite overflow occurs on a line.
+#[test]
+fn test_status_sovr_set_on_sprite_count_overflow() {
+    let mut vdp = Vdp::new();
+    vdp.registers[REG_MODE4] = 0x81; // H40
+    vdp.registers[REG_SPRITE_TABLE] = 0x6A;
+    let sat_base = 0xD400;
+
+    for i in 0..25u8 {
+        let next = if i == 24 { 0 } else { i + 1 };
+        place_sprite(&mut vdp, sat_base, i as usize, 32 + (i as u16) * 8, 10, next);
+    }
+
+    let mut buf = [SpriteAttributes::default(); 80];
+    let _ = vdp.get_active_sprites(10, &mut buf);
+    assert!(
+        (vdp.status & STATUS_SOVR) != 0,
+        "STATUS_SOVR (bit 6) must be set when more than 20 sprites land on a line in H40"
+    );
+}
+
+/// Status bit 5 (SCOL) is set when two opaque sprite pixels overlap on the same line.
+#[test]
+fn test_status_scol_set_on_sprite_overlap() {
+    let mut vdp = Vdp::new();
+    vdp.registers[REG_MODE2] = MODE2_DISPLAY_ENABLE; // display on
+    vdp.registers[REG_MODE4] = 0x81; // H40
+    vdp.registers[REG_SPRITE_TABLE] = 0x6A;
+    let sat_base = 0xD400;
+
+    // Paint tile 1 as a solid 8x8 block of color index 1.
+    // Each row is 4 bytes, two pixels per byte (high nibble first).
+    let tile_addr = 32usize; // tile index 1 -> byte addr 32
+    for row in 0..8 {
+        for byte in 0..4 {
+            vdp.vram[tile_addr + row * 4 + byte] = 0x11;
+        }
+    }
+
+    // Two sprites overlapping at screen (50, 10).
+    place_sprite(&mut vdp, sat_base, 0, 50, 10, 1);
+    // Point sprite 0 at tile 1.
+    vdp.vram[sat_base + 4] = 0x00;
+    vdp.vram[sat_base + 5] = 0x01;
+
+    place_sprite(&mut vdp, sat_base, 1, 50, 10, 0);
+    vdp.vram[sat_base + 8 + 4] = 0x00;
+    vdp.vram[sat_base + 8 + 5] = 0x01;
+
+    vdp.sync_sat_cache();
+    vdp.render_line(10);
+
+    assert!(
+        (vdp.status & STATUS_COLLISION) != 0,
+        "STATUS_COLLISION (bit 5) must be set when two opaque sprite pixels overlap"
+    );
+}
+
 /// `prev_line_sprite_overflow` is set when the per-line sprite count limit is hit.
 #[test]
 fn test_prev_line_overflow_records_count_limit() {
