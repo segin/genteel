@@ -667,6 +667,12 @@ impl Vdp {
         (self.registers[REG_MODE2] & MODE2_DISPLAY_ENABLE) != 0
     }
 
+    /// Whether the VDP is currently within an active-display scanline
+    /// (used by the CPU to tighten HINT-sensing cadence — see R3).
+    pub fn in_active_display(&self) -> bool {
+        (self.status & STATUS_VBLANK) == 0
+    }
+
     pub fn vint_enabled(&self) -> bool {
         (self.registers[REG_MODE2] & MODE2_VINT_ENABLE) != 0
     }

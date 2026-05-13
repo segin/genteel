@@ -704,7 +704,11 @@ impl Emulator {
                 (262, 224)
             }
         };
-        let samples_per_line = audio::samples_per_frame() as f32 / lines as f32;
+        let samples_per_line = audio::samples_per_frame_for_rate_and_region(
+            self.bus.borrow().sample_rate,
+            lines == 313,
+        ) as f32
+            / lines as f32;
 
         for line in 0..lines {
             self.step_scanline(line, active_lines, samples_per_line);
@@ -749,9 +753,9 @@ impl Emulator {
             let z80_can_run = !bus.z80_reset && !bus.z80_bus_request;
             let z80_is_reset = bus.z80_reset;
             let cycles_per_sample = if bus.vdp.is_pal {
-                audio::PAL_MCLK as f32 / bus.sample_rate as f32
+                audio::PAL_MCLK as f64 / bus.sample_rate as f64
             } else {
-                audio::NTSC_MCLK as f32 / bus.sample_rate as f32
+                audio::NTSC_MCLK as f64 / bus.sample_rate as f64
             };
             (z80_can_run, z80_is_reset, cycles_per_sample)
         };
@@ -793,14 +797,12 @@ impl Emulator {
         let output_sample_rate = bus.sample_rate;
         bus.apu.set_timing(region, output_sample_rate);
         bus.apu.tick_cycles(m68k_cycles);
-        bus.audio_accumulator += mclk as f32;
+        bus.audio_accumulator += mclk as f64;
 
         while bus.audio_accumulator >= cycles_per_sample {
             let (l, r) = bus.apu.generate_sample();
-            if bus.audio_buffer.len() < 32768 {
-                bus.audio_buffer.push(l);
-                bus.audio_buffer.push(r);
-            }
+            bus.audio_buffer.push(l);
+            bus.audio_buffer.push(r);
             bus.audio_accumulator -= cycles_per_sample;
         }
     }
@@ -811,7 +813,10 @@ impl Emulator {
         line: u16,
         active_lines: u16,
     ) -> CpuBatchResult {
-        const Z80_AUDIO_SYNC_SLICE: u32 = 32;
+        // R3: tighter HINT/VINT sensing during active display so the CPU
+        // can ack HINT in time to update the road palette before line render.
+        const Z80_AUDIO_SYNC_SLICE_ACTIVE: u32 = 8;
+        const Z80_AUDIO_SYNC_SLICE_VBLANK: u32 = 32;
         let (initial_req, initial_rst) = {
             let bus = ctx.bus_rc.borrow();
             (bus.z80_bus_request, bus.z80_reset)
@@ -863,7 +868,12 @@ impl Emulator {
             deferred_audio_cycles += m68k_cycles;
 
             let trigger_vint = line == active_lines && pending_cycles < 10;
-            let should_sync_audio = deferred_bus_cycles >= Z80_AUDIO_SYNC_SLICE
+            let slice = if ctx.bus_rc.borrow().vdp.in_active_display() {
+                Z80_AUDIO_SYNC_SLICE_ACTIVE
+            } else {
+                Z80_AUDIO_SYNC_SLICE_VBLANK
+            };
+            let should_sync_audio = deferred_bus_cycles >= slice
                 || trigger_vint
                 || ctx.bus_rc.borrow().dma_active();
             if should_sync_audio {
@@ -953,14 +963,19 @@ impl Emulator {
         // collapse audio into repeated whole-frame dropouts.
         const MAX_BUFFERED_AUDIO_FRAMES: usize = 8;
         let max_samples =
-            audio::samples_per_frame_for_rate(bus.sample_rate) * 2 * MAX_BUFFERED_AUDIO_FRAMES;
+            audio::samples_per_frame_for_rate_and_region(bus.sample_rate, bus.vdp.is_pal)
+                * 2
+                * MAX_BUFFERED_AUDIO_FRAMES;
         let needed = self.audio_buffer.len() + bus.audio_buffer.len();
         if needed > max_samples {
-            let to_drop = needed - max_samples;
+            let to_drop = ((needed - max_samples) + 1) & !1;
             self.audio_buffer
-                .drain(..to_drop.min(self.audio_buffer.len()));
+                .drain(..to_drop.min(self.audio_buffer.len() & !1));
         }
-        self.audio_buffer.extend(bus.audio_buffer.iter());
+        if (bus.audio_buffer.len() & 1) != 0 {
+            bus.audio_buffer.pop();
+        }
+        self.audio_buffer.extend_from_slice(&bus.audio_buffer);
         bus.audio_buffer.clear();
     }
     fn handle_interrupts(&mut self) {
