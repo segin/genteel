@@ -263,6 +263,14 @@ pub struct Vdp {
     /// render with an empty SAT cache).
     #[serde(skip, default)]
     pub(crate) sat_cache_valid: bool,
+    /// HINT is "due" on the current line but its MCLK threshold hasn't
+    /// yet been reached. Asserted in `tick` once `mclk_line_clocks` crosses
+    /// `HINT_OFFSET_MCLK`.
+    #[serde(skip, default)]
+    pub(crate) hint_due: bool,
+    /// VINT is "due" on the current line; same deferred-assertion model.
+    #[serde(skip, default)]
+    pub(crate) vint_due: bool,
 }
 
 impl Default for Vdp {
@@ -273,6 +281,13 @@ impl Default for Vdp {
 
 impl Vdp {
     const ACTIVE_DISPLAY_START_MCLK: u32 = 860;
+    /// MCLK offset within a line at which HINT becomes asserted.
+    /// Hardware asserts a few slots into the line — well before active
+    /// display starts. Approximated at 200 MCLK.
+    const HINT_OFFSET_MCLK: u32 = 200;
+    /// MCLK offset within the first VBlank line at which VINT is asserted.
+    /// Hardware asserts ~slot 0 of line 0xE0+ several slots later.
+    const VINT_OFFSET_MCLK: u32 = 480;
 
     pub fn new() -> Self {
         let mut vdp = Self {
@@ -306,6 +321,8 @@ impl Vdp {
             prev_line_sprite_overflow: false,
             dma_stall_cycles: 0,
             sat_cache_valid: false,
+            hint_due: false,
+            vint_due: false,
         };
         vdp.reset();
         vdp
@@ -907,6 +924,24 @@ impl Vdp {
         let prev_line_clocks = self.mclk_line_clocks;
         self.mclk_line_clocks += mclk;
 
+        // Deferred-interrupt assertion: if HINT/VINT was queued at the
+        // previous line wrap and the MCLK has now crossed its threshold,
+        // assert the actual pending flag.
+        if self.hint_due
+            && prev_line_clocks < Self::HINT_OFFSET_MCLK
+            && self.mclk_line_clocks >= Self::HINT_OFFSET_MCLK
+        {
+            self.hint_pending = true;
+            self.hint_due = false;
+        }
+        if self.vint_due
+            && prev_line_clocks < Self::VINT_OFFSET_MCLK
+            && self.mclk_line_clocks >= Self::VINT_OFFSET_MCLK
+        {
+            self.status |= STATUS_VINT_PENDING;
+            self.vint_due = false;
+        }
+
         let is_h40 = self.h40_mode();
         let total_slots = if is_h40 { 210 } else { 171 };
 
@@ -947,11 +982,16 @@ impl Vdp {
 
             let active_lines = self.screen_height();
             self.hint_pending = false;
+            self.hint_due = false;
+            self.vint_due = false;
 
             // Handle VBlank status flag based on V counter
             if self.v_counter == active_lines {
                 self.status |= STATUS_VBLANK;
-                self.status |= STATUS_VINT_PENDING;
+                // VINT is "due" but the actual STATUS_VINT_PENDING flag is
+                // set later once the MCLK threshold within this line is
+                // crossed (see post-wrap deferred-assertion check below).
+                self.vint_due = true;
             } else if self.v_counter == 0 {
                 self.status &= !STATUS_VBLANK;
             }
@@ -959,7 +999,7 @@ impl Vdp {
             if self.v_counter < active_lines {
                 if self.line_counter == 0 {
                     self.line_counter = self.registers[REG_H_INT_COUNTER] as u16;
-                    self.hint_pending = true;
+                    self.hint_due = true;
                 } else {
                     self.line_counter -= 1;
                 }
@@ -978,6 +1018,16 @@ impl Vdp {
             };
             if self.mclk_line_clocks >= Self::ACTIVE_DISPLAY_START_MCLK {
                 self.render_scanline_if_needed(self.v_counter);
+            }
+            // Post-wrap deferred-interrupt check: if the current tick
+            // advanced past the new line's HINT/VINT thresholds, assert now.
+            if self.hint_due && self.mclk_line_clocks >= Self::HINT_OFFSET_MCLK {
+                self.hint_pending = true;
+                self.hint_due = false;
+            }
+            if self.vint_due && self.mclk_line_clocks >= Self::VINT_OFFSET_MCLK {
+                self.status |= STATUS_VINT_PENDING;
+                self.vint_due = false;
             }
             for slot_idx in 0..next_line_curr_slot {
                 self.process_slot(slot_idx as usize, is_h40, &mut read_bus_word);

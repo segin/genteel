@@ -3,7 +3,8 @@
 //! Uses proptest for comprehensive property testing of VDP behavior.
 
 use crate::vdp::{
-    RenderOps, Vdp, MODE1_HINT_ENABLE, REG_H_INT_COUNTER, REG_PLANE_SIZE, STATUS_VBLANK,
+    RenderOps, Vdp, MODE1_HINT_ENABLE, MODE2_VINT_ENABLE, REG_H_INT_COUNTER, REG_PLANE_SIZE,
+    STATUS_VBLANK, STATUS_VINT_PENDING,
 };
 use proptest::prelude::*;
 
@@ -318,12 +319,58 @@ mod unit_tests {
         vdp.line_counter = 0;
         vdp.mclk_line_clocks = 3419;
 
-        vdp.tick(1, |_| 0);
+        // Tick 1 MCLK to cross the line boundary, then enough MCLK to
+        // cross HINT_OFFSET_MCLK (=200) so the deferred HINT asserts.
+        vdp.tick(1 + 200, |_| 0);
 
         assert_eq!(vdp.v_counter, 223);
         assert_eq!(vdp.line_counter, 5);
         assert!(vdp.hint_pending());
         assert_eq!(vdp.status & STATUS_VBLANK, 0);
+    }
+
+    /// HINT is deferred: at the very start of the new line (mclk_line_clocks
+    /// = 0) it must NOT yet be pending; only after MCLK crosses HINT_OFFSET.
+    #[test]
+    fn hint_is_deferred_until_threshold_crossed() {
+        let mut vdp = Vdp::new();
+        vdp.registers[0] = MODE1_HINT_ENABLE;
+        vdp.registers[REG_H_INT_COUNTER] = 0;
+        vdp.v_counter = 0;
+        vdp.line_counter = 0;
+        vdp.mclk_line_clocks = 3419;
+
+        // Tick exactly 1 MCLK: wraps to new line at mclk = 0; HINT is due
+        // but not yet asserted.
+        vdp.tick(1, |_| 0);
+        assert!(vdp.hint_due, "HINT must be queued at line boundary");
+        assert!(!vdp.hint_pending, "HINT must not yet have asserted");
+
+        // Tick past the threshold (HINT_OFFSET = 200).
+        vdp.tick(200, |_| 0);
+        assert!(!vdp.hint_due);
+        assert!(vdp.hint_pending);
+    }
+
+    /// VINT is deferred by VINT_OFFSET_MCLK from the start of the first
+    /// VBlank line.
+    #[test]
+    fn vint_is_deferred_until_threshold_crossed() {
+        let mut vdp = Vdp::new();
+        vdp.registers[1] = MODE2_VINT_ENABLE;
+        // V counter is the line index 0..262; first VBlank line in V28 is 224.
+        vdp.v_counter = 223;
+        vdp.mclk_line_clocks = 3419;
+
+        // Wrap to v_counter = 224 (first VBlank line). VINT is due but not pending.
+        vdp.tick(1, |_| 0);
+        assert!(vdp.vint_due);
+        assert_eq!(vdp.status & STATUS_VINT_PENDING, 0);
+
+        // Cross the VINT threshold (VINT_OFFSET = 480 MCLK).
+        vdp.tick(480, |_| 0);
+        assert!(!vdp.vint_due);
+        assert_ne!(vdp.status & STATUS_VINT_PENDING, 0);
     }
 
     #[test]
