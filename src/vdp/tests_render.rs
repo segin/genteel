@@ -1401,6 +1401,68 @@ fn test_sprite_mask_x0_first_with_prev_overflow() {
     );
 }
 
+/// H40 window/Plane-A boundary glitch (G10): when the window is left-anchored
+/// and there is a non-zero H-scroll, the right edge of the window region
+/// duplicates one extra window tile before plane A resumes.
+#[test]
+fn test_h40_window_plane_a_boundary_glitches() {
+    let mut vdp = Vdp::new();
+    vdp.registers[REG_MODE2] = MODE2_DISPLAY_ENABLE;
+    vdp.registers[REG_MODE4] = 0x81; // H40
+    vdp.registers[2] = 0x30; // Plane A @ 0xC000
+    vdp.registers[3] = 0x34; // Window @ 0xD000 (H40 requires 4KB alignment)
+    vdp.registers[REG_PLANE_SIZE] = 0x00; // 32x32
+
+    // Window covers cells 0..2 (16 px) on the left.
+    // win_h_point = (h_pos & 0x1F) * 16 = 2*16 = 32 px.
+    vdp.registers[REG_WINDOW_H_POS] = 2;
+    vdp.registers[REG_WINDOW_V_POS] = 0;
+
+    // Non-zero H-scroll (full-screen mode, table at VRAM 0).
+    vdp.vram[0] = 0x00;
+    vdp.vram[1] = 0x08;
+    vdp.registers[REG_HSCROLL] = 0;
+    vdp.registers[REG_MODE3] = 0x00;
+
+    // Tile 1: red (all pixels color index 1). Tile 2: green (all index 2).
+    for i in 0..32 {
+        vdp.vram[32 + i] = 0x11;
+        vdp.vram[64 + i] = 0x22;
+    }
+    vdp.cram_cache[1] = 0xF800; // red
+    vdp.cram_cache[2] = 0x07E0; // green
+
+    // Window nametable @ 0xD000: cell (row 0, col 4) -> tile 1 (red). This
+    // is the *pre-fetched* window tile that the glitch will draw at the
+    // plane-A boundary.
+    let win_row0_cell4 = 0xD000 + (4 * 2);
+    vdp.vram[win_row0_cell4] = 0x00;
+    vdp.vram[win_row0_cell4 + 1] = 0x01;
+
+    // Plane A nametable @ 0xC000: cell (row 0, col 4) -> tile 2 (green).
+    let plane_row0_cell4 = 0xC000 + (4 * 2);
+    vdp.vram[plane_row0_cell4] = 0x00;
+    vdp.vram[plane_row0_cell4 + 1] = 0x02;
+    let plane_row0_cell5 = 0xC000 + (5 * 2);
+    vdp.vram[plane_row0_cell5] = 0x00;
+    vdp.vram[plane_row0_cell5 + 1] = 0x02;
+
+    vdp.sync_sat_cache();
+    vdp.render_line(0);
+
+    // Boundary is at screen_x = 32 (cells 0-3 are the window). Without the
+    // glitch, pixels 32..40 would show plane-A cell 4 (green). With the
+    // glitch enabled, the window's cell-4 tile (red) duplicates into that
+    // position instead.
+    for x in 32..40usize {
+        assert_eq!(
+            vdp.framebuffer[x], 0xF800,
+            "expected window-tile (red) duplicated into plane-A boundary at x={}",
+            x
+        );
+    }
+}
+
 /// SAT cache (LSU) latches at line boundary. A mid-line write to the
 /// SAT region of VRAM must not be visible to the SAT cache until the
 /// next line wrap re-latches it.

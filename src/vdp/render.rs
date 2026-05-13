@@ -541,22 +541,46 @@ impl RenderOps for Vdp {
                 scanline_width: screen_width,
             };
 
+            // H40 window/Plane-A boundary glitch (G10):
+            // On real hardware, the VDP pre-fetches the next tile's nametable
+            // entry one slot ahead. When the rendered region transitions from
+            // the window plane back to plane A (left-anchored window with
+            // win_h_dir == false), the in-flight window entry is reused for
+            // the first plane-A tile, producing the classic "Mickey Mania
+            // logo wobble" artifact. We approximate by drawing one extra
+            // tile with the window's parameters at the boundary, only in
+            // H40 mode with a non-zero H-scroll (the same trigger as G5).
+            let glitch_enabled = h40_mode && h_scroll != 0 && !win_h_dir;
+            let mut prev_in_window = win_full_line
+                || if win_h_dir {
+                    screen_x >= win_h_point
+                } else {
+                    screen_x < win_h_point
+                };
             while screen_x < screen_width {
-                let params = if win_full_line {
+                let now_in_window = if win_full_line {
+                    true
+                } else if win_h_dir {
+                    screen_x >= win_h_point
+                } else {
+                    screen_x < win_h_point
+                };
+
+                if glitch_enabled && prev_in_window && !now_in_window {
+                    // Boundary glitch: one extra window tile before plane A.
+                    self.render_tile(&win_params, &mut screen_x, line_buf);
+                    if screen_x >= screen_width {
+                        break;
+                    }
+                }
+
+                let params = if now_in_window {
                     &win_params
                 } else {
-                    let in_h = if win_h_dir {
-                        screen_x >= win_h_point
-                    } else {
-                        screen_x < win_h_point
-                    };
-                    if in_h {
-                        &win_params
-                    } else {
-                        &plane_params
-                    }
+                    &plane_params
                 };
                 self.render_tile(params, &mut screen_x, line_buf);
+                prev_in_window = now_in_window;
             }
         } else {
             // Plane B never has a window
