@@ -691,7 +691,18 @@ impl RenderOps for Vdp {
             if h40 && two_cell_mode && current_x < 16 && params.h_scroll != 0 {
                 let vs_strip19 = self.get_v_scroll(params.is_plane_a, 38, params.fetch_line);
                 let vs_strip18 = self.get_v_scroll(params.is_plane_a, 36, params.fetch_line);
-                vs_strip19 & vs_strip18
+                // R5: tighten the AND quirk. If either source strip is zero,
+                // the AND would clobber the other strip with zero, breaking
+                // games (e.g. Road Rash II) that intentionally keep the last
+                // strip unwritten while strip 0 carries the real value.
+                // Fall back to strip-19 only in that case (the looser
+                // pre-G5 behavior). The AND only fires when both strips
+                // carry meaningful (non-zero) bits.
+                if vs_strip19 != 0 && vs_strip18 != 0 {
+                    vs_strip19 & vs_strip18
+                } else {
+                    vs_strip19
+                }
             } else {
                 let tile_column = (current_x >> 3) as usize;
                 self.get_v_scroll(params.is_plane_a, tile_column, params.fetch_line)

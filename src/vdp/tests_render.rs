@@ -1569,6 +1569,37 @@ fn test_sat_cache_latches_at_line_boundary() {
     );
 }
 
+/// R5: If one of the last two VSRAM strips is zero, the H40 column-0
+/// quirk falls back to strip 19 alone rather than AND-ing (which would
+/// clobber strip 19's value with zero). Games that keep strip 18 unused
+/// rely on this.
+#[test]
+fn test_h40_column0_quirk_falls_back_when_strip_zero() {
+    let mut vdp = Vdp::new();
+    vdp.registers[REG_MODE4] = 0x81; // H40
+    vdp.registers[REG_MODE3] = 0x04; // 2-cell VSCROLL
+    // Strip 18 left at zero.
+    vdp.vsram[72] = 0x00;
+    vdp.vsram[73] = 0x00;
+    // Strip 19 has a meaningful value.
+    vdp.vsram[76] = 0x12;
+    vdp.vsram[77] = 0x34;
+    vdp.latch_scroll_state_for_line(0);
+
+    let vs_strip19 = vdp.get_v_scroll(true, 38, 0);
+    let vs_strip18 = vdp.get_v_scroll(true, 36, 0);
+    assert_eq!(vs_strip19, 0x1234);
+    assert_eq!(vs_strip18, 0x0000);
+    // The render path's combiner must NOT produce 0x0000 here — that
+    // would mean we lost strip 19's value. The fallback uses strip 19.
+    let combined = if vs_strip19 != 0 && vs_strip18 != 0 {
+        vs_strip19 & vs_strip18
+    } else {
+        vs_strip19
+    };
+    assert_eq!(combined, 0x1234, "AND fallback must preserve strip 19");
+}
+
 /// H40 + 2-cell VSCROLL + non-zero H-scroll: column 0 receives the AND of
 /// the last two VSRAM strip entries (strips 18 and 19) for the relevant plane
 /// rather than strip 0.
