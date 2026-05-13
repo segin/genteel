@@ -230,8 +230,7 @@ mod unit_tests {
     #[test]
     fn test_vdp_hv_counter() {
         let mut vdp = Vdp::new();
-        // Set state to midway through active area
-        vdp.mclk_line_clocks = 860 + 1280; // HBlank (860) + half of active area (2560 / 2)
+        vdp.mclk_line_clocks = 0;
         vdp.v_counter = 0x00AB;
 
         let hv = vdp.read_hv_counter();
@@ -239,8 +238,75 @@ mod unit_tests {
         let h_out = hv as u8;
 
         assert_eq!(v_out, 0xAB);
-        // H should be midway through active range: 0xB6 / 2 = 0x5B
-        assert_eq!(h_out, 0x5B);
+        assert_eq!(h_out, 0x00, "H counter starts at 0 at the line boundary");
+    }
+
+    #[test]
+    fn h_counter_h40_jump_table() {
+        // First segment fills 0..=0xB6 over the first 0xB7 ticks.
+        assert_eq!(Vdp::h_counter_value_for_tick(0, true), 0x00);
+        assert_eq!(Vdp::h_counter_value_for_tick(0xB6, true), 0xB6);
+        // Boundary jumps from 0xB6 to 0xE4.
+        assert_eq!(Vdp::h_counter_value_for_tick(0xB7, true), 0xE4);
+        assert_eq!(Vdp::h_counter_value_for_tick(0xB7 + 1, true), 0xE5);
+        // Final tick of the line.
+        assert_eq!(Vdp::h_counter_value_for_tick(210, true), 0xFF);
+        // Values in the gap should never be produced.
+        for tick in 0..=210u32 {
+            let h = Vdp::h_counter_value_for_tick(tick, true);
+            assert!(
+                !(0xB7..=0xE3).contains(&h),
+                "H40 produced gap value 0x{:02X} at tick {}",
+                h,
+                tick
+            );
+        }
+    }
+
+    #[test]
+    fn h_counter_h32_jump_table() {
+        assert_eq!(Vdp::h_counter_value_for_tick(0, false), 0x00);
+        assert_eq!(Vdp::h_counter_value_for_tick(0x93, false), 0x93);
+        assert_eq!(Vdp::h_counter_value_for_tick(0x94, false), 0xE9);
+        assert_eq!(Vdp::h_counter_value_for_tick(170, false), 0xFF);
+        for tick in 0..=170u32 {
+            let h = Vdp::h_counter_value_for_tick(tick, false);
+            assert!(
+                !(0x94..=0xE8).contains(&h),
+                "H32 produced gap value 0x{:02X} at tick {}",
+                h,
+                tick
+            );
+        }
+    }
+
+    #[test]
+    fn v_counter_ntsc_v28_jump_table() {
+        assert_eq!(Vdp::v_counter_value_for_line(0, false, false), 0x00);
+        assert_eq!(Vdp::v_counter_value_for_line(0xEA, false, false), 0xEA);
+        assert_eq!(Vdp::v_counter_value_for_line(0xEB, false, false), 0xE5);
+        assert_eq!(Vdp::v_counter_value_for_line(261, false, false), 0xFF);
+        for line in 0..262u16 {
+            let v = Vdp::v_counter_value_for_line(line, false, false);
+            assert!(
+                !(0xEB..=0xE4).contains(&v),
+                "NTSC V28 produced gap value 0x{:02X} at line {}",
+                v,
+                line
+            );
+        }
+    }
+
+    #[test]
+    fn v_counter_pal_v28_jump_table() {
+        // PAL V28: 0..=0xFF, then 0xCA..=0xFF (54 values). The last 3 lines
+        // of a 313-line PAL frame wrap past 0xFF — that matches the canonical
+        // table at the cost of a 3-line ambiguity.
+        assert_eq!(Vdp::v_counter_value_for_line(0, true, false), 0x00);
+        assert_eq!(Vdp::v_counter_value_for_line(0xFF, true, false), 0xFF);
+        assert_eq!(Vdp::v_counter_value_for_line(0x100, true, false), 0xCA);
+        // Last representable line in the canonical table is 0x100 + 53 = 0x135 → 0xFF.
+        assert_eq!(Vdp::v_counter_value_for_line(0x135, true, false), 0xFF);
     }
 
     #[test]

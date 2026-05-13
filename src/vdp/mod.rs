@@ -706,17 +706,65 @@ impl Vdp {
         self.hint_pending && self.hint_enabled()
     }
 
-    pub fn read_hv_counter(&self) -> u16 {
-        let h = if self.mclk_line_clocks < Self::ACTIVE_DISPLAY_START_MCLK {
-            (0xE4 + ((self.mclk_line_clocks * (0xFF - 0xE4)) / Self::ACTIVE_DISPLAY_START_MCLK))
-                as u8
+    /// Map a 0-based H tick within the line to the externally visible 8-bit H
+    /// counter, applying the hardware jump:
+    ///   * H40: 0x00..=0xB6 then 0xE4..=0xFF (total 211 values)
+    ///   * H32: 0x00..=0x93 then 0xE9..=0xFF (total 171 values)
+    #[inline]
+    pub(crate) fn h_counter_value_for_tick(tick: u32, is_h40: bool) -> u8 {
+        if is_h40 {
+            // First segment: 0x00..=0xB6 (0xB7 values)
+            // Second segment: 0xE4..=0xFF (0x1C values)
+            if tick <= 0xB6 {
+                tick as u8
+            } else {
+                let s2 = (tick - 0xB7) as u8;
+                0xE4u8.wrapping_add(s2)
+            }
+        } else if tick <= 0x93 {
+            tick as u8
         } else {
-            let active_clocks = 3420 - Self::ACTIVE_DISPLAY_START_MCLK;
-            let offset = self.mclk_line_clocks - Self::ACTIVE_DISPLAY_START_MCLK;
-            ((offset * 0xB6) / active_clocks) as u8
-        };
+            let s2 = (tick - 0x94) as u8;
+            0xE9u8.wrapping_add(s2)
+        }
+    }
 
-        let v = (self.v_counter & 0xFF) as u8;
+    /// Map an internal 0-based line number (0..262 NTSC / 0..313 PAL) to the
+    /// externally visible 8-bit V counter, applying the hardware jump.
+    ///
+    /// NTSC V28: 0..=0xEA then 0xE5..=0xFF (total 262 = 235+27).
+    /// NTSC V30: same shape; on real NTSC hardware V30 misbehaves but we
+    ///   produce a plausible counter.
+    /// PAL  V28: 0..=0xFF then 0xCA..=0xFF (total 313 = 256+57).
+    /// PAL  V30: 0..=0xFF then 0xC8..=0xFF (total 314 = 256+56; we map 313).
+    #[inline]
+    pub(crate) fn v_counter_value_for_line(line: u16, is_pal: bool, v30: bool) -> u8 {
+        if !is_pal {
+            // NTSC
+            if line <= 0xEA {
+                line as u8
+            } else {
+                let s2 = line - 0xEB;
+                0xE5u8.wrapping_add(s2 as u8)
+            }
+        } else if line <= 0xFF {
+            line as u8
+        } else {
+            let second_start: u16 = if v30 { 0xC8 } else { 0xCA };
+            let s2 = line - 0x100;
+            second_start.wrapping_add(s2) as u8
+        }
+    }
+
+    pub fn read_hv_counter(&self) -> u16 {
+        let is_h40 = self.h40_mode();
+        // Approximate H tick from MCLK. Total H ticks per line: 211 (H40), 171 (H32).
+        let total_ticks: u32 = if is_h40 { 211 } else { 171 };
+        let tick = (self.mclk_line_clocks * total_ticks) / 3420;
+        let h = Self::h_counter_value_for_tick(tick, is_h40);
+
+        let v30 = (self.registers[REG_MODE2] & MODE2_V30_MODE) != 0;
+        let v = Self::v_counter_value_for_line(self.v_counter, self.is_pal, v30);
         ((v as u16) << 8) | (h as u16)
     }
 
