@@ -1200,6 +1200,7 @@ fn test_get_active_sprites_h40_limits() {
     // In H40, line limit is 20 sprites, max sprites is 80.
     // Let's create 25 sprites on line 10.
     // They are linked linearly: 0 -> 1 -> 2 ... -> 24 -> 0
+    // Give every sprite a nonzero raw SAT X so the X=0 mask doesn't trigger.
     for i in 0..25 {
         let addr = sat_base + (i * 8);
         vdp.vram[addr] = 0x00;
@@ -1213,6 +1214,11 @@ fn test_get_active_sprites_h40_limits() {
         } else {
             vdp.vram[addr + 3] = (i + 1) as u8;
         }
+
+        // Non-zero raw X (so none of these are X=0 mask sprites).
+        let raw_x = 128u16 + (i as u16) * 8;
+        vdp.vram[addr + 6] = (raw_x >> 8) as u8;
+        vdp.vram[addr + 7] = (raw_x & 0xFF) as u8;
     }
 
     let mut buffer = [SpriteAttributes::default(); 80];
@@ -1221,5 +1227,140 @@ fn test_get_active_sprites_h40_limits() {
     assert_eq!(
         count, 20,
         "H40 mode should limit to 20 active sprites per line"
+    );
+}
+
+/// Helper used by the X=0 sprite-mask tests. Builds a sprite at the given
+/// link slot with the given screen X (in screen coords; SAT stores X+128).
+fn place_sprite(vdp: &mut Vdp, sat_base: usize, slot: usize, x: u16, y: u16, link_next: u8) {
+    let addr = sat_base + slot * 8;
+    let raw_y = y.wrapping_add(128);
+    vdp.vram[addr] = (raw_y >> 8) as u8;
+    vdp.vram[addr + 1] = (raw_y & 0xFF) as u8;
+    vdp.vram[addr + 2] = 0x00; // 1x1 size
+    vdp.vram[addr + 3] = link_next;
+    vdp.vram[addr + 4] = 0x00;
+    vdp.vram[addr + 5] = 0x00;
+    let raw_x = x.wrapping_add(128);
+    vdp.vram[addr + 6] = (raw_x >> 8) as u8;
+    vdp.vram[addr + 7] = (raw_x & 0xFF) as u8;
+}
+
+/// X=0 sprite as the FIRST sprite on a line with no prior overflow:
+/// the mask should NOT trigger; subsequent sprites still render.
+#[test]
+fn test_sprite_mask_x0_first_not_triggered() {
+    let mut vdp = Vdp::new();
+    vdp.registers[REG_MODE4] = 0x81; // H40
+    vdp.registers[REG_SPRITE_TABLE] = 0x6A; // SAT @ 0xD400
+    let sat_base = 0xD400;
+
+    // Slot 0: raw X=0 (mask candidate, h_pos = -128), Slot 1: visible.
+    let raw_zero_x = 0u16; // raw SAT X = 0 → h_pos = 0xFF80
+    let addr0 = sat_base;
+    let raw_y = 10u16 + 128;
+    vdp.vram[addr0] = (raw_y >> 8) as u8;
+    vdp.vram[addr0 + 1] = (raw_y & 0xFF) as u8;
+    vdp.vram[addr0 + 2] = 0x00;
+    vdp.vram[addr0 + 3] = 1;
+    vdp.vram[addr0 + 6] = (raw_zero_x >> 8) as u8;
+    vdp.vram[addr0 + 7] = (raw_zero_x & 0xFF) as u8;
+    place_sprite(&mut vdp, sat_base, 1, 100, 10, 0);
+
+    let mut buf = [SpriteAttributes::default(); 80];
+    let count = vdp.get_active_sprites(10, &mut buf);
+
+    assert_eq!(
+        count, 1,
+        "X=0 first sprite without prior overflow: mask must NOT trigger; sprite 1 stays visible"
+    );
+    assert_eq!(buf[0].index, 1);
+}
+
+/// X=0 sprite AFTER a visible sprite: the mask triggers, hiding all later sprites.
+#[test]
+fn test_sprite_mask_x0_after_visible_triggers() {
+    let mut vdp = Vdp::new();
+    vdp.registers[REG_MODE4] = 0x81; // H40
+    vdp.registers[REG_SPRITE_TABLE] = 0x6A; // SAT @ 0xD400
+    let sat_base = 0xD400;
+
+    // Slot 0: visible at X=50
+    place_sprite(&mut vdp, sat_base, 0, 50, 10, 1);
+    // Slot 1: raw X=0. Should trigger mask.
+    let addr1 = sat_base + 8;
+    let raw_y = 10u16 + 128;
+    let raw_zero_x = 0u16;
+    vdp.vram[addr1] = (raw_y >> 8) as u8;
+    vdp.vram[addr1 + 1] = (raw_y & 0xFF) as u8;
+    vdp.vram[addr1 + 2] = 0x00;
+    vdp.vram[addr1 + 3] = 2;
+    vdp.vram[addr1 + 6] = (raw_zero_x >> 8) as u8;
+    vdp.vram[addr1 + 7] = (raw_zero_x & 0xFF) as u8;
+    // Slot 2: visible at X=150 — should be masked out.
+    place_sprite(&mut vdp, sat_base, 2, 150, 10, 0);
+
+    let mut buf = [SpriteAttributes::default(); 80];
+    let count = vdp.get_active_sprites(10, &mut buf);
+
+    assert_eq!(
+        count, 1,
+        "Mask must trigger after a visible sprite; later sprite must be hidden"
+    );
+    assert_eq!(buf[0].index, 0);
+}
+
+/// X=0 sprite as FIRST when previous line overflowed: mask triggers immediately.
+#[test]
+fn test_sprite_mask_x0_first_with_prev_overflow() {
+    let mut vdp = Vdp::new();
+    vdp.registers[REG_MODE4] = 0x81; // H40
+    vdp.registers[REG_SPRITE_TABLE] = 0x6A; // SAT @ 0xD400
+    let sat_base = 0xD400;
+
+    // Force previous-line overflow state.
+    vdp.prev_line_sprite_overflow = true;
+
+    // Slot 0: raw X=0
+    let addr0 = sat_base;
+    let raw_y = 10u16 + 128;
+    let raw_zero_x = 0u16;
+    vdp.vram[addr0] = (raw_y >> 8) as u8;
+    vdp.vram[addr0 + 1] = (raw_y & 0xFF) as u8;
+    vdp.vram[addr0 + 2] = 0x00;
+    vdp.vram[addr0 + 3] = 1;
+    vdp.vram[addr0 + 6] = (raw_zero_x >> 8) as u8;
+    vdp.vram[addr0 + 7] = (raw_zero_x & 0xFF) as u8;
+    // Slot 1: visible — should be masked.
+    place_sprite(&mut vdp, sat_base, 1, 80, 10, 0);
+
+    let mut buf = [SpriteAttributes::default(); 80];
+    let count = vdp.get_active_sprites(10, &mut buf);
+
+    assert_eq!(
+        count, 0,
+        "Prior-line overflow makes an X=0 first sprite trigger the mask immediately"
+    );
+}
+
+/// `prev_line_sprite_overflow` is set when the per-line sprite count limit is hit.
+#[test]
+fn test_prev_line_overflow_records_count_limit() {
+    let mut vdp = Vdp::new();
+    vdp.registers[REG_MODE4] = 0x81; // H40 → 20 sprites per line
+    vdp.registers[REG_SPRITE_TABLE] = 0x6A;
+    let sat_base = 0xD400;
+
+    // 25 sprites all on line 10 — pushes past the 20-sprite line limit.
+    for i in 0..25u8 {
+        let next = if i == 24 { 0 } else { i + 1 };
+        place_sprite(&mut vdp, sat_base, i as usize, 32 + (i as u16) * 8, 10, next);
+    }
+
+    let mut buf = [SpriteAttributes::default(); 80];
+    let _ = vdp.get_active_sprites(10, &mut buf);
+    assert!(
+        vdp.prev_line_sprite_overflow,
+        "Hitting the per-line sprite count limit must set prev_line_sprite_overflow"
     );
 }

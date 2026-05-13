@@ -249,6 +249,10 @@ pub struct Vdp {
     pub(crate) latched_scroll_line: u16,
     #[serde(skip, default)]
     pub(crate) latched_scroll_valid: bool,
+    /// Whether sprite overflow (dot or count) occurred on the previous scanline.
+    /// Used to gate the X=0 sprite mask trigger.
+    #[serde(skip, default)]
+    pub(crate) prev_line_sprite_overflow: bool,
 }
 
 impl Default for Vdp {
@@ -289,6 +293,7 @@ impl Vdp {
             latched_hscroll_b: 0,
             latched_scroll_line: 0,
             latched_scroll_valid: false,
+            prev_line_sprite_overflow: false,
         };
         vdp.reset();
         vdp
@@ -320,6 +325,7 @@ impl Vdp {
         self.hint_pending = false;
         self.rendered_scanlines.fill(false);
         self.latched_scroll_valid = false;
+        self.prev_line_sprite_overflow = false;
         self.reconstruct_cram_cache();
         self.sync_sat_cache();
     }

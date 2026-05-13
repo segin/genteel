@@ -620,12 +620,21 @@ impl RenderOps for Vdp {
     fn get_active_sprites(&mut self, line: u16, sprites: &mut [SpriteAttributes]) -> usize {
         self.sync_sat_cache();
 
-        let mut count = 0;
-        let mut pixels = 0;
-
         let max_sprites = if self.h40_mode() { 80 } else { 64 };
         let line_limit = if self.h40_mode() { 20 } else { 16 };
         let pixel_limit = if self.h40_mode() { 320 } else { 256 };
+
+        // X=0 sprite mask state. Triggered when an X=0 sprite is encountered AND
+        // either a non-X=0 sprite has already been added to this line, OR the
+        // previous line had a sprite overflow. Once triggered, subsequent
+        // sprites on this line are not rendered (but still count toward
+        // per-line limits for overflow purposes).
+        let mut mask_triggered = false;
+        let mut visible_added: usize = 0;
+        let mut slots_consumed: usize = 0;
+        let mut pixels: usize = 0;
+        let prev_overflow = self.prev_line_sprite_overflow;
+        let mut overflow_this_line = false;
 
         let iter = SpriteIterator {
             vram: &self.sat,
@@ -637,34 +646,44 @@ impl RenderOps for Vdp {
 
         for attr in iter {
             let sprite_v_px = (attr.v_size as u16) * 8;
-
-            // X=0 suppression mode
-            if attr.h_pos == 0 {
-                // Technically hardware suppresses rendering but continues processing,
-                // but for our buffer we can just skip it visually
-            }
-
             let sprite_top = attr.v_pos as i16 as i32;
             let line_i = line as i32;
-            if line_i >= sprite_top && line_i < sprite_top + sprite_v_px as i32 {
-                // If the sprite falls on this scanline, add it
-                if count < sprites.len() {
-                    sprites[count] = attr;
-                    count += 1;
 
-                    pixels += (attr.h_size as usize) * 8;
-                }
+            if line_i < sprite_top || line_i >= sprite_top + sprite_v_px as i32 {
+                continue;
+            }
 
-                if count >= line_limit {
-                    break;
+            // An X=0 sprite that meets the trigger condition activates the mask.
+            // "X=0" means the raw 10-bit SAT X field is 0 (i.e. h_pos after the
+            // 128 subtraction equals 0xFF80 / -128). Such a sprite is fully
+            // off-screen and never renders, but it still consumes a per-line
+            // slot and dot budget on hardware, and arms the mask.
+            let is_x0_mask = attr.h_pos == 0u16.wrapping_sub(128);
+            if is_x0_mask {
+                if visible_added > 0 || prev_overflow {
+                    mask_triggered = true;
                 }
+            } else if !mask_triggered && visible_added < sprites.len() {
+                sprites[visible_added] = attr;
+                visible_added += 1;
+            }
 
-                if pixels >= pixel_limit {
-                    break;
-                }
+            slots_consumed += 1;
+            pixels += (attr.h_size as usize) * 8;
+
+            if slots_consumed >= line_limit {
+                overflow_this_line = true;
+                break;
+            }
+
+            if pixels >= pixel_limit {
+                overflow_this_line = true;
+                break;
             }
         }
-        count
+
+        self.prev_line_sprite_overflow = overflow_this_line;
+        visible_added
     }
 
     fn render_sprites(
