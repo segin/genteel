@@ -1,4 +1,4 @@
-use super::render::{PixelLayerData, ShadowHighlightParams};
+use super::render::PixelLayerData;
 use super::*;
 
 #[test]
@@ -39,7 +39,8 @@ fn test_render_plane_basic() {
 }
 
 #[test]
-fn test_shadow_highlight_mode_keeps_normal_pixels_at_normal_intensity() {
+fn test_shadow_highlight_mode_high_priority_pixel_is_normal() {
+    // Under S/H mode, a *high-priority* plane pixel renders at normal intensity.
     let mut vdp = Vdp::new();
     vdp.is_pal = false;
     vdp.registers[1] = 0x40; // Display enable
@@ -55,7 +56,8 @@ fn test_shadow_highlight_mode_keeps_normal_pixels_at_normal_intensity() {
     }
 
     let nt_addr = 0xC000;
-    vdp.vram[nt_addr] = 0x00;
+    // High byte 0x80 = priority bit set; low byte 0x01 = tile index 1.
+    vdp.vram[nt_addr] = 0x80;
     vdp.vram[nt_addr + 1] = 0x01;
 
     vdp.render_line(0);
@@ -63,7 +65,42 @@ fn test_shadow_highlight_mode_keeps_normal_pixels_at_normal_intensity() {
     for i in 0..8 {
         assert_eq!(
             vdp.framebuffer[i], 0xF800,
-            "shadow/highlight mode should not darken normal plane pixels at {}",
+            "high-priority plane pixel under S/H should be normal at {}",
+            i
+        );
+    }
+}
+
+#[test]
+fn test_shadow_highlight_mode_low_priority_pixel_is_shadowed() {
+    // Under S/H mode, a *low-priority* plane pixel renders at shadow intensity
+    // (each channel halved) — this is the canonical "background is shadowed
+    // until something high-priority covers it" behavior.
+    let mut vdp = Vdp::new();
+    vdp.is_pal = false;
+    vdp.registers[1] = 0x40; // Display enable
+    vdp.registers[2] = 0x30; // Plane A at 0xC000
+    vdp.registers[12] = 0x08; // Shadow/highlight enabled
+
+    vdp.cram_cache[0] = 0x0000;
+    vdp.cram_cache[1] = 0xF800; // bright red
+
+    let tile_addr = 32;
+    for i in 0..32 {
+        vdp.vram[tile_addr + i] = 0x11;
+    }
+
+    let nt_addr = 0xC000;
+    vdp.vram[nt_addr] = 0x00; // priority = 0
+    vdp.vram[nt_addr + 1] = 0x01;
+
+    vdp.render_line(0);
+
+    let expected_shadow = 0x7800; // r=0x0F<<11
+    for i in 0..8 {
+        assert_eq!(
+            vdp.framebuffer[i], expected_shadow,
+            "low-priority plane pixel under S/H should be shadowed at {}",
             i
         );
     }
@@ -1035,87 +1072,105 @@ fn test_sprite_fully_oob_rendering() {
     vdp.render_line(0);
 }
 
+/// $3E (palette 3, color 14) is the **highlight** operator: it hides the
+/// sprite and shifts state +1 saturating at 2.
 #[test]
-fn test_apply_shadow_highlight_basic() {
+fn test_sh_operator_3e_is_highlight() {
     let vdp = Vdp::new();
     let px = PixelLayerData {
         bg_color_idx: 0,
         s_pri: true,
         s_trans: false,
-        s_col: 0x3E, // Shadow operator
+        s_col: 0x3E,
         a_pri: false,
         a_trans: false,
-        a_col: 1, // Underlying color
+        a_col: 1,
         b_pri: false,
         b_trans: true,
         b_col: 0,
     };
-
-    let params = ShadowHighlightParams {
-        top_layer: 3,
-        top_col: 0x3E,
-        state: 0, // Normal
-        px: &px,
-    };
-
-    let (new_top_col, new_state) = vdp.apply_shadow_highlight(params);
-    assert_eq!(new_top_col, 1, "Underlying color should be revealed");
-    assert_eq!(new_state, 1, "State should be changed to shadow (1)");
+    let (top, state) = vdp.resolve_shadow_highlight_pixel(&px);
+    assert_eq!(top, 1, "Operator sprite is invisible; underlying A shows");
+    assert_eq!(state, 1, "Shadow (0) bumped to normal (1) by $3E");
 }
 
+/// $3F (palette 3, color 15) is the **shadow** operator: it hides the sprite
+/// and shifts state -1 saturating at 0.
 #[test]
-fn test_apply_shadow_highlight_highlight() {
+fn test_sh_operator_3f_is_shadow() {
     let vdp = Vdp::new();
+    // High-priority A lifts the default state to 1; the $3F sprite then drops it back to 0.
     let px = PixelLayerData {
         bg_color_idx: 0,
         s_pri: true,
         s_trans: false,
-        s_col: 0x3F, // Highlight operator
-        a_pri: false,
+        s_col: 0x3F,
+        a_pri: true,
         a_trans: false,
-        a_col: 2, // Underlying color
+        a_col: 2,
         b_pri: false,
         b_trans: true,
         b_col: 0,
     };
+    let (top, state) = vdp.resolve_shadow_highlight_pixel(&px);
+    assert_eq!(top, 2, "Operator sprite is invisible; high-prio A shows");
+    assert_eq!(state, 0, "Normal (lifted by hi-prio A) dropped to shadow by $3F");
+}
 
-    let params = ShadowHighlightParams {
-        top_layer: 3,
-        top_col: 0x3F,
-        state: 1, // Shadow
-        px: &px,
+/// Default state is **shadow** when only low-priority planes are visible.
+/// This is the bit the old simplified pipeline got wrong.
+#[test]
+fn test_sh_default_state_is_shadow() {
+    let vdp = Vdp::new();
+    let px = PixelLayerData {
+        bg_color_idx: 0,
+        s_pri: false,
+        s_trans: true,
+        s_col: 0,
+        a_pri: false,
+        a_trans: false,
+        a_col: 5,
+        b_pri: false,
+        b_trans: true,
+        b_col: 0,
     };
+    let (_, state) = vdp.resolve_shadow_highlight_pixel(&px);
+    assert_eq!(state, 0, "Low-prio plane only → state is shadow");
+}
 
-    let (new_top_col, new_state) = vdp.apply_shadow_highlight(params);
-    assert_eq!(new_top_col, 2, "Underlying color should be revealed");
-    assert_eq!(
-        new_state, 0,
-        "State should be changed from shadow to normal (0)"
-    );
+/// A high-priority plane pixel lifts the state to normal.
+#[test]
+fn test_sh_high_priority_plane_normal_state() {
+    let vdp = Vdp::new();
+    let px = PixelLayerData {
+        bg_color_idx: 0,
+        s_pri: false,
+        s_trans: true,
+        s_col: 0,
+        a_pri: true,
+        a_trans: false,
+        a_col: 5,
+        b_pri: false,
+        b_trans: true,
+        b_col: 0,
+    };
+    let (_, state) = vdp.resolve_shadow_highlight_pixel(&px);
+    assert_eq!(state, 1, "High-priority A pixel → state is normal");
+}
 
-    // Now test the color transform
-    // In `apply_color_transform`, color is r=11..15, g=5..10, b=0..4.
-    // Let's create a known mid-level green color (0x10) to test both halving and increasing.
-    let color = 0b00000_010000_00000; // Partial Green
-
-    // Test the specific state mapping logic from the source code:
-    // state 0 = shadow (halves intensity)
-    // state 1 = normal (unmodified)
-    // state 2 = highlight (halfway towards max)
-    let shadowed = vdp.apply_color_transform(color, 0); // Shadow is state 0
-    let normal = vdp.apply_color_transform(color, 1); // Normal is state 1 or any other
-    let highlighted = vdp.apply_color_transform(color, 2); // Highlight is state 2
-
-    // Extract the green channel (bits 5-10)
+/// Color transform: state 0 = shadow (halve), 1 = normal, 2 = highlight (toward max).
+#[test]
+fn test_sh_color_transform() {
+    let vdp = Vdp::new();
+    let color = 0b00000_010000_00000_u16; // mid-level green
+    let shadowed = vdp.apply_color_transform(color, 0);
+    let normal = vdp.apply_color_transform(color, 1);
+    let highlighted = vdp.apply_color_transform(color, 2);
     let g_shadow = (shadowed >> 5) & 0x3F;
     let g_normal = (normal >> 5) & 0x3F;
     let g_highlight = (highlighted >> 5) & 0x3F;
-
-    assert_eq!(g_shadow, g_normal >> 1, "Shadow should halve intensity");
-    assert!(
-        g_highlight > g_normal,
-        "Highlight should increase intensity"
-    );
+    assert_eq!(g_shadow, g_normal >> 1, "Shadow halves intensity");
+    assert!(g_highlight > g_normal, "Highlight raises intensity");
 }
 
 #[test]

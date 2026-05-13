@@ -155,13 +155,6 @@ pub struct PixelLayerData {
     pub b_col: u8,
 }
 
-pub struct ShadowHighlightParams<'a> {
-    pub top_layer: u8,
-    pub top_col: u8,
-    pub state: u8,
-    pub px: &'a PixelLayerData,
-}
-
 pub struct CompositeLineParams<'a> {
     pub line_offset: usize,
     pub bg_color_idx: u8,
@@ -211,28 +204,72 @@ impl Vdp {
                 b_col,
             };
 
-            let (mut top_col, top_layer) = self.determine_top_layer(&px);
-
             if !sh_enabled {
+                let (top_col, _) = self.determine_top_layer(&px);
                 self.framebuffer[params.line_offset + x] = self.cram_cache[top_col as usize];
             } else {
-                let mut state = 1;
-
-                let sh_params = ShadowHighlightParams {
-                    top_layer,
-                    top_col,
-                    state,
-                    px: &px,
-                };
-                let (new_top_col, new_state) = self.apply_shadow_highlight(sh_params);
-                top_col = new_top_col;
-                state = new_state;
-
+                let (top_col, state) = self.resolve_shadow_highlight_pixel(&px);
                 let color = self.cram_cache[top_col as usize];
                 let final_color = self.apply_color_transform(color, state);
                 self.framebuffer[params.line_offset + x] = final_color;
             }
         }
+    }
+
+    /// Full S/H pipeline.
+    ///
+    /// Hardware behavior:
+    ///   * Default shadow-state = 0 (shadow). The BG color is in shadow unless
+    ///     something with priority is on top.
+    ///   * A non-transparent high-priority plane pixel lifts the state to 1 (normal).
+    ///   * A non-transparent, non-operator priority sprite lifts the state to 1.
+    ///   * Operator sprites ($3E = highlight, $3F = shadow, palette 3 only)
+    ///     are themselves invisible — the plane/BG pixel underneath shows
+    ///     through — and modify the state by +1/-1 saturating to [0, 2].
+    pub(crate) fn resolve_shadow_highlight_pixel(&self, px: &PixelLayerData) -> (u8, u8) {
+        let sprite_visible = !px.s_trans;
+        let sprite_is_operator = sprite_visible && (px.s_col == 0x3E || px.s_col == 0x3F);
+
+        let mut state: u8 = 0; // shadow by default
+
+        // High-priority plane pixels lift the state to normal.
+        if (px.a_pri && !px.a_trans) || (px.b_pri && !px.b_trans) {
+            state = 1;
+        }
+        // A priority sprite that isn't an operator also lifts the state.
+        if px.s_pri && sprite_visible && !sprite_is_operator {
+            state = 1;
+        }
+
+        // Top color: operator sprites hide themselves; pick top from non-sprite layers.
+        let top_col = if sprite_is_operator {
+            let masked = PixelLayerData {
+                bg_color_idx: px.bg_color_idx,
+                s_pri: false,
+                s_trans: true,
+                s_col: 0,
+                a_pri: px.a_pri,
+                a_trans: px.a_trans,
+                a_col: px.a_col,
+                b_pri: px.b_pri,
+                b_trans: px.b_trans,
+                b_col: px.b_col,
+            };
+            self.determine_top_layer(&masked).0
+        } else {
+            self.determine_top_layer(px).0
+        };
+
+        // Apply the operator's state modification.
+        if sprite_is_operator {
+            if px.s_col == 0x3E && state < 2 {
+                state += 1;
+            } else if px.s_col == 0x3F && state > 0 {
+                state -= 1;
+            }
+        }
+
+        (top_col, state)
     }
 
     pub(crate) fn determine_top_layer(&self, px: &PixelLayerData) -> (u8, u8) {
@@ -260,43 +297,6 @@ impl Vdp {
         }
 
         (top_col, top_layer)
-    }
-
-    pub(crate) fn apply_shadow_highlight(&self, mut params: ShadowHighlightParams) -> (u8, u8) {
-        if params.top_layer == 3 {
-            if params.px.s_col == 0x3E {
-                params.top_col = params.px.bg_color_idx;
-                if params.px.a_pri && !params.px.a_trans {
-                    params.top_col = params.px.a_col;
-                } else if params.px.b_pri && !params.px.b_trans {
-                    params.top_col = params.px.b_col;
-                } else if !params.px.a_trans {
-                    params.top_col = params.px.a_col;
-                } else if !params.px.b_trans {
-                    params.top_col = params.px.b_col;
-                }
-                if params.state < 2 {
-                    params.state += 1;
-                }
-            } else if params.px.s_col == 0x3F {
-                params.top_col = params.px.bg_color_idx;
-                if params.px.a_pri && !params.px.a_trans {
-                    params.top_col = params.px.a_col;
-                } else if params.px.b_pri && !params.px.b_trans {
-                    params.top_col = params.px.b_col;
-                } else if !params.px.a_trans {
-                    params.top_col = params.px.a_col;
-                } else if !params.px.b_trans {
-                    params.top_col = params.px.b_col;
-                }
-                if params.state > 0 {
-                    params.state -= 1;
-                }
-            } else if (params.px.s_col & 0x0F) == 0x0E {
-                params.state = 1;
-            }
-        }
-        (params.top_col, params.state)
     }
 
     pub(crate) fn apply_color_transform(&self, color: u16, state: u8) -> u16 {
