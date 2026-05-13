@@ -48,6 +48,13 @@ pub trait MemoryInterface: std::fmt::Debug {
             Size::Long => self.write_long(address, value),
         }
     }
+
+    /// Return and clear cycles the 68k is stalled for due to peripheral
+    /// back-pressure (e.g. VDP FIFO full). Default returns 0 for memory
+    /// implementations that don't model stalls.
+    fn take_pending_stall_cycles(&mut self) -> u32 {
+        0
+    }
 }
 
 pub trait IoInterface: std::fmt::Debug {
@@ -81,6 +88,9 @@ impl MemoryInterface for Box<dyn MemoryInterface> {
     fn write_long(&mut self, address: u32, value: u32) {
         (**self).write_long(address, value);
     }
+    fn take_pending_stall_cycles(&mut self) -> u32 {
+        (**self).take_pending_stall_cycles()
+    }
 }
 
 // Blanket impl for Box<T> where T: MemoryInterface
@@ -102,6 +112,9 @@ impl<T: MemoryInterface> MemoryInterface for Box<T> {
     }
     fn write_long(&mut self, address: u32, value: u32) {
         (**self).write_long(address, value);
+    }
+    fn take_pending_stall_cycles(&mut self) -> u32 {
+        (**self).take_pending_stall_cycles()
     }
 }
 
