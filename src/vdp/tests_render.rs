@@ -968,8 +968,12 @@ fn test_h40_partial_left_column_uses_last_vscroll_strip() {
     assert_eq!(vdp.framebuffer[0], 0x07E0);
 }
 
+/// HINT-handler H-scroll updates land in HBlank. The VDP reads the
+/// H-scroll table at the *end* of HBlank (just before active display),
+/// so HBlank updates ARE visible on the current line. (This is the
+/// fix that gets Road Rash II's horizon to render correctly.)
 #[test]
-fn test_tick_latches_hscroll_before_hblank_updates() {
+fn test_render_picks_up_hblank_hscroll_updates() {
     let mut vdp = Vdp::new();
     vdp.registers[1] = 0x40;
     vdp.registers[2] = 0x30;
@@ -987,21 +991,25 @@ fn test_tick_latches_hscroll_before_hblank_updates() {
     vdp.vram[0xC002] = 0x00;
     vdp.vram[0xC003] = 0x02;
 
-    // Line 1 initially latches hscroll = 0.
+    // Initial line 0 H-scroll = 0. Tick through line 0; line 1 begins.
     vdp.vram[0x0000] = 0x00;
     vdp.vram[0x0001] = 0x00;
-
     vdp.tick(3420, |_| 0);
 
-    // A later HBlank update changes the live table to -8, but line 1 should
-    // keep the latched value and still render tile 0 at x=0.
+    // Mid-HBlank of line 1, the (HINT) handler updates H-scroll to -8.
+    // On real hardware, the H-scroll table read happens near the end of
+    // HBlank so this update IS visible on line 1.
     vdp.vram[0x0000] = 0xFF;
     vdp.vram[0x0001] = 0xF8;
 
     vdp.tick(860, |_| 0);
 
+    // hscroll = -8 → tile cell 1 (tile index 2 = green) is at screen x = 0.
     let offset = 320;
-    assert_eq!(vdp.framebuffer[offset], 0xF800);
+    assert_eq!(
+        vdp.framebuffer[offset], 0x07E0,
+        "HBlank H-scroll updates must be visible on the current line"
+    );
 }
 
 #[test]

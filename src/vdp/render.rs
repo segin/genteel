@@ -453,6 +453,13 @@ impl RenderOps for Vdp {
         // never latched yet) falls back to an initial sync.
         self.ensure_sat_cache();
 
+        // Re-latch scroll state right before rendering: HINT-driven per-line
+        // H-scroll updates land in HBlank (MCLK 200..~860) after `tick`'s
+        // line-wrap latch fires at MCLK 0. Re-latching here picks up those
+        // updates so the road H-scroll for line N reflects the HINT handler
+        // that ran during HBlank of line N (R-RR-1).
+        self.latch_scroll_state_for_line(line);
+
         let draw_line = line;
         let fetch_line = line;
         let line_offset = (draw_line as usize) * 320;
