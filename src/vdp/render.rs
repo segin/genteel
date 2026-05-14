@@ -447,11 +447,12 @@ impl RenderOps for Vdp {
             return;
         }
 
-        // SAT cache (LSU) is latched at the line boundary by `tick`; do not
-        // refresh here so mid-line VRAM writes to the SAT region don't take
-        // effect until next line, matching hardware. Cold-start case (cache
-        // never latched yet) falls back to an initial sync.
-        self.ensure_sat_cache();
+        // Latch the SAT cache (LSU) from VRAM. On hardware this happens in
+        // two passes during HBlank — bytes 0/1 early, attr/X bytes later —
+        // but our approximation just snapshots at render time. Capturing
+        // HERE (not at line wrap) picks up HINT-driven SAT updates that
+        // land in HBlank between MCLK 200 and 860 (R-RR-4).
+        self.sync_sat_cache();
 
         // Re-latch scroll state right before rendering: HINT-driven per-line
         // H-scroll updates land in HBlank (MCLK 200..~860) after `tick`'s
