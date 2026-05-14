@@ -871,15 +871,19 @@ impl Vdp {
             return;
         }
 
-        let line = if self.mclk_line_clocks < Self::ACTIVE_DISPLAY_START_MCLK {
-            if self.v_counter == 0 {
-                return;
-            }
-            self.v_counter - 1
-        } else {
-            self.v_counter
-        };
+        // HBlank window of line N: the *previous* line N-1 has already been
+        // fully rendered and its pixels are on screen — writes here cannot
+        // change them. The write IS queued for the upcoming line N, whose
+        // render at MCLK 860 will pick up the new state automatically.
+        // (R-RR-3: the previous behavior incorrectly redrew line N-1 with
+        // the new state, applying the next line's palette to the previous
+        // line — exactly the off-by-one that made Road Rash II's road
+        // gradient render as noise.)
+        if self.mclk_line_clocks < Self::ACTIVE_DISPLAY_START_MCLK {
+            return;
+        }
 
+        let line = self.v_counter;
         let line_idx = line as usize;
         if line_idx >= self.screen_height() as usize || !self.rendered_scanlines[line_idx] {
             return;

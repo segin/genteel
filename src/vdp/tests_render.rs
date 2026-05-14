@@ -534,8 +534,13 @@ fn test_register_write_rerenders_current_scanline() {
     );
 }
 
+/// R-RR-3: HBlank-window CRAM writes target the *upcoming* line, NOT the
+/// previous one. The previous line's pixels are already on screen and must
+/// not be retroactively repainted. The write updates state immediately
+/// (via the synchronous cram_cache write in process_fifo_entry); the
+/// upcoming line will use the new palette when it renders at MCLK 860.
 #[test]
-fn test_hblank_cram_write_rerenders_previous_scanline() {
+fn test_hblank_cram_write_does_not_repaint_previous_scanline() {
     let mut vdp = Vdp::new();
     vdp.is_pal = false;
     vdp.registers[1] = 0x40;
@@ -547,16 +552,20 @@ fn test_hblank_cram_write_rerenders_previous_scanline() {
     vdp.render_line(0);
     assert_eq!(vdp.framebuffer[0], 0xF800);
 
-    vdp.mclk_line_clocks = 0;
+    vdp.mclk_line_clocks = 0; // HBlank of line 1
     vdp.bypass_fifo = true;
     vdp.write_control(0xC002);
     vdp.write_control(0x0000);
     vdp.write_data(0x00E0);
 
+    // Previous scanline's pixels (line 0) must NOT be repainted.
     assert_eq!(
-        vdp.framebuffer[0], 0x07E0,
-        "CRAM writes during the early-HBlank window must remap the previous visible line"
+        vdp.framebuffer[0], 0xF800,
+        "HBlank CRAM writes must leave the previous scanline alone"
     );
+    // The cram cache, however, IS updated synchronously so the next
+    // render_line picks it up.
+    assert_eq!(vdp.cram_cache[1], 0x07E0);
 }
 
 #[test]
