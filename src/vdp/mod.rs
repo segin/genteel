@@ -1123,8 +1123,19 @@ impl Vdp {
         }
 
         if !self.fifo.is_empty() {
+            // R-RR-2: temporarily set mclk_line_clocks to this slot's MCLK
+            // position so that any redraw triggered by the drained entry
+            // computes its split_x relative to the slot's actual pixel
+            // position, not the (later) end-of-tick MCLK.
+            let saved_mclk = self.mclk_line_clocks;
+            let total_slots = if is_h40 { 210u32 } else { 171u32 };
+            let slot_mclk = (slot_idx as u32 * 3420) / total_slots;
+            self.mclk_line_clocks = slot_mclk;
+
             let entry = self.fifo.remove(0);
             self.process_fifo_entry(entry);
+
+            self.mclk_line_clocks = saved_mclk;
 
             self.fifo_full = false;
             self.status &= !STATUS_FIFO_FULL;

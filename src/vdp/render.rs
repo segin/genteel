@@ -515,6 +515,10 @@ impl RenderOps for Vdp {
         }
 
         self.ensure_sat_cache();
+        // Re-latch scroll state so the right side of the line picks up any
+        // mid-line VSRAM / H-scroll-table / mode3 writes the segmented
+        // render is being triggered by.
+        self.latch_scroll_state_for_line(line);
 
         let fetch_line = line;
         let line_offset = (line as usize) * 320;
