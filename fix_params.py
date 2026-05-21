@@ -128,17 +128,13 @@ def fix():
     with open("src/vdp/tests_draw_row_refactor.rs", "r") as f2:
         test_src = f2.read()
 
-    test_src = test_src.replace(
-        "vdp.draw_full_tile_row(entry, pixel_v, dest_idx);",
-        "let mut line_buf = [0u8; 320];\n    vdp.draw_full_tile_row(entry, pixel_v, dest_idx, &mut line_buf);"
-    )
-    test_src = test_src.replace(
-        "vdp.draw_full_tile_row(0, 0, dest_idx);",
-        "let mut line_buf = [0u8; 320];\n    vdp.draw_full_tile_row(0, 0, dest_idx, &mut line_buf);"
-    )
-    test_src = test_src.replace(
-        "vdp.draw_full_tile_row(entry, 0, 0);",
-        "let mut line_buf = [0u8; 320];\n    vdp.draw_full_tile_row(entry, 0, 0, &mut line_buf);"
+    # Use regex for more robust replacement of vdp.draw_full_tile_row calls
+    # Matches calls with 3 arguments and adds line_buf declaration + 4th argument
+    # We use a separate newline to ensure correct formatting
+    test_src = re.sub(
+        r"([ \t]+)vdp\.draw_full_tile_row\(([^,]+,\s*[^,]+,\s*[^,)]+)\);",
+        r"\1let mut line_buf = [0u8; 320];\n\1vdp.draw_full_tile_row(\2, &mut line_buf);",
+        test_src
     )
 
     with open("src/vdp/tests_draw_row_refactor.rs", "w") as f2:
@@ -147,4 +143,5 @@ def fix():
     with open("src/vdp/render.rs", "w") as f:
         f.write(src)
 
-fix()
+if __name__ == "__main__":
+    fix()
