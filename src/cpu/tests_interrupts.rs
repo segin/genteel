@@ -154,3 +154,37 @@ fn test_multiple_interrupts_priority() {
     assert_eq!(cycles, 44);
     assert_eq!(cpu.pc, 0x6000);
 }
+
+#[test]
+fn test_cancel_interrupt() {
+    let (mut cpu, _memory) = create_cpu();
+
+    // 1. Basic cancellation
+    cpu.request_interrupt(4);
+    assert_eq!(cpu.pending_interrupt, 4);
+    cpu.cancel_interrupt(4);
+    assert_eq!(cpu.pending_interrupt, 0);
+
+    // 2. Priority cancellation (highest level cancelled)
+    cpu.request_interrupt(2);
+    cpu.request_interrupt(5);
+    assert_eq!(cpu.pending_interrupt, 5);
+    cpu.cancel_interrupt(5);
+    assert_eq!(cpu.pending_interrupt, 2);
+
+    // 3. Non-highest cancellation (lower level cancelled)
+    cpu.request_interrupt(5); // Pending should be 5 (already have 2 set)
+    assert_eq!(cpu.pending_interrupt, 5);
+    cpu.cancel_interrupt(2);
+    assert_eq!(cpu.pending_interrupt, 5);
+    cpu.cancel_interrupt(5);
+    assert_eq!(cpu.pending_interrupt, 0);
+
+    // 4. Invalid levels
+    cpu.request_interrupt(4);
+    assert_eq!(cpu.pending_interrupt, 4);
+    cpu.cancel_interrupt(0); // Should be ignored
+    assert_eq!(cpu.pending_interrupt, 4);
+    cpu.cancel_interrupt(8); // Should be ignored
+    assert_eq!(cpu.pending_interrupt, 4);
+}
