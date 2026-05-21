@@ -158,6 +158,11 @@ impl AudioBuffer {
 
     /// Pop samples as f32 (for cpal)
     pub fn pop_f32(&mut self, dest: &mut [f32]) {
+        if self.available == 0 {
+            dest.fill(0.0);
+            return;
+        }
+
         for sample in dest.iter_mut() {
             if self.available > 0 {
                 let i16_sample = self.buffer[self.read_pos];
@@ -657,6 +662,52 @@ mod tests {
         buf.pop(&mut out);
 
         assert_eq!(out, [30, 40, 50, 60]);
+    }
+
+    #[test]
+    fn test_pop_f32_boundaries() {
+        let mut buf = AudioBuffer::new(4);
+
+        // Push extreme values: MIN (-32768), MAX (32767), 0, and a mid-value
+        let samples = [i16::MIN, i16::MAX, 0, 16384];
+        buf.push(&samples);
+
+        let mut dest = [0.0f32; 4];
+        buf.pop_f32(&mut dest);
+
+        // MIN should be exactly -1.0
+        assert!((dest[0] - (-1.0)).abs() < f32::EPSILON);
+        // MAX should be 32767 / 32768
+        assert!((dest[1] - (32767.0 / 32768.0)).abs() < f32::EPSILON);
+        // 0 should be exactly 0.0
+        assert!((dest[2] - 0.0).abs() < f32::EPSILON);
+        // 16384 should be exactly 0.5
+        assert!((dest[3] - 0.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_pop_f32_wrap_around() {
+        let mut buf = AudioBuffer::new(2); // capacity 4 samples (2*2)
+
+        // Push 3 samples
+        buf.push(&[16384, 16384, 16384]);
+
+        // Pop 2
+        let mut dest2 = [0.0f32; 2];
+        buf.pop_f32(&mut dest2);
+        assert!((dest2[0] - 0.5).abs() < f32::EPSILON);
+        assert!((dest2[1] - 0.5).abs() < f32::EPSILON);
+
+        // Push 2 more (wraps)
+        buf.push(&[-16384, -32768]);
+
+        // Pop 3 (should get the one remaining + two new ones)
+        let mut dest3 = [0.0f32; 3];
+        buf.pop_f32(&mut dest3);
+
+        assert!((dest3[0] - 0.5).abs() < f32::EPSILON);
+        assert!((dest3[1] - (-0.5)).abs() < f32::EPSILON);
+        assert!((dest3[2] - (-1.0)).abs() < f32::EPSILON);
     }
 
     // Reference implementation (old slow loop) for property testing
