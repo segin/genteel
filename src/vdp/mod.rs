@@ -1031,3 +1031,6 @@ mod tests_constants;
 
 #[cfg(test)]
 mod test_dma_transfer;
+
+#[cfg(test)]
+mod tests_sprite_iterator;
