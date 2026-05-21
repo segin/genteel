@@ -1,8 +1,4 @@
 use super::*;
-use crate::memory::Memory;
-
-#[cfg(test)]
-use crate::z80::test_utils::TestIo;
 
 #[test]
 fn test_reset_behavior() {
