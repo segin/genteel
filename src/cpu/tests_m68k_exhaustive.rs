@@ -8,27 +8,7 @@ use super::*;
 use crate::cpu::flags;
 use crate::cpu::instructions::Size;
 use crate::memory::Memory;
-
-// fast rng for exhaustive testing
-struct XorShift64 {
-    state: u64,
-}
-impl XorShift64 {
-    fn new(seed: u64) -> Self {
-        Self { state: seed }
-    }
-    fn next(&mut self) -> u64 {
-        let mut x = self.state;
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        self.state = x;
-        x
-    }
-    fn next_u32(&mut self) -> u32 {
-        self.next() as u32
-    }
-}
+use crate::test_utils::XorShift64;
 
 fn create_test_setup() -> (Cpu, Memory) {
     let mut memory = Memory::new(0x100000);
