@@ -529,6 +529,23 @@ mod tests {
         rgb565_to_rgba8(&[0xFFFE], &mut output);
         // b: (30 << 3) | (30 >> 2) = 240 | 7 = 247
         assert_eq!(output, [255, 255, 247, 255]);
+
+        // Extremely large buffer (e.g., 2MB output)
+        let large_input = vec![0x0000u16; 512 * 1024];
+        let mut large_output = vec![0u8; 512 * 1024 * 4];
+        rgb565_to_rgba8(&large_input, &mut large_output);
+        assert_eq!(large_output[3], 255);
+        assert_eq!(large_output[large_output.len() - 1], 255);
+
+        // Buffer not aligned to 4-byte boundary (e.g., 1003 bytes)
+        let mut unaligned_output = vec![0u8; 1003];
+        rgb565_to_rgba8(&vec![0xFFFFu16; 300], &mut unaligned_output);
+        // 1003 / 4 = 250 pixels should be processed
+        assert_eq!(unaligned_output[250 * 4 - 1], 255); // Last byte (A) of 250th pixel
+        // Bytes 1000, 1001, 1002 (0-indexed) should be untouched
+        assert_eq!(unaligned_output[1000], 0);
+        assert_eq!(unaligned_output[1001], 0);
+        assert_eq!(unaligned_output[1002], 0);
     }
 
     #[test]
@@ -630,6 +647,138 @@ mod tests {
                 result, expected,
                 "Failed for mapping {:?} and keycode {:?}",
                 mapping, keycode
+            );
+        }
+    }
+
+    #[cfg(any(feature = "gui", feature = "test_headless"))]
+    #[test]
+    fn test_key_to_button_comprehensive() {
+        use winit::keyboard::NamedKey;
+
+        let test_cases = [
+            // Original Mapping
+            (
+                InputMapping::Original,
+                Key::Named(NamedKey::ArrowUp),
+                Some(("up", true)),
+            ),
+            (
+                InputMapping::Original,
+                Key::Named(NamedKey::ArrowDown),
+                Some(("down", true)),
+            ),
+            (
+                InputMapping::Original,
+                Key::Named(NamedKey::ArrowLeft),
+                Some(("left", true)),
+            ),
+            (
+                InputMapping::Original,
+                Key::Named(NamedKey::ArrowRight),
+                Some(("right", true)),
+            ),
+            (
+                InputMapping::Original,
+                Key::Character("z".into()),
+                Some(("a", true)),
+            ),
+            (
+                InputMapping::Original,
+                Key::Character("Z".into()),
+                Some(("a", true)),
+            ),
+            (
+                InputMapping::Original,
+                Key::Character("x".into()),
+                Some(("b", true)),
+            ),
+            (
+                InputMapping::Original,
+                Key::Character("c".into()),
+                Some(("c", true)),
+            ),
+            (
+                InputMapping::Original,
+                Key::Named(NamedKey::Enter),
+                Some(("start", true)),
+            ),
+            (InputMapping::Original, Key::Character("q".into()), None),
+            // Ergonomic Mapping
+            (
+                InputMapping::Ergonomic,
+                Key::Character("w".into()),
+                Some(("up", true)),
+            ),
+            (
+                InputMapping::Ergonomic,
+                Key::Character("W".into()),
+                Some(("up", true)),
+            ),
+            (
+                InputMapping::Ergonomic,
+                Key::Character("s".into()),
+                Some(("down", true)),
+            ),
+            (
+                InputMapping::Ergonomic,
+                Key::Character("a".into()),
+                Some(("left", true)),
+            ),
+            (
+                InputMapping::Ergonomic,
+                Key::Character("d".into()),
+                Some(("right", true)),
+            ),
+            (
+                InputMapping::Ergonomic,
+                Key::Character("j".into()),
+                Some(("a", true)),
+            ),
+            (
+                InputMapping::Ergonomic,
+                Key::Character("k".into()),
+                Some(("b", true)),
+            ),
+            (
+                InputMapping::Ergonomic,
+                Key::Character("l".into()),
+                Some(("c", true)),
+            ),
+            (
+                InputMapping::Ergonomic,
+                Key::Character("u".into()),
+                Some(("x", true)),
+            ),
+            (
+                InputMapping::Ergonomic,
+                Key::Character("i".into()),
+                Some(("y", true)),
+            ),
+            (
+                InputMapping::Ergonomic,
+                Key::Character("o".into()),
+                Some(("z", true)),
+            ),
+            (
+                InputMapping::Ergonomic,
+                Key::Named(NamedKey::Enter),
+                Some(("start", true)),
+            ),
+            (
+                InputMapping::Ergonomic,
+                Key::Named(NamedKey::Space),
+                Some(("mode", true)),
+            ),
+            (InputMapping::Ergonomic, Key::Character("e".into()), None),
+        ];
+
+        for (mapping, key, expected) in test_cases {
+            let result = key_to_button(&key, mapping);
+            assert_eq!(
+                result, expected,
+                "Failed for mapping {:?} and key {:?}",
+                mapping, key
             );
         }
     }
