@@ -469,29 +469,26 @@ impl Emulator {
         self.single_step = false;
 
         // Apply inputs from script or live input
-        let (p1, p2, command) = {
-            let frame_input = match input {
-                Some(i) => {
-                    self.input.record((*i).clone());
-                    std::borrow::Cow::Borrowed(i)
-                }
-                None => self.input.advance_frame(),
-            };
-            (frame_input.p1, frame_input.p2, frame_input.command.clone())
+        let frame_input = match input {
+            Some(i) => {
+                self.input.record(i);
+                std::borrow::Cow::Borrowed(i)
+            }
+            None => self.input.advance_frame(),
         };
 
         {
             let mut bus = self.bus.borrow_mut();
             if let Some(ctrl) = bus.io.controller(1) {
-                *ctrl = p1;
+                *ctrl = frame_input.p1;
             }
             if let Some(ctrl) = bus.io.controller(2) {
-                *ctrl = p2;
+                *ctrl = frame_input.p2;
             }
         }
 
         // Handle commands (e.g., SCREENSHOT <path>)
-        if let Some(cmd) = &command {
+        if let Some(cmd) = &frame_input.command {
             self.execute_script_command(cmd);
         }
 
