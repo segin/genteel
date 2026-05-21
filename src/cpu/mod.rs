@@ -820,3 +820,5 @@ mod tests_performance;
 mod tests_security;
 #[cfg(test)]
 mod tests_system;
+#[cfg(test)]
+mod tests_state;
