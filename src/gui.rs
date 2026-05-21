@@ -543,15 +543,14 @@ impl Framework {
                         if self.gui_state.recent_roms.is_empty() {
                             ui.label("No recent ROMs");
                         } else {
-                            let recent = self.gui_state.recent_roms.clone();
-                            for path in recent {
+                            for path in &self.gui_state.recent_roms {
                                 let filename = path
                                     .file_name()
                                     .and_then(|f| f.to_str())
                                     .unwrap_or("Unknown");
                                 if ui.button(filename).clicked() {
                                     let mut lock = self.pending_rom_path.lock().unwrap();
-                                    *lock = Some(path);
+                                    *lock = Some(path.clone());
                                     ui.close_menu();
                                 }
                             }
