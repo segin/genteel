@@ -533,17 +533,18 @@ impl GdbServer {
     }
 
     fn write_register(&self, cmd: &str, registers: &mut GdbRegisters) -> String {
-        let parts: Vec<&str> = cmd.split('=').collect();
-        if parts.len() != 2 {
-            return "E01".to_string();
-        }
+        let mut parts = cmd.split('=');
+        let (reg_part, val_part) = match (parts.next(), parts.next(), parts.next()) {
+            (Some(r), Some(v), None) => (r, v),
+            _ => return "E01".to_string(),
+        };
 
-        let reg_num = match u32::from_str_radix(parts[0], 16) {
+        let reg_num = match u32::from_str_radix(reg_part, 16) {
             Ok(n) => n,
             Err(_) => return "E01".to_string(),
         };
 
-        let value = match u32::from_str_radix(parts[1], 16) {
+        let value = match u32::from_str_radix(val_part, 16) {
             Ok(v) => v,
             Err(_) => return "E01".to_string(),
         };
@@ -561,17 +562,18 @@ impl GdbServer {
 
     fn read_memory(&self, cmd: &str, memory: &mut dyn GdbMemory) -> String {
         use std::fmt::Write;
-        let parts: Vec<&str> = cmd.split(',').collect();
-        if parts.len() != 2 {
-            return "E01".to_string();
-        }
+        let mut parts = cmd.split(',');
+        let (addr_part, len_part) = match (parts.next(), parts.next(), parts.next()) {
+            (Some(a), Some(l), None) => (a, l),
+            _ => return "E01".to_string(),
+        };
 
-        let addr = match u32::from_str_radix(parts[0], 16) {
+        let addr = match u32::from_str_radix(addr_part, 16) {
             Ok(a) => a,
             Err(_) => return "E01".to_string(),
         };
 
-        let len = match usize::from_str_radix(parts[1], 16) {
+        let len = match usize::from_str_radix(len_part, 16) {
             Ok(l) => l,
             Err(_) => return "E01".to_string(),
         };
@@ -586,22 +588,24 @@ impl GdbServer {
     }
 
     fn write_memory(&self, cmd: &str, memory: &mut dyn GdbMemory) -> String {
-        let parts: Vec<&str> = cmd.split(':').collect();
-        if parts.len() != 2 {
-            return "E01".to_string();
-        }
+        let mut parts = cmd.split(':');
+        let (addr_len_str, data) = match (parts.next(), parts.next(), parts.next()) {
+            (Some(al), Some(d), None) => (al, d),
+            _ => return "E01".to_string(),
+        };
 
-        let addr_len: Vec<&str> = parts[0].split(',').collect();
-        if addr_len.len() != 2 {
-            return "E01".to_string();
-        }
+        let mut addr_len_parts = addr_len_str.split(',');
+        let (addr_part, _len_part) =
+            match (addr_len_parts.next(), addr_len_parts.next(), addr_len_parts.next()) {
+                (Some(a), Some(l), None) => (a, l),
+                _ => return "E01".to_string(),
+            };
 
-        let addr = match u32::from_str_radix(addr_len[0], 16) {
+        let addr = match u32::from_str_radix(addr_part, 16) {
             Ok(a) => a,
             Err(_) => return "E01".to_string(),
         };
 
-        let data = parts[1];
         if !data.len().is_multiple_of(2) {
             return "E01".to_string();
         }
@@ -621,17 +625,18 @@ impl GdbServer {
     }
 
     fn set_breakpoint(&mut self, cmd: &str) -> String {
-        let parts: Vec<&str> = cmd.split(',').collect();
-        if parts.len() < 2 {
-            return "E01".to_string();
-        }
+        let mut parts = cmd.split(',');
+        let (type_part, addr_part) = match (parts.next(), parts.next()) {
+            (Some(t), Some(a)) => (t, a),
+            _ => return "E01".to_string(),
+        };
 
         // Type 0 = software breakpoint
-        if parts[0] != "0" {
+        if type_part != "0" {
             return "".to_string(); // Not supported
         }
 
-        let addr = match u32::from_str_radix(parts[1], 16) {
+        let addr = match u32::from_str_radix(addr_part, 16) {
             Ok(a) => a,
             Err(_) => return "E01".to_string(),
         };
@@ -649,16 +654,17 @@ impl GdbServer {
     }
 
     fn remove_breakpoint(&mut self, cmd: &str) -> String {
-        let parts: Vec<&str> = cmd.split(',').collect();
-        if parts.len() < 2 {
-            return "E01".to_string();
-        }
+        let mut parts = cmd.split(',');
+        let (type_part, addr_part) = match (parts.next(), parts.next()) {
+            (Some(t), Some(a)) => (t, a),
+            _ => return "E01".to_string(),
+        };
 
-        if parts[0] != "0" {
+        if type_part != "0" {
             return "".to_string();
         }
 
-        let addr = match u32::from_str_radix(parts[1], 16) {
+        let addr = match u32::from_str_radix(addr_part, 16) {
             Ok(a) => a,
             Err(_) => return "E01".to_string(),
         };
