@@ -74,7 +74,7 @@ pub struct WindowState {
 }
 
 #[cfg(feature = "gui")]
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct GuiState {
     pub windows: HashMap<String, WindowState>,
     pub input_mapping: InputMapping,
@@ -179,9 +179,15 @@ impl GuiState {
     }
 
     pub fn save(&self) {
-        if let Ok(json) = serde_json::to_string_pretty(self) {
-            let _ = std::fs::write("gui_config.json", json);
-        }
+        let state = self.clone();
+        // Use a background thread to prevent blocking the GUI thread during disk I/O.
+        // Note: This may lead to out-of-order writes if save() is called frequently,
+        // and may be interrupted if the application exits before the thread completes.
+        std::thread::spawn(move || {
+            if let Ok(json) = serde_json::to_string_pretty(&state) {
+                let _ = std::fs::write("gui_config.json", json);
+            }
+        });
     }
 
     pub fn is_window_open(&self, name: &str) -> bool {
