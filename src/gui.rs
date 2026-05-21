@@ -256,6 +256,7 @@ pub struct DebugInfo {
 #[cfg(feature = "gui")]
 #[cfg(feature = "gilrs")]
 fn init_gilrs() -> Option<Gilrs> {
+    #[cfg(test)]
     if std::env::var("GENTEEL_TEST_FAIL_GILRS").is_ok() {
         return None;
     }
