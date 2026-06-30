@@ -31,6 +31,9 @@ const MAX_STATE_SIZE: u64 = 25 * 1024 * 1024;
 /// Maximum SRAM size in bytes (2MB) to prevent OOM/DoS
 const MAX_SRAM_SIZE: u64 = 2 * 1024 * 1024;
 
+/// Maximum ROM size in bytes (32MB) to prevent OOM/DoS
+const MAX_ROM_SIZE: u64 = 32 * 1024 * 1024;
+
 use apu::{Apu, Region};
 use cpu::Cpu;
 use debugger::{GdbMemory, GdbRegisters, GdbServer, StopReason};
@@ -399,7 +402,6 @@ impl Emulator {
         size: u64,
     ) -> std::io::Result<Vec<u8>> {
         use std::io::Read;
-        const MAX_ROM_SIZE: u64 = 32 * 1024 * 1024; // 32 MB
         if size > MAX_ROM_SIZE {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
@@ -413,7 +415,10 @@ impl Emulator {
                 "ROM size too large for memory address space",
             ));
         }
-        let mut data = Vec::with_capacity(size as usize);
+
+        // Security: Do NOT use Vec::with_capacity(size) as 'size' comes from untrusted metadata
+        // (e.g. ZIP file header) and could be used to trigger an OOM before any data is read.
+        let mut data = Vec::new();
         reader.take(MAX_ROM_SIZE + 1).read_to_end(&mut data)?;
         if data.len() as u64 > MAX_ROM_SIZE {
             return Err(std::io::Error::new(
@@ -444,10 +449,10 @@ impl Emulator {
 
             if is_rom {
                 let size = entry.size();
-                if size > 32 * 1024 * 1024 {
+                if size > MAX_ROM_SIZE {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
-                        "ROM size exceeds limit of 32MB",
+                        format!("ROM size exceeds limit of {}MB", MAX_ROM_SIZE / (1024 * 1024)),
                     ));
                 }
                 let data = Self::read_rom_with_limit(&mut entry, size)?;
@@ -1740,6 +1745,26 @@ mod tests {
         emulator.step_frame(None);
         assert_eq!(emulator.internal_frame_count, 2);
     }
+    #[test]
+    fn test_read_rom_with_limit_capacity_vulnerability_fixed() {
+        let reported_size = MAX_ROM_SIZE;
+        let actual_data = b"small rom data";
+        let mut reader = std::io::Cursor::new(actual_data);
+
+        // This should not fail, but we want to inspect the capacity of the returned Vec
+        let result = Emulator::read_rom_with_limit(&mut reader, reported_size);
+        let data = result.expect("Should succeed with small data");
+
+        // After the fix, capacity should NOT be the pre-allocated reported_size
+        assert!(
+            data.capacity() < reported_size as usize,
+            "Vulnerability STILL PRESENT: Capacity {} is >= reported size {}",
+            data.capacity(),
+            reported_size
+        );
+        assert_eq!(data.len(), actual_data.len());
+    }
+
     #[test]
     fn test_large_raw_rom_prevention() {
         let path = "large_rom.bin";
