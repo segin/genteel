@@ -451,8 +451,11 @@ impl Cpu {
         };
 
         let cycles = self.execute(instruction, memory);
-        self.cycles += cycles as u64;
-        cycles
+        // Add any peripheral-induced stalls (e.g. VDP FIFO back-pressure).
+        let stall = memory.take_pending_stall_cycles();
+        let total = cycles + stall;
+        self.cycles += total as u64;
+        total
     }
 
     fn fetch_next_instruction<M: MemoryInterface>(

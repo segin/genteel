@@ -284,9 +284,9 @@ impl InputManager {
     }
 
     /// Record input for current frame
-    pub fn record(&mut self, input: FrameInput) {
+    pub fn record(&mut self, input: &FrameInput) {
         if self.recording {
-            self.recorded.push((self.current_frame, input));
+            self.recorded.push((self.current_frame, input.clone()));
         }
     }
 
@@ -410,19 +410,19 @@ mod tests {
         // Frame 0: Press A
         let mut input0 = FrameInput::default();
         input0.p1.a = true;
-        manager.record(input0.clone());
+        manager.record(&input0);
         manager.advance_frame();
 
         // Frame 1: Press B
         let mut input1 = FrameInput::default();
         input1.p1.b = true;
-        manager.record(input1.clone());
+        manager.record(&input1);
         manager.advance_frame();
 
         // Frame 2: Press Start
         let mut input2 = FrameInput::default();
         input2.p1.start = true;
-        manager.record(input2.clone());
+        manager.record(&input2);
         // Don't advance frame after last record
 
         // Stop recording
@@ -698,5 +698,47 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.contains("Input script too large"));
+    }
+
+    #[test]
+    fn test_input_manager_load_script() {
+        use std::fs;
+        let path = "test_load_script.txt";
+        let content = "10,....A...,........";
+        fs::write(path, content).unwrap();
+
+        let mut manager = InputManager::new();
+        // Set some non-default state
+        manager.current_frame = 50;
+        manager.last_input.p1.b = true;
+
+        let result = manager.load_script(path);
+
+        // Cleanup
+        let _ = fs::remove_file(path);
+
+        assert!(result.is_ok());
+        assert_eq!(manager.current_frame, 0);
+        assert!(!manager.last_input.p1.b);
+        assert!(manager.script.is_some());
+
+        let script = manager.script.as_ref().unwrap();
+        assert_eq!(script.max_frame, 10);
+        assert!(script.get(10).unwrap().p1.a);
+    }
+
+    #[test]
+    fn test_input_manager_load_script_error() {
+        let mut manager = InputManager::new();
+        // Set some non-default state
+        manager.current_frame = 50;
+        manager.last_input.p1.b = true;
+
+        let result = manager.load_script("non_existent_script_file.txt");
+
+        assert!(result.is_err());
+        // State should remain unchanged if load fails
+        assert_eq!(manager.current_frame, 50);
+        assert!(manager.last_input.p1.b);
     }
 }

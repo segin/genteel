@@ -252,6 +252,36 @@ pub struct Vdp {
 
     #[serde(skip)]
     pub debug_plane: Option<char>,
+    /// Whether sprite overflow (dot or count) occurred on the previous scanline.
+    /// Used to gate the X=0 sprite mask trigger.
+    #[serde(skip, default)]
+    pub(crate) prev_line_sprite_overflow: bool,
+    /// 68k stall cycles owed by the most recent DMA operation. Drained by the
+    /// Bus through `take_dma_stall_cycles`.
+    #[serde(skip, default)]
+    pub dma_stall_cycles: u32,
+    /// Whether the SAT cache is initialized. `tick` latches it at each
+    /// line boundary and clears this flag only on reset. Rendering paths
+    /// lazily sync if not yet valid (so a freshly constructed VDP doesn't
+    /// render with an empty SAT cache).
+    #[serde(skip, default)]
+    pub(crate) sat_cache_valid: bool,
+    /// HINT is "due" on the current line but its MCLK threshold hasn't
+    /// yet been reached. Asserted in `tick` once `mclk_line_clocks` crosses
+    /// `HINT_OFFSET_MCLK`.
+    #[serde(skip, default)]
+    pub(crate) hint_due: bool,
+    /// VINT is "due" on the current line; same deferred-assertion model.
+    #[serde(skip, default)]
+    pub(crate) vint_due: bool,
+    /// Mid-line segmented-render watermark. Pixels at x < line_split_x for the
+    /// current scanline have already been committed to the framebuffer with the
+    /// state at the time they were drawn. A mid-line CRAM/VSRAM/register write
+    /// advances this watermark to the current MCLK's pixel position and
+    /// re-renders pixels [watermark..320] with the new state. Reset to 0 at
+    /// each fresh line render.
+    #[serde(skip, default)]
+    pub(crate) line_split_x: u16,
 }
 
 impl Default for Vdp {
@@ -262,6 +292,13 @@ impl Default for Vdp {
 
 impl Vdp {
     const ACTIVE_DISPLAY_START_MCLK: u32 = 860;
+    /// MCLK offset within a line at which HINT becomes asserted.
+    /// Hardware asserts a few slots into the line — well before active
+    /// display starts. Approximated at 200 MCLK.
+    const HINT_OFFSET_MCLK: u32 = 200;
+    /// MCLK offset within the first VBlank line at which VINT is asserted.
+    /// Hardware asserts ~slot 0 of line 0xE0+ several slots later.
+    const VINT_OFFSET_MCLK: u32 = 480;
 
     pub fn new() -> Self {
         let mut vdp = Self {
@@ -304,6 +341,12 @@ impl Vdp {
                     None
                 }
             },
+            prev_line_sprite_overflow: false,
+            dma_stall_cycles: 0,
+            sat_cache_valid: false,
+            hint_due: false,
+            vint_due: false,
+            line_split_x: 0,
         };
         vdp.reset();
         vdp
@@ -335,8 +378,19 @@ impl Vdp {
         self.hint_pending = false;
         self.rendered_scanlines.fill(false);
         self.latched_scroll_valid = false;
+        self.prev_line_sprite_overflow = false;
+        self.dma_stall_cycles = 0;
         self.reconstruct_cram_cache();
-        self.sync_sat_cache();
+        // SAT cache stays invalid; first render or first tick line wrap
+        // will latch it from VRAM.
+        self.sat_cache_valid = false;
+    }
+
+    /// Return and clear DMA stall cycles owed to the 68k.
+    pub fn take_dma_stall_cycles(&mut self) -> u32 {
+        let c = self.dma_stall_cycles;
+        self.dma_stall_cycles = 0;
+        c
     }
 
     fn compute_hscroll_words(&self, fetch_line: u16, mode3: u8) -> (u16, u16) {
@@ -449,8 +503,9 @@ impl Vdp {
                 if idx < self.vram.len() {
                     self.vram[idx] = (value >> 8) as u8;
                     self.vram[idx ^ 1] = (value & 0xFF) as u8;
-                    self.mirror_sat_byte(idx, (value >> 8) as u8);
-                    self.mirror_sat_byte(idx ^ 1, (value & 0xFF) as u8);
+                    // Writes to the SAT region during active display do NOT
+                    // update the SAT cache (LSU latches it once per line at
+                    // HBlank). Cache refresh happens at the next line wrap.
                 }
             }
             CRAM_WRITE => {
@@ -627,6 +682,12 @@ impl Vdp {
         (self.registers[REG_MODE2] & MODE2_DISPLAY_ENABLE) != 0
     }
 
+    /// Whether the VDP is currently within an active-display scanline
+    /// (used by the CPU to tighten HINT-sensing cadence — see R3).
+    pub fn in_active_display(&self) -> bool {
+        (self.status & STATUS_VBLANK) == 0
+    }
+
     pub fn vint_enabled(&self) -> bool {
         (self.registers[REG_MODE2] & MODE2_VINT_ENABLE) != 0
     }
@@ -715,17 +776,65 @@ impl Vdp {
         self.hint_pending && self.hint_enabled()
     }
 
-    pub fn read_hv_counter(&self) -> u16 {
-        let h = if self.mclk_line_clocks < Self::ACTIVE_DISPLAY_START_MCLK {
-            (0xE4 + ((self.mclk_line_clocks * (0xFF - 0xE4)) / Self::ACTIVE_DISPLAY_START_MCLK))
-                as u8
+    /// Map a 0-based H tick within the line to the externally visible 8-bit H
+    /// counter, applying the hardware jump:
+    ///   * H40: 0x00..=0xB6 then 0xE4..=0xFF (total 211 values)
+    ///   * H32: 0x00..=0x93 then 0xE9..=0xFF (total 171 values)
+    #[inline]
+    pub(crate) fn h_counter_value_for_tick(tick: u32, is_h40: bool) -> u8 {
+        if is_h40 {
+            // First segment: 0x00..=0xB6 (0xB7 values)
+            // Second segment: 0xE4..=0xFF (0x1C values)
+            if tick <= 0xB6 {
+                tick as u8
+            } else {
+                let s2 = (tick - 0xB7) as u8;
+                0xE4u8.wrapping_add(s2)
+            }
+        } else if tick <= 0x93 {
+            tick as u8
         } else {
-            let active_clocks = 3420 - Self::ACTIVE_DISPLAY_START_MCLK;
-            let offset = self.mclk_line_clocks - Self::ACTIVE_DISPLAY_START_MCLK;
-            ((offset * 0xB6) / active_clocks) as u8
-        };
+            let s2 = (tick - 0x94) as u8;
+            0xE9u8.wrapping_add(s2)
+        }
+    }
 
-        let v = (self.v_counter & 0xFF) as u8;
+    /// Map an internal 0-based line number (0..262 NTSC / 0..313 PAL) to the
+    /// externally visible 8-bit V counter, applying the hardware jump.
+    ///
+    /// NTSC V28: 0..=0xEA then 0xE5..=0xFF (total 262 = 235+27).
+    /// NTSC V30: same shape; on real NTSC hardware V30 misbehaves but we
+    ///   produce a plausible counter.
+    /// PAL  V28: 0..=0xFF then 0xCA..=0xFF (total 313 = 256+57).
+    /// PAL  V30: 0..=0xFF then 0xC8..=0xFF (total 314 = 256+56; we map 313).
+    #[inline]
+    pub(crate) fn v_counter_value_for_line(line: u16, is_pal: bool, v30: bool) -> u8 {
+        if !is_pal {
+            // NTSC
+            if line <= 0xEA {
+                line as u8
+            } else {
+                let s2 = line - 0xEB;
+                0xE5u8.wrapping_add(s2 as u8)
+            }
+        } else if line <= 0xFF {
+            line as u8
+        } else {
+            let second_start: u16 = if v30 { 0xC8 } else { 0xCA };
+            let s2 = line - 0x100;
+            second_start.wrapping_add(s2) as u8
+        }
+    }
+
+    pub fn read_hv_counter(&self) -> u16 {
+        let is_h40 = self.h40_mode();
+        // Approximate H tick from MCLK. Total H ticks per line: 211 (H40), 171 (H32).
+        let total_ticks: u32 = if is_h40 { 211 } else { 171 };
+        let tick = (self.mclk_line_clocks * total_ticks) / 3420;
+        let h = Self::h_counter_value_for_tick(tick, is_h40);
+
+        let v30 = (self.registers[REG_MODE2] & MODE2_V30_MODE) != 0;
+        let v = Self::v_counter_value_for_line(self.v_counter, self.is_pal, v30);
         ((v as u16) << 8) | (h as u16)
     }
 
@@ -734,39 +843,77 @@ impl Vdp {
         for (i, byte) in self.sat.iter_mut().enumerate() {
             *byte = self.vram[(base + i) & 0xFFFF];
         }
+        self.sat_cache_valid = true;
     }
 
-    pub(crate) fn mirror_sat_byte(&mut self, vram_addr: usize, value: u8) {
-        let sat_base = self.sprite_table_address();
-        let (sat_base_mask, sat_addr_mask) = if self.h40_mode() {
-            (0xFC00usize, 0x03FFusize)
-        } else {
-            (0xFE00usize, 0x01FFusize)
-        };
-
-        if (vram_addr & sat_base_mask) == sat_base {
-            self.sat[vram_addr & sat_addr_mask] = value;
+    /// Used by render paths to ensure the SAT cache has at least been
+    /// initialized once. Production code latches at line boundary in
+    /// `tick`; this catches the cold-start case (and tests that build
+    /// VRAM directly without ticking).
+    pub(crate) fn ensure_sat_cache(&mut self) {
+        if !self.sat_cache_valid {
+            self.sync_sat_cache();
         }
     }
 
+    /// Map current MCLK within an active scanline to a pixel-x position.
+    /// Used for the mid-line segmented re-render (R1/R2).
+    ///   * Before active display: returns 0 (no pixels emitted yet).
+    ///   * Past active display end: returns scanline width (no remaining pixels).
+    pub(crate) fn mid_line_pixel_x(&self) -> u16 {
+        let width = self.screen_width();
+        if self.mclk_line_clocks < Self::ACTIVE_DISPLAY_START_MCLK {
+            return 0;
+        }
+        let active_end = 3420;
+        if self.mclk_line_clocks >= active_end {
+            return width;
+        }
+        let elapsed = self.mclk_line_clocks - Self::ACTIVE_DISPLAY_START_MCLK;
+        let active_span = active_end - Self::ACTIVE_DISPLAY_START_MCLK;
+        // Linear map MCLK -> pixel within the active region.
+        let x = (elapsed * width as u32) / active_span;
+        x.min(width as u32) as u16
+    }
+
+    /// Mid-line CRAM/VSRAM/register write hook: instead of atomically
+    /// re-rendering the whole scanline (which clobbered all earlier pixels
+    /// drawn with the previous state — fatal for road-gradient effects),
+    /// commit only pixels [line_split_x .. screen_width] with the new state
+    /// and advance the watermark to the current MCLK's pixel position.
     pub(crate) fn redraw_current_scanline_if_visible(&mut self) {
         if !self.display_enabled() {
             return;
         }
 
-        let line = if self.mclk_line_clocks < Self::ACTIVE_DISPLAY_START_MCLK {
-            if self.v_counter == 0 {
-                return;
-            }
-            self.v_counter - 1
-        } else {
-            self.v_counter
-        };
-
-        let line_idx = line as usize;
-        if line_idx < self.screen_height() as usize && self.rendered_scanlines[line_idx] {
-            self.render_line(line);
+        // HBlank window of line N: the *previous* line N-1 has already been
+        // fully rendered and its pixels are on screen — writes here cannot
+        // change them. The write IS queued for the upcoming line N, whose
+        // render at MCLK 860 will pick up the new state automatically.
+        // (R-RR-3: the previous behavior incorrectly redrew line N-1 with
+        // the new state, applying the next line's palette to the previous
+        // line — exactly the off-by-one that made Road Rash II's road
+        // gradient render as noise.)
+        if self.mclk_line_clocks < Self::ACTIVE_DISPLAY_START_MCLK {
+            return;
         }
+
+        let line = self.v_counter;
+        let line_idx = line as usize;
+        if line_idx >= self.screen_height() as usize || !self.rendered_scanlines[line_idx] {
+            return;
+        }
+
+        let split_x = self.mid_line_pixel_x();
+        if split_x >= self.screen_width() {
+            // Line fully emitted; nothing to repaint.
+            return;
+        }
+        // Pixels at [0..split_x] are "emitted" by the scan beam already and
+        // must stay put. Pixels at [split_x..screen_width] are still in
+        // flight and reflect the current state — re-render them.
+        self.line_split_x = split_x;
+        self.render_line_from(line, split_x);
     }
 
     fn render_scanline_if_needed(&mut self, line: u16) {
@@ -847,6 +994,24 @@ impl Vdp {
         let prev_line_clocks = self.mclk_line_clocks;
         self.mclk_line_clocks += mclk;
 
+        // Deferred-interrupt assertion: if HINT/VINT was queued at the
+        // previous line wrap and the MCLK has now crossed its threshold,
+        // assert the actual pending flag.
+        if self.hint_due
+            && prev_line_clocks < Self::HINT_OFFSET_MCLK
+            && self.mclk_line_clocks >= Self::HINT_OFFSET_MCLK
+        {
+            self.hint_pending = true;
+            self.hint_due = false;
+        }
+        if self.vint_due
+            && prev_line_clocks < Self::VINT_OFFSET_MCLK
+            && self.mclk_line_clocks >= Self::VINT_OFFSET_MCLK
+        {
+            self.status |= STATUS_VINT_PENDING;
+            self.vint_due = false;
+        }
+
         let is_h40 = self.h40_mode();
         let total_slots = if is_h40 { 210 } else { 171 };
 
@@ -880,14 +1045,25 @@ impl Vdp {
             let frame_lines = if self.is_pal { 313 } else { 262 };
             self.v_counter = (self.v_counter + 1) % frame_lines;
             self.latch_scroll_state_for_line(self.v_counter);
+            // Latch the SAT cache (LSU) from VRAM. On real hardware this
+            // happens in two passes during HBlank/active display; we
+            // approximate with a single line-boundary snapshot.
+            self.sync_sat_cache();
+            // New line: reset the mid-line render watermark.
+            self.line_split_x = 0;
 
             let active_lines = self.screen_height();
             self.hint_pending = false;
+            self.hint_due = false;
+            self.vint_due = false;
 
             // Handle VBlank status flag based on V counter
             if self.v_counter == active_lines {
                 self.status |= STATUS_VBLANK;
-                self.status |= STATUS_VINT_PENDING;
+                // VINT is "due" but the actual STATUS_VINT_PENDING flag is
+                // set later once the MCLK threshold within this line is
+                // crossed (see post-wrap deferred-assertion check below).
+                self.vint_due = true;
             } else if self.v_counter == 0 {
                 self.status &= !STATUS_VBLANK;
             }
@@ -895,7 +1071,7 @@ impl Vdp {
             if self.v_counter < active_lines {
                 if self.line_counter == 0 {
                     self.line_counter = self.registers[REG_H_INT_COUNTER] as u16;
-                    self.hint_pending = true;
+                    self.hint_due = true;
                 } else {
                     self.line_counter -= 1;
                 }
@@ -914,6 +1090,16 @@ impl Vdp {
             };
             if self.mclk_line_clocks >= Self::ACTIVE_DISPLAY_START_MCLK {
                 self.render_scanline_if_needed(self.v_counter);
+            }
+            // Post-wrap deferred-interrupt check: if the current tick
+            // advanced past the new line's HINT/VINT thresholds, assert now.
+            if self.hint_due && self.mclk_line_clocks >= Self::HINT_OFFSET_MCLK {
+                self.hint_pending = true;
+                self.hint_due = false;
+            }
+            if self.vint_due && self.mclk_line_clocks >= Self::VINT_OFFSET_MCLK {
+                self.status |= STATUS_VINT_PENDING;
+                self.vint_due = false;
             }
             for slot_idx in 0..next_line_curr_slot {
                 self.process_slot(slot_idx as usize, is_h40, &mut read_bus_word);
@@ -956,8 +1142,19 @@ impl Vdp {
         }
 
         if !self.fifo.is_empty() {
+            // R-RR-2: temporarily set mclk_line_clocks to this slot's MCLK
+            // position so that any redraw triggered by the drained entry
+            // computes its split_x relative to the slot's actual pixel
+            // position, not the (later) end-of-tick MCLK.
+            let saved_mclk = self.mclk_line_clocks;
+            let total_slots = if is_h40 { 210u32 } else { 171u32 };
+            let slot_mclk = (slot_idx as u32 * 3420) / total_slots;
+            self.mclk_line_clocks = slot_mclk;
+
             let entry = self.fifo.remove(0);
             self.process_fifo_entry(entry);
+
+            self.mclk_line_clocks = saved_mclk;
 
             self.fifo_full = false;
             self.status &= !STATUS_FIFO_FULL;
@@ -1046,3 +1243,6 @@ mod tests_constants;
 
 #[cfg(test)]
 mod test_dma_transfer;
+
+#[cfg(test)]
+mod tests_sprite_iterator;

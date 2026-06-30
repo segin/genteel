@@ -101,6 +101,11 @@ pub struct TileRenderParams {
 
 pub trait RenderOps {
     fn render_line(&mut self, line: u16);
+    /// Re-render only pixels [start_x .. screen_width] of `line` using the
+    /// current VDP state. Pixels at [0 .. start_x] are left untouched so
+    /// they retain whatever state they were drawn with previously
+    /// (segmented mid-line render for road-gradient effects).
+    fn render_line_from(&mut self, line: u16, start_x: u16);
     fn render_plane(&self, is_plane_a: bool, fetch_line: u16, line_buf: &mut [u8; 320]);
     fn render_tile(&self, params: &TileRenderParams, screen_x: &mut u16, line_buf: &mut [u8; 320]);
     fn get_active_sprites(&mut self, line: u16, sprites: &mut [SpriteAttributes]) -> usize;
@@ -109,7 +114,7 @@ pub trait RenderOps {
         sprites: &[SpriteAttributes],
         fetch_line: u16,
         line_buf: &mut [u8; 320],
-    );
+    ) -> bool;
     fn get_v_scroll(&self, is_plane_a: bool, tile_h: usize, fetch_line: u16) -> u16;
     fn get_h_scroll(&self, is_plane_a: bool, fetch_line: u16) -> u16;
     fn fetch_nametable_entry(
@@ -155,13 +160,6 @@ pub struct PixelLayerData {
     pub b_col: u8,
 }
 
-pub struct ShadowHighlightParams<'a> {
-    pub top_layer: u8,
-    pub top_col: u8,
-    pub state: u8,
-    pub px: &'a PixelLayerData,
-}
-
 pub struct CompositeLineParams<'a> {
     pub line_offset: usize,
     pub bg_color_idx: u8,
@@ -169,6 +167,9 @@ pub struct CompositeLineParams<'a> {
     pub buf_b: &'a [u8; 320],
     pub buf_a: &'a [u8; 320],
     pub buf_s: &'a [u8; 320],
+    /// Inclusive start pixel for composite (used for mid-line segmented
+    /// re-render). Defaults to 0 for a full-line composite.
+    pub start_x: usize,
 }
 
 impl Vdp {
@@ -176,7 +177,7 @@ impl Vdp {
         let sh_enabled = (self.registers[REG_MODE4] & 0x08) != 0;
         let mask_col0 = (self.registers[REG_MODE1] & 0x20) != 0;
 
-        for x in 0..320 {
+        for x in params.start_x..320 {
             if mask_col0 && x < 8 {
                 self.framebuffer[params.line_offset + x] = params.bg_color_val;
                 continue;
@@ -211,28 +212,72 @@ impl Vdp {
                 b_col,
             };
 
-            let (mut top_col, top_layer) = self.determine_top_layer(&px);
-
             if !sh_enabled {
+                let (top_col, _) = self.determine_top_layer(&px);
                 self.framebuffer[params.line_offset + x] = self.cram_cache[top_col as usize];
             } else {
-                let mut state = 1;
-
-                let sh_params = ShadowHighlightParams {
-                    top_layer,
-                    top_col,
-                    state,
-                    px: &px,
-                };
-                let (new_top_col, new_state) = self.apply_shadow_highlight(sh_params);
-                top_col = new_top_col;
-                state = new_state;
-
+                let (top_col, state) = self.resolve_shadow_highlight_pixel(&px);
                 let color = self.cram_cache[top_col as usize];
                 let final_color = self.apply_color_transform(color, state);
                 self.framebuffer[params.line_offset + x] = final_color;
             }
         }
+    }
+
+    /// Full S/H pipeline.
+    ///
+    /// Hardware behavior:
+    ///   * Default shadow-state = 0 (shadow). The BG color is in shadow unless
+    ///     something with priority is on top.
+    ///   * A non-transparent high-priority plane pixel lifts the state to 1 (normal).
+    ///   * A non-transparent, non-operator priority sprite lifts the state to 1.
+    ///   * Operator sprites ($3E = highlight, $3F = shadow, palette 3 only)
+    ///     are themselves invisible — the plane/BG pixel underneath shows
+    ///     through — and modify the state by +1/-1 saturating to [0, 2].
+    pub(crate) fn resolve_shadow_highlight_pixel(&self, px: &PixelLayerData) -> (u8, u8) {
+        let sprite_visible = !px.s_trans;
+        let sprite_is_operator = sprite_visible && (px.s_col == 0x3E || px.s_col == 0x3F);
+
+        let mut state: u8 = 0; // shadow by default
+
+        // High-priority plane pixels lift the state to normal.
+        if (px.a_pri && !px.a_trans) || (px.b_pri && !px.b_trans) {
+            state = 1;
+        }
+        // A priority sprite that isn't an operator also lifts the state.
+        if px.s_pri && sprite_visible && !sprite_is_operator {
+            state = 1;
+        }
+
+        // Top color: operator sprites hide themselves; pick top from non-sprite layers.
+        let top_col = if sprite_is_operator {
+            let masked = PixelLayerData {
+                bg_color_idx: px.bg_color_idx,
+                s_pri: false,
+                s_trans: true,
+                s_col: 0,
+                a_pri: px.a_pri,
+                a_trans: px.a_trans,
+                a_col: px.a_col,
+                b_pri: px.b_pri,
+                b_trans: px.b_trans,
+                b_col: px.b_col,
+            };
+            self.determine_top_layer(&masked).0
+        } else {
+            self.determine_top_layer(px).0
+        };
+
+        // Apply the operator's state modification.
+        if sprite_is_operator {
+            if px.s_col == 0x3E && state < 2 {
+                state += 1;
+            } else if px.s_col == 0x3F && state > 0 {
+                state -= 1;
+            }
+        }
+
+        (top_col, state)
     }
 
     pub(crate) fn determine_top_layer(&self, px: &PixelLayerData) -> (u8, u8) {
@@ -260,43 +305,6 @@ impl Vdp {
         }
 
         (top_col, top_layer)
-    }
-
-    pub(crate) fn apply_shadow_highlight(&self, mut params: ShadowHighlightParams) -> (u8, u8) {
-        if params.top_layer == 3 {
-            if params.px.s_col == 0x3E {
-                params.top_col = params.px.bg_color_idx;
-                if params.px.a_pri && !params.px.a_trans {
-                    params.top_col = params.px.a_col;
-                } else if params.px.b_pri && !params.px.b_trans {
-                    params.top_col = params.px.b_col;
-                } else if !params.px.a_trans {
-                    params.top_col = params.px.a_col;
-                } else if !params.px.b_trans {
-                    params.top_col = params.px.b_col;
-                }
-                if params.state < 2 {
-                    params.state += 1;
-                }
-            } else if params.px.s_col == 0x3F {
-                params.top_col = params.px.bg_color_idx;
-                if params.px.a_pri && !params.px.a_trans {
-                    params.top_col = params.px.a_col;
-                } else if params.px.b_pri && !params.px.b_trans {
-                    params.top_col = params.px.b_col;
-                } else if !params.px.a_trans {
-                    params.top_col = params.px.a_col;
-                } else if !params.px.b_trans {
-                    params.top_col = params.px.b_col;
-                }
-                if params.state > 0 {
-                    params.state -= 1;
-                }
-            } else if (params.px.s_col & 0x0F) == 0x0E {
-                params.state = 1;
-            }
-        }
-        (params.top_col, params.state)
     }
 
     pub(crate) fn apply_color_transform(&self, color: u16, state: u8) -> u16 {
@@ -327,6 +335,7 @@ fn render_sprite_scanline(
     line: u16,
     attr: &SpriteAttributes,
     screen_width: u16,
+    collision: &mut bool,
 ) {
     let sprite_v_px = (attr.v_size as u16) * 8;
 
@@ -393,11 +402,10 @@ fn render_sprite_scanline(
                 if color_idx != 0 {
                     let addr = (attr.palette << 4) | color_idx;
                     let pri_mask = if attr.priority { 0x80 } else { 0x00 };
-                    // Only write if not already occupied by a higher-priority sprite (in this case we draw in reverse order, so we overwrite, wait actually sprite 0 is highest priority.
-                    // If we draw in reverse order (sprites.iter().rev()), the highest priority sprite is drawn last and overwrites.
-                    // Wait, S/H operators only apply if they are the TOP sprite pixel.
-                    // By drawing in reverse order, the last drawn pixel is the top one.
                     if let Some(pixel) = line_buf.get_mut(screen_x as usize) {
+                        if (*pixel & 0x0F) != 0 {
+                            *collision = true;
+                        }
                         *pixel = addr | pri_mask;
                     }
                 }
@@ -422,6 +430,9 @@ fn render_sprite_scanline(
                     let addr = (attr.palette << 4) | color_idx;
                     let pri_mask = if attr.priority { 0x80 } else { 0x00 };
                     if let Some(pixel) = line_buf.get_mut(screen_x as usize) {
+                        if (*pixel & 0x0F) != 0 {
+                            *collision = true;
+                        }
                         *pixel = addr | pri_mask;
                     }
                 }
@@ -436,7 +447,19 @@ impl RenderOps for Vdp {
             return;
         }
 
+        // Latch the SAT cache (LSU) from VRAM. On hardware this happens in
+        // two passes during HBlank — bytes 0/1 early, attr/X bytes later —
+        // but our approximation just snapshots at render time. Capturing
+        // HERE (not at line wrap) picks up HINT-driven SAT updates that
+        // land in HBlank between MCLK 200 and 860 (R-RR-4).
         self.sync_sat_cache();
+
+        // Re-latch scroll state right before rendering: HINT-driven per-line
+        // H-scroll updates land in HBlank (MCLK 200..~860) after `tick`'s
+        // line-wrap latch fires at MCLK 0. Re-latching here picks up those
+        // updates so the road H-scroll for line N reflects the HINT handler
+        // that ran during HBlank of line N (R-RR-1).
+        self.latch_scroll_state_for_line(line);
 
         let draw_line = line;
         let fetch_line = line;
@@ -466,7 +489,9 @@ impl RenderOps for Vdp {
         if self.debug_plane != Some('b') {
             self.render_plane(true, fetch_line, &mut buf_a);
         }
-        self.render_sprites(active_sprites, fetch_line, &mut buf_s);
+        if self.render_sprites(active_sprites, fetch_line, &mut buf_s) {
+            self.status |= STATUS_COLLISION;
+        }
 
         let composite_params = CompositeLineParams {
             line_offset,
@@ -475,9 +500,72 @@ impl RenderOps for Vdp {
             buf_b: &buf_b,
             buf_a: &buf_a,
             buf_s: &buf_s,
+            start_x: 0,
         };
         self.composite_line(&composite_params);
         self.rendered_scanlines[line as usize] = true;
+        // Reset the per-line split marker so subsequent mid-line writes can
+        // segment from pixel 0.
+        self.line_split_x = 0;
+    }
+
+    fn render_line_from(&mut self, line: u16, start_x: u16) {
+        let width = self.screen_width();
+        if line >= self.screen_height() || start_x >= width {
+            return;
+        }
+
+        self.ensure_sat_cache();
+        // Re-latch scroll state so the right side of the line picks up any
+        // mid-line VSRAM / H-scroll-table / mode3 writes the segmented
+        // render is being triggered by.
+        self.latch_scroll_state_for_line(line);
+
+        let fetch_line = line;
+        let line_offset = (line as usize) * 320;
+
+        let (pal_line, color_idx) = self.bg_color();
+        let bg_color_val = self.get_cram_color(pal_line, color_idx);
+        let bg_color_idx = (pal_line << 4) | color_idx;
+
+        if !self.display_enabled() {
+            // Mid-line display-disable: pixels [start_x..width] become BG.
+            let start = line_offset + start_x as usize;
+            let end = line_offset + width as usize;
+            self.framebuffer[start..end].fill(bg_color_val);
+            return;
+        }
+
+        // We re-render the full plane/sprite buffers but composite only the
+        // [start_x..320] range back into the framebuffer.
+        let mut sprite_buffer = [SpriteAttributes::default(); 80];
+        let sprite_count = self.get_active_sprites(fetch_line, &mut sprite_buffer);
+        let active_sprites = &sprite_buffer[..sprite_count];
+
+        let mut buf_b = [0u8; 320];
+        let mut buf_a = [0u8; 320];
+        let mut buf_s = [0u8; 320];
+
+        if std::env::var("GENTEEL_DEBUG_PLANE").as_deref() != Ok("a") {
+            self.render_plane(false, fetch_line, &mut buf_b);
+        }
+        if std::env::var("GENTEEL_DEBUG_PLANE").as_deref() != Ok("b") {
+            self.render_plane(true, fetch_line, &mut buf_a);
+        }
+        if self.render_sprites(active_sprites, fetch_line, &mut buf_s) {
+            self.status |= STATUS_COLLISION;
+        }
+
+        let composite_params = CompositeLineParams {
+            line_offset,
+            bg_color_idx,
+            bg_color_val,
+            buf_b: &buf_b,
+            buf_a: &buf_a,
+            buf_s: &buf_s,
+            start_x: start_x as usize,
+        };
+        self.composite_line(&composite_params);
     }
 
     fn render_plane(&self, is_plane_a: bool, fetch_line: u16, line_buf: &mut [u8; 320]) {
@@ -532,22 +620,51 @@ impl RenderOps for Vdp {
                 scanline_width: screen_width,
             };
 
+            // H40 window/Plane-A boundary glitch (G10/R6):
+            // The hardware artifact only occurs once per line (the first
+            // window->plane-A transition) and only when the window doesn't
+            // span the entire line. We additionally require the transition
+            // boundary to fall on a tile-aligned screen X — the pre-fetch
+            // race that causes the glitch only happens when the window
+            // boundary coincides with a fetch slot boundary.
+            let glitch_enabled = h40_mode && h_scroll != 0 && !win_h_dir && !win_full_line;
+            let mut glitch_fired = false;
+            let mut prev_in_window = win_full_line
+                || if win_h_dir {
+                    screen_x >= win_h_point
+                } else {
+                    screen_x < win_h_point
+                };
             while screen_x < screen_width {
-                let params = if win_full_line {
+                let now_in_window = if win_full_line {
+                    true
+                } else if win_h_dir {
+                    screen_x >= win_h_point
+                } else {
+                    screen_x < win_h_point
+                };
+
+                if glitch_enabled
+                    && !glitch_fired
+                    && prev_in_window
+                    && !now_in_window
+                    && (screen_x & 0x07) == 0
+                {
+                    // Boundary glitch: one extra window tile before plane A.
+                    self.render_tile(&win_params, &mut screen_x, line_buf);
+                    glitch_fired = true;
+                    if screen_x >= screen_width {
+                        break;
+                    }
+                }
+
+                let params = if now_in_window {
                     &win_params
                 } else {
-                    let in_h = if win_h_dir {
-                        screen_x >= win_h_point
-                    } else {
-                        screen_x < win_h_point
-                    };
-                    if in_h {
-                        &win_params
-                    } else {
-                        &plane_params
-                    }
+                    &plane_params
                 };
                 self.render_tile(params, &mut screen_x, line_buf);
+                prev_in_window = now_in_window;
             }
         } else {
             // Plane B never has a window
@@ -574,17 +691,39 @@ impl RenderOps for Vdp {
         let pixel_h = scrolled_h & 0x07;
         let tile_h = ((scrolled_h >> 3) as usize) & params.plane_w_mask;
 
-        // Fetch V-scroll for this specific column (per-column VS support)
+        // Fetch V-scroll for this specific column (per-column VS support).
         // If not using scroll (e.g. Window plane), V-scroll is 0.
+        //
+        // H40 column-0 VSRAM-AND quirk:
+        //   In H40 mode with 2-cell V-scroll enabled and non-zero H-scroll,
+        //   the VDP pre-fetches the V-scroll entry for column "-1" of the
+        //   previous frame. The bus settles to the bitwise AND of the last
+        //   two strip entries (strips 18 and 19, i.e. cells 36-37 and 38-39).
+        //   Cells 0 and 1 (current_x < 16) both share this value because
+        //   they map to strip 0 which is what gets overridden.
         let v_scroll = if params.enable_v_scroll {
             let mode3 = self.registers[REG_MODE3];
-            let tile_column =
-                if self.h40_mode() && (mode3 & 0x04) != 0 && current_x == 0 && pixel_h != 0 {
-                    38
+            let two_cell_mode = (mode3 & 0x04) != 0;
+            let h40 = self.h40_mode();
+            if h40 && two_cell_mode && current_x < 16 && params.h_scroll != 0 {
+                let vs_strip19 = self.get_v_scroll(params.is_plane_a, 38, params.fetch_line);
+                let vs_strip18 = self.get_v_scroll(params.is_plane_a, 36, params.fetch_line);
+                // R5: tighten the AND quirk. If either source strip is zero,
+                // the AND would clobber the other strip with zero, breaking
+                // games (e.g. Road Rash II) that intentionally keep the last
+                // strip unwritten while strip 0 carries the real value.
+                // Fall back to strip-19 only in that case (the looser
+                // pre-G5 behavior). The AND only fires when both strips
+                // carry meaningful (non-zero) bits.
+                if vs_strip19 != 0 && vs_strip18 != 0 {
+                    vs_strip19 & vs_strip18
                 } else {
-                    (current_x >> 3) as usize
-                };
-            self.get_v_scroll(params.is_plane_a, tile_column, params.fetch_line)
+                    vs_strip19
+                }
+            } else {
+                let tile_column = (current_x >> 3) as usize;
+                self.get_v_scroll(params.is_plane_a, tile_column, params.fetch_line)
+            }
         } else {
             0
         };
@@ -618,14 +757,24 @@ impl RenderOps for Vdp {
     }
 
     fn get_active_sprites(&mut self, line: u16, sprites: &mut [SpriteAttributes]) -> usize {
-        self.sync_sat_cache();
-
-        let mut count = 0;
-        let mut pixels = 0;
+        // Cold-start sync only. Production latches at line boundary in `tick`.
+        self.ensure_sat_cache();
 
         let max_sprites = if self.h40_mode() { 80 } else { 64 };
         let line_limit = if self.h40_mode() { 20 } else { 16 };
         let pixel_limit = if self.h40_mode() { 320 } else { 256 };
+
+        // X=0 sprite mask state. Triggered when an X=0 sprite is encountered AND
+        // either a non-X=0 sprite has already been added to this line, OR the
+        // previous line had a sprite overflow. Once triggered, subsequent
+        // sprites on this line are not rendered (but still count toward
+        // per-line limits for overflow purposes).
+        let mut mask_triggered = false;
+        let mut visible_added: usize = 0;
+        let mut slots_consumed: usize = 0;
+        let mut pixels: usize = 0;
+        let prev_overflow = self.prev_line_sprite_overflow;
+        let mut overflow_this_line = false;
 
         let iter = SpriteIterator {
             vram: &self.sat,
@@ -637,34 +786,47 @@ impl RenderOps for Vdp {
 
         for attr in iter {
             let sprite_v_px = (attr.v_size as u16) * 8;
-
-            // X=0 suppression mode
-            if attr.h_pos == 0 {
-                // Technically hardware suppresses rendering but continues processing,
-                // but for our buffer we can just skip it visually
-            }
-
             let sprite_top = attr.v_pos as i16 as i32;
             let line_i = line as i32;
-            if line_i >= sprite_top && line_i < sprite_top + sprite_v_px as i32 {
-                // If the sprite falls on this scanline, add it
-                if count < sprites.len() {
-                    sprites[count] = attr;
-                    count += 1;
 
-                    pixels += (attr.h_size as usize) * 8;
-                }
+            if line_i < sprite_top || line_i >= sprite_top + sprite_v_px as i32 {
+                continue;
+            }
 
-                if count >= line_limit {
-                    break;
+            // An X=0 sprite that meets the trigger condition activates the mask.
+            // "X=0" means the raw 10-bit SAT X field is 0 (i.e. h_pos after the
+            // 128 subtraction equals 0xFF80 / -128). Such a sprite is fully
+            // off-screen and never renders, but it still consumes a per-line
+            // slot and dot budget on hardware, and arms the mask.
+            let is_x0_mask = attr.h_pos == 0u16.wrapping_sub(128);
+            if is_x0_mask {
+                if visible_added > 0 || prev_overflow {
+                    mask_triggered = true;
                 }
+            } else if !mask_triggered && visible_added < sprites.len() {
+                sprites[visible_added] = attr;
+                visible_added += 1;
+            }
 
-                if pixels >= pixel_limit {
-                    break;
-                }
+            slots_consumed += 1;
+            pixels += (attr.h_size as usize) * 8;
+
+            if slots_consumed >= line_limit {
+                overflow_this_line = true;
+                break;
+            }
+
+            if pixels >= pixel_limit {
+                overflow_this_line = true;
+                break;
             }
         }
-        count
+
+        self.prev_line_sprite_overflow = overflow_this_line;
+        if overflow_this_line {
+            self.status |= STATUS_SOVR;
+        }
+        visible_added
     }
 
     fn render_sprites(
@@ -672,21 +834,31 @@ impl RenderOps for Vdp {
         sprites: &[SpriteAttributes],
         fetch_line: u16,
         line_buf: &mut [u8; 320],
-    ) {
+    ) -> bool {
         let screen_width = self.screen_width();
+        let mut collision = false;
 
         // Render in reverse order so that sprites with lower indices (higher priority)
         // are drawn last and appear on top.
         for attr in sprites.iter().rev() {
-            render_sprite_scanline(&self.vram, line_buf, fetch_line, attr, screen_width);
+            render_sprite_scanline(
+                &self.vram,
+                line_buf,
+                fetch_line,
+                attr,
+                screen_width,
+                &mut collision,
+            );
         }
+        collision
     }
     /// Fetch Vertical scroll value for the given column.
     /// Supports both Full-screen and 2-cell (16-pixel) strip modes.
     /// V-scroll values in VSRAM are stored as signed words. We preserve the
     /// raw register contents so wraparound matches hardware behavior.
     fn get_v_scroll(&self, is_plane_a: bool, tile_h: usize, fetch_line: u16) -> u16 {
-        let (mode3, vsram) = if self.latched_scroll_valid && self.latched_scroll_line == fetch_line {
+        let (mode3, vsram) = if self.latched_scroll_valid && self.latched_scroll_line == fetch_line
+        {
             (self.latched_mode3, &self.latched_vsram)
         } else {
             (self.registers[REG_MODE3], &self.vsram)
