@@ -15,6 +15,9 @@ pub mod vdp;
 pub mod wav_writer;
 pub mod z80;
 
+#[cfg(test)]
+pub mod test_utils;
+
 pub use audio::{create_audio_buffer, AudioBuffer, SharedAudioBuffer};
 pub use cpu::Cpu;
 pub use input::{InputManager, InputScript};
