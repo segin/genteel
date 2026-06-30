@@ -501,6 +501,23 @@ mod tests {
         rgb565_to_rgba8(&[0xFFFE], &mut output);
         // b: (30 << 3) | (30 >> 2) = 240 | 7 = 247
         assert_eq!(output, [255, 255, 247, 255]);
+
+        // Extremely large buffer (e.g., 2MB output)
+        let large_input = vec![0x0000u16; 512 * 1024];
+        let mut large_output = vec![0u8; 512 * 1024 * 4];
+        rgb565_to_rgba8(&large_input, &mut large_output);
+        assert_eq!(large_output[3], 255);
+        assert_eq!(large_output[large_output.len() - 1], 255);
+
+        // Buffer not aligned to 4-byte boundary (e.g., 1003 bytes)
+        let mut unaligned_output = vec![0u8; 1003];
+        rgb565_to_rgba8(&vec![0xFFFFu16; 300], &mut unaligned_output);
+        // 1003 / 4 = 250 pixels should be processed
+        assert_eq!(unaligned_output[250 * 4 - 1], 255); // Last byte (A) of 250th pixel
+        // Bytes 1000, 1001, 1002 (0-indexed) should be untouched
+        assert_eq!(unaligned_output[1000], 0);
+        assert_eq!(unaligned_output[1001], 0);
+        assert_eq!(unaligned_output[1002], 0);
     }
 
     #[test]
