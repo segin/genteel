@@ -986,8 +986,8 @@ mod tests_index;
 // #[cfg(test)]
 // mod tests_interrupt;
 
-// #[cfg(test)]
-// mod tests_reset;
+#[cfg(test)]
+mod tests_reset;
 
 // #[cfg(test)]
 // mod tests_rrd_rld;

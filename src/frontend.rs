@@ -3,7 +3,6 @@
 //! Provides cross-platform windowing, input handling, and rendering
 //! for the Genesis emulator using pure Rust libraries.
 
-use std::path::PathBuf;
 #[cfg(any(feature = "gui", feature = "test_headless"))]
 use winit::keyboard::{Key, KeyCode};
 
@@ -18,45 +17,7 @@ pub enum InputMapping {
     Ergonomic,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PsgToneInfo {
-    pub frequency: u16,
-    pub volume: u8,
-}
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PsgNoiseInfo {
-    pub volume: u8,
-    pub white: bool,
-    pub rate: u8,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DebugInfo {
-    pub frame_count: u64,
-    pub m68k_pc: u32,
-    pub z80_pc: u16,
-    pub display_enabled: bool,
-    pub vdp_status: u16,
-    pub bg_color_index: usize,
-    pub cram: Vec<u16>,
-    pub cram_raw: Vec<u16>,
-    pub vram: Vec<u8>,
-    pub vsram: Vec<u8>,
-    pub wram: Vec<u8>,
-    pub z80_ram: Vec<u8>,
-    pub psg_tone: [PsgToneInfo; 3],
-    pub psg_noise: PsgNoiseInfo,
-    pub vdp_registers: [u8; 24],
-    pub m68k_disasm: Vec<(u32, String)>,
-    pub z80_disasm: Vec<(u16, String)>,
-    pub port1_type: crate::io::ControllerType,
-    pub port2_type: crate::io::ControllerType,
-    pub has_rom: bool,
-    pub current_rom_path: Option<PathBuf>,
-}
-
-use serde::{Deserialize, Serialize};
 
 /// Key mapping for player 1 (Physical KeyCode)
 #[cfg(any(feature = "gui", feature = "test_headless"))]
@@ -122,9 +83,20 @@ pub fn key_to_button(key: &Key, mapping: InputMapping) -> Option<(&'static str, 
             Key::Character(s) if s == "x" || s == "X" => Some(("b", true)),
             Key::Character(s) if s == "c" || s == "C" => Some(("c", true)),
             Key::Named(winit::keyboard::NamedKey::Enter) => Some(("start", true)),
+            // 6-button extension
+            Key::Character(s) if s == "a" || s == "A" => Some(("x", true)),
+            Key::Character(s) if s == "s" || s == "S" => Some(("y", true)),
+            Key::Character(s) if s == "d" || s == "D" => Some(("z", true)),
+            Key::Character(s) if s == "q" || s == "Q" => Some(("mode", true)),
             _ => None,
         },
         InputMapping::Ergonomic => match key {
+            // Player 1 - D-pad (WASD physical or Arrow keys)
+            Key::Named(winit::keyboard::NamedKey::ArrowUp) => Some(("up", true)),
+            Key::Named(winit::keyboard::NamedKey::ArrowDown) => Some(("down", true)),
+            Key::Named(winit::keyboard::NamedKey::ArrowLeft) => Some(("left", true)),
+            Key::Named(winit::keyboard::NamedKey::ArrowRight) => Some(("right", true)),
+
             Key::Character(s) if s == "w" || s == "W" => Some(("up", true)),
             Key::Character(s) if s == "s" || s == "S" => Some(("down", true)),
             Key::Character(s) if s == "a" || s == "A" => Some(("left", true)),
@@ -529,6 +501,23 @@ mod tests {
         rgb565_to_rgba8(&[0xFFFE], &mut output);
         // b: (30 << 3) | (30 >> 2) = 240 | 7 = 247
         assert_eq!(output, [255, 255, 247, 255]);
+
+        // Extremely large buffer (e.g., 2MB output)
+        let large_input = vec![0x0000u16; 512 * 1024];
+        let mut large_output = vec![0u8; 512 * 1024 * 4];
+        rgb565_to_rgba8(&large_input, &mut large_output);
+        assert_eq!(large_output[3], 255);
+        assert_eq!(large_output[large_output.len() - 1], 255);
+
+        // Buffer not aligned to 4-byte boundary (e.g., 1003 bytes)
+        let mut unaligned_output = vec![0u8; 1003];
+        rgb565_to_rgba8(&vec![0xFFFFu16; 300], &mut unaligned_output);
+        // 1003 / 4 = 250 pixels should be processed
+        assert_eq!(unaligned_output[250 * 4 - 1], 255); // Last byte (A) of 250th pixel
+        // Bytes 1000, 1001, 1002 (0-indexed) should be untouched
+        assert_eq!(unaligned_output[1000], 0);
+        assert_eq!(unaligned_output[1001], 0);
+        assert_eq!(unaligned_output[1002], 0);
     }
 
     #[test]
@@ -632,5 +621,184 @@ mod tests {
                 mapping, keycode
             );
         }
+    }
+
+    #[cfg(any(feature = "gui", feature = "test_headless"))]
+    #[test]
+    fn test_keycode_to_button_mode_isolation() {
+        // Keys that only resolve in Ergonomic mode
+        assert_eq!(
+            keycode_to_button(KeyCode::KeyW, InputMapping::Original),
+            None
+        );
+        assert_eq!(
+            keycode_to_button(KeyCode::KeyJ, InputMapping::Original),
+            None
+        );
+        assert_eq!(
+            keycode_to_button(KeyCode::Space, InputMapping::Original),
+            None
+        );
+
+        // KeyA is mapped in both modes but to different buttons
+        assert_eq!(
+            keycode_to_button(KeyCode::KeyA, InputMapping::Original),
+            Some(("x", true))
+        );
+        assert_eq!(
+            keycode_to_button(KeyCode::KeyA, InputMapping::Ergonomic),
+            Some(("left", true))
+        );
+
+        // Unmapped in both modes
+        assert_eq!(
+            keycode_to_button(KeyCode::KeyM, InputMapping::Original),
+            None
+        );
+        assert_eq!(
+            keycode_to_button(KeyCode::KeyM, InputMapping::Ergonomic),
+            None
+        );
+    }
+
+    #[cfg(any(feature = "gui", feature = "test_headless"))]
+    #[test]
+    fn test_key_to_button_comprehensive() {
+        use winit::keyboard::NamedKey;
+
+        // Original mapping
+        let mapping = InputMapping::Original;
+        assert_eq!(
+            key_to_button(&Key::Named(NamedKey::ArrowUp), mapping),
+            Some(("up", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Named(NamedKey::ArrowDown), mapping),
+            Some(("down", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Named(NamedKey::ArrowLeft), mapping),
+            Some(("left", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Named(NamedKey::ArrowRight), mapping),
+            Some(("right", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Named(NamedKey::Enter), mapping),
+            Some(("start", true))
+        );
+        // Action keys (case insensitive)
+        assert_eq!(
+            key_to_button(&Key::Character("z".into()), mapping),
+            Some(("a", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("Z".into()), mapping),
+            Some(("a", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("x".into()), mapping),
+            Some(("b", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("X".into()), mapping),
+            Some(("b", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("c".into()), mapping),
+            Some(("c", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("C".into()), mapping),
+            Some(("c", true))
+        );
+        // 6-button extension
+        assert_eq!(
+            key_to_button(&Key::Character("a".into()), mapping),
+            Some(("x", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("A".into()), mapping),
+            Some(("x", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("s".into()), mapping),
+            Some(("y", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("d".into()), mapping),
+            Some(("z", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("q".into()), mapping),
+            Some(("mode", true))
+        );
+        // Unmapped in Original mode
+        assert_eq!(key_to_button(&Key::Named(NamedKey::Space), mapping), None);
+
+        // Ergonomic mapping
+        let mapping = InputMapping::Ergonomic;
+        assert_eq!(
+            key_to_button(&Key::Character("w".into()), mapping),
+            Some(("up", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("W".into()), mapping),
+            Some(("up", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("s".into()), mapping),
+            Some(("down", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("a".into()), mapping),
+            Some(("left", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("d".into()), mapping),
+            Some(("right", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("j".into()), mapping),
+            Some(("a", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("J".into()), mapping),
+            Some(("a", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("k".into()), mapping),
+            Some(("b", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("l".into()), mapping),
+            Some(("c", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("u".into()), mapping),
+            Some(("x", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("i".into()), mapping),
+            Some(("y", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Character("o".into()), mapping),
+            Some(("z", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Named(NamedKey::Enter), mapping),
+            Some(("start", true))
+        );
+        assert_eq!(
+            key_to_button(&Key::Named(NamedKey::Space), mapping),
+            Some(("mode", true))
+        );
+        // Ergonomic also supports arrows
+        assert_eq!(
+            key_to_button(&Key::Named(NamedKey::ArrowDown), mapping),
+            Some(("down", true))
+        );
     }
 }

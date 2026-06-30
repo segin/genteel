@@ -333,9 +333,9 @@ pub fn exec_eori_to_sr<M: MemoryInterface>(cpu: &mut Cpu, memory: &mut M) -> u32
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cpu::test_utils::create_cpu;
+    use crate::cpu::decoder::{AddressingMode, Condition};
     use crate::cpu::flags;
-    use crate::cpu::decoder::{Condition, AddressingMode};
+    use crate::cpu::test_utils::create_cpu;
 
     #[test]
     fn test_exec_bsr_short() {
@@ -438,17 +438,32 @@ mod tests {
         let (mut cpu, mut memory) = create_cpu();
 
         // Condition true
-        let mut cycles = exec_scc(&mut cpu, Condition::True, AddressingMode::DataRegister(0), &mut memory);
+        let mut cycles = exec_scc(
+            &mut cpu,
+            Condition::True,
+            AddressingMode::DataRegister(0),
+            &mut memory,
+        );
         assert_eq!(cycles, 4); // 4 + 0
         assert_eq!(cpu.d[0] & 0xFF, 0xFF);
 
         // Condition false
-        cycles = exec_scc(&mut cpu, Condition::False, AddressingMode::DataRegister(0), &mut memory);
+        cycles = exec_scc(
+            &mut cpu,
+            Condition::False,
+            AddressingMode::DataRegister(0),
+            &mut memory,
+        );
         assert_eq!(cycles, 4); // 4 + 0
         assert_eq!(cpu.d[0] & 0xFF, 0x00);
 
         // Memory addressing
-        cycles = exec_scc(&mut cpu, Condition::True, AddressingMode::AddressIndirect(0), &mut memory);
+        cycles = exec_scc(
+            &mut cpu,
+            Condition::True,
+            AddressingMode::AddressIndirect(0),
+            &mut memory,
+        );
         assert_eq!(cycles, 4 + 4 + 4); // base 4, EA calculation 4, write 4
         assert_eq!(memory.read_byte(cpu.a[0]), 0xFF);
     }
@@ -508,7 +523,7 @@ mod tests {
 
         assert_eq!(cycles, 16);
         assert_eq!(cpu.a[7], initial_sp - 4 - 16); // Stack pointer decremented by 4 (push An) and then added displacement
-        assert_eq!(cpu.a[0], initial_sp - 4);      // An points to the pushed value
+        assert_eq!(cpu.a[0], initial_sp - 4); // An points to the pushed value
         assert_eq!(memory.read_long(cpu.a[0]), 0x12345678); // Old An saved on stack
     }
 
