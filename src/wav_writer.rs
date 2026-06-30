@@ -14,41 +14,29 @@ impl WavWriter<BufWriter<File>> {
         // Security: Restrict path to current directory or its subdirectories
         let base_dir = std::env::current_dir()?.canonicalize()?;
         let requested_path = std::path::Path::new(path);
-        let full_path = if requested_path.is_absolute() {
-            requested_path.to_path_buf()
-        } else {
-            base_dir.join(requested_path)
-        };
+        let mut full_path = base_dir.clone();
 
-        let parent = full_path.parent().ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::InvalidInput, "Invalid path")
-        })?;
-
-        // Canonicalize parent if it exists, otherwise it's just base_dir
-        let canonical_parent = if parent.exists() {
-            parent.canonicalize()?
-        } else {
-            // If parent doesn't exist, we can't canonicalize it directly.
-            // For safety, we check the closest existing parent.
-            let mut current = parent;
-            while !current.exists() {
-                if let Some(p) = current.parent() {
-                    current = p;
-                } else {
-                    break;
+        for component in requested_path.components() {
+            match component {
+                std::path::Component::Normal(c) => full_path.push(c),
+                std::path::Component::CurDir => {}
+                _ => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        format!("Access denied to path: {}. Audio dumps must be within the current directory.", path),
+                    ));
                 }
             }
-            current.canonicalize()?
-        };
+        }
 
-        if !canonical_parent.starts_with(&base_dir) {
+        if full_path == base_dir {
             return Err(std::io::Error::new(
-                std::io::ErrorKind::PermissionDenied,
-                format!("Access denied to path: {}. Audio dumps must be within the current directory.", path),
+                std::io::ErrorKind::InvalidInput,
+                "Invalid path: must specify a file name",
             ));
         }
 
-        let file = File::create(full_path)?;
+        let file = File::create(&full_path)?;
         let writer = BufWriter::new(file);
         Self::new_with_writer(writer, sample_rate, channels)
     }
@@ -261,7 +249,8 @@ mod tests {
         let result = WavWriter::new(invalid_path, 44100, 2);
         match result {
             Err(e) => assert!(
-                e.kind() == std::io::ErrorKind::NotFound || e.kind() == std::io::ErrorKind::PermissionDenied
+                e.kind() == std::io::ErrorKind::NotFound
+                    || e.kind() == std::io::ErrorKind::PermissionDenied
             ),
             _ => panic!("Expected error"),
         }
@@ -357,7 +346,11 @@ mod tests {
         assert!(!std::path::Path::new(traversal_path).exists());
 
         // Test with an absolute path outside the current directory (heuristic for unix/windows)
-        let absolute_path = if cfg!(windows) { "C:\\Windows\\test.wav" } else { "/etc/test.wav" };
+        let absolute_path = if cfg!(windows) {
+            "C:\\Windows\\test.wav"
+        } else {
+            "/etc/test.wav"
+        };
         let result = WavWriter::new(absolute_path, 44100, 2);
 
         match result {

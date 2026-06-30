@@ -423,13 +423,26 @@ impl Default for Io {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_controller_default() {
-        let state = ControllerState::default();
+    #[track_caller]
+    fn assert_cleared(state: &ControllerState) {
+        assert!(!state.up);
+        assert!(!state.down);
+        assert!(!state.left);
+        assert!(!state.right);
         assert!(!state.a);
         assert!(!state.b);
         assert!(!state.c);
         assert!(!state.start);
+        assert!(!state.x);
+        assert!(!state.y);
+        assert!(!state.z);
+        assert!(!state.mode);
+    }
+
+    #[test]
+    fn test_controller_default() {
+        let state = ControllerState::default();
+        assert_cleared(&state);
     }
 
     #[test]
@@ -450,18 +463,7 @@ mod tests {
 
         state.clear();
 
-        assert!(!state.up);
-        assert!(!state.down);
-        assert!(!state.left);
-        assert!(!state.right);
-        assert!(!state.a);
-        assert!(!state.b);
-        assert!(!state.c);
-        assert!(!state.start);
-        assert!(!state.x);
-        assert!(!state.y);
-        assert!(!state.z);
-        assert!(!state.mode);
+        assert_cleared(&state);
     }
 
     #[test]
@@ -918,17 +920,12 @@ mod tests {
         // Try to set invalid button, ensure valid button remains
         state.set_button("start2", true);
         assert!(state.up);
-        assert!(!state.down);
-        assert!(!state.left);
-        assert!(!state.right);
-        assert!(!state.a);
-        assert!(!state.b);
-        assert!(!state.c);
-        assert!(!state.start);
-        assert!(!state.x);
-        assert!(!state.y);
-        assert!(!state.z);
-        assert!(!state.mode);
+
+        // Verify remaining buttons are not set
+        state.up = false; // Temporarily clear 'up' to use assert_cleared
+        assert_cleared(&state);
+        state.up = true; // Restore 'up'
+
         assert_eq!(state.to_button_string(), "U...........");
     }
 }

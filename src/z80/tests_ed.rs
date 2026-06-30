@@ -161,8 +161,8 @@ fn test_inir() {
     let mut c = create_z80(&[0xED, 0xB2]);
     c.set_hl(0x1000);
     c.set_bc(0x0280); // B=2, C=0x80
-    // Port 0x80 read
-    // Mock IO returns 0xFF
+                      // Port 0x80 read
+                      // Mock IO returns 0xFF
 
     // First step
     let t1 = c.step();

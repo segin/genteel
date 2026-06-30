@@ -1,10 +1,25 @@
 #[cfg(all(feature = "gui", test))]
 mod tests {
     use crate::frontend::InputMapping;
-    use crate::gui::GuiState;
+    use crate::gui::{GuiState, WindowState};
     use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
     use std::thread;
+
+    #[test]
+    fn test_window_state_default() {
+        let state = WindowState::default();
+        assert!(!state.open);
+    }
+
+    #[test]
+    fn test_window_state_modification() {
+        let mut state = WindowState::default();
+        state.open = true;
+        assert!(state.open);
+        state.open = false;
+        assert!(!state.open);
+    }
 
     #[test]
     fn test_gui_state_window_management() {
@@ -104,6 +119,9 @@ mod tests {
         let result = crate::gui::run(emulator, None);
 
         // We expect an error because there is no display server available in this headless environment
-        assert!(result.is_err(), "Expected run to fail without a display server");
+        assert!(
+            result.is_err(),
+            "Expected run to fail without a display server"
+        );
     }
 }

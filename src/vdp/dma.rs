@@ -60,9 +60,9 @@ impl DmaOps for Vdp {
         let inc = self.registers[REG_AUTO_INC] as u16;
 
         if len > 0 {
-            // First write is always LSB
+            // First write is always LSB. SAT cache is NOT updated here — it
+            // refreshes once per line at HBlank.
             self.vram[addr as usize] = fill_lsb;
-            self.mirror_sat_byte(addr as usize, fill_lsb);
             addr = addr.wrapping_add(inc);
 
             // Remaining writes are MSB
@@ -87,11 +87,9 @@ impl DmaOps for Vdp {
                     addr = addr.wrapping_add(remaining_len as u16);
                 } else if inc == 0 {
                     self.vram[addr as usize] = fill_msb;
-                    self.mirror_sat_byte(addr as usize, fill_msb);
                 } else {
                     for _ in 0..remaining_len {
                         self.vram[addr as usize] = fill_msb;
-                        self.mirror_sat_byte(addr as usize, fill_msb);
                         addr = addr.wrapping_add(inc);
                     }
                 }
@@ -106,6 +104,30 @@ impl DmaOps for Vdp {
 
         let mode = self.registers[REG_DMA_SRC_HI] & DMA_MODE_MASK;
 
+        // Charge 68k stall cycles for the duration of the DMA. Slot
+        // availability differs by ~7x between active display (~14 slots
+        // per line) and VBlank (~167 slots per line), so the stall
+        // calibration differs accordingly. Calibration:
+        //   active display: Fill=2/byte, Copy=4/byte, Mem->VDP=2/word
+        //   VBlank:         Fill=1 per 4 bytes, Copy=1 per 2 bytes,
+        //                   Mem->VDP=1 per 4 words
+        // (i.e. 8x cheaper in VBlank, matching the slot-availability ratio).
+        let in_vblank = (self.status & STATUS_VBLANK) != 0;
+        let stall = if in_vblank {
+            match mode {
+                DMA_MODE_FILL => len / 4,
+                DMA_MODE_COPY => len / 2,
+                _ => len / 4,
+            }
+        } else {
+            match mode {
+                DMA_MODE_FILL => len.saturating_mul(2),
+                DMA_MODE_COPY => len.saturating_mul(4),
+                _ => len.saturating_mul(2),
+            }
+        };
+        self.dma_stall_cycles = self.dma_stall_cycles.saturating_add(stall);
+
         match mode {
             DMA_MODE_FILL => {
                 self.perform_dma_fill(len);
@@ -118,7 +140,6 @@ impl DmaOps for Vdp {
                 for _ in 0..len {
                     let val = self.vram[source as usize];
                     self.vram[dest as usize] = val;
-                    self.mirror_sat_byte(dest as usize, val);
                     source = source.wrapping_add(1);
                     dest = dest.wrapping_add(inc);
                 }
@@ -162,7 +183,6 @@ impl DmaOps for Vdp {
 
                 if (self.command.code & 0x0F) == VRAM_WRITE {
                     self.vram[addr as usize] = val;
-                    self.mirror_sat_byte(addr as usize, val);
                 }
                 if (self.command.code & 0x0F) == CRAM_WRITE
                     || (self.command.code & 0x0F) == VSRAM_WRITE
@@ -179,7 +199,6 @@ impl DmaOps for Vdp {
                 if (self.command.code & 0x0F) == VRAM_WRITE {
                     let val = self.vram[source as usize];
                     self.vram[addr as usize] = val;
-                    self.mirror_sat_byte(addr as usize, val);
                 }
                 if (self.command.code & 0x0F) == CRAM_WRITE
                     || (self.command.code & 0x0F) == VSRAM_WRITE
@@ -205,8 +224,6 @@ impl DmaOps for Vdp {
                         if idx < self.vram.len() {
                             self.vram[idx] = (val >> 8) as u8;
                             self.vram[idx ^ 1] = (val & 0xFF) as u8;
-                            self.mirror_sat_byte(idx, (val >> 8) as u8);
-                            self.mirror_sat_byte(idx ^ 1, (val & 0xFF) as u8);
                         }
                     }
                     CRAM_WRITE => {
