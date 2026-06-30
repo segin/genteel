@@ -21,6 +21,7 @@
 //! | 0xE00000-0xFFFFFF  | 2 MB   | Work RAM (64KB mirrored)       |
 
 use super::byte_utils;
+use super::everdrive::EverdriveMapper;
 use super::MemoryInterface;
 use crate::apu::Apu;
 use crate::audio;
@@ -45,6 +46,11 @@ pub struct Bus {
     /// ROM data (up to 4MB)
     #[serde(skip)]
     pub rom: Vec<u8>,
+
+    /// EverDrive / SSF bank-switching mapper. Active only for `"SEGA SSF"` ROMs,
+    /// where it exposes the `$000000-$3FFFFF` window as up to 4MB of banked RAM.
+    #[serde(default)]
+    pub everdrive: EverdriveMapper,
 
     /// Work RAM (64KB at 0xFF0000-0xFFFFFF, mirrored in 0xE00000-0xFFFFFF)
     pub work_ram: Box<[u8]>,
@@ -104,6 +110,7 @@ impl Bus {
     pub fn new() -> Self {
         Self {
             rom: Vec::new(),
+            everdrive: EverdriveMapper::new(),
             work_ram: vec![0; 0x10000].into_boxed_slice(),
             z80_ram: vec![0; 0x2000].into_boxed_slice(),
             sram: vec![0; 0x10000].into_boxed_slice(),
@@ -131,6 +138,16 @@ impl Bus {
         // Pad ROM to at least 512 bytes to ensure vector table exists
         if self.rom.len() < 512 {
             self.rom.resize(512, 0);
+        }
+
+        // EverDrive / SSF mapper: ROMs whose header system field is "SEGA SSF"
+        // expose the cartridge window as banked, writable RAM. Re-established
+        // here so it survives a save-state restore (ROM is loaded after the
+        // register state is deserialized).
+        if EverdriveMapper::rom_uses_mapper(&self.rom) {
+            self.everdrive.load_rom(&self.rom);
+        } else {
+            self.everdrive.disable();
         }
 
         // Parse SRAM info from header (0x1B0)
@@ -193,6 +210,9 @@ impl Bus {
         self.z80_ram.fill(0);
         self.sram.fill(0);
         self.sram_enabled = false;
+        // Return the SSF mapper to its power-on bank mapping. The backing memory
+        // (which holds the ROM image) persists across a soft reset, like PSRAM.
+        self.everdrive.reset_registers();
 
         self.vdp.reset();
         self.vdp.vram.fill(0);
@@ -218,7 +238,9 @@ impl Bus {
 
         match addr {
             0x000000..=0x3FFFFF => {
-                if self.sram_enabled && addr >= self.sram_start && addr <= self.sram_end {
+                if self.everdrive.enabled {
+                    self.everdrive.read(addr)
+                } else if self.sram_enabled && addr >= self.sram_start && addr <= self.sram_end {
                     self.read_sram(addr)
                 } else {
                     self.read_rom(addr)
@@ -238,13 +260,18 @@ impl Bus {
 
         match addr {
             0x000000..=0x3FFFFF => {
-                if self.sram_enabled && addr >= self.sram_start && addr <= self.sram_end {
+                if self.everdrive.enabled {
+                    self.everdrive.write(addr, value);
+                } else if self.sram_enabled && addr >= self.sram_start && addr <= self.sram_end {
                     self.write_sram(addr, value);
                 }
             }
             0xA00000..=0xA0FFFF => self.write_z80_area(addr, value),
             0xA10000..=0xA1FFFF => {
-                if addr == 0xA130F1 {
+                if self.everdrive.enabled && EverdriveMapper::is_register(addr) {
+                    // SSF mapper control/bank registers ($A130F0-$A130FF).
+                    self.everdrive.write_register(addr, value);
+                } else if addr == 0xA130F1 {
                     self.sram_enabled = (value & 0x01) != 0;
                 } else {
                     self.write_io_area(addr, value);
@@ -449,8 +476,8 @@ impl Bus {
     pub fn read_word(&mut self, address: u32) -> u16 {
         let addr = address & 0xFFFFFF;
 
-        // ROM Fast Path
-        if addr <= 0x3FFFFF {
+        // ROM Fast Path (bypassed for the SSF mapper, which banks this window)
+        if addr <= 0x3FFFFF && !self.everdrive.enabled {
             let idx = addr as usize;
             if idx + 1 < self.rom.len() {
                 return ((self.rom[idx] as u16) << 8) | (self.rom[idx + 1] as u16);
@@ -531,8 +558,8 @@ impl Bus {
     pub fn read_long(&mut self, address: u32) -> u32 {
         let addr = address & 0xFFFFFF;
 
-        // ROM Fast Path
-        if addr <= 0x3FFFFF {
+        // ROM Fast Path (bypassed for the SSF mapper, which banks this window)
+        if addr <= 0x3FFFFF && !self.everdrive.enabled {
             let idx = addr as usize;
             if idx + 3 < self.rom.len() {
                 return ((self.rom[idx] as u32) << 24)

@@ -17,6 +17,7 @@ pub mod gui;
 pub mod input;
 pub mod io;
 pub mod memory;
+pub mod test_utils;
 #[cfg(all(feature = "gui", test))]
 pub mod tests_gui;
 pub mod vdp;
