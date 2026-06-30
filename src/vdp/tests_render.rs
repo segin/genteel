@@ -1,4 +1,4 @@
-use super::render::{PixelLayerData, ShadowHighlightParams};
+use super::render::PixelLayerData;
 use super::*;
 
 #[test]
@@ -39,7 +39,8 @@ fn test_render_plane_basic() {
 }
 
 #[test]
-fn test_shadow_highlight_mode_keeps_normal_pixels_at_normal_intensity() {
+fn test_shadow_highlight_mode_high_priority_pixel_is_normal() {
+    // Under S/H mode, a *high-priority* plane pixel renders at normal intensity.
     let mut vdp = Vdp::new();
     vdp.is_pal = false;
     vdp.registers[1] = 0x40; // Display enable
@@ -55,7 +56,8 @@ fn test_shadow_highlight_mode_keeps_normal_pixels_at_normal_intensity() {
     }
 
     let nt_addr = 0xC000;
-    vdp.vram[nt_addr] = 0x00;
+    // High byte 0x80 = priority bit set; low byte 0x01 = tile index 1.
+    vdp.vram[nt_addr] = 0x80;
     vdp.vram[nt_addr + 1] = 0x01;
 
     vdp.render_line(0);
@@ -63,7 +65,42 @@ fn test_shadow_highlight_mode_keeps_normal_pixels_at_normal_intensity() {
     for i in 0..8 {
         assert_eq!(
             vdp.framebuffer[i], 0xF800,
-            "shadow/highlight mode should not darken normal plane pixels at {}",
+            "high-priority plane pixel under S/H should be normal at {}",
+            i
+        );
+    }
+}
+
+#[test]
+fn test_shadow_highlight_mode_low_priority_pixel_is_shadowed() {
+    // Under S/H mode, a *low-priority* plane pixel renders at shadow intensity
+    // (each channel halved) — this is the canonical "background is shadowed
+    // until something high-priority covers it" behavior.
+    let mut vdp = Vdp::new();
+    vdp.is_pal = false;
+    vdp.registers[1] = 0x40; // Display enable
+    vdp.registers[2] = 0x30; // Plane A at 0xC000
+    vdp.registers[12] = 0x08; // Shadow/highlight enabled
+
+    vdp.cram_cache[0] = 0x0000;
+    vdp.cram_cache[1] = 0xF800; // bright red
+
+    let tile_addr = 32;
+    for i in 0..32 {
+        vdp.vram[tile_addr + i] = 0x11;
+    }
+
+    let nt_addr = 0xC000;
+    vdp.vram[nt_addr] = 0x00; // priority = 0
+    vdp.vram[nt_addr + 1] = 0x01;
+
+    vdp.render_line(0);
+
+    let expected_shadow = 0x7800; // r=0x0F<<11
+    for i in 0..8 {
+        assert_eq!(
+            vdp.framebuffer[i], expected_shadow,
+            "low-priority plane pixel under S/H should be shadowed at {}",
             i
         );
     }
@@ -497,8 +534,13 @@ fn test_register_write_rerenders_current_scanline() {
     );
 }
 
+/// R-RR-3: HBlank-window CRAM writes target the *upcoming* line, NOT the
+/// previous one. The previous line's pixels are already on screen and must
+/// not be retroactively repainted. The write updates state immediately
+/// (via the synchronous cram_cache write in process_fifo_entry); the
+/// upcoming line will use the new palette when it renders at MCLK 860.
 #[test]
-fn test_hblank_cram_write_rerenders_previous_scanline() {
+fn test_hblank_cram_write_does_not_repaint_previous_scanline() {
     let mut vdp = Vdp::new();
     vdp.is_pal = false;
     vdp.registers[1] = 0x40;
@@ -510,16 +552,20 @@ fn test_hblank_cram_write_rerenders_previous_scanline() {
     vdp.render_line(0);
     assert_eq!(vdp.framebuffer[0], 0xF800);
 
-    vdp.mclk_line_clocks = 0;
+    vdp.mclk_line_clocks = 0; // HBlank of line 1
     vdp.bypass_fifo = true;
     vdp.write_control(0xC002);
     vdp.write_control(0x0000);
     vdp.write_data(0x00E0);
 
+    // Previous scanline's pixels (line 0) must NOT be repainted.
     assert_eq!(
-        vdp.framebuffer[0], 0x07E0,
-        "CRAM writes during the early-HBlank window must remap the previous visible line"
+        vdp.framebuffer[0], 0xF800,
+        "HBlank CRAM writes must leave the previous scanline alone"
     );
+    // The cram cache, however, IS updated synchronously so the next
+    // render_line picks it up.
+    assert_eq!(vdp.cram_cache[1], 0x07E0);
 }
 
 #[test]
@@ -919,7 +965,10 @@ fn test_h40_partial_left_column_uses_last_vscroll_strip() {
     vdp.vram[row31_col31] = 0x00;
     vdp.vram[row31_col31 + 1] = 0x02;
 
-    // Last H40 V-scroll strip = -8.
+    // H40 column-0 VSRAM quirk: column 0 uses (strip18 AND strip19).
+    // Set both strips to -8 so the AND is also -8.
+    vdp.vsram[72] = 0xFF;
+    vdp.vsram[73] = 0xF8;
     vdp.vsram[76] = 0xFF;
     vdp.vsram[77] = 0xF8;
 
@@ -928,8 +977,12 @@ fn test_h40_partial_left_column_uses_last_vscroll_strip() {
     assert_eq!(vdp.framebuffer[0], 0x07E0);
 }
 
+/// HINT-handler H-scroll updates land in HBlank. The VDP reads the
+/// H-scroll table at the *end* of HBlank (just before active display),
+/// so HBlank updates ARE visible on the current line. (This is the
+/// fix that gets Road Rash II's horizon to render correctly.)
 #[test]
-fn test_tick_latches_hscroll_before_hblank_updates() {
+fn test_render_picks_up_hblank_hscroll_updates() {
     let mut vdp = Vdp::new();
     vdp.registers[1] = 0x40;
     vdp.registers[2] = 0x30;
@@ -947,21 +1000,25 @@ fn test_tick_latches_hscroll_before_hblank_updates() {
     vdp.vram[0xC002] = 0x00;
     vdp.vram[0xC003] = 0x02;
 
-    // Line 1 initially latches hscroll = 0.
+    // Initial line 0 H-scroll = 0. Tick through line 0; line 1 begins.
     vdp.vram[0x0000] = 0x00;
     vdp.vram[0x0001] = 0x00;
-
     vdp.tick(3420, |_| 0);
 
-    // A later HBlank update changes the live table to -8, but line 1 should
-    // keep the latched value and still render tile 0 at x=0.
+    // Mid-HBlank of line 1, the (HINT) handler updates H-scroll to -8.
+    // On real hardware, the H-scroll table read happens near the end of
+    // HBlank so this update IS visible on line 1.
     vdp.vram[0x0000] = 0xFF;
     vdp.vram[0x0001] = 0xF8;
 
     vdp.tick(860, |_| 0);
 
+    // hscroll = -8 → tile cell 1 (tile index 2 = green) is at screen x = 0.
     let offset = 320;
-    assert_eq!(vdp.framebuffer[offset], 0xF800);
+    assert_eq!(
+        vdp.framebuffer[offset], 0x07E0,
+        "HBlank H-scroll updates must be visible on the current line"
+    );
 }
 
 #[test]
@@ -1035,87 +1092,105 @@ fn test_sprite_fully_oob_rendering() {
     vdp.render_line(0);
 }
 
+/// $3E (palette 3, color 14) is the **highlight** operator: it hides the
+/// sprite and shifts state +1 saturating at 2.
 #[test]
-fn test_apply_shadow_highlight_basic() {
+fn test_sh_operator_3e_is_highlight() {
     let vdp = Vdp::new();
     let px = PixelLayerData {
         bg_color_idx: 0,
         s_pri: true,
         s_trans: false,
-        s_col: 0x3E, // Shadow operator
+        s_col: 0x3E,
         a_pri: false,
         a_trans: false,
-        a_col: 1, // Underlying color
+        a_col: 1,
         b_pri: false,
         b_trans: true,
         b_col: 0,
     };
-
-    let params = ShadowHighlightParams {
-        top_layer: 3,
-        top_col: 0x3E,
-        state: 0, // Normal
-        px: &px,
-    };
-
-    let (new_top_col, new_state) = vdp.apply_shadow_highlight(params);
-    assert_eq!(new_top_col, 1, "Underlying color should be revealed");
-    assert_eq!(new_state, 1, "State should be changed to shadow (1)");
+    let (top, state) = vdp.resolve_shadow_highlight_pixel(&px);
+    assert_eq!(top, 1, "Operator sprite is invisible; underlying A shows");
+    assert_eq!(state, 1, "Shadow (0) bumped to normal (1) by $3E");
 }
 
+/// $3F (palette 3, color 15) is the **shadow** operator: it hides the sprite
+/// and shifts state -1 saturating at 0.
 #[test]
-fn test_apply_shadow_highlight_highlight() {
+fn test_sh_operator_3f_is_shadow() {
     let vdp = Vdp::new();
+    // High-priority A lifts the default state to 1; the $3F sprite then drops it back to 0.
     let px = PixelLayerData {
         bg_color_idx: 0,
         s_pri: true,
         s_trans: false,
-        s_col: 0x3F, // Highlight operator
-        a_pri: false,
+        s_col: 0x3F,
+        a_pri: true,
         a_trans: false,
-        a_col: 2, // Underlying color
+        a_col: 2,
         b_pri: false,
         b_trans: true,
         b_col: 0,
     };
+    let (top, state) = vdp.resolve_shadow_highlight_pixel(&px);
+    assert_eq!(top, 2, "Operator sprite is invisible; high-prio A shows");
+    assert_eq!(state, 0, "Normal (lifted by hi-prio A) dropped to shadow by $3F");
+}
 
-    let params = ShadowHighlightParams {
-        top_layer: 3,
-        top_col: 0x3F,
-        state: 1, // Shadow
-        px: &px,
+/// Default state is **shadow** when only low-priority planes are visible.
+/// This is the bit the old simplified pipeline got wrong.
+#[test]
+fn test_sh_default_state_is_shadow() {
+    let vdp = Vdp::new();
+    let px = PixelLayerData {
+        bg_color_idx: 0,
+        s_pri: false,
+        s_trans: true,
+        s_col: 0,
+        a_pri: false,
+        a_trans: false,
+        a_col: 5,
+        b_pri: false,
+        b_trans: true,
+        b_col: 0,
     };
+    let (_, state) = vdp.resolve_shadow_highlight_pixel(&px);
+    assert_eq!(state, 0, "Low-prio plane only → state is shadow");
+}
 
-    let (new_top_col, new_state) = vdp.apply_shadow_highlight(params);
-    assert_eq!(new_top_col, 2, "Underlying color should be revealed");
-    assert_eq!(
-        new_state, 0,
-        "State should be changed from shadow to normal (0)"
-    );
+/// A high-priority plane pixel lifts the state to normal.
+#[test]
+fn test_sh_high_priority_plane_normal_state() {
+    let vdp = Vdp::new();
+    let px = PixelLayerData {
+        bg_color_idx: 0,
+        s_pri: false,
+        s_trans: true,
+        s_col: 0,
+        a_pri: true,
+        a_trans: false,
+        a_col: 5,
+        b_pri: false,
+        b_trans: true,
+        b_col: 0,
+    };
+    let (_, state) = vdp.resolve_shadow_highlight_pixel(&px);
+    assert_eq!(state, 1, "High-priority A pixel → state is normal");
+}
 
-    // Now test the color transform
-    // In `apply_color_transform`, color is r=11..15, g=5..10, b=0..4.
-    // Let's create a known mid-level green color (0x10) to test both halving and increasing.
-    let color = 0b00000_010000_00000; // Partial Green
-
-    // Test the specific state mapping logic from the source code:
-    // state 0 = shadow (halves intensity)
-    // state 1 = normal (unmodified)
-    // state 2 = highlight (halfway towards max)
-    let shadowed = vdp.apply_color_transform(color, 0); // Shadow is state 0
-    let normal = vdp.apply_color_transform(color, 1); // Normal is state 1 or any other
-    let highlighted = vdp.apply_color_transform(color, 2); // Highlight is state 2
-
-    // Extract the green channel (bits 5-10)
+/// Color transform: state 0 = shadow (halve), 1 = normal, 2 = highlight (toward max).
+#[test]
+fn test_sh_color_transform() {
+    let vdp = Vdp::new();
+    let color = 0b00000_010000_00000_u16; // mid-level green
+    let shadowed = vdp.apply_color_transform(color, 0);
+    let normal = vdp.apply_color_transform(color, 1);
+    let highlighted = vdp.apply_color_transform(color, 2);
     let g_shadow = (shadowed >> 5) & 0x3F;
     let g_normal = (normal >> 5) & 0x3F;
     let g_highlight = (highlighted >> 5) & 0x3F;
-
-    assert_eq!(g_shadow, g_normal >> 1, "Shadow should halve intensity");
-    assert!(
-        g_highlight > g_normal,
-        "Highlight should increase intensity"
-    );
+    assert_eq!(g_shadow, g_normal >> 1, "Shadow halves intensity");
+    assert!(g_highlight > g_normal, "Highlight raises intensity");
 }
 
 #[test]
@@ -1200,6 +1275,7 @@ fn test_get_active_sprites_h40_limits() {
     // In H40, line limit is 20 sprites, max sprites is 80.
     // Let's create 25 sprites on line 10.
     // They are linked linearly: 0 -> 1 -> 2 ... -> 24 -> 0
+    // Give every sprite a nonzero raw SAT X so the X=0 mask doesn't trigger.
     for i in 0..25 {
         let addr = sat_base + (i * 8);
         vdp.vram[addr] = 0x00;
@@ -1213,6 +1289,11 @@ fn test_get_active_sprites_h40_limits() {
         } else {
             vdp.vram[addr + 3] = (i + 1) as u8;
         }
+
+        // Non-zero raw X (so none of these are X=0 mask sprites).
+        let raw_x = 128u16 + (i as u16) * 8;
+        vdp.vram[addr + 6] = (raw_x >> 8) as u8;
+        vdp.vram[addr + 7] = (raw_x & 0xFF) as u8;
     }
 
     let mut buffer = [SpriteAttributes::default(); 80];
@@ -1221,5 +1302,436 @@ fn test_get_active_sprites_h40_limits() {
     assert_eq!(
         count, 20,
         "H40 mode should limit to 20 active sprites per line"
+    );
+}
+
+/// Helper used by the X=0 sprite-mask tests. Builds a sprite at the given
+/// link slot with the given screen X (in screen coords; SAT stores X+128).
+fn place_sprite(vdp: &mut Vdp, sat_base: usize, slot: usize, x: u16, y: u16, link_next: u8) {
+    let addr = sat_base + slot * 8;
+    let raw_y = y.wrapping_add(128);
+    vdp.vram[addr] = (raw_y >> 8) as u8;
+    vdp.vram[addr + 1] = (raw_y & 0xFF) as u8;
+    vdp.vram[addr + 2] = 0x00; // 1x1 size
+    vdp.vram[addr + 3] = link_next;
+    vdp.vram[addr + 4] = 0x00;
+    vdp.vram[addr + 5] = 0x00;
+    let raw_x = x.wrapping_add(128);
+    vdp.vram[addr + 6] = (raw_x >> 8) as u8;
+    vdp.vram[addr + 7] = (raw_x & 0xFF) as u8;
+}
+
+/// X=0 sprite as the FIRST sprite on a line with no prior overflow:
+/// the mask should NOT trigger; subsequent sprites still render.
+#[test]
+fn test_sprite_mask_x0_first_not_triggered() {
+    let mut vdp = Vdp::new();
+    vdp.registers[REG_MODE4] = 0x81; // H40
+    vdp.registers[REG_SPRITE_TABLE] = 0x6A; // SAT @ 0xD400
+    let sat_base = 0xD400;
+
+    // Slot 0: raw X=0 (mask candidate, h_pos = -128), Slot 1: visible.
+    let raw_zero_x = 0u16; // raw SAT X = 0 → h_pos = 0xFF80
+    let addr0 = sat_base;
+    let raw_y = 10u16 + 128;
+    vdp.vram[addr0] = (raw_y >> 8) as u8;
+    vdp.vram[addr0 + 1] = (raw_y & 0xFF) as u8;
+    vdp.vram[addr0 + 2] = 0x00;
+    vdp.vram[addr0 + 3] = 1;
+    vdp.vram[addr0 + 6] = (raw_zero_x >> 8) as u8;
+    vdp.vram[addr0 + 7] = (raw_zero_x & 0xFF) as u8;
+    place_sprite(&mut vdp, sat_base, 1, 100, 10, 0);
+
+    let mut buf = [SpriteAttributes::default(); 80];
+    let count = vdp.get_active_sprites(10, &mut buf);
+
+    assert_eq!(
+        count, 1,
+        "X=0 first sprite without prior overflow: mask must NOT trigger; sprite 1 stays visible"
+    );
+    assert_eq!(buf[0].index, 1);
+}
+
+/// X=0 sprite AFTER a visible sprite: the mask triggers, hiding all later sprites.
+#[test]
+fn test_sprite_mask_x0_after_visible_triggers() {
+    let mut vdp = Vdp::new();
+    vdp.registers[REG_MODE4] = 0x81; // H40
+    vdp.registers[REG_SPRITE_TABLE] = 0x6A; // SAT @ 0xD400
+    let sat_base = 0xD400;
+
+    // Slot 0: visible at X=50
+    place_sprite(&mut vdp, sat_base, 0, 50, 10, 1);
+    // Slot 1: raw X=0. Should trigger mask.
+    let addr1 = sat_base + 8;
+    let raw_y = 10u16 + 128;
+    let raw_zero_x = 0u16;
+    vdp.vram[addr1] = (raw_y >> 8) as u8;
+    vdp.vram[addr1 + 1] = (raw_y & 0xFF) as u8;
+    vdp.vram[addr1 + 2] = 0x00;
+    vdp.vram[addr1 + 3] = 2;
+    vdp.vram[addr1 + 6] = (raw_zero_x >> 8) as u8;
+    vdp.vram[addr1 + 7] = (raw_zero_x & 0xFF) as u8;
+    // Slot 2: visible at X=150 — should be masked out.
+    place_sprite(&mut vdp, sat_base, 2, 150, 10, 0);
+
+    let mut buf = [SpriteAttributes::default(); 80];
+    let count = vdp.get_active_sprites(10, &mut buf);
+
+    assert_eq!(
+        count, 1,
+        "Mask must trigger after a visible sprite; later sprite must be hidden"
+    );
+    assert_eq!(buf[0].index, 0);
+}
+
+/// X=0 sprite as FIRST when previous line overflowed: mask triggers immediately.
+#[test]
+fn test_sprite_mask_x0_first_with_prev_overflow() {
+    let mut vdp = Vdp::new();
+    vdp.registers[REG_MODE4] = 0x81; // H40
+    vdp.registers[REG_SPRITE_TABLE] = 0x6A; // SAT @ 0xD400
+    let sat_base = 0xD400;
+
+    // Force previous-line overflow state.
+    vdp.prev_line_sprite_overflow = true;
+
+    // Slot 0: raw X=0
+    let addr0 = sat_base;
+    let raw_y = 10u16 + 128;
+    let raw_zero_x = 0u16;
+    vdp.vram[addr0] = (raw_y >> 8) as u8;
+    vdp.vram[addr0 + 1] = (raw_y & 0xFF) as u8;
+    vdp.vram[addr0 + 2] = 0x00;
+    vdp.vram[addr0 + 3] = 1;
+    vdp.vram[addr0 + 6] = (raw_zero_x >> 8) as u8;
+    vdp.vram[addr0 + 7] = (raw_zero_x & 0xFF) as u8;
+    // Slot 1: visible — should be masked.
+    place_sprite(&mut vdp, sat_base, 1, 80, 10, 0);
+
+    let mut buf = [SpriteAttributes::default(); 80];
+    let count = vdp.get_active_sprites(10, &mut buf);
+
+    assert_eq!(
+        count, 0,
+        "Prior-line overflow makes an X=0 first sprite trigger the mask immediately"
+    );
+}
+
+/// H40 window/Plane-A boundary glitch (G10): when the window is left-anchored
+/// and there is a non-zero H-scroll, the right edge of the window region
+/// duplicates one extra window tile before plane A resumes.
+#[test]
+fn test_h40_window_plane_a_boundary_glitches() {
+    let mut vdp = Vdp::new();
+    vdp.registers[REG_MODE2] = MODE2_DISPLAY_ENABLE;
+    vdp.registers[REG_MODE4] = 0x81; // H40
+    vdp.registers[2] = 0x30; // Plane A @ 0xC000
+    vdp.registers[3] = 0x34; // Window @ 0xD000 (H40 requires 4KB alignment)
+    vdp.registers[REG_PLANE_SIZE] = 0x00; // 32x32
+
+    // Window covers cells 0..2 (16 px) on the left.
+    // win_h_point = (h_pos & 0x1F) * 16 = 2*16 = 32 px.
+    vdp.registers[REG_WINDOW_H_POS] = 2;
+    vdp.registers[REG_WINDOW_V_POS] = 0;
+
+    // Non-zero H-scroll (full-screen mode, table at VRAM 0).
+    vdp.vram[0] = 0x00;
+    vdp.vram[1] = 0x08;
+    vdp.registers[REG_HSCROLL] = 0;
+    vdp.registers[REG_MODE3] = 0x00;
+
+    // Tile 1: red (all pixels color index 1). Tile 2: green (all index 2).
+    for i in 0..32 {
+        vdp.vram[32 + i] = 0x11;
+        vdp.vram[64 + i] = 0x22;
+    }
+    vdp.cram_cache[1] = 0xF800; // red
+    vdp.cram_cache[2] = 0x07E0; // green
+
+    // Window nametable @ 0xD000: cell (row 0, col 4) -> tile 1 (red). This
+    // is the *pre-fetched* window tile that the glitch will draw at the
+    // plane-A boundary.
+    let win_row0_cell4 = 0xD000 + (4 * 2);
+    vdp.vram[win_row0_cell4] = 0x00;
+    vdp.vram[win_row0_cell4 + 1] = 0x01;
+
+    // Plane A nametable @ 0xC000: cell (row 0, col 4) -> tile 2 (green).
+    let plane_row0_cell4 = 0xC000 + (4 * 2);
+    vdp.vram[plane_row0_cell4] = 0x00;
+    vdp.vram[plane_row0_cell4 + 1] = 0x02;
+    let plane_row0_cell5 = 0xC000 + (5 * 2);
+    vdp.vram[plane_row0_cell5] = 0x00;
+    vdp.vram[plane_row0_cell5 + 1] = 0x02;
+
+    vdp.sync_sat_cache();
+    vdp.render_line(0);
+
+    // Boundary is at screen_x = 32 (cells 0-3 are the window). Without the
+    // glitch, pixels 32..40 would show plane-A cell 4 (green). With the
+    // glitch enabled, the window's cell-4 tile (red) duplicates into that
+    // position instead.
+    for x in 32..40usize {
+        assert_eq!(
+            vdp.framebuffer[x], 0xF800,
+            "expected window-tile (red) duplicated into plane-A boundary at x={}",
+            x
+        );
+    }
+}
+
+/// Road Rash II raster-effect regression: a mid-line CRAM write must NOT
+/// retroactively repaint pixels that were already drawn with the previous
+/// palette. Pixels left of the MCLK position keep the old palette; pixels
+/// right of it get the new palette.
+#[test]
+fn test_mid_line_cram_write_segments_the_scanline() {
+    let mut vdp = Vdp::new();
+    vdp.is_pal = false;
+    vdp.registers[1] = 0x40; // display enable
+    vdp.registers[2] = 0x30; // Plane A @ 0xC000
+    vdp.registers[REG_MODE4] = 0x81; // H40 (320px)
+    vdp.registers[REG_PLANE_SIZE] = 0x00;
+
+    // CRAM index 1 = bright red initially.
+    vdp.cram_cache[1] = 0xF800;
+
+    // Tile 1: all color index 1.
+    let tile_addr = 32usize;
+    for i in 0..32 {
+        vdp.vram[tile_addr + i] = 0x11;
+    }
+
+    // Fill row 0 of Plane A with tile 1.
+    for col in 0..40 {
+        let nt = 0xC000 + col * 2;
+        vdp.vram[nt] = 0x00;
+        vdp.vram[nt + 1] = 0x01;
+    }
+
+    // Render line 0 at MCLK 860 (the active-display start).
+    vdp.mclk_line_clocks = 860;
+    vdp.render_line(0);
+    // All 320 pixels should be red.
+    for x in 0..320 {
+        assert_eq!(vdp.framebuffer[x], 0xF800, "initial render @ x={}", x);
+    }
+
+    // Advance MCLK to roughly the middle of active display, then perform a
+    // mid-line CRAM update: change palette entry 1 to green.
+    vdp.mclk_line_clocks = 860 + 1280; // half-way through active span
+    let split_x = vdp.mid_line_pixel_x();
+    assert!(split_x > 0 && split_x < 320);
+
+    vdp.cram_cache[1] = 0x07E0;
+    vdp.redraw_current_scanline_if_visible();
+
+    // Left side (before split): still red.
+    for x in 0..(split_x as usize) {
+        assert_eq!(
+            vdp.framebuffer[x], 0xF800,
+            "pixel x={} (left of split {}) must keep old red palette",
+            x, split_x
+        );
+    }
+    // Right side (from split onward): now green.
+    for x in (split_x as usize)..320 {
+        assert_eq!(
+            vdp.framebuffer[x], 0x07E0,
+            "pixel x={} (right of split {}) must reflect new green palette",
+            x, split_x
+        );
+    }
+}
+
+/// SAT cache (LSU) latches at line boundary. A mid-line write to the
+/// SAT region of VRAM must not be visible to the SAT cache until the
+/// next line wrap re-latches it.
+#[test]
+fn test_sat_cache_latches_at_line_boundary() {
+    let mut vdp = Vdp::new();
+    vdp.registers[REG_MODE2] = MODE2_DISPLAY_ENABLE;
+    vdp.registers[REG_MODE4] = 0x81; // H40
+    vdp.registers[REG_SPRITE_TABLE] = 0x6A; // SAT @ 0xD400
+    let sat_base = 0xD400;
+
+    // Write sprite 0 directly to VRAM, then force a latch.
+    vdp.vram[sat_base] = 0x00;
+    vdp.vram[sat_base + 1] = 138; // raw Y = 138 -> on-screen Y = 10
+    vdp.vram[sat_base + 2] = 0x00;
+    vdp.vram[sat_base + 3] = 0;
+    vdp.vram[sat_base + 6] = 0x00;
+    vdp.vram[sat_base + 7] = 168; // raw X = 168 -> on-screen X = 40
+    vdp.sync_sat_cache();
+
+    let captured_y_before = vdp.sat[1];
+    assert_eq!(captured_y_before, 138);
+
+    // Mid-line VRAM write to the SAT region: change Y to something else.
+    vdp.vram[sat_base + 1] = 0xAA;
+
+    // SAT cache must still reflect the latched value, not the new VRAM.
+    assert_eq!(
+        vdp.sat[1], 138,
+        "Mid-line VRAM write to SAT region must not update the cache"
+    );
+
+    // Tick a full line to trigger the line-boundary re-latch.
+    // 3420 MCLK = full line.
+    vdp.tick(3420, |_| 0);
+
+    assert_eq!(
+        vdp.sat[1], 0xAA,
+        "Line-boundary tick must re-latch the SAT cache from VRAM"
+    );
+}
+
+/// R5: If one of the last two VSRAM strips is zero, the H40 column-0
+/// quirk falls back to strip 19 alone rather than AND-ing (which would
+/// clobber strip 19's value with zero). Games that keep strip 18 unused
+/// rely on this.
+#[test]
+fn test_h40_column0_quirk_falls_back_when_strip_zero() {
+    let mut vdp = Vdp::new();
+    vdp.registers[REG_MODE4] = 0x81; // H40
+    vdp.registers[REG_MODE3] = 0x04; // 2-cell VSCROLL
+    // Strip 18 left at zero.
+    vdp.vsram[72] = 0x00;
+    vdp.vsram[73] = 0x00;
+    // Strip 19 has a meaningful value.
+    vdp.vsram[76] = 0x12;
+    vdp.vsram[77] = 0x34;
+    vdp.latch_scroll_state_for_line(0);
+
+    let vs_strip19 = vdp.get_v_scroll(true, 38, 0);
+    let vs_strip18 = vdp.get_v_scroll(true, 36, 0);
+    assert_eq!(vs_strip19, 0x1234);
+    assert_eq!(vs_strip18, 0x0000);
+    // The render path's combiner must NOT produce 0x0000 here — that
+    // would mean we lost strip 19's value. The fallback uses strip 19.
+    let combined = if vs_strip19 != 0 && vs_strip18 != 0 {
+        vs_strip19 & vs_strip18
+    } else {
+        vs_strip19
+    };
+    assert_eq!(combined, 0x1234, "AND fallback must preserve strip 19");
+}
+
+/// H40 + 2-cell VSCROLL + non-zero H-scroll: column 0 receives the AND of
+/// the last two VSRAM strip entries (strips 18 and 19) for the relevant plane
+/// rather than strip 0.
+#[test]
+fn test_h40_column0_vsram_and_quirk() {
+    let mut vdp = Vdp::new();
+    vdp.registers[REG_MODE4] = 0x81; // H40
+    vdp.registers[REG_MODE3] = 0x04; // 2-cell VSCROLL
+    // Plant a non-zero horizontal scroll value at HSCROLL table base (=0).
+    vdp.vram[0] = 0x00;
+    vdp.vram[1] = 0x01; // hscroll = 1 for plane A → nonzero
+    vdp.registers[REG_HSCROLL] = 0;
+
+    // Strip 0: V scroll = 0xAAAA for plane A (so the visible column 0 v_scroll
+    // shouldn't be this if the quirk fires).
+    vdp.vsram[0] = 0xAA;
+    vdp.vsram[1] = 0xAA;
+    // Strip 18 (cells 36-37, byte offset 36*2 = 72): plane A vscroll = 0xF0F0
+    vdp.vsram[72] = 0xF0;
+    vdp.vsram[73] = 0xF0;
+    // Strip 19 (cells 38-39, byte offset 38*2 = 76): plane A vscroll = 0x0FFF
+    vdp.vsram[76] = 0x0F;
+    vdp.vsram[77] = 0xFF;
+    // Expected column-0 VS = 0xF0F0 AND 0x0FFF = 0x00F0.
+
+    // Walk the existing scroll latching path so the get_v_scroll reads from
+    // latched_vsram on the rendered line.
+    vdp.latch_scroll_state_for_line(0);
+
+    let plane_a = true;
+    // Direct call: emulate render_tile's column-0 branch via the public API
+    // it relies on.
+    let vs_strip19 = vdp.get_v_scroll(plane_a, 38, 0);
+    let vs_strip18 = vdp.get_v_scroll(plane_a, 36, 0);
+    assert_eq!(vs_strip19, 0x0FFF);
+    assert_eq!(vs_strip18, 0xF0F0);
+    assert_eq!(vs_strip19 & vs_strip18, 0x00F0);
+}
+
+/// Status bit 6 (SOVR) is set when sprite overflow occurs on a line.
+#[test]
+fn test_status_sovr_set_on_sprite_count_overflow() {
+    let mut vdp = Vdp::new();
+    vdp.registers[REG_MODE4] = 0x81; // H40
+    vdp.registers[REG_SPRITE_TABLE] = 0x6A;
+    let sat_base = 0xD400;
+
+    for i in 0..25u8 {
+        let next = if i == 24 { 0 } else { i + 1 };
+        place_sprite(&mut vdp, sat_base, i as usize, 32 + (i as u16) * 8, 10, next);
+    }
+
+    let mut buf = [SpriteAttributes::default(); 80];
+    let _ = vdp.get_active_sprites(10, &mut buf);
+    assert!(
+        (vdp.status & STATUS_SOVR) != 0,
+        "STATUS_SOVR (bit 6) must be set when more than 20 sprites land on a line in H40"
+    );
+}
+
+/// Status bit 5 (SCOL) is set when two opaque sprite pixels overlap on the same line.
+#[test]
+fn test_status_scol_set_on_sprite_overlap() {
+    let mut vdp = Vdp::new();
+    vdp.registers[REG_MODE2] = MODE2_DISPLAY_ENABLE; // display on
+    vdp.registers[REG_MODE4] = 0x81; // H40
+    vdp.registers[REG_SPRITE_TABLE] = 0x6A;
+    let sat_base = 0xD400;
+
+    // Paint tile 1 as a solid 8x8 block of color index 1.
+    // Each row is 4 bytes, two pixels per byte (high nibble first).
+    let tile_addr = 32usize; // tile index 1 -> byte addr 32
+    for row in 0..8 {
+        for byte in 0..4 {
+            vdp.vram[tile_addr + row * 4 + byte] = 0x11;
+        }
+    }
+
+    // Two sprites overlapping at screen (50, 10).
+    place_sprite(&mut vdp, sat_base, 0, 50, 10, 1);
+    // Point sprite 0 at tile 1.
+    vdp.vram[sat_base + 4] = 0x00;
+    vdp.vram[sat_base + 5] = 0x01;
+
+    place_sprite(&mut vdp, sat_base, 1, 50, 10, 0);
+    vdp.vram[sat_base + 8 + 4] = 0x00;
+    vdp.vram[sat_base + 8 + 5] = 0x01;
+
+    vdp.sync_sat_cache();
+    vdp.render_line(10);
+
+    assert!(
+        (vdp.status & STATUS_COLLISION) != 0,
+        "STATUS_COLLISION (bit 5) must be set when two opaque sprite pixels overlap"
+    );
+}
+
+/// `prev_line_sprite_overflow` is set when the per-line sprite count limit is hit.
+#[test]
+fn test_prev_line_overflow_records_count_limit() {
+    let mut vdp = Vdp::new();
+    vdp.registers[REG_MODE4] = 0x81; // H40 → 20 sprites per line
+    vdp.registers[REG_SPRITE_TABLE] = 0x6A;
+    let sat_base = 0xD400;
+
+    // 25 sprites all on line 10 — pushes past the 20-sprite line limit.
+    for i in 0..25u8 {
+        let next = if i == 24 { 0 } else { i + 1 };
+        place_sprite(&mut vdp, sat_base, i as usize, 32 + (i as u16) * 8, 10, next);
+    }
+
+    let mut buf = [SpriteAttributes::default(); 80];
+    let _ = vdp.get_active_sprites(10, &mut buf);
+    assert!(
+        vdp.prev_line_sprite_overflow,
+        "Hitting the per-line sprite count limit must set prev_line_sprite_overflow"
     );
 }

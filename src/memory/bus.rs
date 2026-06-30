@@ -33,6 +33,10 @@ use serde_json::{json, Value};
 /// Maximum SRAM size in bytes (2MB) to prevent OOM/DoS
 const MAX_SRAM_SIZE: usize = 2 * 1024 * 1024;
 
+/// 68k stall cycles charged for each data-port write that hits a full VDP FIFO.
+/// Calibrated to roughly one FIFO drain slot in H40 (~16 MCLK / 7 MCLK-per-cycle).
+const VDP_FIFO_STALL_CYCLES: u32 = 4;
+
 /// Sega Genesis Memory Bus
 ///
 /// Routes memory accesses to the appropriate component based on address.
@@ -78,10 +82,15 @@ pub struct Bus {
     pub tmss_register: [u8; 4],
 
     /// Audio synchronization
-    pub audio_accumulator: f32,
+    pub audio_accumulator: f64,
     #[serde(skip)]
     pub audio_buffer: Vec<i16>,
     pub sample_rate: u32,
+
+    /// 68k stall cycles owed by the VDP (e.g. for FIFO back-pressure).
+    /// Drained by the CPU through `take_pending_stall_cycles`.
+    #[serde(skip)]
+    pub vdp_stall_cycles: u32,
 }
 
 impl Default for Bus {
@@ -112,6 +121,7 @@ impl Bus {
             audio_accumulator: 0.0,
             audio_buffer: Vec::with_capacity(2048),
             sample_rate: audio::SAMPLE_RATE,
+            vdp_stall_cycles: 0,
         }
     }
 
@@ -412,6 +422,11 @@ impl Bus {
             0x00..=0x03 => {
                 // Data Port Byte Write: duplicate byte to both halves
                 let val16 = ((value as u16) << 8) | (value as u16);
+                if self.vdp.fifo_full {
+                    // FIFO back-pressure: the 68k stalls until a slot drains.
+                    self.vdp_stall_cycles =
+                        self.vdp_stall_cycles.saturating_add(VDP_FIFO_STALL_CYCLES);
+                }
                 self.vdp.write_data(val16);
             }
             0x04..=0x07 => {
@@ -484,6 +499,10 @@ impl Bus {
         // VDP Ports
         if (0xC00000..=0xC00007).contains(&addr) {
             if (addr & 0x1F) < 4 {
+                if self.vdp.fifo_full {
+                    self.vdp_stall_cycles =
+                        self.vdp_stall_cycles.saturating_add(VDP_FIFO_STALL_CYCLES);
+                }
                 self.vdp.write_data(value);
             } else {
                 self.vdp.write_control(value);
@@ -667,6 +686,13 @@ impl MemoryInterface for Bus {
     fn write_long(&mut self, address: u32, value: u32) {
         self.write_long(address, value)
     }
+    #[inline]
+    fn take_pending_stall_cycles(&mut self) -> u32 {
+        let cycles = self.vdp_stall_cycles
+            .saturating_add(self.vdp.take_dma_stall_cycles());
+        self.vdp_stall_cycles = 0;
+        cycles
+    }
 }
 
 impl Debuggable for Bus {
@@ -715,7 +741,7 @@ impl Debuggable for Bus {
         }
         if let Some(val) = state.get("audio_accumulator") {
             if let Some(f) = val.as_f64() {
-                self.audio_accumulator = f as f32;
+                self.audio_accumulator = f;
             }
         }
         if let Some(val) = state.get("sample_rate") {
@@ -753,6 +779,53 @@ impl Debuggable for Bus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Writing to the VDP data port while the FIFO is full charges 68k stall
+    /// cycles via `take_pending_stall_cycles`.
+    #[test]
+    fn vdp_fifo_full_charges_stall_cycles() {
+        let mut bus = Bus::new();
+        // Configure the VDP so writes target VRAM.
+        bus.vdp.command.code = crate::vdp::VRAM_WRITE;
+        bus.vdp.command.address = 0;
+        // Pretend the FIFO is already full.
+        bus.vdp.fifo_full = true;
+        // Push three writes through the byte path.
+        bus.write_byte(0xC00000, 0x12);
+        bus.write_byte(0xC00000, 0x34);
+        bus.write_byte(0xC00000, 0x56);
+
+        let stall = bus.take_pending_stall_cycles();
+        assert_eq!(
+            stall,
+            3 * VDP_FIFO_STALL_CYCLES,
+            "FIFO-full writes should accumulate stall cycles"
+        );
+        // Second drain should return 0.
+        assert_eq!(bus.take_pending_stall_cycles(), 0);
+    }
+
+    /// Word-path writes follow the same stall path.
+    #[test]
+    fn vdp_fifo_full_word_write_charges_stall() {
+        let mut bus = Bus::new();
+        bus.vdp.command.code = crate::vdp::VRAM_WRITE;
+        bus.vdp.command.address = 0;
+        bus.vdp.fifo_full = true;
+        bus.write_word(0xC00000, 0xABCD);
+        assert_eq!(bus.take_pending_stall_cycles(), VDP_FIFO_STALL_CYCLES);
+    }
+
+    /// Writes that don't hit a full FIFO must not charge stalls.
+    #[test]
+    fn vdp_empty_fifo_no_stall() {
+        let mut bus = Bus::new();
+        bus.vdp.command.code = crate::vdp::VRAM_WRITE;
+        bus.vdp.command.address = 0;
+        // FIFO empty by default.
+        bus.write_word(0xC00000, 0xABCD);
+        assert_eq!(bus.take_pending_stall_cycles(), 0);
+    }
 
     #[test]
     fn test_tmss_unlock_byte_writes() {
@@ -832,7 +905,7 @@ mod tests {
                 assert!(!new_bus.z80_reset);
                 assert_eq!(new_bus.z80_bank_addr, 0x12345);
                 assert!(new_bus.tmss_unlocked);
-                assert!((new_bus.audio_accumulator - 1.234).abs() < 1e-6);
+                assert!((new_bus.audio_accumulator - 1.234).abs() < 1e-12);
                 assert_eq!(new_bus.sample_rate, 48000);
 
                 // Assert RAM equality
