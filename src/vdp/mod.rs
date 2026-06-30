@@ -249,6 +249,9 @@ pub struct Vdp {
     pub(crate) latched_scroll_line: u16,
     #[serde(skip, default)]
     pub(crate) latched_scroll_valid: bool,
+
+    #[serde(skip)]
+    pub debug_plane: Option<char>,
     /// Whether sprite overflow (dot or count) occurred on the previous scanline.
     /// Used to gate the X=0 sprite mask trigger.
     #[serde(skip, default)]
@@ -326,6 +329,18 @@ impl Vdp {
             latched_hscroll_b: 0,
             latched_scroll_line: 0,
             latched_scroll_valid: false,
+            debug_plane: {
+                #[cfg(debug_assertions)]
+                {
+                    std::env::var("GENTEEL_DEBUG_PLANE")
+                        .ok()
+                        .and_then(|s| s.chars().next())
+                }
+                #[cfg(not(debug_assertions))]
+                {
+                    None
+                }
+            },
             prev_line_sprite_overflow: false,
             dma_stall_cycles: 0,
             sat_cache_valid: false,

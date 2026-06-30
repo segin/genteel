@@ -483,10 +483,10 @@ impl RenderOps for Vdp {
         let mut buf_a = [0u8; 320];
         let mut buf_s = [0u8; 320];
 
-        if std::env::var("GENTEEL_DEBUG_PLANE").as_deref() != Ok("a") {
+        if self.debug_plane != Some('a') {
             self.render_plane(false, fetch_line, &mut buf_b);
         }
-        if std::env::var("GENTEEL_DEBUG_PLANE").as_deref() != Ok("b") {
+        if self.debug_plane != Some('b') {
             self.render_plane(true, fetch_line, &mut buf_a);
         }
         if self.render_sprites(active_sprites, fetch_line, &mut buf_s) {
