@@ -129,8 +129,16 @@ def fix():
         test_src = f2.read()
 
     test_src = test_src.replace(
+        "let dest_idx = 0; // Start of framebuffer",
+        "let dest_idx = 0; // Start of scanline"
+    )
+    test_src = test_src.replace(
         "vdp.draw_full_tile_row(entry, pixel_v, dest_idx);",
         "let mut line_buf = [0u8; 320];\n    vdp.draw_full_tile_row(entry, pixel_v, dest_idx, &mut line_buf);"
+    )
+    test_src = test_src.replace(
+        "// Try to draw at end of framebuffer\n    let dest_idx = vdp.framebuffer.len() - 4; // Not enough space for 8 pixels",
+        "// Try to draw at end of scanline\n    let dest_idx = 316; // Not enough space for 8 pixels in 320-byte line_buf"
     )
     test_src = test_src.replace(
         "vdp.draw_full_tile_row(0, 0, dest_idx);",

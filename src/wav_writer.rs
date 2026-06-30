@@ -20,9 +20,9 @@ impl WavWriter<BufWriter<File>> {
             base_dir.join(requested_path)
         };
 
-        let parent = full_path.parent().ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::InvalidInput, "Invalid path")
-        })?;
+        let parent = full_path
+            .parent()
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "Invalid path"))?;
 
         // Canonicalize parent if it exists, otherwise it's just base_dir
         let canonical_parent = if parent.exists() {
@@ -44,7 +44,10 @@ impl WavWriter<BufWriter<File>> {
         if !canonical_parent.starts_with(&base_dir) {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::PermissionDenied,
-                format!("Access denied to path: {}. Audio dumps must be within the current directory.", path),
+                format!(
+                    "Access denied to path: {}. Audio dumps must be within the current directory.",
+                    path
+                ),
             ));
         }
 
@@ -261,7 +264,8 @@ mod tests {
         let result = WavWriter::new(invalid_path, 44100, 2);
         match result {
             Err(e) => assert!(
-                e.kind() == std::io::ErrorKind::NotFound || e.kind() == std::io::ErrorKind::PermissionDenied
+                e.kind() == std::io::ErrorKind::NotFound
+                    || e.kind() == std::io::ErrorKind::PermissionDenied
             ),
             _ => panic!("Expected error"),
         }
@@ -357,7 +361,11 @@ mod tests {
         assert!(!std::path::Path::new(traversal_path).exists());
 
         // Test with an absolute path outside the current directory (heuristic for unix/windows)
-        let absolute_path = if cfg!(windows) { "C:\\Windows\\test.wav" } else { "/etc/test.wav" };
+        let absolute_path = if cfg!(windows) {
+            "C:\\Windows\\test.wav"
+        } else {
+            "/etc/test.wav"
+        };
         let result = WavWriter::new(absolute_path, 44100, 2);
 
         match result {

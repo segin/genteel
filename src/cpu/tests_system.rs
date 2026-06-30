@@ -388,7 +388,7 @@ fn test_exec_bcc() {
 
 #[test]
 fn test_exec_scc() {
-    use crate::cpu::decoder::{Condition, AddressingMode};
+    use crate::cpu::decoder::{AddressingMode, Condition};
     let (mut cpu, mut memory) = create_test_cpu();
 
     // Test true condition (should set to 0xFF)
@@ -422,7 +422,7 @@ fn test_exec_dbcc() {
     let cycles = exec_dbcc(&mut cpu, Condition::Equal, 0, &mut memory);
     assert_eq!(cycles, 12);
     assert_eq!(cpu.pc, 0x1004); // PC advances past word
-    assert_eq!(cpu.d[0], 5);    // Reg not decremented
+    assert_eq!(cpu.d[0], 5); // Reg not decremented
 
     // Test condition not met, reg > -1 (loops)
     cpu.pc = 0x1002;
@@ -433,7 +433,7 @@ fn test_exec_dbcc() {
     let cycles = exec_dbcc(&mut cpu, Condition::Equal, 0, &mut memory);
     assert_eq!(cycles, 10);
     assert_eq!(cpu.pc, 0x1008); // Branch taken (1002 + 6 = 1008)
-    assert_eq!(cpu.d[0], 4);    // Reg decremented
+    assert_eq!(cpu.d[0], 4); // Reg decremented
 
     // Test condition not met, reg == -1 after decrement (does not loop)
     cpu.pc = 0x1002;

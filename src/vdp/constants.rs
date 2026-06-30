@@ -48,8 +48,10 @@ pub const STATUS_DMA: u16 = 0x0002;
 pub const STATUS_HBLANK: u16 = 0x0004;
 pub const STATUS_VBLANK: u16 = 0x0008;
 pub const STATUS_ODD_FRAME: u16 = 0x0010;
+/// Sprite-sprite pixel collision (bit 5, SCOL).
 pub const STATUS_COLLISION: u16 = 0x0020;
-pub const STATUS_ODD_SCANLINE: u16 = 0x0040;
+/// Sprite overflow: more than 20/16 sprites or 320/256 dot pixels on a line (bit 6, SOVR).
+pub const STATUS_SOVR: u16 = 0x0040;
 pub const STATUS_VINT_PENDING: u16 = 0x0080;
 pub const STATUS_FIFO_FULL: u16 = 0x0100;
 pub const STATUS_FIFO_EMPTY: u16 = 0x0200;
