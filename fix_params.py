@@ -128,25 +128,21 @@ def fix():
     with open("src/vdp/tests_draw_row_refactor.rs", "r") as f2:
         test_src = f2.read()
 
+    # Fix dest_idx comments to reflect per-scanline line_buf semantics
     test_src = test_src.replace(
         "let dest_idx = 0; // Start of framebuffer",
         "let dest_idx = 0; // Start of scanline"
     )
     test_src = test_src.replace(
-        "vdp.draw_full_tile_row(entry, pixel_v, dest_idx);",
-        "let mut line_buf = [0u8; 320];\n    vdp.draw_full_tile_row(entry, pixel_v, dest_idx, &mut line_buf);"
-    )
-    test_src = test_src.replace(
         "// Try to draw at end of framebuffer\n    let dest_idx = vdp.framebuffer.len() - 4; // Not enough space for 8 pixels",
         "// Try to draw at end of scanline\n    let dest_idx = 316; // Not enough space for 8 pixels in 320-byte line_buf"
     )
-    test_src = test_src.replace(
-        "vdp.draw_full_tile_row(0, 0, dest_idx);",
-        "let mut line_buf = [0u8; 320];\n    vdp.draw_full_tile_row(0, 0, dest_idx, &mut line_buf);"
-    )
-    test_src = test_src.replace(
-        "vdp.draw_full_tile_row(entry, 0, 0);",
-        "let mut line_buf = [0u8; 320];\n    vdp.draw_full_tile_row(entry, 0, 0, &mut line_buf);"
+    # Use regex for robust replacement of all vdp.draw_full_tile_row calls:
+    # add a line_buf declaration and pass it as the new 4th argument.
+    test_src = re.sub(
+        r"([ \t]+)vdp\.draw_full_tile_row\(([^,]+,\s*[^,]+,\s*[^,)]+)\);",
+        r"\1let mut line_buf = [0u8; 320];\n\1vdp.draw_full_tile_row(\2, &mut line_buf);",
+        test_src,
     )
 
     with open("src/vdp/tests_draw_row_refactor.rs", "w") as f2:
@@ -155,4 +151,5 @@ def fix():
     with open("src/vdp/render.rs", "w") as f:
         f.write(src)
 
-fix()
+if __name__ == "__main__":
+    fix()
