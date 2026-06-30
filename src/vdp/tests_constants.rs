@@ -20,12 +20,18 @@ fn test_dma_mode_constants() {
 fn test_h40_external_slots_content() {
     // Count the true values in H40_EXTERNAL_SLOTS
     let true_count = H40_EXTERNAL_SLOTS.iter().filter(|&&x| x).count();
-    assert_eq!(true_count, 18, "H40_EXTERNAL_SLOTS should have exactly 18 external slots");
+    assert_eq!(
+        true_count, 18,
+        "H40_EXTERNAL_SLOTS should have exactly 18 external slots"
+    );
 }
 
 #[test]
 fn test_h32_external_slots_content() {
     // Count the true values in H32_EXTERNAL_SLOTS
     let true_count = H32_EXTERNAL_SLOTS.iter().filter(|&&x| x).count();
-    assert_eq!(true_count, 16, "H32_EXTERNAL_SLOTS should have exactly 16 external slots");
+    assert_eq!(
+        true_count, 16,
+        "H32_EXTERNAL_SLOTS should have exactly 16 external slots"
+    );
 }

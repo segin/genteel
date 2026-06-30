@@ -469,16 +469,18 @@ impl Emulator {
         self.single_step = false;
 
         // Apply inputs from script or live input
-        let (p1, p2, command) = {
-            let frame_input = match input {
-                Some(i) => {
-                    self.input.record((*i).clone());
-                    std::borrow::Cow::Borrowed(i)
-                }
-                None => self.input.advance_frame(),
-            };
-            (frame_input.p1, frame_input.p2, frame_input.command.clone())
+        let frame_input = match input {
+            Some(i) => {
+                self.input.record(i);
+                std::borrow::Cow::Borrowed(i)
+            }
+            None => self.input.advance_frame(),
         };
+
+        let p1 = frame_input.p1;
+        let p2 = frame_input.p2;
+        let command = frame_input.command.clone();
+        drop(frame_input);
 
         {
             let mut bus = self.bus.borrow_mut();
@@ -527,17 +529,34 @@ impl Emulator {
         if parts.len() > 1 {
             let raw_path = parts[1];
             // Security: Sanitize path to prevent arbitrary file writes
-            // Only allow saving to current directory by using only the file name component
-            let path = std::path::Path::new(raw_path)
+            // 1. Only allow saving to current directory by using only the file name component
+            let file_name = std::path::Path::new(raw_path)
                 .file_name()
                 .and_then(|s| s.to_str())
                 .unwrap_or("screenshot.png");
+
+            // 2. Enforce .png extension to prevent writing to non-image files
+            let mut path_buf = std::path::PathBuf::from(file_name);
+            if path_buf.extension().and_then(|s| s.to_str()) != Some("png") {
+                path_buf.set_extension("png");
+            }
+            let sanitized_path = path_buf.to_string_lossy().into_owned();
+            let path = &sanitized_path;
 
             if path != raw_path {
                 eprintln!(
                     "Script Warning: Sanitized screenshot path '{}' to '{}'",
                     raw_path, path
                 );
+            }
+
+            // 3. Prevent overwriting existing files to protect local data
+            if std::path::Path::new(path).exists() {
+                eprintln!(
+                    "Script Error: Refusing to overwrite existing file: {}",
+                    path
+                );
+                return;
             }
 
             if let Err(e) = self.save_screenshot(path) {
@@ -685,7 +704,11 @@ impl Emulator {
                 (262, 224)
             }
         };
-        let samples_per_line = audio::samples_per_frame() as f32 / lines as f32;
+        let samples_per_line = audio::samples_per_frame_for_rate_and_region(
+            self.bus.borrow().sample_rate,
+            lines == 313,
+        ) as f32
+            / lines as f32;
 
         for line in 0..lines {
             self.step_scanline(line, active_lines, samples_per_line);
@@ -730,9 +753,9 @@ impl Emulator {
             let z80_can_run = !bus.z80_reset && !bus.z80_bus_request;
             let z80_is_reset = bus.z80_reset;
             let cycles_per_sample = if bus.vdp.is_pal {
-                audio::PAL_MCLK as f32 / bus.sample_rate as f32
+                audio::PAL_MCLK as f64 / bus.sample_rate as f64
             } else {
-                audio::NTSC_MCLK as f32 / bus.sample_rate as f32
+                audio::NTSC_MCLK as f64 / bus.sample_rate as f64
             };
             (z80_can_run, z80_is_reset, cycles_per_sample)
         };
@@ -774,14 +797,12 @@ impl Emulator {
         let output_sample_rate = bus.sample_rate;
         bus.apu.set_timing(region, output_sample_rate);
         bus.apu.tick_cycles(m68k_cycles);
-        bus.audio_accumulator += mclk as f32;
+        bus.audio_accumulator += mclk as f64;
 
         while bus.audio_accumulator >= cycles_per_sample {
             let (l, r) = bus.apu.generate_sample();
-            if bus.audio_buffer.len() < 32768 {
-                bus.audio_buffer.push(l);
-                bus.audio_buffer.push(r);
-            }
+            bus.audio_buffer.push(l);
+            bus.audio_buffer.push(r);
             bus.audio_accumulator -= cycles_per_sample;
         }
     }
@@ -792,7 +813,10 @@ impl Emulator {
         line: u16,
         active_lines: u16,
     ) -> CpuBatchResult {
-        const Z80_AUDIO_SYNC_SLICE: u32 = 32;
+        // R3: tighter HINT/VINT sensing during active display so the CPU
+        // can ack HINT in time to update the road palette before line render.
+        const Z80_AUDIO_SYNC_SLICE_ACTIVE: u32 = 8;
+        const Z80_AUDIO_SYNC_SLICE_VBLANK: u32 = 32;
         let (initial_req, initial_rst) = {
             let bus = ctx.bus_rc.borrow();
             (bus.z80_bus_request, bus.z80_reset)
@@ -844,7 +868,12 @@ impl Emulator {
             deferred_audio_cycles += m68k_cycles;
 
             let trigger_vint = line == active_lines && pending_cycles < 10;
-            let should_sync_audio = deferred_bus_cycles >= Z80_AUDIO_SYNC_SLICE
+            let slice = if ctx.bus_rc.borrow().vdp.in_active_display() {
+                Z80_AUDIO_SYNC_SLICE_ACTIVE
+            } else {
+                Z80_AUDIO_SYNC_SLICE_VBLANK
+            };
+            let should_sync_audio = deferred_bus_cycles >= slice
                 || trigger_vint
                 || ctx.bus_rc.borrow().dma_active();
             if should_sync_audio {
@@ -934,14 +963,19 @@ impl Emulator {
         // collapse audio into repeated whole-frame dropouts.
         const MAX_BUFFERED_AUDIO_FRAMES: usize = 8;
         let max_samples =
-            audio::samples_per_frame_for_rate(bus.sample_rate) * 2 * MAX_BUFFERED_AUDIO_FRAMES;
+            audio::samples_per_frame_for_rate_and_region(bus.sample_rate, bus.vdp.is_pal)
+                * 2
+                * MAX_BUFFERED_AUDIO_FRAMES;
         let needed = self.audio_buffer.len() + bus.audio_buffer.len();
         if needed > max_samples {
-            let to_drop = needed - max_samples;
+            let to_drop = ((needed - max_samples) + 1) & !1;
             self.audio_buffer
-                .drain(..to_drop.min(self.audio_buffer.len()));
+                .drain(..to_drop.min(self.audio_buffer.len() & !1));
         }
-        self.audio_buffer.extend(bus.audio_buffer.iter());
+        if (bus.audio_buffer.len() & 1) != 0 {
+            bus.audio_buffer.pop();
+        }
+        self.audio_buffer.extend_from_slice(&bus.audio_buffer);
         bus.audio_buffer.clear();
     }
     fn handle_interrupts(&mut self) {
@@ -1767,41 +1801,71 @@ mod tests {
     #[test]
     fn test_screenshot_path_sanitization() {
         let mut emulator = Emulator::new();
-        let path = "/tmp/genteel_exploit.png";
-        let sanitized_path = "genteel_exploit.png";
+
+        // 1. Test directory traversal and extension enforcement
+        let exploit_path = "/tmp/genteel_exploit.txt";
+        let expected_path = "genteel_exploit.png";
 
         // Ensure files don't exist
-        if std::path::Path::new(path).exists() {
-            let _ = std::fs::remove_file(path);
+        if std::path::Path::new(exploit_path).exists() {
+            let _ = std::fs::remove_file(exploit_path);
         }
-        if std::path::Path::new(sanitized_path).exists() {
-            let _ = std::fs::remove_file(sanitized_path);
+        if std::path::Path::new(expected_path).exists() {
+            let _ = std::fs::remove_file(expected_path);
         }
 
-        // Construct input with command
         let input = crate::input::FrameInput {
-            command: Some(format!("SCREENSHOT {}", path)),
+            command: Some(format!("SCREENSHOT {}", exploit_path)),
             ..Default::default()
         };
 
         emulator.step_frame(Some(&input));
 
-        // Check vulnerability is fixed
-        if std::path::Path::new(path).exists() {
-            let _ = std::fs::remove_file(path);
-            panic!("Vulnerability still present: file created at {}", path);
+        // Check directory traversal is blocked
+        if std::path::Path::new(exploit_path).exists() {
+            let _ = std::fs::remove_file(exploit_path);
+            panic!(
+                "Vulnerability still present: file created at {}",
+                exploit_path
+            );
         }
 
-        // Check sanitized behavior
-        if std::path::Path::new(sanitized_path).exists() {
-            // Success: created at sanitized path
-            let _ = std::fs::remove_file(sanitized_path);
+        // Check sanitized behavior and extension enforcement
+        if std::path::Path::new(expected_path).exists() {
+            let _ = std::fs::remove_file(expected_path);
         } else {
             panic!(
                 "Sanitization failed: file not created at {}",
-                sanitized_path
+                expected_path
             );
         }
+
+        // 2. Test overwrite prevention
+        let protected_file = "protected.txt";
+        let protected_content = "original content";
+        std::fs::write(protected_file, protected_content).unwrap();
+
+        // Try to overwrite it by requesting a screenshot with that name
+        // (even if we request .png, if we request protected.txt it should be sanitized to protected.txt.png if we are not careful,
+        // or if we request protected.txt it will be sanitized to protected.png.
+        // Let's test with a name that won't be changed by sanitization to be sure we test overwrite prevention logic)
+        let screenshot_name = "test_exists.png";
+        std::fs::write(screenshot_name, "do not overwrite").unwrap();
+
+        let input2 = crate::input::FrameInput {
+            command: Some(format!("SCREENSHOT {}", screenshot_name)),
+            ..Default::default()
+        };
+
+        emulator.step_frame(Some(&input2));
+
+        // Content should still be "do not overwrite"
+        let content = std::fs::read_to_string(screenshot_name).unwrap();
+        assert_eq!(content, "do not overwrite", "Overwrite prevention failed!");
+
+        // Cleanup
+        let _ = std::fs::remove_file(protected_file);
+        let _ = std::fs::remove_file(screenshot_name);
     }
 
     #[test]
