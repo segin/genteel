@@ -3,6 +3,7 @@
 //! Provides cross-platform windowing, input handling, and rendering
 //! for the Genesis emulator using pure Rust libraries.
 
+use std::sync::LazyLock;
 #[cfg(any(feature = "gui", feature = "test_headless"))]
 use winit::keyboard::{Key, KeyCode};
 
@@ -114,19 +115,30 @@ pub fn key_to_button(key: &Key, mapping: InputMapping) -> Option<(&'static str, 
     }
 }
 
+/// Lookup table for RGB565 to RGBA8 conversion
+static RGB565_TO_RGBA8_LUT: LazyLock<[u32; 65536]> = LazyLock::new(|| {
+    let mut lut = [0u32; 65536];
+    for pixel in 0..65536 {
+        let p = pixel as u16;
+        let r5 = ((p >> 11) & 0x1F) as u8;
+        let g6 = ((p >> 5) & 0x3F) as u8;
+        let b5 = (p & 0x1F) as u8;
+
+        let r = (r5 << 3) | (r5 >> 2);
+        let g = (g6 << 2) | (g6 >> 4);
+        let b = (b5 << 3) | (b5 >> 2);
+        let a = 255u8;
+
+        lut[pixel] = u32::from_le_bytes([r, g, b, a]);
+    }
+    lut
+});
+
 /// Convert RGB565 framebuffer to RGBA8 for pixels crate
 pub fn rgb565_to_rgba8(framebuffer_565: &[u16], output: &mut [u8]) {
     for (&pixel, chunk) in framebuffer_565.iter().zip(output.chunks_exact_mut(4)) {
-        // Extract RGB565 components
-        let r5 = ((pixel >> 11) & 0x1F) as u8;
-        let g6 = ((pixel >> 5) & 0x3F) as u8;
-        let b5 = (pixel & 0x1F) as u8;
-
-        // Scale to 8-bit
-        chunk[0] = (r5 << 3) | (r5 >> 2); // R
-        chunk[1] = (g6 << 2) | (g6 >> 4); // G
-        chunk[2] = (b5 << 3) | (b5 >> 2); // B
-        chunk[3] = 255; // A
+        let rgba = RGB565_TO_RGBA8_LUT[pixel as usize];
+        chunk.copy_from_slice(&rgba.to_le_bytes());
     }
 }
 
