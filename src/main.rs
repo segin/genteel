@@ -490,15 +490,15 @@ impl Emulator {
         {
             let mut bus = self.bus.borrow_mut();
             if let Some(ctrl) = bus.io.controller(1) {
-                *ctrl = frame_input.p1;
+                *ctrl = p1;
             }
             if let Some(ctrl) = bus.io.controller(2) {
-                *ctrl = frame_input.p2;
+                *ctrl = p2;
             }
         }
 
         // Handle commands (e.g., SCREENSHOT <path>)
-        if let Some(cmd) = &frame_input.command {
+        if let Some(cmd) = &command {
             self.execute_script_command(cmd);
         }
 
