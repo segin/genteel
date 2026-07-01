@@ -4,6 +4,7 @@ use super::Vdp;
 pub trait DmaOps {
     fn dma_mode(&self) -> u8;
     fn dma_source(&self) -> u32;
+    fn dma_copy_source(&self) -> u16;
     fn dma_length(&self) -> u32;
     fn dma_source_transfer(&self) -> u32;
     fn is_dma_transfer(&self) -> bool;
@@ -20,6 +21,8 @@ impl DmaOps for Vdp {
         self.registers[REG_DMA_SRC_HI]
     }
 
+    /// Word-doubled 68K source assembly. Superseded in production by
+    /// `dma_source_transfer` (which also models the RAM-address force).
     fn dma_source(&self) -> u32 {
         ((self.registers[REG_DMA_SRC_HI] as u32) << 17)
             | ((self.registers[REG_DMA_SRC_MID] as u32) << 9)
@@ -28,6 +31,13 @@ impl DmaOps for Vdp {
 
     fn dma_length(&self) -> u32 {
         ((self.registers[REG_DMA_LEN_HI] as u32) << 8) | (self.registers[REG_DMA_LEN_LO] as u32)
+    }
+
+    /// VRAM-copy source address. Unlike `dma_source`, a copy source is a plain
+    /// byte VRAM address in regs 21/22 with no `<<1` word doubling (that doubling
+    /// only applies to 68K memory sources).
+    fn dma_copy_source(&self) -> u16 {
+        ((self.registers[REG_DMA_SRC_MID] as u16) << 8) | (self.registers[REG_DMA_SRC_LO] as u16)
     }
 
     fn dma_source_transfer(&self) -> u32 {
@@ -133,7 +143,7 @@ impl DmaOps for Vdp {
                 self.perform_dma_fill(len);
             }
             DMA_MODE_COPY => {
-                let mut source = (self.dma_source() & 0xFFFF) as u16;
+                let mut source = self.dma_copy_source();
                 let mut dest = self.command.address;
                 let inc = self.registers[REG_AUTO_INC] as u16;
 
@@ -144,6 +154,9 @@ impl DmaOps for Vdp {
                     dest = dest.wrapping_add(inc);
                 }
                 self.command.address = dest;
+                // Leave the source registers pointing past the copied region.
+                self.registers[REG_DMA_SRC_LO] = (source & 0xFF) as u8;
+                self.registers[REG_DMA_SRC_MID] = (source >> 8) as u8;
             }
             _ => {
                 for _ in 0..len {
@@ -174,37 +187,20 @@ impl DmaOps for Vdp {
 
         match mode {
             DMA_MODE_FILL => {
-                let addr = self.command.address;
-                let val = if length == self.dma_length() && self.dma_length() != 0 {
-                    (self.last_data_write & 0xFF) as u8
-                } else {
-                    (self.last_data_write >> 8) as u8
-                };
-
-                if (self.command.code & 0x0F) == VRAM_WRITE {
-                    self.vram[addr as usize] = val;
-                }
-                if (self.command.code & 0x0F) == CRAM_WRITE
-                    || (self.command.code & 0x0F) == VSRAM_WRITE
-                {
-                    self.redraw_current_scanline_if_visible();
-                }
-
-                self.command.address = addr.wrapping_add(inc);
+                // A VRAM fill does nothing until the fill byte is written to the
+                // data port; `write_data` then completes it synchronously via
+                // `execute_dma`. Do not step (and do not consume length) here —
+                // the previous logic ran with a stale `last_data_write` and
+                // always mis-selected the fill byte.
+                return;
             }
             DMA_MODE_COPY => {
-                let source = (self.dma_source() & 0xFFFF) as u16;
+                // VRAM copy: byte source (regs 21/22, no <<1) -> destination VRAM.
+                // Copy always targets VRAM.
+                let source = self.dma_copy_source();
                 let addr = self.command.address;
 
-                if (self.command.code & 0x0F) == VRAM_WRITE {
-                    let val = self.vram[source as usize];
-                    self.vram[addr as usize] = val;
-                }
-                if (self.command.code & 0x0F) == CRAM_WRITE
-                    || (self.command.code & 0x0F) == VSRAM_WRITE
-                {
-                    self.redraw_current_scanline_if_visible();
-                }
+                self.vram[addr as usize] = self.vram[source as usize];
 
                 let next_source = source.wrapping_add(1);
                 self.registers[REG_DMA_SRC_LO] = (next_source & 0xFF) as u8;

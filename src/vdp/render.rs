@@ -59,7 +59,8 @@ impl<'a> Iterator for SpriteIterator<'a> {
         let h_flip = (attr_word & 0x0800) != 0;
         let base_tile = attr_word & 0x07FF;
 
-        let cur_h = (data as u16) & 0x03FF;
+        // Sprite X is a 9-bit field (bits 0-8); bit 9+ are unused.
+        let cur_h = (data as u16) & 0x01FF;
         let h_pos = cur_h.wrapping_sub(128);
 
         let attr = SpriteAttributes {
@@ -793,8 +794,17 @@ impl RenderOps for Vdp {
                 continue;
             }
 
+            // If the per-line sprite or dot budget is already fully consumed,
+            // this on-line sprite is beyond the limit: set overflow and stop.
+            // Checking before consuming means the flag fires only when the line
+            // has MORE than the limit, not at exactly the limit (hardware).
+            if slots_consumed >= line_limit || pixels >= pixel_limit {
+                overflow_this_line = true;
+                break;
+            }
+
             // An X=0 sprite that meets the trigger condition activates the mask.
-            // "X=0" means the raw 10-bit SAT X field is 0 (i.e. h_pos after the
+            // "X=0" means the raw 9-bit SAT X field is 0 (i.e. h_pos after the
             // 128 subtraction equals 0xFF80 / -128). Such a sprite is fully
             // off-screen and never renders, but it still consumes a per-line
             // slot and dot budget on hardware, and arms the mask.
@@ -810,16 +820,6 @@ impl RenderOps for Vdp {
 
             slots_consumed += 1;
             pixels += (attr.h_size as usize) * 8;
-
-            if slots_consumed >= line_limit {
-                overflow_this_line = true;
-                break;
-            }
-
-            if pixels >= pixel_limit {
-                overflow_this_line = true;
-                break;
-            }
         }
 
         self.prev_line_sprite_overflow = overflow_this_line;
@@ -902,8 +902,9 @@ impl RenderOps for Vdp {
         let hs_base = self.hscroll_address();
 
         let hs_addr = match hs_mode {
-            0x00 | 0x01 => hs_base,                               // Full screen
-            0x02 => hs_base + (((fetch_line as usize) >> 3) * 4), // 8-pixel high strips (Cell)
+            0x00 => hs_base,                                      // Full screen
+            0x01 => hs_base + (((fetch_line as usize) & 7) * 4),  // Prohibited: 8-line repeat
+            0x02 => hs_base + (((fetch_line as usize) & !7) * 4), // Cell: (line & ~7) * 4
             0x03 => hs_base + ((fetch_line as usize) * 4),        // Per-line
             _ => hs_base,
         };

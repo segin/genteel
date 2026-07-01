@@ -7,15 +7,20 @@ mod tests {
         let mut bus = Bus::new();
         bus.vdp.bypass_fifo = true;
 
-        // Initial status is 0x3600 (FIFO empty, etc)
+        // Initial status is 0x3608: FIFO empty (bit 9) + the fixed 0x3400
+        // pattern, plus VBLANK (bit 3) because the display is disabled at reset
+        // (reg 1 bit 6 = 0).
         // High byte: 0x36
-        // Low byte: 0x00
+        // Low byte: 0x08
 
         let high = bus.read_byte(0xC00004);
         assert_eq!(high, 0x36, "High byte at 0xC00004 should be 0x36");
 
         let low = bus.read_byte(0xC00005);
-        assert_eq!(low, 0x00, "Low byte at 0xC00005 should be 0x00");
+        assert_eq!(
+            low, 0x08,
+            "Low byte at 0xC00005 should be 0x08 (VBLANK, display off)"
+        );
     }
 
     #[test]

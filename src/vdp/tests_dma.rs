@@ -105,13 +105,10 @@ fn test_dma_copy_vram() {
 
     // 4. Set DMA Mode to Copy (Mode 3) and Source Address
     // Mode 3 is bits 7,6 = 11. Reg 23 = 0xC0.
-    // Source Address 0x1000.
-    // Reg 21 (A1-A8): 0x00.
-    // Reg 22 (A9-A16): 0x08 (A12=1).
-    // Reg 23 (A17-A23): 0x00 (masked with 0x3F).
-    // So Reg 23 is 0xC0.
+    // Copy source is a plain byte VRAM address (regs 21/22, no <<1), so
+    // source 0x1000 = reg21 (low) 0x00, reg22 (high) 0x10.
     vdp.write_control(0x9500); // Reg 21 = 0x00
-    vdp.write_control(0x9608); // Reg 22 = 0x08
+    vdp.write_control(0x9610); // Reg 22 = 0x10 -> byte source 0x1000
     vdp.write_control(0x97C0); // Reg 23 = 0xC0
 
     // 5. Set Auto-increment to 1
