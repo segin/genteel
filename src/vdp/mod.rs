@@ -397,8 +397,12 @@ impl Vdp {
         let hs_mode = mode3 & 0x03;
         let hs_base = self.hscroll_address();
         let hs_addr = match hs_mode {
-            0x00 | 0x01 => hs_base,
-            0x02 => hs_base + (((fetch_line as usize) >> 3) * 4),
+            0x00 => hs_base,
+            // Prohibited mode: repeats the first 8 lines' scroll values.
+            0x01 => hs_base + (((fetch_line as usize) & 7) * 4),
+            // Per-cell: one longword per 8-line cell row. The table is the same
+            // as per-line, read every 8th entry -> byte offset (line & ~7) * 4.
+            0x02 => hs_base + (((fetch_line as usize) & !7) * 4),
             0x03 => hs_base + ((fetch_line as usize) * 4),
             _ => hs_base,
         };
@@ -477,8 +481,13 @@ impl Vdp {
                     self.status |= STATUS_FIFO_FULL;
                 }
             } else {
-                // Stall modeling - currently force process
-                self.process_fifo_entry(FifoEntry {
+                // FIFO full: drain the oldest queued entry to free a slot
+                // (approximating the CPU stalling until a slot opens) so writes
+                // still commit in program order, then queue this one. The FIFO
+                // stays full, so STATUS_FIFO_FULL remains correctly asserted.
+                let oldest = self.fifo.remove(0);
+                self.process_fifo_entry(oldest);
+                self.fifo.push(FifoEntry {
                     address: self.command.address,
                     code: self.command.code,
                     value,
@@ -651,8 +660,19 @@ impl Vdp {
         if self.command.dma_pending {
             res |= STATUS_DMA;
         }
-        // Reading status clears the VInt pending bit (Bit 7)
-        self.status &= !STATUS_VINT_PENDING;
+        // Region bit (bit 0) reflects the console video standard (1 = PAL/50Hz).
+        if self.is_pal {
+            res |= STATUS_PAL;
+        }
+        // The VBLANK flag (bit 3) also reads set whenever the display is
+        // force-blanked (reg 1 bit 6 = 0), because the VDP then yields full bus
+        // bandwidth for the whole frame.
+        if !self.display_enabled() {
+            res |= STATUS_VBLANK;
+        }
+        // Reading status clears the read-and-clear flags: VINT/F (bit 7),
+        // sprite overflow (bit 6), and sprite collision (bit 5).
+        self.status &= !(STATUS_VINT_PENDING | STATUS_SOVR | STATUS_COLLISION);
         res
     }
 
@@ -802,11 +822,10 @@ impl Vdp {
     /// Map an internal 0-based line number (0..262 NTSC / 0..313 PAL) to the
     /// externally visible 8-bit V counter, applying the hardware jump.
     ///
-    /// NTSC V28: 0..=0xEA then 0xE5..=0xFF (total 262 = 235+27).
-    /// NTSC V30: same shape; on real NTSC hardware V30 misbehaves but we
-    ///   produce a plausible counter.
-    /// PAL  V28: 0..=0xFF then 0xCA..=0xFF (total 313 = 256+57).
-    /// PAL  V30: 0..=0xFF then 0xC8..=0xFF (total 314 = 256+56; we map 313).
+    /// NTSC: 0x00..=0xEA then 0xE5..=0xFF (total 262).
+    /// PAL: 0x00..=0xFF, then a short low run right after the wrap, then a high
+    ///   run ending at 0xFF (total 313). V28: low run 0x00..=0x02 then
+    ///   0xCA..=0xFF; V30: low run 0x00..=0x0A then 0xD2..=0xFF.
     #[inline]
     pub(crate) fn v_counter_value_for_line(line: u16, is_pal: bool, v30: bool) -> u8 {
         if !is_pal {
@@ -820,9 +839,15 @@ impl Vdp {
         } else if line <= 0xFF {
             line as u8
         } else {
-            let second_start: u16 = if v30 { 0xC8 } else { 0xCA };
-            let s2 = line - 0x100;
-            second_start.wrapping_add(s2) as u8
+            // The external counter wraps to 0x00 for a few lines immediately
+            // after 0xFF, then jumps to the high run that ends at 0xFF.
+            let (low_run, high_start): (u16, u16) = if v30 { (0x0B, 0xD2) } else { (0x03, 0xCA) };
+            let s = line - 0x100;
+            if s < low_run {
+                s as u8
+            } else {
+                (high_start + (s - low_run)) as u8
+            }
         }
     }
 
@@ -1068,7 +1093,11 @@ impl Vdp {
                 self.status &= !STATUS_VBLANK;
             }
 
-            if self.v_counter < active_lines {
+            // The H-int counter is decremented on every active line AND on the
+            // first blanking line (v_counter == active_lines); only the
+            // remaining blanking lines reload it. Using `<` here dropped the
+            // HINT at the active/blank boundary (one lost HINT per frame).
+            if self.v_counter <= active_lines {
                 if self.line_counter == 0 {
                     self.line_counter = self.registers[REG_H_INT_COUNTER] as u16;
                     self.hint_due = true;
@@ -1244,5 +1273,7 @@ mod tests_constants;
 #[cfg(test)]
 mod test_dma_transfer;
 
+#[cfg(test)]
+mod tests_audit_fixes;
 #[cfg(test)]
 mod tests_sprite_iterator;

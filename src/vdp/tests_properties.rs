@@ -300,14 +300,15 @@ mod unit_tests {
 
     #[test]
     fn v_counter_pal_v28_jump_table() {
-        // PAL V28: 0..=0xFF, then 0xCA..=0xFF (54 values). The last 3 lines
-        // of a 313-line PAL frame wrap past 0xFF — that matches the canonical
-        // table at the cost of a 3-line ambiguity.
-        assert_eq!(Vdp::v_counter_value_for_line(0, true, false), 0x00);
+        // PAL V28 (313 lines): 0x00..=0xFF (256), then a short 0x00..=0x02 run
+        // immediately after the wrap (3), then 0xCA..=0xFF (54).
+        assert_eq!(Vdp::v_counter_value_for_line(0x00, true, false), 0x00);
         assert_eq!(Vdp::v_counter_value_for_line(0xFF, true, false), 0xFF);
-        assert_eq!(Vdp::v_counter_value_for_line(0x100, true, false), 0xCA);
-        // Last representable line in the canonical table is 0x100 + 53 = 0x135 → 0xFF.
-        assert_eq!(Vdp::v_counter_value_for_line(0x135, true, false), 0xFF);
+        assert_eq!(Vdp::v_counter_value_for_line(0x100, true, false), 0x00);
+        assert_eq!(Vdp::v_counter_value_for_line(0x102, true, false), 0x02);
+        assert_eq!(Vdp::v_counter_value_for_line(0x103, true, false), 0xCA);
+        // Last line of the 313-line frame (0x138) maps to 0xFF.
+        assert_eq!(Vdp::v_counter_value_for_line(0x138, true, false), 0xFF);
     }
 
     #[test]
