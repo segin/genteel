@@ -704,11 +704,11 @@ impl Emulator {
     pub fn step_frame_internal(&mut self) {
         let (lines, active_lines) = {
             let bus = self.bus.borrow();
-            if bus.vdp.is_pal {
-                (313, 240)
-            } else {
-                (262, 224)
-            }
+            let lines: u16 = if bus.vdp.is_pal { 313 } else { 262 };
+            // Active lines follow the VDP's V28/V30 mode (reg 1 bit 3), not a
+            // region constant — PAL games are almost always V28 (224), so the
+            // Z80 VINT and audio sync must fire at 224, in phase with the 68k.
+            (lines, bus.vdp.screen_height())
         };
         let samples_per_line = audio::samples_per_frame_for_rate_and_region(
             self.bus.borrow().sample_rate,

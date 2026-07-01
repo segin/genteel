@@ -424,7 +424,15 @@ impl Bus {
 
     fn write_io_area(&mut self, addr: u32, value: u8) {
         match addr {
-            0xA10000..=0xA1001F => self.io.write(addr, value),
+            0xA10000..=0xA1001F => {
+                self.io.write(addr, value);
+                // A write to a controller data port toggles the TH line, which
+                // latches the VDP HV counter when latching is enabled (light-gun
+                // support). `latch_hv_counter` is a no-op otherwise.
+                if matches!(addr & 0x1F, 0x03 | 0x05 | 0x07) {
+                    self.vdp.latch_hv_counter();
+                }
+            }
             0xA11100 => self.z80_bus_request = (value & 0x01) != 0,
             0xA11200 => {
                 self.z80_reset = (value & 0x01) == 0;
