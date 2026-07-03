@@ -282,6 +282,12 @@ pub struct Vdp {
     /// each fresh line render.
     #[serde(skip, default)]
     pub(crate) line_split_x: u16,
+
+    /// HV counter latch (reg 0 bit 1). When latching is enabled, a TH line
+    /// transition on a controller port freezes the HV counter; reads then
+    /// return this captured value until re-latched. Used by light-gun titles.
+    #[serde(default)]
+    pub(crate) hv_latched: Option<u16>,
 }
 
 impl Default for Vdp {
@@ -347,6 +353,7 @@ impl Vdp {
             hint_due: false,
             vint_due: false,
             line_split_x: 0,
+            hv_latched: None,
         };
         vdp.reset();
         vdp
@@ -380,6 +387,7 @@ impl Vdp {
         self.latched_scroll_valid = false;
         self.prev_line_sprite_overflow = false;
         self.dma_stall_cycles = 0;
+        self.hv_latched = None;
         self.reconstruct_cram_cache();
         // SAT cache stays invalid; first render or first tick line wrap
         // will latch it from VRAM.
@@ -624,6 +632,10 @@ impl Vdp {
                 let val = (value & 0xFF) as u8;
                 if reg < NUM_REGISTERS {
                     self.registers[reg] = val;
+                    // Disabling the HV latch (reg 0 bit 1 -> 0) re-arms it.
+                    if reg == REG_MODE1 && (val & 0x02) == 0 {
+                        self.hv_latched = None;
+                    }
                     if matches!(
                         reg,
                         REG_MODE1
@@ -851,7 +863,13 @@ impl Vdp {
         }
     }
 
-    pub fn read_hv_counter(&self) -> u16 {
+    /// True when the HV-counter latch is enabled (reg 0 bit 1 / M3).
+    pub fn hv_latch_enabled(&self) -> bool {
+        (self.registers[REG_MODE1] & 0x02) != 0
+    }
+
+    /// Live HV counter derived from the current beam position.
+    fn compute_hv_counter(&self) -> u16 {
         let is_h40 = self.h40_mode();
         // Approximate H tick from MCLK. Total H ticks per line: 211 (H40), 171 (H32).
         let total_ticks: u32 = if is_h40 { 211 } else { 171 };
@@ -861,6 +879,23 @@ impl Vdp {
         let v30 = (self.registers[REG_MODE2] & MODE2_V30_MODE) != 0;
         let v = Self::v_counter_value_for_line(self.v_counter, self.is_pal, v30);
         ((v as u16) << 8) | (h as u16)
+    }
+
+    pub fn read_hv_counter(&self) -> u16 {
+        // While latching is enabled, reads return the frozen value captured at
+        // the last TH transition; otherwise the live beam position.
+        match self.hv_latched {
+            Some(v) if self.hv_latch_enabled() => v,
+            _ => self.compute_hv_counter(),
+        }
+    }
+
+    /// Capture the HV counter on a controller TH transition. Only latches while
+    /// latching is enabled (reg 0 bit 1); otherwise a no-op.
+    pub fn latch_hv_counter(&mut self) {
+        if self.hv_latch_enabled() {
+            self.hv_latched = Some(self.compute_hv_counter());
+        }
     }
 
     pub(crate) fn sync_sat_cache(&mut self) {

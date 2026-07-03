@@ -224,3 +224,51 @@ fn step_dma_fill_waits_for_data_write() {
         "fill stays pending until the data write"
     );
 }
+
+/// Deferred/F1 (intentionally NOT changed): `acknowledge_vint` clears the F flag
+/// on the 68k interrupt-acknowledge. The hardware-accurate behaviour (clear only
+/// on a status read) was tried but hangs games whose VINT handler relies on the
+/// ack auto-clear (Sonic loops forever in VINT), so the pragmatic auto-clear is
+/// retained.
+#[test]
+fn acknowledge_vint_clears_f_flag_for_compat() {
+    let mut vdp = Vdp::new();
+    vdp.status |= STATUS_VINT_PENDING;
+    vdp.acknowledge_vint();
+    assert_eq!(
+        vdp.status & STATUS_VINT_PENDING,
+        0,
+        "interrupt ack clears F (retained for game compatibility)"
+    );
+}
+
+/// Deferred/HV-latch: with reg 0 bit 1 set, a TH transition freezes the HV
+/// counter; reads return the frozen value until latching is disabled.
+#[test]
+fn hv_counter_latch_freezes_when_enabled() {
+    let mut vdp = Vdp::new();
+    vdp.v_counter = 100;
+    vdp.mclk_line_clocks = 1000;
+    let value_at_latch = vdp.read_hv_counter();
+
+    // Enable the latch (reg 0 bit 1) and capture on a TH transition.
+    vdp.registers[0] = 0x02;
+    vdp.latch_hv_counter();
+
+    // Advance the beam; the latched read must not move.
+    vdp.v_counter = 150;
+    vdp.mclk_line_clocks = 2000;
+    assert_eq!(
+        vdp.read_hv_counter(),
+        value_at_latch,
+        "latched HV counter stays frozen while enabled"
+    );
+
+    // Disabling the latch returns the live counter.
+    vdp.registers[0] = 0x00;
+    assert_ne!(
+        vdp.read_hv_counter(),
+        value_at_latch,
+        "HV counter is live again once latching is disabled"
+    );
+}
