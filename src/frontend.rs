@@ -18,8 +18,6 @@ pub enum InputMapping {
     Ergonomic,
 }
 
-
-
 /// Key mapping for player 1 (Physical KeyCode)
 #[cfg(any(feature = "gui", feature = "test_headless"))]
 pub fn keycode_to_button(keycode: KeyCode, mapping: InputMapping) -> Option<(&'static str, bool)> {
@@ -526,7 +524,7 @@ mod tests {
         rgb565_to_rgba8(&vec![0xFFFFu16; 300], &mut unaligned_output);
         // 1003 / 4 = 250 pixels should be processed
         assert_eq!(unaligned_output[250 * 4 - 1], 255); // Last byte (A) of 250th pixel
-        // Bytes 1000, 1001, 1002 (0-indexed) should be untouched
+                                                        // Bytes 1000, 1001, 1002 (0-indexed) should be untouched
         assert_eq!(unaligned_output[1000], 0);
         assert_eq!(unaligned_output[1001], 0);
         assert_eq!(unaligned_output[1002], 0);

@@ -453,7 +453,10 @@ impl Emulator {
                 if size > MAX_ROM_SIZE {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
-                        format!("ROM size exceeds limit of {}MB", MAX_ROM_SIZE / (1024 * 1024)),
+                        format!(
+                            "ROM size exceeds limit of {}MB",
+                            MAX_ROM_SIZE / (1024 * 1024)
+                        ),
                     ));
                 }
                 let data = Self::read_rom_with_limit(&mut entry, size)?;
@@ -879,9 +882,8 @@ impl Emulator {
             } else {
                 Z80_AUDIO_SYNC_SLICE_VBLANK
             };
-            let should_sync_audio = deferred_bus_cycles >= slice
-                || trigger_vint
-                || ctx.bus_rc.borrow().dma_active();
+            let should_sync_audio =
+                deferred_bus_cycles >= slice || trigger_vint || ctx.bus_rc.borrow().dma_active();
             if should_sync_audio {
                 {
                     let mut bus = ctx.bus_rc.borrow_mut();
@@ -1860,10 +1862,7 @@ mod tests {
         if std::path::Path::new(expected_path).exists() {
             let _ = std::fs::remove_file(expected_path);
         } else {
-            panic!(
-                "Sanitization failed: file not created at {}",
-                expected_path
-            );
+            panic!("Sanitization failed: file not created at {}", expected_path);
         }
 
         // 2. Test overwrite prevention

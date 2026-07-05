@@ -723,7 +723,8 @@ impl MemoryInterface for Bus {
     }
     #[inline]
     fn take_pending_stall_cycles(&mut self) -> u32 {
-        let cycles = self.vdp_stall_cycles
+        let cycles = self
+            .vdp_stall_cycles
             .saturating_add(self.vdp.take_dma_stall_cycles());
         self.vdp_stall_cycles = 0;
         cycles

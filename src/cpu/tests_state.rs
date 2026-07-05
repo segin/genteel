@@ -1,7 +1,7 @@
 #![cfg(test)]
 
-use crate::cpu::{CpuState, flags};
 use crate::cpu::test_utils::create_test_cpu;
+use crate::cpu::{flags, CpuState};
 
 #[test]
 fn test_set_state() {

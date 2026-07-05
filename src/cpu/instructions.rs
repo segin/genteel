@@ -794,9 +794,843 @@ impl Default for DecodeCacheEntry {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Disassembly formatting: standard Motorola syntax, or GNU (AT&T) syntax.
+//
+// The decoder only captures the opcode word, so operand *values* (immediates,
+// absolute addresses, displacements) are reconstructed here from the raw
+// instruction words supplied by the caller via `DisAsm`.
+// ---------------------------------------------------------------------------
+
+fn dis_dreg(n: u8, gnu: bool) -> String {
+    if gnu {
+        format!("%d{n}")
+    } else {
+        format!("D{n}")
+    }
+}
+
+fn dis_areg(n: u8, gnu: bool) -> String {
+    if gnu {
+        format!("%a{n}")
+    } else {
+        format!("A{n}")
+    }
+}
+
+fn dis_special(name: &str, gnu: bool) -> String {
+    if gnu {
+        format!("%{}", name.to_lowercase())
+    } else {
+        name.to_string()
+    }
+}
+
+fn dis_size(size: Size) -> &'static str {
+    match size {
+        Size::Byte => ".B",
+        Size::Word => ".W",
+        Size::Long => ".L",
+    }
+}
+
+fn dis_imm(v: i64, gnu: bool) -> String {
+    match (v < 0, gnu) {
+        (true, true) => format!("#-0x{:x}", -v),
+        (true, false) => format!("#-${:X}", -v),
+        (false, true) => format!("#0x{v:x}"),
+        (false, false) => format!("#${v:X}"),
+    }
+}
+
+fn dis_hex_signed(v: i32, gnu: bool) -> String {
+    let m = (v as i64).unsigned_abs();
+    match (v < 0, gnu) {
+        (true, true) => format!("-0x{m:x}"),
+        (true, false) => format!("-${m:X}"),
+        (false, true) => format!("0x{m:x}"),
+        (false, false) => format!("${m:X}"),
+    }
+}
+
+/// Format a MOVEM register mask, e.g. "D0-D3/A0/A2".
+fn dis_reglist(mask: u16, predec: bool, gnu: bool) -> String {
+    let mut regs = [false; 16];
+    for (i, present) in regs.iter_mut().enumerate() {
+        // -(An) reverses the bit order (A7..D0); otherwise D0..A7.
+        let bit = if predec { 15 - i } else { i };
+        *present = (mask >> bit) & 1 != 0;
+    }
+    let name = |i: usize| {
+        if i < 8 {
+            dis_dreg(i as u8, gnu)
+        } else {
+            dis_areg((i - 8) as u8, gnu)
+        }
+    };
+    let mut parts: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < 16 {
+        if !regs[i] {
+            i += 1;
+            continue;
+        }
+        let file_end = if i < 8 { 8 } else { 16 };
+        let start = i;
+        while i + 1 < file_end && regs[i + 1] {
+            i += 1;
+        }
+        if i == start {
+            parts.push(name(start));
+        } else {
+            parts.push(format!("{}-{}", name(start), name(i)));
+        }
+        i += 1;
+    }
+    parts.join("/")
+}
+
+/// Assemble "MNEMONIC.sz  op1,op2" for the selected syntax.
+fn dis_line(gnu: bool, mnem: &str, size: Option<Size>, ops: &[String]) -> String {
+    let sz = size.map(dis_size).unwrap_or("");
+    let head = if gnu {
+        format!("{}{}", mnem.to_lowercase(), sz.to_lowercase())
+    } else {
+        format!("{mnem}{sz}")
+    };
+    if ops.is_empty() {
+        head
+    } else {
+        format!("{head:<8}{}", ops.join(","))
+    }
+}
+
+/// Cursor over an instruction's raw words. Formats operands, consuming
+/// extension words in encoding order so immediates/addresses show real values.
+struct DisAsm<'a> {
+    words: &'a [u16],
+    /// Index of the next unread word (1 = first extension word).
+    idx: usize,
+    pc: u32,
+    gnu: bool,
+}
+
+impl<'a> DisAsm<'a> {
+    fn new(words: &'a [u16], pc: u32, gnu: bool) -> Self {
+        Self {
+            words,
+            idx: 1,
+            pc,
+            gnu,
+        }
+    }
+
+    fn word_u(&mut self) -> u32 {
+        let v = self.words.get(self.idx).copied().unwrap_or(0) as u32;
+        self.idx += 1;
+        v
+    }
+
+    fn word_s(&mut self) -> i32 {
+        let v = self.words.get(self.idx).copied().unwrap_or(0) as i16 as i32;
+        self.idx += 1;
+        v
+    }
+
+    fn long(&mut self) -> u32 {
+        let hi = self.word_u();
+        let lo = self.word_u();
+        (hi << 16) | lo
+    }
+
+    /// Address of the extension word about to be read (for PC-relative modes).
+    fn cur_addr(&self) -> u32 {
+        self.pc.wrapping_add(2 * self.idx as u32)
+    }
+
+    /// Decode a brief extension word: (displacement, "Xn.sz").
+    fn brief_index(&mut self) -> (i32, String) {
+        let ext = self.word_u();
+        let disp = (ext as u8) as i8 as i32;
+        let is_addr = (ext & 0x8000) != 0;
+        let reg = ((ext >> 12) & 0x7) as u8;
+        let long = (ext & 0x0800) != 0;
+        let rname = if is_addr {
+            dis_areg(reg, self.gnu)
+        } else {
+            dis_dreg(reg, self.gnu)
+        };
+        let sz = match (long, self.gnu) {
+            (true, true) => ".l",
+            (true, false) => ".L",
+            (false, true) => ".w",
+            (false, false) => ".W",
+        };
+        (disp, format!("{rname}{sz}"))
+    }
+
+    fn imm(&mut self, size: Size) -> String {
+        let v: i64 = match size {
+            Size::Byte => (self.word_u() & 0xFF) as i64,
+            Size::Word => self.word_s() as i64,
+            Size::Long => self.long() as i32 as i64,
+        };
+        dis_imm(v, self.gnu)
+    }
+
+    fn ea(&mut self, m: &AddressingMode, size: Size) -> String {
+        let gnu = self.gnu;
+        match m {
+            AddressingMode::DataRegister(r) => dis_dreg(*r, gnu),
+            AddressingMode::AddressRegister(r) => dis_areg(*r, gnu),
+            AddressingMode::AddressIndirect(r) => format!("({})", dis_areg(*r, gnu)),
+            AddressingMode::AddressPostIncrement(r) => format!("({})+", dis_areg(*r, gnu)),
+            AddressingMode::AddressPreDecrement(r) => format!("-({})", dis_areg(*r, gnu)),
+            AddressingMode::AddressDisplacement(r) => {
+                let d = self.word_s();
+                format!("{}({})", dis_hex_signed(d, gnu), dis_areg(*r, gnu))
+            }
+            AddressingMode::AddressIndex(r) => {
+                let (disp, idx) = self.brief_index();
+                format!(
+                    "{}({},{})",
+                    dis_hex_signed(disp, gnu),
+                    dis_areg(*r, gnu),
+                    idx
+                )
+            }
+            AddressingMode::AbsoluteShort => {
+                let a = self.word_s() as u32; // sign-extended to 32 bits
+                let body = if gnu {
+                    format!("0x{a:x}")
+                } else {
+                    format!("${:X}", a & 0xFFFF)
+                };
+                format!("{}{}", body, if gnu { ".w" } else { ".W" })
+            }
+            AddressingMode::AbsoluteLong => {
+                let a = self.long();
+                let body = if gnu {
+                    format!("0x{a:x}")
+                } else {
+                    format!("${a:06X}")
+                };
+                format!("{}{}", body, if gnu { ".l" } else { ".L" })
+            }
+            AddressingMode::PcDisplacement => {
+                let base = self.cur_addr();
+                let d = self.word_s();
+                let t = base.wrapping_add(d as u32);
+                if gnu {
+                    format!("0x{t:x}(%pc)")
+                } else {
+                    format!("${t:06X}(PC)")
+                }
+            }
+            AddressingMode::PcIndex => {
+                let base = self.cur_addr();
+                let (disp, idx) = self.brief_index();
+                let t = base.wrapping_add(disp as u32);
+                if gnu {
+                    format!("0x{t:x}(%pc,{idx})")
+                } else {
+                    format!("${t:06X}(PC,{idx})")
+                }
+            }
+            AddressingMode::Immediate => self.imm(size),
+        }
+    }
+
+    /// Branch target: the byte form carries the displacement in the opcode; a
+    /// zero byte selects the 16-bit form (displacement in the next word).
+    fn target(&mut self, byte_disp: i16) -> String {
+        let disp = if byte_disp != 0 {
+            byte_disp as i32
+        } else {
+            self.word_s()
+        };
+        let t = self.pc.wrapping_add(2).wrapping_add(disp as u32);
+        if self.gnu {
+            format!("0x{t:x}")
+        } else {
+            format!("${t:06X}")
+        }
+    }
+}
+
+impl Instruction {
+    /// Disassemble using the raw instruction words (`words[0]` = opcode) so
+    /// operand values are shown. `gnu` selects GNU/AT&T syntax over Motorola.
+    pub fn format_with_words(&self, pc: u32, words: &[u16], gnu: bool) -> String {
+        let mut d = DisAsm::new(words, pc, gnu);
+        match self {
+            Instruction::Data(x) => x.format(&mut d),
+            Instruction::Arithmetic(x) => x.format(&mut d),
+            Instruction::Bits(x) => x.format(&mut d),
+            Instruction::System(x) => x.format(&mut d),
+        }
+    }
+
+    /// Disassemble without extension words (registers/branches show correctly;
+    /// operands needing extension words render as 0).
+    pub fn format(&self, pc: u32, gnu: bool) -> String {
+        self.format_with_words(pc, &[], gnu)
+    }
+}
+
+impl DataInstruction {
+    fn format(&self, d: &mut DisAsm) -> String {
+        use DataInstruction::*;
+        let gnu = d.gnu;
+        match self {
+            Move { size, src, dst } => {
+                let s = d.ea(src, *size);
+                let t = d.ea(dst, *size);
+                dis_line(gnu, "MOVE", Some(*size), &[s, t])
+            }
+            MoveA { size, src, dst_reg } => {
+                let s = d.ea(src, *size);
+                dis_line(gnu, "MOVEA", Some(*size), &[s, dis_areg(*dst_reg, gnu)])
+            }
+            MoveQ { dst_reg, data } => dis_line(
+                gnu,
+                "MOVEQ",
+                None,
+                &[dis_imm(*data as i64, gnu), dis_dreg(*dst_reg, gnu)],
+            ),
+            Lea { src, dst_reg } => {
+                let s = d.ea(src, Size::Long);
+                dis_line(gnu, "LEA", None, &[s, dis_areg(*dst_reg, gnu)])
+            }
+            Pea { src } => {
+                let s = d.ea(src, Size::Long);
+                dis_line(gnu, "PEA", None, &[s])
+            }
+            Clr { size, dst } => {
+                let t = d.ea(dst, *size);
+                dis_line(gnu, "CLR", Some(*size), &[t])
+            }
+            Exg { rx, ry, mode } => {
+                let (a, b) = match mode {
+                    0x08 => (dis_dreg(*rx, gnu), dis_dreg(*ry, gnu)),
+                    0x09 => (dis_areg(*rx, gnu), dis_areg(*ry, gnu)),
+                    _ => (dis_dreg(*rx, gnu), dis_areg(*ry, gnu)),
+                };
+                dis_line(gnu, "EXG", None, &[a, b])
+            }
+            Movep {
+                size,
+                reg,
+                an,
+                direction,
+            } => {
+                let disp = d.word_s();
+                let dn = dis_dreg(*reg, gnu);
+                let ea = format!("{}({})", dis_hex_signed(disp, gnu), dis_areg(*an, gnu));
+                let ops = if *direction {
+                    vec![dn, ea]
+                } else {
+                    vec![ea, dn]
+                };
+                dis_line(gnu, "MOVEP", Some(*size), &ops)
+            }
+            Movem {
+                size,
+                direction,
+                mask,
+                ea,
+            } => {
+                // The register mask lives in the first extension word (decode
+                // always stores mask 0); consume it before the EA reads its
+                // own extension words. Fall back to the instruction's mask so
+                // callers without raw words still get a list.
+                let ext_mask = d.word_u() as u16;
+                let mask = if *mask != 0 { *mask } else { ext_mask };
+                let predec = matches!(ea, AddressingMode::AddressPreDecrement(_));
+                let list = dis_reglist(mask, predec, gnu);
+                let e = d.ea(ea, *size);
+                // direction=true is registers -> memory.
+                let ops = if *direction {
+                    vec![list, e]
+                } else {
+                    vec![e, list]
+                };
+                dis_line(gnu, "MOVEM", Some(*size), &ops)
+            }
+            Swap { reg } => dis_line(gnu, "SWAP", None, &[dis_dreg(*reg, gnu)]),
+            Ext { size, reg } => dis_line(gnu, "EXT", Some(*size), &[dis_dreg(*reg, gnu)]),
+        }
+    }
+}
+
+impl ArithmeticInstruction {
+    fn format(&self, d: &mut DisAsm) -> String {
+        use ArithmeticInstruction::*;
+        let gnu = d.gnu;
+        let bcd = |sr: u8, dr: u8, mem: bool| {
+            if mem {
+                vec![
+                    format!("-({})", dis_areg(sr, gnu)),
+                    format!("-({})", dis_areg(dr, gnu)),
+                ]
+            } else {
+                vec![dis_dreg(sr, gnu), dis_dreg(dr, gnu)]
+            }
+        };
+        match self {
+            Add { size, src, dst, .. } => {
+                let s = d.ea(src, *size);
+                let t = d.ea(dst, *size);
+                dis_line(gnu, "ADD", Some(*size), &[s, t])
+            }
+            Sub { size, src, dst, .. } => {
+                let s = d.ea(src, *size);
+                let t = d.ea(dst, *size);
+                dis_line(gnu, "SUB", Some(*size), &[s, t])
+            }
+            AddA { size, src, dst_reg } => {
+                let s = d.ea(src, *size);
+                dis_line(gnu, "ADDA", Some(*size), &[s, dis_areg(*dst_reg, gnu)])
+            }
+            SubA { size, src, dst_reg } => {
+                let s = d.ea(src, *size);
+                dis_line(gnu, "SUBA", Some(*size), &[s, dis_areg(*dst_reg, gnu)])
+            }
+            AddI { size, dst } => {
+                let imm = d.imm(*size);
+                let t = d.ea(dst, *size);
+                dis_line(gnu, "ADDI", Some(*size), &[imm, t])
+            }
+            SubI { size, dst } => {
+                let imm = d.imm(*size);
+                let t = d.ea(dst, *size);
+                dis_line(gnu, "SUBI", Some(*size), &[imm, t])
+            }
+            AddQ { size, dst, data } => {
+                let t = d.ea(dst, *size);
+                dis_line(gnu, "ADDQ", Some(*size), &[dis_imm(*data as i64, gnu), t])
+            }
+            SubQ { size, dst, data } => {
+                let t = d.ea(dst, *size);
+                dis_line(gnu, "SUBQ", Some(*size), &[dis_imm(*data as i64, gnu), t])
+            }
+            MulU { src, dst_reg } => {
+                let s = d.ea(src, Size::Word);
+                dis_line(gnu, "MULU", None, &[s, dis_dreg(*dst_reg, gnu)])
+            }
+            MulS { src, dst_reg } => {
+                let s = d.ea(src, Size::Word);
+                dis_line(gnu, "MULS", None, &[s, dis_dreg(*dst_reg, gnu)])
+            }
+            DivU { src, dst_reg } => {
+                let s = d.ea(src, Size::Word);
+                dis_line(gnu, "DIVU", None, &[s, dis_dreg(*dst_reg, gnu)])
+            }
+            DivS { src, dst_reg } => {
+                let s = d.ea(src, Size::Word);
+                dis_line(gnu, "DIVS", None, &[s, dis_dreg(*dst_reg, gnu)])
+            }
+            Neg { size, dst } => {
+                let t = d.ea(dst, *size);
+                dis_line(gnu, "NEG", Some(*size), &[t])
+            }
+            NegX { size, dst } => {
+                let t = d.ea(dst, *size);
+                dis_line(gnu, "NEGX", Some(*size), &[t])
+            }
+            Nbcd { dst } => {
+                let t = d.ea(dst, Size::Byte);
+                dis_line(gnu, "NBCD", None, &[t])
+            }
+            Abcd {
+                src_reg,
+                dst_reg,
+                memory_mode,
+            } => dis_line(gnu, "ABCD", None, &bcd(*src_reg, *dst_reg, *memory_mode)),
+            Sbcd {
+                src_reg,
+                dst_reg,
+                memory_mode,
+            } => dis_line(gnu, "SBCD", None, &bcd(*src_reg, *dst_reg, *memory_mode)),
+            AddX {
+                size,
+                src_reg,
+                dst_reg,
+                memory_mode,
+            } => dis_line(
+                gnu,
+                "ADDX",
+                Some(*size),
+                &bcd(*src_reg, *dst_reg, *memory_mode),
+            ),
+            SubX {
+                size,
+                src_reg,
+                dst_reg,
+                memory_mode,
+            } => dis_line(
+                gnu,
+                "SUBX",
+                Some(*size),
+                &bcd(*src_reg, *dst_reg, *memory_mode),
+            ),
+            Chk { src, dst_reg } => {
+                let s = d.ea(src, Size::Word);
+                dis_line(gnu, "CHK", None, &[s, dis_dreg(*dst_reg, gnu)])
+            }
+            Cmp { size, src, dst_reg } => {
+                let s = d.ea(src, *size);
+                dis_line(gnu, "CMP", Some(*size), &[s, dis_dreg(*dst_reg, gnu)])
+            }
+            CmpA { size, src, dst_reg } => {
+                let s = d.ea(src, *size);
+                dis_line(gnu, "CMPA", Some(*size), &[s, dis_areg(*dst_reg, gnu)])
+            }
+            CmpI { size, dst } => {
+                let imm = d.imm(*size);
+                let t = d.ea(dst, *size);
+                dis_line(gnu, "CMPI", Some(*size), &[imm, t])
+            }
+            CmpM { size, ax, ay } => dis_line(
+                gnu,
+                "CMPM",
+                Some(*size),
+                &[
+                    format!("({})+", dis_areg(*ay, gnu)),
+                    format!("({})+", dis_areg(*ax, gnu)),
+                ],
+            ),
+            Tst { size, dst } => {
+                let t = d.ea(dst, *size);
+                dis_line(gnu, "TST", Some(*size), &[t])
+            }
+        }
+    }
+}
+
+impl BitsInstruction {
+    fn format(&self, d: &mut DisAsm) -> String {
+        use BitsInstruction::*;
+        let gnu = d.gnu;
+        match self {
+            And { size, src, dst, .. } => {
+                let s = d.ea(src, *size);
+                let t = d.ea(dst, *size);
+                dis_line(gnu, "AND", Some(*size), &[s, t])
+            }
+            Or { size, src, dst, .. } => {
+                let s = d.ea(src, *size);
+                let t = d.ea(dst, *size);
+                dis_line(gnu, "OR", Some(*size), &[s, t])
+            }
+            AndI { size, dst } => {
+                let imm = d.imm(*size);
+                let t = d.ea(dst, *size);
+                dis_line(gnu, "ANDI", Some(*size), &[imm, t])
+            }
+            OrI { size, dst } => {
+                let imm = d.imm(*size);
+                let t = d.ea(dst, *size);
+                dis_line(gnu, "ORI", Some(*size), &[imm, t])
+            }
+            EorI { size, dst } => {
+                let imm = d.imm(*size);
+                let t = d.ea(dst, *size);
+                dis_line(gnu, "EORI", Some(*size), &[imm, t])
+            }
+            Eor { size, src_reg, dst } => {
+                let t = d.ea(dst, *size);
+                dis_line(gnu, "EOR", Some(*size), &[dis_dreg(*src_reg, gnu), t])
+            }
+            Not { size, dst } => {
+                let t = d.ea(dst, *size);
+                dis_line(gnu, "NOT", Some(*size), &[t])
+            }
+            Lsl { size, dst, count } => shift(d, "LSL", *size, dst, count),
+            Lsr { size, dst, count } => shift(d, "LSR", *size, dst, count),
+            Asl { size, dst, count } => shift(d, "ASL", *size, dst, count),
+            Asr { size, dst, count } => shift(d, "ASR", *size, dst, count),
+            Rol { size, dst, count } => shift(d, "ROL", *size, dst, count),
+            Ror { size, dst, count } => shift(d, "ROR", *size, dst, count),
+            Roxl { size, dst, count } => shift(d, "ROXL", *size, dst, count),
+            Roxr { size, dst, count } => shift(d, "ROXR", *size, dst, count),
+            AslM { dst } => {
+                let t = d.ea(dst, Size::Word);
+                dis_line(gnu, "ASL", None, &[t])
+            }
+            AsrM { dst } => {
+                let t = d.ea(dst, Size::Word);
+                dis_line(gnu, "ASR", None, &[t])
+            }
+            Btst { bit, dst } => bitop(d, "BTST", bit, dst),
+            Bset { bit, dst } => bitop(d, "BSET", bit, dst),
+            Bclr { bit, dst } => bitop(d, "BCLR", bit, dst),
+            Bchg { bit, dst } => bitop(d, "BCHG", bit, dst),
+            Tas { dst } => {
+                let t = d.ea(dst, Size::Byte);
+                dis_line(gnu, "TAS", None, &[t])
+            }
+        }
+    }
+}
+
+fn shift(
+    d: &mut DisAsm,
+    mnem: &str,
+    size: Size,
+    dst: &AddressingMode,
+    count: &ShiftCount,
+) -> String {
+    let gnu = d.gnu;
+    let c = match count {
+        ShiftCount::Immediate(n) => dis_imm(*n as i64, gnu),
+        ShiftCount::Register(r) => dis_dreg(*r, gnu),
+    };
+    let t = d.ea(dst, size);
+    dis_line(gnu, mnem, Some(size), &[c, t])
+}
+
+fn bitop(d: &mut DisAsm, mnem: &str, bit: &BitSource, dst: &AddressingMode) -> String {
+    let gnu = d.gnu;
+    // An immediate bit number is the first extension word.
+    let src = match bit {
+        BitSource::Immediate => dis_imm((d.word_u() & 0xFF) as i64, gnu),
+        BitSource::Register(r) => dis_dreg(*r, gnu),
+    };
+    let t = d.ea(dst, Size::Byte);
+    dis_line(gnu, mnem, None, &[src, t])
+}
+
+impl SystemInstruction {
+    fn format(&self, d: &mut DisAsm) -> String {
+        use SystemInstruction::*;
+        let gnu = d.gnu;
+        match self {
+            Bra { displacement } => {
+                let t = d.target(*displacement);
+                dis_line(gnu, "BRA", None, &[t])
+            }
+            Bsr { displacement } => {
+                let t = d.target(*displacement);
+                dis_line(gnu, "BSR", None, &[t])
+            }
+            Bcc {
+                condition,
+                displacement,
+            } => {
+                let t = d.target(*displacement);
+                dis_line(gnu, &format!("B{}", condition.mnemonic()), None, &[t])
+            }
+            Scc { condition, dst } => {
+                let t = d.ea(dst, Size::Byte);
+                dis_line(gnu, &format!("S{}", condition.mnemonic()), None, &[t])
+            }
+            DBcc { condition, reg } => {
+                let t = d.target(0);
+                dis_line(
+                    gnu,
+                    &format!("DB{}", condition.mnemonic()),
+                    None,
+                    &[dis_dreg(*reg, gnu), t],
+                )
+            }
+            Jmp { dst } => {
+                let t = d.ea(dst, Size::Long);
+                dis_line(gnu, "JMP", None, &[t])
+            }
+            Jsr { dst } => {
+                let t = d.ea(dst, Size::Long);
+                dis_line(gnu, "JSR", None, &[t])
+            }
+            Rts => dis_line(gnu, "RTS", None, &[]),
+            Rte => dis_line(gnu, "RTE", None, &[]),
+            Rtr => dis_line(gnu, "RTR", None, &[]),
+            Nop => dis_line(gnu, "NOP", None, &[]),
+            Reset => dis_line(gnu, "RESET", None, &[]),
+            Stop => {
+                let v = d.word_u();
+                dis_line(gnu, "STOP", None, &[dis_imm(v as i64, gnu)])
+            }
+            TrapV => dis_line(gnu, "TRAPV", None, &[]),
+            Illegal => dis_line(gnu, "ILLEGAL", None, &[]),
+            MoveUsp { reg, to_usp } => {
+                let an = dis_areg(*reg, gnu);
+                let usp = dis_special("USP", gnu);
+                let ops = if *to_usp {
+                    vec![an, usp]
+                } else {
+                    vec![usp, an]
+                };
+                dis_line(gnu, "MOVE", None, &ops)
+            }
+            Trap { vector } => dis_line(gnu, "TRAP", None, &[dis_imm(*vector as i64, gnu)]),
+            Link { reg } => {
+                let disp = d.word_s();
+                dis_line(
+                    gnu,
+                    "LINK",
+                    None,
+                    &[dis_areg(*reg, gnu), dis_imm(disp as i64, gnu)],
+                )
+            }
+            Unlk { reg } => dis_line(gnu, "UNLK", None, &[dis_areg(*reg, gnu)]),
+            MoveToSr { src } => {
+                let s = d.ea(src, Size::Word);
+                dis_line(gnu, "MOVE", None, &[s, dis_special("SR", gnu)])
+            }
+            MoveFromSr { dst } => {
+                let t = d.ea(dst, Size::Word);
+                dis_line(gnu, "MOVE", None, &[dis_special("SR", gnu), t])
+            }
+            MoveToCcr { src } => {
+                let s = d.ea(src, Size::Word);
+                dis_line(gnu, "MOVE", None, &[s, dis_special("CCR", gnu)])
+            }
+            AndiToCcr => {
+                let imm = d.imm(Size::Byte);
+                dis_line(gnu, "ANDI", None, &[imm, dis_special("CCR", gnu)])
+            }
+            AndiToSr => {
+                let imm = d.imm(Size::Word);
+                dis_line(gnu, "ANDI", None, &[imm, dis_special("SR", gnu)])
+            }
+            OriToCcr => {
+                let imm = d.imm(Size::Byte);
+                dis_line(gnu, "ORI", None, &[imm, dis_special("CCR", gnu)])
+            }
+            OriToSr => {
+                let imm = d.imm(Size::Word);
+                dis_line(gnu, "ORI", None, &[imm, dis_special("SR", gnu)])
+            }
+            EoriToCcr => {
+                let imm = d.imm(Size::Byte);
+                dis_line(gnu, "EORI", None, &[imm, dis_special("CCR", gnu)])
+            }
+            EoriToSr => {
+                let imm = d.imm(Size::Word);
+                dis_line(gnu, "EORI", None, &[imm, dis_special("SR", gnu)])
+            }
+            LineA { opcode } | LineF { opcode } | Unimplemented { opcode } => {
+                if gnu {
+                    format!(".short  0x{opcode:x}")
+                } else {
+                    format!("DC.W    ${opcode:04X}")
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_disassemble_motorola_and_gnu() {
+        let mv = Instruction::Data(DataInstruction::Move {
+            size: Size::Word,
+            src: AddressingMode::DataRegister(0),
+            dst: AddressingMode::AddressIndirect(1),
+        });
+        assert_eq!(mv.format(0x1000, false), "MOVE.W  D0,(A1)");
+        assert_eq!(mv.format(0x1000, true), "move.w  %d0,(%a1)");
+
+        let mq = Instruction::Data(DataInstruction::MoveQ {
+            dst_reg: 3,
+            data: 0x34,
+        });
+        assert_eq!(mq.format(0, false), "MOVEQ   #$34,D3");
+        assert_eq!(mq.format(0, true), "moveq   #0x34,%d3");
+
+        // BEQ: target = pc + 2 + disp = 0x1000 + 2 + 0x20 = 0x1022.
+        let beq = Instruction::System(SystemInstruction::Bcc {
+            condition: Condition::Equal,
+            displacement: 0x20,
+        });
+        assert_eq!(beq.format(0x1000, false), "BEQ     $001022");
+        assert_eq!(beq.format(0x1000, true), "beq     0x1022");
+
+        let rts = Instruction::System(SystemInstruction::Rts);
+        assert_eq!(rts.format(0, false), "RTS");
+        assert_eq!(rts.format(0, true), "rts");
+
+        // MOVEM.L D0-D2/A6,-(A7): direction=true is registers->memory. In
+        // predec order the mask bits run A7..D0, so D0-D2/A6 is 0xE002.
+        let movem = Instruction::Data(DataInstruction::Movem {
+            size: Size::Long,
+            direction: true,
+            mask: 0xE002,
+            ea: AddressingMode::AddressPreDecrement(7),
+        });
+        assert_eq!(movem.format(0, false), "MOVEM.L D0-D2/A6,-(A7)");
+
+        // Memory->registers with the mask taken from the extension word
+        // (decode always stores mask 0): MOVEM.W (A0)+,D0-D1.
+        let movem_load = Instruction::Data(DataInstruction::Movem {
+            size: Size::Word,
+            direction: false,
+            mask: 0,
+            ea: AddressingMode::AddressPostIncrement(0),
+        });
+        let words = [0x4C98, 0x0003, 0, 0, 0];
+        assert_eq!(
+            movem_load.format_with_words(0, &words, false),
+            "MOVEM.W (A0)+,D0-D1"
+        );
+    }
+
+    #[test]
+    fn test_disassemble_with_extension_words() {
+        // MOVE.W #$1234,$FF0000.L  — immediate word then absolute-long address.
+        let mv = Instruction::Data(DataInstruction::Move {
+            size: Size::Word,
+            src: AddressingMode::Immediate,
+            dst: AddressingMode::AbsoluteLong,
+        });
+        let words = [0x33FC, 0x1234, 0x00FF, 0x0000, 0];
+        assert_eq!(
+            mv.format_with_words(0, &words, false),
+            "MOVE.W  #$1234,$FF0000.L"
+        );
+        assert_eq!(
+            mv.format_with_words(0, &words, true),
+            "move.w  #0x1234,0xff0000.l"
+        );
+
+        // ADDI.L #$12345678,D0 — the long immediate precedes the (register) dst.
+        let addi = Instruction::Arithmetic(ArithmeticInstruction::AddI {
+            size: Size::Long,
+            dst: AddressingMode::DataRegister(0),
+        });
+        let words = [0x0680, 0x1234, 0x5678, 0, 0];
+        assert_eq!(
+            addi.format_with_words(0, &words, false),
+            "ADDI.L  #$12345678,D0"
+        );
+
+        // LEA $10(A5),A0 — displacement extension word.
+        let lea = Instruction::Data(DataInstruction::Lea {
+            src: AddressingMode::AddressDisplacement(5),
+            dst_reg: 0,
+        });
+        let words = [0x41ED, 0x0010, 0, 0, 0];
+        assert_eq!(
+            lea.format_with_words(0, &words, false),
+            "LEA     $10(A5),A0"
+        );
+
+        // Word-form BNE: byte displacement 0 pulls the 16-bit displacement from
+        // the next word (0x0100). Target = 0x1000 + 2 + 0x100 = 0x1102.
+        let bne = Instruction::System(SystemInstruction::Bcc {
+            condition: Condition::NotEqual,
+            displacement: 0,
+        });
+        let words = [0x6600, 0x0100, 0, 0, 0];
+        assert_eq!(
+            bne.format_with_words(0x1000, &words, false),
+            "BNE     $001102"
+        );
+    }
 
     #[test]
     fn test_size_bytes() {

@@ -640,11 +640,14 @@ impl GdbServer {
         };
 
         let mut addr_len_parts = addr_len_str.split(',');
-        let (addr_part, _len_part) =
-            match (addr_len_parts.next(), addr_len_parts.next(), addr_len_parts.next()) {
-                (Some(a), Some(l), None) => (a, l),
-                _ => return "E01".to_string(),
-            };
+        let (addr_part, _len_part) = match (
+            addr_len_parts.next(),
+            addr_len_parts.next(),
+            addr_len_parts.next(),
+        ) {
+            (Some(a), Some(l), None) => (a, l),
+            _ => return "E01".to_string(),
+        };
 
         let addr = match u32::from_str_radix(addr_part, 16) {
             Ok(a) => a,

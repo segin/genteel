@@ -286,12 +286,11 @@ impl Psg {
     }
 
     pub fn generate_sample(&mut self) -> i16 {
+        // See Ym2612::generate_sample: the band-limited read_samples integrator
+        // flatlines, so drain the ring but take the exact instantaneous level.
         let mut buf = [0i16; 1];
-        if self.blip.read_samples(&mut buf[..]) > 0 {
-            buf[0]
-        } else {
-            self.blip.read_instant()
-        }
+        self.blip.read_samples(&mut buf[..]);
+        self.blip.read_instant()
     }
 }
 

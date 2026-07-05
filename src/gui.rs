@@ -81,6 +81,9 @@ pub struct GuiState {
     pub integer_scaling: bool,
     pub force_red: bool,
     pub paused: bool,
+    /// Emit 68k disassembly in GNU/AT&T syntax instead of Motorola.
+    #[serde(default)]
+    pub gnu_syntax: bool,
     pub recent_roms: Vec<PathBuf>,
     pub auto_save_load: bool,
     pub scroll_plane_tab: PlaneTab,
@@ -102,6 +105,76 @@ pub struct GuiState {
     pub delete_state_requested: Option<u8>,
 }
 
+fn frame_duration_for_region(is_pal: bool) -> std::time::Duration {
+    let fps = if is_pal {
+        crate::audio::PAL_FPS
+    } else {
+        crate::audio::FPS
+    };
+    std::time::Duration::from_secs_f64(1.0 / fps as f64)
+}
+
+fn trim_pending_audio_to_limit(pending_audio: &mut Vec<i16>, max_samples: usize) {
+    if pending_audio.len() <= max_samples {
+        return;
+    }
+    let to_drop = ((pending_audio.len() - max_samples) + 1) & !1;
+    pending_audio.drain(..to_drop.min(pending_audio.len() & !1));
+}
+
+fn frames_due(
+    now: std::time::Instant,
+    last_frame_inst: std::time::Instant,
+    frame_duration: std::time::Duration,
+    max_frames: usize,
+) -> usize {
+    if now < last_frame_inst + frame_duration {
+        return 0;
+    }
+    let mut frames_to_run = 1usize;
+    while frames_to_run < max_frames
+        && now >= last_frame_inst + frame_duration.mul_f64((frames_to_run + 1) as f64)
+    {
+        frames_to_run += 1;
+    }
+    frames_to_run
+}
+
+fn max_pending_audio_samples(emulator: &Emulator) -> usize {
+    let bus = emulator.bus.borrow();
+    audio::samples_per_frame_for_rate_and_region(bus.sample_rate, bus.vdp.is_pal) * 2 * 8
+}
+
+fn flush_pending_audio_upload(
+    audio_buffer: &audio::SharedAudioBuffer,
+    pending_audio_upload: &mut Vec<i16>,
+) {
+    if pending_audio_upload.is_empty() {
+        return;
+    }
+    if let Ok(mut buf) = audio_buffer.try_lock() {
+        buf.push(pending_audio_upload);
+        pending_audio_upload.clear();
+    }
+}
+
+fn run_emulation_frames(
+    emulator: &mut Emulator,
+    input: &crate::input::FrameInput,
+    pending_audio_upload: &mut Vec<i16>,
+    frames_to_run: usize,
+) {
+    if frames_to_run == 0 {
+        return;
+    }
+    for _ in 0..frames_to_run {
+        emulator.step_frame(Some(input));
+        pending_audio_upload.extend_from_slice(&emulator.audio_buffer);
+        emulator.audio_buffer.clear();
+    }
+    trim_pending_audio_to_limit(pending_audio_upload, max_pending_audio_samples(emulator));
+}
+
 #[cfg(feature = "gui")]
 fn get_gui_config_path() -> PathBuf {
     if let Ok(path) = std::env::var("GENTEEL_GUI_CONFIG") {
@@ -111,7 +184,9 @@ fn get_gui_config_path() -> PathBuf {
     #[cfg(target_os = "windows")]
     {
         if let Ok(app_data) = std::env::var("APPDATA") {
-            return PathBuf::from(app_data).join("genteel").join("gui_config.json");
+            return PathBuf::from(app_data)
+                .join("genteel")
+                .join("gui_config.json");
         }
     }
 
@@ -130,11 +205,16 @@ fn get_gui_config_path() -> PathBuf {
     {
         if let Ok(config_home) = std::env::var("XDG_CONFIG_HOME") {
             if !config_home.is_empty() {
-                return PathBuf::from(config_home).join("genteel").join("gui_config.json");
+                return PathBuf::from(config_home)
+                    .join("genteel")
+                    .join("gui_config.json");
             }
         }
         if let Ok(home) = std::env::var("HOME") {
-            return PathBuf::from(home).join(".config").join("genteel").join("gui_config.json");
+            return PathBuf::from(home)
+                .join(".config")
+                .join("genteel")
+                .join("gui_config.json");
         }
     }
 
@@ -156,6 +236,7 @@ impl GuiState {
             integer_scaling: true,
             force_red: false,
             paused: false,
+            gnu_syntax: false,
             recent_roms: Vec::new(),
             auto_save_load: false,
             scroll_plane_tab: PlaneTab::PlaneA,
@@ -267,7 +348,8 @@ pub struct DebugInfo {
     pub m68k_sr: u16,
     pub m68k_usp: u32,
     pub m68k_ssp: u32,
-    pub m68k_disasm: [(u32, crate::cpu::instructions::Instruction); 10],
+    // (address, decoded instruction, raw words: opcode + up to 4 extension words)
+    pub m68k_disasm: [(u32, crate::cpu::instructions::Instruction, [u16; 5]); 10],
     pub z80_pc: u16,
     pub z80_a: u8,
     pub z80_f: u8,
@@ -681,6 +763,22 @@ impl Framework {
                     }
                 });
                 ui.menu_button("Debug", |ui| {
+                    let pause_label = if self.gui_state.paused {
+                        "▶ Resume"
+                    } else {
+                        "⏸ Pause"
+                    };
+                    if ui.button(pause_label).clicked() {
+                        self.gui_state.paused = !self.gui_state.paused;
+                        self.gui_state.save();
+                        ui.close_menu();
+                    }
+                    if ui.button("⏭ Single Step").clicked() {
+                        self.gui_state.single_step = true;
+                        self.gui_state.paused = true;
+                        ui.close_menu();
+                    }
+                    ui.separator();
                     let mut names: Vec<String> = self.gui_state.windows.keys().cloned().collect();
                     names.sort(); // Keep menu consistent
                     for name in names {
@@ -933,6 +1031,7 @@ impl Framework {
             egui::Window::new("M68k Status")
                 .open(&mut open)
                 .show(&self.egui_ctx, |ui| {
+                    ui.style_mut().override_text_style = Some(egui::TextStyle::Monospace);
                     Self::label_fmt(
                         &mut self.label_buffer,
                         ui,
@@ -1111,24 +1210,34 @@ impl Framework {
             egui::Window::new("Disassembly")
                 .open(&mut open)
                 .show(&self.egui_ctx, |ui| {
-                    ui.heading("M68k Disassembly");
+                    ui.horizontal(|ui| {
+                        ui.heading("M68k Disassembly");
+                        let mut gnu = self.gui_state.gnu_syntax;
+                        if ui.checkbox(&mut gnu, "GNU syntax").changed() {
+                            self.gui_state.gnu_syntax = gnu;
+                            self.gui_state.save();
+                        }
+                    });
+                    let gnu = self.gui_state.gnu_syntax;
                     egui::ScrollArea::vertical()
                         .id_source("m68k_disasm")
                         .show(ui, |ui| {
-                            for (addr, instr) in &debug_info.m68k_disasm {
+                            ui.style_mut().override_text_style = Some(egui::TextStyle::Monospace);
+                            for (addr, instr, words) in &debug_info.m68k_disasm {
+                                let text = instr.format_with_words(*addr, words, gnu);
                                 let is_current = *addr == debug_info.m68k_pc;
                                 if is_current {
                                     Self::colored_label_fmt(
                                         &mut self.label_buffer,
                                         ui,
                                         egui::Color32::YELLOW,
-                                        format_args!("-> {:06X}: {:?}", addr, instr),
+                                        format_args!("-> {:06X}: {}", addr, text),
                                     );
                                 } else {
                                     Self::label_fmt(
                                         &mut self.label_buffer,
                                         ui,
-                                        format_args!("   {:06X}: {:?}", addr, instr),
+                                        format_args!("   {:06X}: {}", addr, text),
                                     );
                                 }
                             }
@@ -1138,6 +1247,7 @@ impl Framework {
                     egui::ScrollArea::vertical()
                         .id_source("z80_disasm")
                         .show(ui, |ui| {
+                            ui.style_mut().override_text_style = Some(egui::TextStyle::Monospace);
                             for (addr, byte) in &debug_info.z80_disasm {
                                 let is_current = *addr == debug_info.z80_pc;
                                 if is_current {
@@ -1234,13 +1344,14 @@ impl Framework {
                                 let row_addr = tile_idx * 32 + y * 4;
                                 for x in 0..8 {
                                     let byte = vram[row_addr + (x / 2)];
-                                    let color_idx = if x % 2 == 0 { byte >> 4 } else { byte & 0x0F };
+                                    let color_idx =
+                                        if x % 2 == 0 { byte >> 4 } else { byte & 0x0F };
 
                                     // Use first palette (0-15)
-                                let color565 = debug_info.cram[color_idx as usize];
-                                let r = (((color565 >> 11) & 0x1F) << 3) as u8;
-                                let g = (((color565 >> 5) & 0x3F) << 2) as u8;
-                                let b = ((color565 & 0x1F) << 3) as u8;
+                                    let color565 = debug_info.cram[color_idx as usize];
+                                    let r = (((color565 >> 11) & 0x1F) << 3) as u8;
+                                    let g = (((color565 >> 5) & 0x3F) << 2) as u8;
+                                    let b = ((color565 & 0x1F) << 3) as u8;
 
                                     let pixel_idx = (tile_y + y) * 128 + (tile_x + x);
                                     image.pixels[pixel_idx] = egui::Color32::from_rgb(r, g, b);
@@ -1250,9 +1361,11 @@ impl Framework {
                     }
 
                     let texture = self.tile_texture.get_or_insert_with(|| {
+                        // Use a 1x1 placeholder, never a 0x0 image: a zero
+                        // dimension makes wgpu panic on texture creation.
                         ui.ctx().load_texture(
                             "tile_viewer",
-                            egui::ColorImage::default(),
+                            egui::ColorImage::new([1, 1], egui::Color32::TRANSPARENT),
                             Default::default(),
                         )
                     });
@@ -1289,64 +1402,64 @@ impl Framework {
                         };
 
                         egui::ScrollArea::vertical().show(ui, |ui| {
-                        egui::Grid::new("sprite_grid").striped(true).show(ui, |ui| {
-                            ui.label("Idx");
-                            ui.label("Pos");
-                            ui.label("Size");
-                            ui.label("Tile");
-                            ui.label("Pal");
-                            ui.label("Pri");
-                            ui.label("Flip");
-                            ui.label("Link");
-                            ui.end_row();
-
-                            for attr in iter {
-                                Self::label_fmt(
-                                    &mut self.label_buffer,
-                                    ui,
-                                    format_args!("{}", attr.index),
-                                );
-                                Self::label_fmt(
-                                    &mut self.label_buffer,
-                                    ui,
-                                    format_args!("{},{}", attr.h_pos, attr.v_pos),
-                                );
-                                Self::label_fmt(
-                                    &mut self.label_buffer,
-                                    ui,
-                                    format_args!("{}x{}", attr.h_size, attr.v_size),
-                                );
-                                Self::label_fmt(
-                                    &mut self.label_buffer,
-                                    ui,
-                                    format_args!("{:03X}", attr.base_tile),
-                                );
-                                Self::label_fmt(
-                                    &mut self.label_buffer,
-                                    ui,
-                                    format_args!("{}", attr.palette),
-                                );
-                                ui.label(if attr.priority { "H" } else { "L" });
-                                Self::label_fmt(
-                                    &mut self.label_buffer,
-                                    ui,
-                                    format_args!(
-                                        "{}{}",
-                                        if attr.h_flip { "H" } else { "-" },
-                                        if attr.v_flip { "V" } else { "-" }
-                                    ),
-                                );
-                                Self::label_fmt(
-                                    &mut self.label_buffer,
-                                    ui,
-                                    format_args!("{}", attr.link),
-                                );
+                            egui::Grid::new("sprite_grid").striped(true).show(ui, |ui| {
+                                ui.label("Idx");
+                                ui.label("Pos");
+                                ui.label("Size");
+                                ui.label("Tile");
+                                ui.label("Pal");
+                                ui.label("Pri");
+                                ui.label("Flip");
+                                ui.label("Link");
                                 ui.end_row();
-                            }
+
+                                for attr in iter {
+                                    Self::label_fmt(
+                                        &mut self.label_buffer,
+                                        ui,
+                                        format_args!("{}", attr.index),
+                                    );
+                                    Self::label_fmt(
+                                        &mut self.label_buffer,
+                                        ui,
+                                        format_args!("{},{}", attr.h_pos, attr.v_pos),
+                                    );
+                                    Self::label_fmt(
+                                        &mut self.label_buffer,
+                                        ui,
+                                        format_args!("{}x{}", attr.h_size, attr.v_size),
+                                    );
+                                    Self::label_fmt(
+                                        &mut self.label_buffer,
+                                        ui,
+                                        format_args!("{:03X}", attr.base_tile),
+                                    );
+                                    Self::label_fmt(
+                                        &mut self.label_buffer,
+                                        ui,
+                                        format_args!("{}", attr.palette),
+                                    );
+                                    ui.label(if attr.priority { "H" } else { "L" });
+                                    Self::label_fmt(
+                                        &mut self.label_buffer,
+                                        ui,
+                                        format_args!(
+                                            "{}{}",
+                                            if attr.h_flip { "H" } else { "-" },
+                                            if attr.v_flip { "V" } else { "-" }
+                                        ),
+                                    );
+                                    Self::label_fmt(
+                                        &mut self.label_buffer,
+                                        ui,
+                                        format_args!("{}", attr.link),
+                                    );
+                                    ui.end_row();
+                                }
+                            });
                         });
-                    });
-                }
-            });
+                    }
+                });
             if !open {
                 self.gui_state.set_window_open("Sprite Viewer", false);
             }
@@ -1426,8 +1539,11 @@ impl Framework {
                                         for px in 0..8 {
                                             let h_idx = if h_flip { 7 - px } else { px };
                                             let byte = vram[row_addr + h_idx / 2];
-                                            let color_idx =
-                                                if h_idx % 2 == 0 { byte >> 4 } else { byte & 0x0F };
+                                            let color_idx = if h_idx % 2 == 0 {
+                                                byte >> 4
+                                            } else {
+                                                byte & 0x0F
+                                            };
 
                                             let color565 =
                                                 debug_info.cram[palette * 16 + color_idx as usize];
@@ -1444,10 +1560,19 @@ impl Framework {
                                 }
                             }
                         }
+                        // A zero-sized image (VRAM not captured yet, or a 0x0
+                        // plane) would create a 0-width GPU texture and panic
+                        // wgpu ("Dimension X is zero"). Skip until real data.
+                        if image_arc.size[0] == 0 || image_arc.size[1] == 0 {
+                            ui.label(
+                                "Plane data unavailable — resume the emulator with a ROM loaded.",
+                            );
+                            return;
+                        }
                         let texture = texture_opt.get_or_insert_with(|| {
                             ui.ctx().load_texture(
                                 id,
-                                egui::ColorImage::default(),
+                                egui::ColorImage::new([1, 1], egui::Color32::TRANSPARENT),
                                 Default::default(),
                             )
                         });
@@ -1506,7 +1631,9 @@ impl Framework {
                                                 let addr = row * 16;
                                                 l_buffer.clear();
                                                 let _ = write!(&mut l_buffer, "{:04X}:", addr);
-                                                ui.label(egui::RichText::new(&l_buffer).monospace());
+                                                ui.label(
+                                                    egui::RichText::new(&l_buffer).monospace(),
+                                                );
 
                                                 l_buffer.clear();
                                                 for i in 0..16 {
@@ -1515,7 +1642,9 @@ impl Framework {
                                                     );
                                                     l_buffer.push(' ');
                                                 }
-                                                ui.label(egui::RichText::new(&l_buffer).monospace());
+                                                ui.label(
+                                                    egui::RichText::new(&l_buffer).monospace(),
+                                                );
                                                 ui.end_row();
                                             }
                                         });
@@ -1601,14 +1730,20 @@ impl Framework {
                                                 let addr = row * 16;
                                                 l_buffer.clear();
                                                 let _ = write!(&mut l_buffer, "{:04X}:", addr);
-                                                ui.label(egui::RichText::new(&l_buffer).monospace());
+                                                ui.label(
+                                                    egui::RichText::new(&l_buffer).monospace(),
+                                                );
 
                                                 l_buffer.clear();
                                                 for i in 0..16 {
-                                                    l_buffer.push_str(HEX_LOOKUP[wram[addr + i] as usize]);
+                                                    l_buffer.push_str(
+                                                        HEX_LOOKUP[wram[addr + i] as usize],
+                                                    );
                                                     l_buffer.push(' ');
                                                 }
-                                                ui.label(egui::RichText::new(&l_buffer).monospace());
+                                                ui.label(
+                                                    egui::RichText::new(&l_buffer).monospace(),
+                                                );
                                                 ui.end_row();
                                             }
                                         });
@@ -1631,7 +1766,9 @@ impl Framework {
                                                 let addr = row * 16;
                                                 l_buffer.clear();
                                                 let _ = write!(&mut l_buffer, "{:04X}:", addr);
-                                                ui.label(egui::RichText::new(&l_buffer).monospace());
+                                                ui.label(
+                                                    egui::RichText::new(&l_buffer).monospace(),
+                                                );
 
                                                 l_buffer.clear();
                                                 for i in 0..16 {
@@ -1640,7 +1777,9 @@ impl Framework {
                                                     );
                                                     l_buffer.push(' ');
                                                 }
-                                                ui.label(egui::RichText::new(&l_buffer).monospace());
+                                                ui.label(
+                                                    egui::RichText::new(&l_buffer).monospace(),
+                                                );
                                                 ui.end_row();
                                             }
                                         });
@@ -2004,12 +2143,18 @@ fn collect_debug_info(
         crate::cpu::instructions::Instruction::System(
             crate::cpu::instructions::SystemInstruction::Unimplemented { opcode: 0 },
         ),
+        [0u16; 5],
     ); 10];
     let mut addr = emulator.cpu.pc;
     for item in &mut m68k_disasm {
         let opcode = bus.read_word(addr);
         let instr = crate::cpu::decode(opcode);
-        *item = (addr, instr);
+        let len = instr.length_words().min(5);
+        let mut words = [0u16; 5];
+        for (i, w) in words.iter_mut().enumerate().take(len as usize) {
+            *w = bus.read_word(addr + (i as u32) * 2);
+        }
+        *item = (addr, instr, words);
         addr += instr.length_words() * 2;
     }
 
@@ -2235,7 +2380,7 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
     let mut last_frame_inst = std::time::Instant::now();
     let mut fps_timer = std::time::Instant::now();
     let mut fps_count = 0;
-    let frame_duration = std::time::Duration::from_nanos(16_666_667); // 60.0 fps
+    let mut pending_audio_upload = Vec::new();
     println!("Starting event loop...");
     event_loop
         .run(move |event, target| {
@@ -2351,21 +2496,19 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                                 framework.gui_state.delete_state_requested = None;
                             }
 
-                            // Sync settings from GUI
+                            // Sync settings from GUI. single_step is NOT
+                            // consumed here: frames only run in AboutToWait,
+                            // and consuming the flag on an OS-triggered redraw
+                            // would swallow the pending step.
                             emulator.input_mapping = framework.gui_state.input_mapping;
                             let force_red = framework.gui_state.force_red;
                             emulator.paused = framework.gui_state.paused;
-                            emulator.single_step = framework.gui_state.single_step;
-                            framework.gui_state.single_step = false; // Reset GUI state
 
                             // Poll GDB (can override GUI state)
                             emulator.poll_gdb();
 
                             // Sync emulator state back to GUI
                             framework.gui_state.paused = emulator.paused;
-
-                            frame_count += 1;
-                            fps_count += 1;
                             // Update FPS in title bar every second
                             if fps_timer.elapsed() >= std::time::Duration::from_secs(1) {
                                 window.set_title(&format!(
@@ -2379,13 +2522,6 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                             if emulator.debug && frame_count % 60 == 1 {
                                 emulator.log_debug(frame_count);
                             }
-                            // Run one frame of emulation
-                            emulator.step_frame(Some(&input));
-                            // Process audio
-                            if let Ok(mut buf) = audio_buffer.lock() {
-                                buf.push(&emulator.audio_buffer);
-                            }
-                            emulator.audio_buffer.clear();
 
                             // Collect debug info and render
                             let debug_info = collect_debug_info(
@@ -2418,10 +2554,39 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                 }
                 Event::AboutToWait => {
                     let now = std::time::Instant::now();
+                    let frame_duration =
+                        frame_duration_for_region(emulator.bus.borrow().vdp.is_pal);
                     let next_frame = last_frame_inst + frame_duration;
                     if now >= next_frame {
-                        last_frame_inst = now;
+                        emulator.input_mapping = framework.gui_state.input_mapping;
+                        emulator.paused = framework.gui_state.paused;
+                        emulator.single_step = framework.gui_state.single_step;
+                        framework.gui_state.single_step = false;
+                        emulator.poll_gdb();
+                        framework.gui_state.paused = emulator.paused;
+
+                        let frames_to_run = frames_due(now, last_frame_inst, frame_duration, 4);
+
+                        run_emulation_frames(
+                            &mut emulator,
+                            &input,
+                            &mut pending_audio_upload,
+                            frames_to_run,
+                        );
+                        flush_pending_audio_upload(&audio_buffer, &mut pending_audio_upload);
+                        last_frame_inst += frame_duration.mul_f64(frames_to_run as f64);
+                        // A stall longer than the catch-up budget (suspend,
+                        // blocking window drag, sustained slowdown) must not
+                        // be replayed at fast-forward speed: drop the backlog
+                        // and resynchronize to wall-clock.
+                        if now.duration_since(last_frame_inst) > frame_duration.mul_f64(4.0) {
+                            last_frame_inst = now;
+                        }
+                        frame_count += frames_to_run as u64;
+                        fps_count += frames_to_run as u64;
                         window.request_redraw();
+                    } else {
+                        flush_pending_audio_upload(&audio_buffer, &mut pending_audio_upload);
                     }
                     target.set_control_flow(winit::event_loop::ControlFlow::Poll);
                 }
@@ -2434,6 +2599,34 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_frame_duration_for_region_matches_video_rate() {
+        let ntsc = frame_duration_for_region(false);
+        let pal = frame_duration_for_region(true);
+
+        assert!(ntsc < pal);
+        assert_eq!(ntsc, std::time::Duration::from_secs_f64(1.0 / 60.0));
+        assert_eq!(pal, std::time::Duration::from_secs_f64(1.0 / 50.0));
+    }
+
+    #[test]
+    fn test_trim_pending_audio_to_limit_drops_whole_stereo_frames() {
+        let mut pending = vec![1, 2, 3, 4, 5, 6];
+        trim_pending_audio_to_limit(&mut pending, 4);
+        assert_eq!(pending, vec![3, 4, 5, 6]);
+    }
+
+    #[test]
+    fn test_frames_due_is_bounded_and_zero_before_deadline() {
+        let start = std::time::Instant::now();
+        let frame = std::time::Duration::from_secs_f64(1.0 / 60.0);
+
+        assert_eq!(frames_due(start, start, frame, 4), 0);
+        assert_eq!(frames_due(start + frame, start, frame, 4), 1);
+        assert_eq!(frames_due(start + frame.mul_f64(3.2), start, frame, 4), 3);
+        assert_eq!(frames_due(start + frame.mul_f64(10.0), start, frame, 4), 4);
+    }
 
     #[cfg(feature = "gilrs")]
     #[test]

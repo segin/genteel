@@ -121,8 +121,15 @@ impl BlipBuf {
         let sample_idx = time_in_samples.floor() as usize;
         let fract = time_in_samples - sample_idx as f64;
 
+        // Always track the DC level (sum of every delta) so `read_instant`
+        // stays exact even when the band-limited step below is skipped. Doing
+        // this only when the step fit meant the accumulator lost dropped deltas
+        // and drifted off to the i16 rails.
+        self.accumulator += delta;
+
         if sample_idx + KERNEL_SIZE >= self.buffer.len() {
-            // Out of bounds (producer ran too far ahead of the consumer)
+            // Out of bounds (producer ran too far ahead of the consumer): the
+            // band-limited step can't be placed, but the DC level is preserved.
             return;
         }
 
@@ -134,8 +141,6 @@ impl BlipBuf {
             self.buffer[idx] += (delta * kernel_val) >> 15;
         }
 
-        // Update DC accumulator for integration
-        self.accumulator += delta;
         self.clock_ptr = time_in_samples;
     }
 

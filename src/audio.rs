@@ -4,9 +4,9 @@
 //! Uses a ring buffer to transfer samples from emulation thread to audio callback.
 
 #[cfg(feature = "gui")]
-use cpal::traits::{DeviceTrait, HostTrait};
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 #[cfg(feature = "gui")]
-use rodio::Source;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// Sample rate for audio output (Native Genesis FM rate: 53693175 / 7 / 144 = ~53267)
@@ -19,58 +19,10 @@ pub const PAL_MCLK: u32 = 53203424;
 
 /// Target frames per second
 pub const FPS: u32 = 60;
+pub const PAL_FPS: u32 = 50;
 
 /// Audio buffer size (in stereo sample pairs)
 pub const BUFFER_SIZE: usize = 512;
-
-/// Source for rodio that pulls from the emulator's ring buffer
-#[cfg(feature = "gui")]
-struct EmulatorSource {
-    buffer: SharedAudioBuffer,
-    sample_rate: u32,
-    staging: Vec<f32>,
-    staging_index: usize,
-}
-
-#[cfg(feature = "gui")]
-impl Iterator for EmulatorSource {
-    type Item = f32;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.staging_index >= self.staging.len() {
-            self.staging.resize(BUFFER_SIZE * 2, 0.0);
-            if let Ok(mut buf) = self.buffer.lock() {
-                buf.pop_f32(&mut self.staging);
-            } else {
-                self.staging.fill(0.0);
-            }
-            self.staging_index = 0;
-        }
-
-        let sample = self.staging[self.staging_index];
-        self.staging_index += 1;
-        Some(sample)
-    }
-}
-
-#[cfg(feature = "gui")]
-impl Source for EmulatorSource {
-    fn current_frame_len(&self) -> Option<usize> {
-        None // Unknown length
-    }
-
-    fn channels(&self) -> u16 {
-        2 // Stereo
-    }
-
-    fn sample_rate(&self) -> u32 {
-        self.sample_rate
-    }
-
-    fn total_duration(&self) -> Option<std::time::Duration> {
-        None
-    }
-}
 
 /// Ring buffer for transferring audio samples between threads
 #[derive(Debug)]
@@ -86,6 +38,15 @@ pub struct AudioBuffer {
 }
 
 impl AudioBuffer {
+    fn discard_oldest(&mut self, mut count: usize) {
+        count = count.min(self.available);
+        if count == 0 {
+            return;
+        }
+        self.read_pos = (self.read_pos + count) % self.buffer.len();
+        self.available -= count;
+    }
+
     /// Create a new audio buffer
     pub fn new(capacity: usize) -> Self {
         Self {
@@ -113,8 +74,7 @@ impl AudioBuffer {
             .len()
             .saturating_sub(capacity.saturating_sub(self.available));
         if overflow > 0 {
-            self.read_pos = (self.read_pos + overflow) % capacity;
-            self.available -= overflow;
+            self.discard_oldest(overflow);
         }
 
         let samples_to_write = samples.len();
@@ -200,68 +160,289 @@ pub fn create_audio_buffer() -> SharedAudioBuffer {
 /// Audio output stream wrapper
 #[cfg(feature = "gui")]
 pub struct AudioOutput {
-    _stream: rodio::OutputStream,
-    _handle: rodio::OutputStreamHandle,
-    _sink: rodio::Sink,
+    _stream: cpal::Stream,
     pub sample_rate: u32,
 }
 
 #[cfg(feature = "gui")]
 impl AudioOutput {
-    /// Create a new audio output using rodio
+    fn pack_stereo(left: i16, right: i16) -> u32 {
+        ((left as u16 as u32) << 16) | right as u16 as u32
+    }
+
+    fn unpack_stereo(packed: u32) -> (i16, i16) {
+        (((packed >> 16) as u16) as i16, (packed as u16) as i16)
+    }
+
+    fn decay_toward_zero(v: i16) -> i16 {
+        if v == 0 {
+            return 0;
+        }
+        let stepped = v - v / 32;
+        if stepped == v {
+            v - v.signum()
+        } else {
+            stepped
+        }
+    }
+
+    /// Sample to emit when the producer has no data. Holding the last sample
+    /// avoids a click on a brief underrun, but decaying the held value keeps a
+    /// stopped producer from parking a constant DC level on the output.
+    fn held_sample_decayed(last_sample: &AtomicU32) -> (i16, i16) {
+        let (left, right) = Self::unpack_stereo(last_sample.load(Ordering::Relaxed));
+        last_sample.store(
+            Self::pack_stereo(
+                Self::decay_toward_zero(left),
+                Self::decay_toward_zero(right),
+            ),
+            Ordering::Relaxed,
+        );
+        (left, right)
+    }
+
+    fn next_stereo_sample(buf: &mut AudioBuffer) -> Option<(i16, i16)> {
+        if buf.available < 2 {
+            if buf.available == 1 {
+                buf.discard_oldest(1);
+            }
+            return None;
+        }
+
+        let left = buf.buffer[buf.read_pos];
+        buf.read_pos = (buf.read_pos + 1) % buf.buffer.len();
+        buf.available -= 1;
+
+        let right = buf.buffer[buf.read_pos];
+        buf.read_pos = (buf.read_pos + 1) % buf.buffer.len();
+        buf.available -= 1;
+
+        Some((left, right))
+    }
+
+    fn write_output_f32(
+        data: &mut [f32],
+        channels: usize,
+        buffer: &SharedAudioBuffer,
+        last_sample: &AtomicU32,
+    ) {
+        if channels == 0 {
+            /* chunks_mut(0) panics; a device reporting no output channels
+             * gets silence by doing nothing. */
+            return;
+        }
+        let mut guard = buffer.try_lock().ok();
+        for frame in data.chunks_mut(channels) {
+            let (left, right) = if let Some(buf) = guard.as_mut() {
+                if let Some((left, right)) = Self::next_stereo_sample(buf) {
+                    last_sample.store(Self::pack_stereo(left, right), Ordering::Relaxed);
+                    (left, right)
+                } else {
+                    Self::held_sample_decayed(last_sample)
+                }
+            } else {
+                Self::held_sample_decayed(last_sample)
+            };
+            match channels {
+                0 => {}
+                1 => {
+                    frame[0] = ((left as i32 + right as i32) as f32 / 2.0) / 32768.0;
+                }
+                _ => {
+                    frame[0] = left as f32 / 32768.0;
+                    frame[1] = right as f32 / 32768.0;
+                    for sample in &mut frame[2..] {
+                        *sample = 0.0;
+                    }
+                }
+            }
+        }
+    }
+
+    fn write_output_i16(
+        data: &mut [i16],
+        channels: usize,
+        buffer: &SharedAudioBuffer,
+        last_sample: &AtomicU32,
+    ) {
+        if channels == 0 {
+            /* chunks_mut(0) panics; a device reporting no output channels
+             * gets silence by doing nothing. */
+            return;
+        }
+        let mut guard = buffer.try_lock().ok();
+        for frame in data.chunks_mut(channels) {
+            let (left, right) = if let Some(buf) = guard.as_mut() {
+                if let Some((left, right)) = Self::next_stereo_sample(buf) {
+                    last_sample.store(Self::pack_stereo(left, right), Ordering::Relaxed);
+                    (left, right)
+                } else {
+                    Self::held_sample_decayed(last_sample)
+                }
+            } else {
+                Self::held_sample_decayed(last_sample)
+            };
+            match channels {
+                0 => {}
+                1 => {
+                    frame[0] = ((left as i32 + right as i32) / 2) as i16;
+                }
+                _ => {
+                    frame[0] = left;
+                    frame[1] = right;
+                    for sample in &mut frame[2..] {
+                        *sample = 0;
+                    }
+                }
+            }
+        }
+    }
+
+    fn write_output_u16(
+        data: &mut [u16],
+        channels: usize,
+        buffer: &SharedAudioBuffer,
+        last_sample: &AtomicU32,
+    ) {
+        if channels == 0 {
+            /* chunks_mut(0) panics; a device reporting no output channels
+             * gets silence by doing nothing. */
+            return;
+        }
+        let mut guard = buffer.try_lock().ok();
+        for frame in data.chunks_mut(channels) {
+            let (left, right) = if let Some(buf) = guard.as_mut() {
+                if let Some((left, right)) = Self::next_stereo_sample(buf) {
+                    last_sample.store(Self::pack_stereo(left, right), Ordering::Relaxed);
+                    (left, right)
+                } else {
+                    Self::held_sample_decayed(last_sample)
+                }
+            } else {
+                Self::held_sample_decayed(last_sample)
+            };
+            let left_u = (left as i32 + 32768) as u16;
+            let right_u = (right as i32 + 32768) as u16;
+            match channels {
+                0 => {}
+                1 => {
+                    frame[0] = (((left as i32 + right as i32) / 2) + 32768) as u16;
+                }
+                _ => {
+                    frame[0] = left_u;
+                    frame[1] = right_u;
+                    for sample in &mut frame[2..] {
+                        *sample = u16::MAX / 2;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Pick a stream config this code can actually render to (F32/I16/U16
+    /// with at least one channel), preferring the device default.
+    fn usable_config(device: &cpal::Device) -> Option<cpal::SupportedStreamConfig> {
+        let renderable = |config: &cpal::SupportedStreamConfig| {
+            config.channels() > 0
+                && matches!(
+                    config.sample_format(),
+                    cpal::SampleFormat::F32 | cpal::SampleFormat::I16 | cpal::SampleFormat::U16
+                )
+        };
+        if let Ok(config) = device.default_output_config() {
+            if renderable(&config) {
+                return Some(config);
+            }
+        }
+        // The default format isn't one we render; look for any supported
+        // range with a renderable format instead of erroring out.
+        if let Ok(ranges) = device.supported_output_configs() {
+            for range in ranges {
+                let config = range.with_max_sample_rate();
+                if renderable(&config) {
+                    return Some(config);
+                }
+            }
+        }
+        None
+    }
+
+    /// Create a new audio output using cpal directly
     pub fn new(buffer: SharedAudioBuffer) -> Result<Self, String> {
         let host = cpal::default_host();
-
-        let mut stream_and_rate = None;
+        let mut selected = None;
 
         if let Some(device) = host.default_output_device() {
-            if let Ok(config) = device.default_output_config() {
-                if let Ok((stream, handle)) =
-                    rodio::OutputStream::try_from_device_config(&device, config.clone())
-                {
-                    stream_and_rate = Some((stream, handle, config.sample_rate().0));
-                }
+            if let Some(config) = Self::usable_config(&device) {
+                selected = Some((device, config));
             }
         }
 
-        if stream_and_rate.is_none() {
-            if let Ok(devices) = host.output_devices() {
-                for device in devices {
-                    let Ok(config) = device.default_output_config() else {
-                        continue;
-                    };
-                    let Ok((stream, handle)) =
-                        rodio::OutputStream::try_from_device_config(&device, config.clone())
-                    else {
-                        continue;
-                    };
-                    stream_and_rate = Some((stream, handle, config.sample_rate().0));
-                    break;
-                }
+        if selected.is_none() {
+            if let Ok(mut devices) = host.output_devices() {
+                selected = devices
+                    .find_map(|device| Self::usable_config(&device).map(|config| (device, config)));
             }
         }
 
-        let (stream, handle, sample_rate) = stream_and_rate
-            .ok_or_else(|| "Failed to open audio output on any available device".to_string())?;
+        let (device, supported_config) =
+            selected.ok_or_else(|| "Failed to locate a usable audio output device".to_string())?;
+        let sample_rate = supported_config.sample_rate().0;
+        let channels = supported_config.channels() as usize;
+        let sample_format = supported_config.sample_format();
+        let stream_config: cpal::StreamConfig = supported_config.into();
+        let err_fn = |err| eprintln!("Audio stream error: {}", err);
+        let last_sample = Arc::new(AtomicU32::new(Self::pack_stereo(0, 0)));
 
-        let sink = rodio::Sink::try_new(&handle)
-            .map_err(|e| format!("Failed to create audio sink: {}", e))?;
+        let stream = match sample_format {
+            cpal::SampleFormat::F32 => {
+                let buffer = buffer.clone();
+                let last_sample = last_sample.clone();
+                device.build_output_stream(
+                    &stream_config,
+                    move |data: &mut [f32], _| {
+                        Self::write_output_f32(data, channels, &buffer, &last_sample)
+                    },
+                    err_fn,
+                    None,
+                )
+            }
+            cpal::SampleFormat::I16 => {
+                let buffer = buffer.clone();
+                let last_sample = last_sample.clone();
+                device.build_output_stream(
+                    &stream_config,
+                    move |data: &mut [i16], _| {
+                        Self::write_output_i16(data, channels, &buffer, &last_sample)
+                    },
+                    err_fn,
+                    None,
+                )
+            }
+            cpal::SampleFormat::U16 => {
+                let buffer = buffer.clone();
+                let last_sample = last_sample.clone();
+                device.build_output_stream(
+                    &stream_config,
+                    move |data: &mut [u16], _| {
+                        Self::write_output_u16(data, channels, &buffer, &last_sample)
+                    },
+                    err_fn,
+                    None,
+                )
+            }
+            other => {
+                return Err(format!("Unsupported audio sample format: {:?}", other));
+            }
+        }
+        .map_err(|e| format!("Failed to build audio output stream: {}", e))?;
 
-        let source = EmulatorSource {
-            buffer,
-            sample_rate,
-            staging: Vec::new(),
-            staging_index: 0,
-        };
-
-        // Use rodio's automatic resampling and channel mixing
-        sink.append(source);
-        sink.play();
+        stream
+            .play()
+            .map_err(|e| format!("Failed to start audio output stream: {}", e))?;
 
         Ok(Self {
             _stream: stream,
-            _handle: handle,
-            _sink: sink,
             sample_rate,
         })
     }
@@ -270,17 +451,78 @@ impl AudioOutput {
 /// Calculate samples needed per frame
 /// Genesis runs at ~60fps NTSC, so samples_per_frame = sample_rate / 60
 pub fn samples_per_frame() -> usize {
-    (SAMPLE_RATE as f32 / 60.0).ceil() as usize
+    samples_per_frame_for_rate_and_region(SAMPLE_RATE, false)
 }
 
 pub fn samples_per_frame_for_rate(sample_rate: u32) -> usize {
-    (sample_rate as f32 / 60.0).ceil() as usize
+    samples_per_frame_for_rate_and_region(sample_rate, false)
+}
+
+pub fn samples_per_frame_for_rate_and_region(sample_rate: u32, is_pal: bool) -> usize {
+    let fps = if is_pal { PAL_FPS } else { FPS };
+    (sample_rate as f32 / fps as f32).ceil() as usize
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use proptest::prelude::*;
+
+    #[test]
+    fn test_pack_unpack_stereo_round_trip() {
+        #[cfg(feature = "gui")]
+        {
+            let packed = AudioOutput::pack_stereo(-1234, 5678);
+            assert_eq!(AudioOutput::unpack_stereo(packed), (-1234, 5678));
+        }
+    }
+
+    #[test]
+    fn test_audio_callback_reuses_last_sample_on_stereo_underrun() {
+        #[cfg(feature = "gui")]
+        {
+            use std::sync::atomic::AtomicU32;
+
+            let shared_buf = create_audio_buffer();
+            {
+                let mut buf = shared_buf.lock().unwrap();
+                buf.push(&[1000]);
+            }
+
+            let last_sample = AtomicU32::new(AudioOutput::pack_stereo(111, -222));
+            let mut out = [0i16; 2];
+            AudioOutput::write_output_i16(&mut out, 2, &shared_buf, &last_sample);
+
+            assert_eq!(out, [111, -222]);
+        }
+    }
+
+    #[test]
+    fn test_audio_callback_discards_stray_sample_before_reuse() {
+        #[cfg(feature = "gui")]
+        {
+            use std::sync::atomic::AtomicU32;
+
+            let shared_buf = create_audio_buffer();
+            {
+                let mut buf = shared_buf.lock().unwrap();
+                buf.push(&[100, 200]);
+                let write_pos = buf.write_pos;
+                buf.buffer[write_pos] = 77;
+                buf.write_pos = (write_pos + 1) % buf.buffer.len();
+                buf.available += 1;
+            }
+
+            let last_sample = AtomicU32::new(AudioOutput::pack_stereo(5, 6));
+            let mut out = [0i16; 2];
+            AudioOutput::write_output_i16(&mut out, 2, &shared_buf, &last_sample);
+            assert_eq!(out, [100, 200]);
+
+            let mut underrun = [0i16; 2];
+            AudioOutput::write_output_i16(&mut underrun, 2, &shared_buf, &last_sample);
+            assert_eq!(underrun, [100, 200]);
+        }
+    }
 
     #[test]
     fn test_create_audio_buffer() {
@@ -418,6 +660,12 @@ mod tests {
     fn test_samples_per_frame() {
         let spf = samples_per_frame();
         assert_eq!(spf, 888); // 53267 / 60 = 887.78 -> 888
+    }
+
+    #[test]
+    fn test_samples_per_frame_for_pal_rate() {
+        let spf = samples_per_frame_for_rate_and_region(50_000, true);
+        assert_eq!(spf, 1000);
     }
 
     #[test]

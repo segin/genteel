@@ -1134,7 +1134,10 @@ fn test_sh_operator_3f_is_shadow() {
     };
     let (top, state) = vdp.resolve_shadow_highlight_pixel(&px);
     assert_eq!(top, 2, "Operator sprite is invisible; high-prio A shows");
-    assert_eq!(state, 0, "Normal (lifted by hi-prio A) dropped to shadow by $3F");
+    assert_eq!(
+        state, 0,
+        "Normal (lifted by hi-prio A) dropped to shadow by $3F"
+    );
 }
 
 /// Default state is **shadow** when only low-priority planes are visible.
@@ -1595,7 +1598,7 @@ fn test_h40_column0_quirk_falls_back_when_strip_zero() {
     let mut vdp = Vdp::new();
     vdp.registers[REG_MODE4] = 0x81; // H40
     vdp.registers[REG_MODE3] = 0x04; // 2-cell VSCROLL
-    // Strip 18 left at zero.
+                                     // Strip 18 left at zero.
     vdp.vsram[72] = 0x00;
     vdp.vsram[73] = 0x00;
     // Strip 19 has a meaningful value.
@@ -1625,7 +1628,7 @@ fn test_h40_column0_vsram_and_quirk() {
     let mut vdp = Vdp::new();
     vdp.registers[REG_MODE4] = 0x81; // H40
     vdp.registers[REG_MODE3] = 0x04; // 2-cell VSCROLL
-    // Plant a non-zero horizontal scroll value at HSCROLL table base (=0).
+                                     // Plant a non-zero horizontal scroll value at HSCROLL table base (=0).
     vdp.vram[0] = 0x00;
     vdp.vram[1] = 0x01; // hscroll = 1 for plane A → nonzero
     vdp.registers[REG_HSCROLL] = 0;
@@ -1666,7 +1669,14 @@ fn test_status_sovr_set_on_sprite_count_overflow() {
 
     for i in 0..25u8 {
         let next = if i == 24 { 0 } else { i + 1 };
-        place_sprite(&mut vdp, sat_base, i as usize, 32 + (i as u16) * 8, 10, next);
+        place_sprite(
+            &mut vdp,
+            sat_base,
+            i as usize,
+            32 + (i as u16) * 8,
+            10,
+            next,
+        );
     }
 
     let mut buf = [SpriteAttributes::default(); 80];
@@ -1725,7 +1735,14 @@ fn test_prev_line_overflow_records_count_limit() {
     // 25 sprites all on line 10 — pushes past the 20-sprite line limit.
     for i in 0..25u8 {
         let next = if i == 24 { 0 } else { i + 1 };
-        place_sprite(&mut vdp, sat_base, i as usize, 32 + (i as u16) * 8, 10, next);
+        place_sprite(
+            &mut vdp,
+            sat_base,
+            i as usize,
+            32 + (i as u16) * 8,
+            10,
+            next,
+        );
     }
 
     let mut buf = [SpriteAttributes::default(); 80];

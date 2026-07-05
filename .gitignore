@@ -5,3 +5,4 @@ audit_reports/
 output.wav
 reproduce_inc_dec
 benchmark_results.txt
+gui_config.json
