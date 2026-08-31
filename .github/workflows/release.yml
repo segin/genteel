@@ -26,7 +26,7 @@ jobs:
             artifact_name: genteel-windows
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Install dependencies (Linux)
       if: matrix.os == 'ubuntu-latest'
@@ -58,7 +58,7 @@ jobs:
 
 
     - name: Upload Artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: ${{ matrix.artifact_name }}
         path: ${{ matrix.artifact_name }}.zip
