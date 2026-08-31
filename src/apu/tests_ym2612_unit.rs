@@ -505,21 +505,27 @@ fn test_ym2612_algorithm7_stores_full_resolution_op1_in_feedback_history() {
 }
 
 #[test]
-fn test_ym2612_ym3438_profile_disables_carrier_quantization_masks() {
+fn test_ym2612_ym3438_profile_still_applies_9bit_carrier_quantization() {
+    /* The 9-bit carrier truncation is a DAC property of both chips; only
+     * the ladder effect is discrete-specific. Feedback history keeps full
+     * resolution on both profiles. */
     let mut ym = Ym2612::new();
     ym.set_hardware_profile(Ym2612HardwareProfile::Ym3438);
     ym.write_addr(Bank::Bank0, 0xB0);
     ym.write_data_bank(Bank::Bank0, 0x07);
-    ym.force_operator_envelope(0, 0, 0, "decay");
-    ym.force_operator_phase(0, 0, 0);
+    ym.force_operator_envelope(0, 0, 1, "decay");
+    ym.force_operator_phase(0, 0, 4 << 10);
 
     let raw = ym.operator_output_debug(0, 0, 0, 0, 0, 0, true).unwrap();
+    assert!(raw.abs() >= 32, "need a large output, got {raw}");
     assert_ne!((raw as i32) & 31, 0);
 
     ym.step(144);
 
-    let op1 = ym.operator_last_output_debug(0, 0).unwrap();
-    assert_eq!(op1, raw);
+    let ch = ym.generate_channel_samples()[0];
+    assert_ne!(ch, 0);
+    assert_eq!((ch as i32) & 31, 0);
+    assert_eq!(ym.operator_last_output_debug(0, 0).unwrap(), raw);
 }
 
 #[test]

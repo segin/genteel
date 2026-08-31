@@ -655,10 +655,10 @@ impl FmChannel {
         sample.clamp(-8192, 8191) as i16
     }
 
-    fn quantize_output_mask(&self, slot: usize, hardware_profile: Ym2612HardwareProfile) -> bool {
-        if hardware_profile != Ym2612HardwareProfile::DiscreteYm2612 {
-            return false;
-        }
+    /* The 9-bit carrier truncation is a property of the DAC on both chips
+     * (Nuked-OPN2 models OPN2 and OPN2C with the same 9-bit per-slot DAC
+     * output); only the ladder effect is discrete-YM2612-specific. */
+    fn quantize_output_mask(&self, slot: usize) -> bool {
         let quantize_9bit = match self.algorithm {
             0..=3 => slot == SLOT4,
             4 => slot == SLOT2 || slot == SLOT4,
@@ -669,13 +669,8 @@ impl FmChannel {
         quantize_9bit
     }
 
-    fn mask_carrier_output(
-        &self,
-        slot: usize,
-        sample: i16,
-        hardware_profile: Ym2612HardwareProfile,
-    ) -> i16 {
-        let quantize_9bit = self.quantize_output_mask(slot, hardware_profile);
+    fn mask_carrier_output(&self, slot: usize, sample: i16) -> i16 {
+        let quantize_9bit = self.quantize_output_mask(slot);
         if quantize_9bit {
             ((sample as i32) & !31) as i16
         } else {
@@ -777,7 +772,6 @@ impl FmChannel {
         ch_off: usize,
         lfo_am: u8,
         lfo_pm: u8,
-        hardware_profile: Ym2612HardwareProfile,
         special_frequencies: Option<[(u16, u8); 4]>,
     ) -> i16 {
         /* Register-order slot offsets indexed by the SLOT constants
@@ -850,7 +844,7 @@ impl FmChannel {
             ssg[SLOT3],
             false,
         );
-        let out3 = self.mask_carrier_output(SLOT3, out3, hardware_profile);
+        let out3 = self.mask_carrier_output(SLOT3, out3);
         match self.algorithm {
             /* Algorithms 0-4 all route OP3 into OP4's modulation input
              * (alg 4 is the two-stack S1->S2 + S3->S4 configuration). In
@@ -870,7 +864,7 @@ impl FmChannel {
             ssg[SLOT2],
             false,
         );
-        let out2 = self.mask_carrier_output(SLOT2, out2, hardware_profile);
+        let out2 = self.mask_carrier_output(SLOT2, out2);
         match self.algorithm {
             0 | 1 | 2 | 3 => mem += out2 as i32,
             4 | 5 | 6 | 7 => {}
@@ -885,15 +879,15 @@ impl FmChannel {
             /* Carrier sets (OP4 is added below for every algorithm):
              * alg 4 -> OP2+OP4; algs 5/6 -> OP2+OP3+OP4; alg 7 -> all four.
              * OP1 is a modulator in every algorithm except 7. */
-            4 => carrier += self.mask_carrier_output(SLOT2, out2, hardware_profile) as i32,
+            4 => carrier += self.mask_carrier_output(SLOT2, out2) as i32,
             5 | 6 => {
-                carrier += self.mask_carrier_output(SLOT2, out2, hardware_profile) as i32;
-                carrier += self.mask_carrier_output(SLOT3, out3, hardware_profile) as i32;
+                carrier += self.mask_carrier_output(SLOT2, out2) as i32;
+                carrier += self.mask_carrier_output(SLOT3, out3) as i32;
             }
             7 => {
-                carrier += self.mask_carrier_output(SLOT1, out1, hardware_profile) as i32;
-                carrier += self.mask_carrier_output(SLOT2, out2, hardware_profile) as i32;
-                carrier += self.mask_carrier_output(SLOT3, out3, hardware_profile) as i32;
+                carrier += self.mask_carrier_output(SLOT1, out1) as i32;
+                carrier += self.mask_carrier_output(SLOT2, out2) as i32;
+                carrier += self.mask_carrier_output(SLOT3, out3) as i32;
             }
             _ => {}
         }
@@ -909,7 +903,7 @@ impl FmChannel {
             ssg[SLOT4],
             false,
         );
-        let out4 = self.mask_carrier_output(SLOT4, out4, hardware_profile);
+        let out4 = self.mask_carrier_output(SLOT4, out4);
         carrier += out4 as i32;
 
         self.operators[SLOT1].last_output2 = self.operators[SLOT1].last_output;
@@ -1503,7 +1497,6 @@ impl Ym2612 {
             ch_off,
             self.lfo_am,
             self.lfo_pm,
-            self.hardware_profile,
             special_frequencies,
         ) as i32;
         let out = if channel == 5 && self.sample_dac_en {
