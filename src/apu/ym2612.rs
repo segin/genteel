@@ -123,7 +123,7 @@ const EG_RATE_SHIFT: [u8; 128] = [
 static TL_TABLE: LazyLock<[i16; TL_TAB_LEN]> = LazyLock::new(|| {
     let mut table = [0i16; TL_TAB_LEN];
     for x in 0..TL_RES_LEN {
-        let mut m = (1u32 << 16) as f64 / 2.0_f64.powf((x as f64 + 1.0) * (0.125 / 4.0));
+        let mut m = (1u32 << 16) as f64 / 2.0_f64.powf((x as f64 + 1.0) * (0.125 / 4.0) / 8.0);
         m = m.floor();
         let mut n = m as i32;
         n >>= 4;
