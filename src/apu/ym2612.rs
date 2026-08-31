@@ -1724,15 +1724,14 @@ impl Ym2612 {
     }
 
     pub fn generate_sample(&mut self) -> (i16, i16) {
-        // Drain one sample from each blip ring to keep its producer/consumer
-        // position bounded, then take the amplitude from `read_instant` (the
-        // exact accumulated level). The band-limited `read_samples` integrator
-        // currently flatlines the signal, so use the instantaneous level.
+        // Band-limited output: the ~53 kHz chip waveform is resampled to the
+        // host rate through the BlipBuf sinc kernel, avoiding the aliasing a
+        // nearest-sample hold of the raw step waveform produces.
         let mut l = [0i16; 1];
         let mut r = [0i16; 1];
         self.blip_l.read_samples(&mut l[..]);
         self.blip_r.read_samples(&mut r[..]);
-        (self.blip_l.read_instant(), self.blip_r.read_instant())
+        (l[0], r[0])
     }
 
     pub fn generate_channel_samples(&mut self) -> [i16; 6] {

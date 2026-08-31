@@ -1144,11 +1144,13 @@ fn test_ym2612_generate_sample_drains_right_channel_even_when_left_is_silent() {
     ym.blip_r = BlipBuf::new(44_100, 44_100);
     ym.blip_r.add_delta(0, 1000);
 
-    let (left, right) = ym.generate_sample();
-
-    // Both rings are drained; the amplitude is the instantaneous accumulated
-    // level (read_instant), so the right channel reflects the 1000 delta at once
-    // while the silent left stays at 0.
-    assert_eq!(left, 0);
-    assert_eq!(right, 1000);
+    // The band-limited kernel delays the step by half the kernel (8 samples):
+    // after draining past the latency the right channel settles at exactly
+    // 1000 while the silent left stays 0.
+    let mut last = (0i16, 0i16);
+    for _ in 0..9 {
+        last = ym.generate_sample();
+    }
+    assert_eq!(last.0, 0);
+    assert_eq!(last.1, 1000);
 }

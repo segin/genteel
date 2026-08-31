@@ -121,24 +121,33 @@ impl BlipBuf {
         let sample_idx = time_in_samples.floor() as usize;
         let fract = time_in_samples - sample_idx as f64;
 
-        // Always track the DC level (sum of every delta) so `read_instant`
-        // stays exact even when the band-limited step below is skipped. Doing
-        // this only when the step fit meant the accumulator lost dropped deltas
-        // and drifted off to the i16 rails.
+        // Track the DC level (sum of every delta) so `read_instant` stays
+        // exact regardless of where the band-limited step lands.
         self.accumulator += delta;
 
-        if sample_idx + KERNEL_SIZE >= self.buffer.len() {
-            // Out of bounds (producer ran too far ahead of the consumer): the
-            // band-limited step can't be placed, but the DC level is preserved.
-            return;
-        }
+        // Producer too far ahead of the consumer: place the step at the last
+        // writable slot instead of dropping it, so the integrated signal never
+        // loses the delta (a dropped step permanently offsets the integrator).
+        let sample_idx = sample_idx.min(self.buffer.len() - KERNEL_SIZE - 1);
 
-        // Apply band-limited step
+        // Apply band-limited step. The taps must sum to exactly `delta`:
+        // per-tap `(delta * kernel) >> 15` truncation rounds toward -inf,
+        // which biased every step slightly negative and railed the read-path
+        // integrator at -32768 after ~100k steps. Distributing the cumulative
+        // rounding error keeps the integral exact.
         let offset = (fract * RES as f64) as usize;
+        let mut kernel_total = 0i64;
+        for i in 0..KERNEL_SIZE {
+            kernel_total += KERNEL[i * RES + offset] as i64;
+        }
+        let mut cum = 0i64;
+        let mut prev = 0i64;
         for i in 0..KERNEL_SIZE {
             let idx = (self.start + sample_idx + i) % self.buffer.len();
-            let kernel_val = KERNEL[i * RES + offset];
-            self.buffer[idx] += (delta * kernel_val) >> 15;
+            cum += KERNEL[i * RES + offset] as i64;
+            let target = (delta as i64) * cum / kernel_total;
+            self.buffer[idx] += (target - prev) as i32;
+            prev = target;
         }
 
         self.clock_ptr = time_in_samples;

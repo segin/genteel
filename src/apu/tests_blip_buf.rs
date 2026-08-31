@@ -47,9 +47,9 @@ fn test_read_samples_kernel_latency() {
     // Apply a delta at clock 0
     blip.add_delta(0, 1000);
 
-    // Read 16 samples. The band-limited kernel delays the step by half the kernel size (8 samples)
-    // The first ~8 samples should be close to 0, and the remaining samples should be close to 1000
-    // Actually, based on empirical behavior, it is [0, 0, 0, 0, 0, 0, 0, 0, 999, 999, 999, 999, 999, 999, 999, 999]
+    // Read 16 samples. The band-limited kernel delays the step by half the
+    // kernel size (8 samples): the first 8 samples are 0 and the remainder
+    // settle at exactly 1000 (the taps sum to exactly the delta).
     let mut samples = [0i16; 16];
     let count = blip.read_samples(&mut samples);
     assert_eq!(count, 16);
@@ -58,7 +58,7 @@ fn test_read_samples_kernel_latency() {
         assert_eq!(samples[i], 0);
     }
     for i in 8..16 {
-        assert_eq!(samples[i], 999);
+        assert_eq!(samples[i], 1000);
     }
 }
 
@@ -78,14 +78,54 @@ fn test_sinc_filtering_fractional_offset() {
     assert_eq!(count, 16);
 
     // We expect some sinc filtering behavior, where the transition isn't perfectly aligned
-    assert_eq!(samples[0], -1);
-    assert_eq!(samples[1], 0);
-    assert_eq!(samples[2], -7);
-    assert_eq!(samples[6], -131);
-    assert_eq!(samples[7], 495);
-    assert_eq!(samples[8], 1121); // Notice the ringing
-    assert_eq!(samples[9], 937);
-    assert_eq!(samples[15], 990); // Eventually settles near 1000
+    assert_eq!(samples[0], 0);
+    assert_eq!(samples[1], 1);
+    assert_eq!(samples[2], -4);
+    assert_eq!(samples[6], -126);
+    assert_eq!(samples[7], 500);
+    assert_eq!(samples[8], 1126); // Notice the ringing
+    assert_eq!(samples[9], 942);
+    assert_eq!(samples[15], 1000); // Settles at exactly 1000
+}
+
+#[test]
+fn test_alternating_steps_do_not_drift_the_integrator() {
+    /* Regression: per-tap `>> 15` truncation rounded toward -inf, biasing
+     * every step slightly negative; alternating +/-delta steps railed the
+     * integrated output at -32768 after ~100k steps. With exact tap
+     * distribution the band-limited output must track the square wave. */
+    let mclk = 53_693_175u32;
+    let host = 48_000u32;
+    let mut blip = BlipBuf::new(mclk, host);
+    let cps = mclk as f64 / host as f64;
+
+    let mut level = 0i32;
+    let mut chip_i = 0u64;
+    let mut clock = 0u64;
+    let mut acc = 0.0f64;
+    let mut last = 0i16;
+    let mut sample = [0i16; 1];
+    for _ in 0..400_000u32 {
+        clock += 3416;
+        while (chip_i + 1) * 1008 <= clock {
+            chip_i += 1;
+            if chip_i % 24 == 0 {
+                let new = if level == 2000 { -2000 } else { 2000 };
+                blip.add_delta(chip_i * 1008, new - level);
+                level = new;
+            }
+        }
+        acc += 3416.0;
+        while acc >= cps {
+            blip.read_samples(&mut sample[..]);
+            last = sample[0];
+            acc -= cps;
+        }
+    }
+    assert!(
+        last.abs() < 4000,
+        "band-limited output drifted to {last} instead of tracking +/-2000"
+    );
 }
 
 #[test]
