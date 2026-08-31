@@ -910,23 +910,13 @@ impl FmChannel {
             4 | 5 | 6 | 7 => Self::clamp_output(carrier),
             _ => out4,
         };
-        let special_phase_key_code = if special_frequencies.is_some()
-            && self.pms != 0
-            && self.fnum == 0x7ff
-            && self.block == 7
-        {
-            Some(compute_key_code(self.fnum as u32, self.block))
-        } else if special_frequencies.is_some() && self.pms != 0 {
-            Some(compute_key_code(self.fnum as u32, self.block))
-        } else {
-            None
-        };
-
         for (i, op_offset) in op_offsets.iter().enumerate() {
             let off = *op_offset + ch_off;
             let (base_fnum, block) = slot_freqs[i];
-            let base_key_code =
-                special_phase_key_code.unwrap_or_else(|| compute_key_code(base_fnum as u32, block));
+            /* Key code always derives from the slot's own frequency, also in
+             * CH3 special mode with LFO PM active (Nuked kcode_3ch; GPGX
+             * update_phase_lfo_slot recomputes kc per slot). */
+            let base_key_code = compute_key_code(base_fnum as u32, block);
             let lfo_offset = if self.pms == 0 {
                 0
             } else {

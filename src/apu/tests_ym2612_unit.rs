@@ -842,7 +842,7 @@ fn test_ym2612_ssg_write_updates_inversion_immediately() {
 }
 
 #[test]
-fn test_ym2612_ch3_special_pm_uses_shared_channel_keycode_for_detune() {
+fn test_ym2612_ch3_special_pm_uses_per_slot_keycode_for_detune() {
     let mut ym = Ym2612::new();
 
     ym.write_addr(Bank::Bank0, 0x27);
@@ -867,9 +867,11 @@ fn test_ym2612_ch3_special_pm_uses_shared_channel_keycode_for_detune() {
     ym.force_lfo_debug(126, 8);
     ym.step(144);
 
+    /* The slot's key code derives from its own frequency (fnum 0x010,
+     * block 0 -> kc 0), not the channel-level 0x7FF/7 (kc 31). */
     let delta = Ym2612::phase_mod_debug(0x010, 7, 8) as i32;
     let phase_fnum = (0x010i32 + delta).clamp(0, 0x7ff) as u32;
-    let expected = Ym2612::phase_increment_debug(phase_fnum as u16, 0, 31, 1, 1);
+    let expected = Ym2612::phase_increment_debug(phase_fnum as u16, 0, 0, 1, 1);
 
     assert_eq!(ym.operator_phase_debug(2, 0).unwrap(), expected);
 }
