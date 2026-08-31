@@ -585,7 +585,9 @@ impl FmOperator {
             && self.env_phase != AdsrPhase::Off
             && (self.ssg_invert ^ ((ssg_eg & 0x04) != 0))
         {
-            0x3FFu16.saturating_sub(self.env_level)
+            /* Inverted SSG output: internal level 0x200 maps to attenuation 0
+             * (full volume), level 0 to 0x200, per GPGX/Nuked. */
+            (0x200u16.wrapping_sub(self.env_level)) & 0x03ff
         } else {
             self.env_level
         };

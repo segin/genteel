@@ -997,6 +997,28 @@ fn test_ym2612_ssg_inversion_does_not_apply_during_release() {
 }
 
 #[test]
+fn test_ym2612_ssg_inverted_output_uses_half_range_transform() {
+    /* Inverted SSG output level is (0x200 - internal) & 0x3FF: an inverted
+     * operator at internal level L must sound identical to a non-inverted
+     * one at attenuation 0x200 - L. */
+    let mut inv = Ym2612::new();
+    inv.force_operator_envelope(0, 0, 0x180, "decay");
+    inv.force_operator_ssg_invert(0, 0, true);
+    inv.force_operator_phase(0, 0, 256 << 10);
+
+    let mut plain = Ym2612::new();
+    plain.force_operator_envelope(0, 0, 0x080, "decay");
+    plain.force_operator_phase(0, 0, 256 << 10);
+
+    let inv_out = inv.operator_output_debug(0, 0, 0, 0, 0, 0x08, false).unwrap();
+    let plain_out = plain
+        .operator_output_debug(0, 0, 0, 0, 0, 0x00, false)
+        .unwrap();
+    assert_eq!(inv_out, plain_out);
+    assert_ne!(inv_out, 0);
+}
+
+#[test]
 fn test_ym2612_ssg_release_terminates_at_half_attenuation() {
     let mut ym = Ym2612::new();
 
