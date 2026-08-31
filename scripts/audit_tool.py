@@ -56,9 +56,9 @@ findings = []
 # Pre-compiled regex patterns at global scope for performance.
 # Note: String concatenation is used for some patterns (e.g., Private Key) to prevent this script from detecting itself as a false positive.
 SECRET_PATTERN_COMBINED = re.compile(
-    r"(?i)(?P<Generic_Secret>secret\s*[:=]\s*['\"])|"
-    r"(?P<API_Key>api[_-]?key\s*[:=]\s*['\"])|"
-    r"(?P<Password>password\s*[:=]\s*['\"])|"
+    r"(?i:(?P<Generic_Secret>secret\s*[:=]\s*['\"]))|"
+    r"(?i:(?P<API_Key>api[_-]?key\s*[:=]\s*['\"]))|"
+    r"(?i:(?P<Password>password\s*[:=]\s*['\"]))|"
     r"(?P<AWS_Key>AKIA[0-9A-Z]{16})|"
     # Split string to avoid self-flagging (the pattern itself matches the source code string otherwise)
     r"(?P<Private_Key>-----BEGIN .* PRIVATE " + r"KEY-----)|"
