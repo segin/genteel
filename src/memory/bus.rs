@@ -325,8 +325,8 @@ impl Bus {
                     0xFF
                 }
             }
-            // YM2612
-            0xA04000..=0xA04003 => self.apu.fm.read((addr & 3) as u8),
+            // YM2612, mirrored across A04000h-A05FFFh
+            0xA04000..=0xA05FFF => self.apu.fm.read((addr & 3) as u8),
             _ => 0xFF,
         }
     }
@@ -403,7 +403,8 @@ impl Bus {
                     self.z80_ram[(addr & 0x1FFF) as usize] = value;
                 }
             }
-            0xA04000..=0xA04003 => {
+            // YM2612, mirrored across A04000h-A05FFFh
+            0xA04000..=0xA05FFF => {
                 let port = (addr & 2) >> 1;
                 let is_data = (addr & 1) != 0;
                 if is_data {

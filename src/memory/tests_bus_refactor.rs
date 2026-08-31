@@ -125,3 +125,41 @@ fn test_write_byte_work_ram() {
     bus.write_byte(0xFFFFFF, 0x34);
     assert_eq!(bus.work_ram[0xFFFF], 0x34);
 }
+
+#[test]
+fn test_ym2612_ports_mirrored_across_68k_window() {
+    let mut bus = Bus::new();
+    // Address/data ports repeat every 4 bytes across 0xA04000-0xA05FFF.
+    bus.write_byte(0xA04100, 0x27); // mirror of address port 0
+    bus.write_byte(0xA04101, 0x30); // mirror of data port 0
+    assert_eq!(bus.apu.fm.registers[0][0x27], 0x30);
+
+    bus.write_byte(0xA05FFE, 0x30); // mirror of address port 1
+    bus.write_byte(0xA05FFF, 0x42); // mirror of data port 1
+    assert_eq!(bus.apu.fm.registers[1][0x30], 0x42);
+
+    // Status reads mirror too (bit 7 busy set right after a data write).
+    assert_ne!(bus.read_byte(0xA05FFC) & 0x80, 0);
+}
+
+#[test]
+fn test_ym2612_ports_mirrored_across_z80_window() {
+    use super::z80_bus::Z80Bus;
+    use super::{MemoryInterface, SharedBus};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let bus = Rc::new(RefCell::new(Bus::new()));
+    let mut z80_bus = Z80Bus::new(SharedBus::new(bus.clone()));
+
+    z80_bus.write_byte(0x4100, 0x27); // mirror of $4000
+    z80_bus.write_byte(0x4101, 0x30); // mirror of $4001
+    assert_eq!(bus.borrow().apu.fm.registers[0][0x27], 0x30);
+
+    z80_bus.write_byte(0x5FFE, 0x30); // mirror of $4002
+    z80_bus.write_byte(0x5FFF, 0x42); // mirror of $4003
+    assert_eq!(bus.borrow().apu.fm.registers[1][0x30], 0x42);
+
+    // Status reads mirror as well.
+    assert_ne!(z80_bus.read_byte(0x5FFC) & 0x80, 0);
+}

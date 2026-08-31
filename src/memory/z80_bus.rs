@@ -47,11 +47,8 @@ impl Z80Bus {
             // Mirror of Z80 RAM: 2000h-3FFFh
             0x2000..=0x3FFF => bus.z80_ram[(addr & 0x1FFF) as usize],
 
-            // YM2612: 4000h-4003h
-            0x4000..=0x4003 => bus.apu.fm.read((addr & 3) as u8),
-
-            // FM Mirror or PSG/Bank area
-            0x4004..=0x5FFF => 0xFF,
+            // YM2612: 4000h-4003h, mirrored across 4000h-5FFFh
+            0x4000..=0x5FFF => bus.apu.fm.read((addr & 3) as u8),
 
             // Bank register area: 6000h (write-only)
             0x6000..=0x7FFF => 0xFF,
@@ -79,8 +76,8 @@ impl Z80Bus {
                 bus.z80_ram[(addr & 0x1FFF) as usize] = value;
             }
 
-            // YM2612: 4000h-4003h
-            0x4000..=0x4003 => {
+            // YM2612: 4000h-4003h, mirrored across 4000h-5FFFh
+            0x4000..=0x5FFF => {
                 let port = (addr & 2) >> 1;
                 let is_data = (addr & 1) != 0;
                 if is_data {
@@ -89,9 +86,6 @@ impl Z80Bus {
                     bus.apu.fm.write_address(port as u8, value);
                 }
             }
-
-            // Mirror of FM chip or Reserved: 4004h-5FFFh
-            0x4004..=0x5FFF => {}
 
             // Bank register: 6000h
             0x6000..=0x60FF => {
@@ -225,8 +219,11 @@ mod tests {
         assert_eq!(z80_bus.read_byte(0x2000), 0x00);
         assert_eq!(z80_bus.read_byte(0x3FFF), 0x00);
 
+        // 0x4004+ mirrors the YM2612 ports (0x4004 -> status port 0), so it
+        // reads chip status (0 at reset), not 0xFF.
+        assert_eq!(z80_bus.read_byte(0x4004), 0x00);
+
         // Reserved areas (like PSG read) should return 0xFF
-        assert_eq!(z80_bus.read_byte(0x4004), 0xFF); // FM Mirror
         assert_eq!(z80_bus.read_byte(0x6000), 0xFF); // Bank register is write-only
         assert_eq!(z80_bus.read_byte(0x7F11), 0xFF); // PSG is write-only
     }
