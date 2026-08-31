@@ -1326,7 +1326,9 @@ impl Ym2612 {
          * `operator_index_from_register`. */
         let op_offsets: [usize; 4] = [0, 4, 8, 12];
         let off = op_offsets[slot] + ch_off;
-        let (fnum, block) = if channel == 2 && (self.mode & 0x40) != 0 {
+        /* Any non-zero $27 bits 7-6 value (special mode or CSM) selects the
+         * per-operator CH3 frequencies, as in Nuked-OPN2/MAME/GPGX. */
+        let (fnum, block) = if channel == 2 && (self.mode & 0xC0) != 0 {
             match slot {
                 SLOT1 => (self.ch3_fnum[1], self.ch3_block[1]),
                 SLOT2 => (self.ch3_fnum[2], self.ch3_block[2]),
@@ -1409,7 +1411,7 @@ impl Ym2612 {
     }
 
     fn sample_special_frequencies_for_channel(&self, channel: usize) -> Option<[(u16, u8); 4]> {
-        if channel == 2 && (self.sample_mode & 0x40) != 0 {
+        if channel == 2 && (self.sample_mode & 0xC0) != 0 {
             Some([
                 (self.sample_ch3_fnum[1], self.sample_ch3_block[1]),
                 (self.sample_ch3_fnum[0], self.sample_ch3_block[0]),

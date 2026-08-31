@@ -301,6 +301,47 @@ fn test_ym2612_ch3_special_frequency_high_write_latches_until_low_write() {
 }
 
 #[test]
+fn test_ym2612_csm_mode_uses_ch3_per_operator_frequencies() {
+    /* Any non-zero $27 bits 7-6 (special mode or CSM) selects the CH3
+     * per-operator frequencies, so CSM (0x80) must advance phases exactly
+     * like special mode (0x40) with identical registers. */
+    let mk = |mode: u8| {
+        let mut ym = Ym2612::new();
+        ym.write_addr(Bank::Bank0, 0xA6);
+        ym.write_data_bank(Bank::Bank0, 0x22);
+        ym.write_addr(Bank::Bank0, 0xA2);
+        ym.write_data_bank(Bank::Bank0, 0x69);
+        for (hi, lo) in [(0xACu8, 0xA8u8), (0xAD, 0xA9), (0xAE, 0xAA)] {
+            ym.write_addr(Bank::Bank0, hi);
+            ym.write_data_bank(Bank::Bank0, 0x3A);
+            ym.write_addr(Bank::Bank0, lo);
+            ym.write_data_bank(Bank::Bank0, 0x9C);
+        }
+        ym.write_addr(Bank::Bank0, 0x27);
+        ym.write_data_bank(Bank::Bank0, mode);
+        ym.write_addr(Bank::Bank0, 0x28);
+        ym.write_data_bank(Bank::Bank0, 0xF2);
+        ym.step(144 * 8);
+        ym
+    };
+
+    let special = mk(0x40);
+    let csm = mk(0x80);
+    for slot in 0..4 {
+        assert_eq!(
+            special.operator_phase_debug(2, slot),
+            csm.operator_phase_debug(2, slot)
+        );
+    }
+
+    let normal = mk(0x00);
+    assert_ne!(
+        normal.operator_phase_debug(2, 0),
+        csm.operator_phase_debug(2, 0)
+    );
+}
+
+#[test]
 fn test_ym2612_mul_zero_runs_at_half_of_mul_one() {
     let mut ym = Ym2612::new();
 
