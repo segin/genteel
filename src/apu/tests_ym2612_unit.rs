@@ -1038,6 +1038,34 @@ fn test_ym2612_ssg_release_terminates_at_half_attenuation() {
 }
 
 #[test]
+fn test_ym2612_reg_key_events_masked_during_csm_window() {
+    /* While the CSM key window holds the combined key line high, $28 key-on
+     * must not retrigger (no phase reset / attack restart) and $28 key-off
+     * must not release; the release happens when the window ends. */
+    let mut ym = Ym2612::new();
+    ym.debug_apply_csm_key_on(); // CSM window opens, keys all CH3 operators
+
+    ym.force_operator_phase(2, 0, 0x1234 << 10);
+    ym.force_operator_envelope(2, 0, 0x080, "decay");
+
+    // $28 key-on for CH3 during the window: state latches, no retrigger.
+    ym.write_addr(Bank::Bank0, 0x28);
+    ym.write_data_bank(Bank::Bank0, 0xF2);
+    assert_eq!(ym.operator_phase_debug(2, 0), Some(0x1234 << 10));
+    assert_eq!(ym.operator_envelope_debug(2, 0).unwrap().1, "decay");
+
+    // $28 key-off during the window: no release yet (CSM still holds).
+    ym.write_addr(Bank::Bank0, 0x28);
+    ym.write_data_bank(Bank::Bank0, 0x02);
+    assert_eq!(ym.operator_envelope_debug(2, 0).unwrap().1, "decay");
+
+    // Next sample tick ends the window (state 1 shifts to 2 with the timer
+    // idle): with the register key off, the release fires now.
+    ym.step(144 * 2);
+    assert_eq!(ym.operator_envelope_debug(2, 0).unwrap().1, "release");
+}
+
+#[test]
 fn test_ym2612_eg_rate_and_sustain_level_expansion() {
     assert_eq!(Ym2612::eg_debug(0, 0), (0, 0));
     assert_eq!(Ym2612::eg_debug(1, 1), (34, 32));

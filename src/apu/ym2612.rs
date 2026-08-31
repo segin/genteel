@@ -362,11 +362,18 @@ impl FmOperator {
         }
     }
 
-    fn set_key_on(&mut self, on: bool, params: &EnvelopeParams) {
+    fn set_key_on(&mut self, on: bool, params: &EnvelopeParams, csm_active: bool) {
         if on == self.key_on {
             return;
         }
         self.key_on = on;
+        /* While the CSM key window holds the combined key line (register OR
+         * CSM) high, register key changes only latch state: no retrigger on
+         * key-on and no release on key-off. The deferred release fires when
+         * the CSM window ends (set_key_off_csm checks !key_on). */
+        if csm_active {
+            return;
+        }
         if on {
             self.phase_counter = 0;
             self.ssg_invert = false;
@@ -1373,14 +1380,27 @@ impl Ym2612 {
             self.operator_params_for_channel(channel, SLOT3),
             self.operator_params_for_channel(channel, SLOT4),
         ];
-        self.channels[channel].operators[SLOT1]
-            .set_key_on((value & 0x10) != 0, &slot_params[SLOT1]);
-        self.channels[channel].operators[SLOT2]
-            .set_key_on((value & 0x20) != 0, &slot_params[SLOT2]);
-        self.channels[channel].operators[SLOT3]
-            .set_key_on((value & 0x40) != 0, &slot_params[SLOT3]);
-        self.channels[channel].operators[SLOT4]
-            .set_key_on((value & 0x80) != 0, &slot_params[SLOT4]);
+        let csm_active = channel == 2 && self.csm_key_state != 0;
+        self.channels[channel].operators[SLOT1].set_key_on(
+            (value & 0x10) != 0,
+            &slot_params[SLOT1],
+            csm_active,
+        );
+        self.channels[channel].operators[SLOT2].set_key_on(
+            (value & 0x20) != 0,
+            &slot_params[SLOT2],
+            csm_active,
+        );
+        self.channels[channel].operators[SLOT3].set_key_on(
+            (value & 0x40) != 0,
+            &slot_params[SLOT3],
+            csm_active,
+        );
+        self.channels[channel].operators[SLOT4].set_key_on(
+            (value & 0x80) != 0,
+            &slot_params[SLOT4],
+            csm_active,
+        );
     }
 
     fn apply_csm_key_on(&mut self) {
