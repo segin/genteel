@@ -487,17 +487,21 @@ fn test_ym2612_carrier_outputs_use_discrete_9bit_quantization_masks() {
 }
 
 #[test]
-fn test_ym2612_algorithm7_quantizes_op1_before_feedback_history() {
+fn test_ym2612_algorithm7_stores_full_resolution_op1_in_feedback_history() {
+    /* The 9-bit carrier truncation applies to the copy summed into the
+     * channel output only; op1's feedback history keeps all 14 bits. */
     let mut ym = Ym2612::new();
     ym.write_addr(Bank::Bank0, 0xB0);
     ym.write_data_bank(Bank::Bank0, 0x07);
     ym.force_operator_envelope(0, 0, 0, "decay");
     ym.force_operator_phase(0, 0, 0);
 
+    let raw = ym.operator_output_debug(0, 0, 0, 0, 0, 0, true).unwrap();
     ym.step(144);
 
     let op1 = ym.operator_last_output_debug(0, 0).unwrap();
-    assert_eq!((op1 as i32) & 31, 0);
+    assert_eq!(op1, raw);
+    assert_ne!((op1 as i32) & 31, 0);
 }
 
 #[test]
@@ -700,7 +704,6 @@ fn test_ym2612_feedback_write_preserves_live_op1_history_for_next_sample() {
     let (last_output, last_output2) = ym.operator_feedback_history_debug(0, 0).unwrap();
     let fb = ((last_output as i32 + last_output2 as i32) >> 1) >> (9 - 7);
     let expected = ym.operator_output_debug(0, 0, fb, 0, 0, 0, true).unwrap();
-    let expected = ((expected as i32) & !31) as i16;
 
     ym.write_addr(Bank::Bank0, 0xB0);
     ym.write_data_bank(Bank::Bank0, 0x3f);

@@ -812,7 +812,9 @@ impl FmChannel {
             ssg[SLOT1],
             true,
         );
-        let out1 = self.mask_carrier_output(SLOT1, out1, hardware_profile);
+        /* out1 stays full-resolution here: the feedback history must store
+         * the unquantized 14-bit output; the algorithm-7 carrier sum masks
+         * its own copy below. */
         let mut m2 = 0i32;
         let mut c1 = 0i32;
         let mut c2 = 0i32;
