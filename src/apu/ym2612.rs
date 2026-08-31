@@ -549,9 +549,10 @@ impl FmOperator {
                         }
                     }
                     _ => {
-                        let step = if (params.ssg_eg & 0x08) != 0
-                            && self.env_phase != AdsrPhase::Release
-                        {
+                        /* SSG-EG runs the envelope 4x fast in decay, sustain
+                         * AND release (GPGX/Nuked; the release snap to 0x3FF
+                         * at 0x200 is handled below). */
+                        let step = if (params.ssg_eg & 0x08) != 0 {
                             (increment as u16) * 4
                         } else {
                             increment as u16

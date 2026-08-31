@@ -1068,6 +1068,28 @@ fn test_ym2612_reg_key_events_masked_during_csm_window() {
 }
 
 #[test]
+fn test_ym2612_ssg_release_runs_4x_fast() {
+    /* SSG-EG's 4x envelope speedup applies during release as well. */
+    let mk = |ssg: u8| {
+        let mut ym = Ym2612::new();
+        ym.write_addr(Bank::Bank0, 0x90);
+        ym.write_data_bank(Bank::Bank0, ssg);
+        ym.write_addr(Bank::Bank0, 0x80);
+        ym.write_data_bank(Bank::Bank0, 0x0F); // RR=15 -> rate 94, steps every EG tick
+        ym.force_operator_envelope(0, 0, 0x040, "release");
+        ym.step(144 * 33); // ~11 EG ticks, before the SSG 0x200 snap
+        ym.operator_envelope_debug(0, 0).unwrap().0
+    };
+    let plain = mk(0x00);
+    let ssg = mk(0x08);
+    assert!(
+        ssg > plain,
+        "SSG release should rise faster: ssg={ssg:#x} plain={plain:#x}"
+    );
+    assert!(plain > 0x040, "plain release must have advanced");
+}
+
+#[test]
 fn test_ym2612_ch6_pipeline_keeps_clocking_in_dac_mode() {
     let mut ym = Ym2612::new();
     ym.write_addr(Bank::Bank1, 0xA6);
