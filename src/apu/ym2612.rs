@@ -528,7 +528,7 @@ impl FmOperator {
         } else {
             (1u16 << shift).saturating_sub(1)
         };
-        if rate >= 48 || (params.counter & mask) == 0 {
+        if (params.counter & mask) == 0 {
             let step_idx = ((params.counter >> shift) & 7) as usize;
             let increment = ENV_INCREMENT_TABLE[(select as usize / 8).min(18)][step_idx];
             if increment > 0 {
