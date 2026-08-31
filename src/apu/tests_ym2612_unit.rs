@@ -1068,6 +1068,23 @@ fn test_ym2612_reg_key_events_masked_during_csm_window() {
 }
 
 #[test]
+fn test_ym2612_ssg_envelope_freezes_at_0x200_outside_release() {
+    /* With SSG-EG enabled, decay/sustain increments stop once attenuation
+     * reaches 0x200; held-inverted shapes (e.g. \$90=0x0D) must hold steady
+     * there rather than ramp on to 0x3FF. */
+    let mut ym = Ym2612::new();
+    ym.write_addr(Bank::Bank0, 0x90);
+    ym.write_data_bank(Bank::Bank0, 0x0D); // enable + attack + hold
+    ym.write_addr(Bank::Bank0, 0x60);
+    ym.write_data_bank(Bank::Bank0, 0x1F); // DR=31: fastest decay
+    ym.force_operator_envelope(0, 0, 0x210, "decay");
+
+    ym.step(144 * 30);
+    let (level, _, _) = ym.operator_envelope_debug(0, 0).unwrap();
+    assert_eq!(level, 0x210, "level must freeze at/above 0x200, got {level:#x}");
+}
+
+#[test]
 fn test_ym2612_ssg_release_runs_4x_fast() {
     /* SSG-EG's 4x envelope speedup applies during release as well. */
     let mk = |ssg: u8| {

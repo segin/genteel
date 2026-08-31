@@ -551,13 +551,23 @@ impl FmOperator {
                     _ => {
                         /* SSG-EG runs the envelope 4x fast in decay, sustain
                          * AND release (GPGX/Nuked; the release snap to 0x3FF
-                         * at 0x200 is handled below). */
-                        let step = if (params.ssg_eg & 0x08) != 0 {
-                            (increment as u16) * 4
-                        } else {
-                            increment as u16
-                        };
-                        self.env_level = (self.env_level + step).min(0x3FF);
+                         * at 0x200 is handled below). Outside release, SSG
+                         * increments apply only below 0x200: at or above, the
+                         * per-sample transition logic (hold/alternate/
+                         * retrigger) owns the level, so e.g. held-inverted
+                         * shapes hold steady instead of ramping to 0x3FF. */
+                        let ssg_on = (params.ssg_eg & 0x08) != 0;
+                        let frozen = ssg_on
+                            && self.env_phase != AdsrPhase::Release
+                            && self.env_level >= 0x200;
+                        if !frozen {
+                            let step = if ssg_on {
+                                (increment as u16) * 4
+                            } else {
+                                increment as u16
+                            };
+                            self.env_level = (self.env_level + step).min(0x3FF);
+                        }
                     }
                 }
             }
