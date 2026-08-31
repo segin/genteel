@@ -1068,6 +1068,27 @@ fn test_ym2612_reg_key_events_masked_during_csm_window() {
 }
 
 #[test]
+fn test_ym2612_ch6_pipeline_keeps_clocking_in_dac_mode() {
+    let mut ym = Ym2612::new();
+    ym.write_addr(Bank::Bank1, 0xA6);
+    ym.write_data_bank(Bank::Bank1, 0x22);
+    ym.write_addr(Bank::Bank1, 0xA2);
+    ym.write_data_bank(Bank::Bank1, 0x69);
+    ym.write_addr(Bank::Bank0, 0x28);
+    ym.write_data_bank(Bank::Bank0, 0xF6);
+    ym.write_addr(Bank::Bank0, 0x2B);
+    ym.write_data_bank(Bank::Bank0, 0x80);
+
+    let before = ym.operator_phase_debug(5, 0).unwrap();
+    ym.step(144 * 4);
+    let after = ym.operator_phase_debug(5, 0).unwrap();
+    assert_ne!(
+        before, after,
+        "CH6 phase generators must keep running in DAC mode"
+    );
+}
+
+#[test]
 fn test_ym2612_eg_rate_and_sustain_level_expansion() {
     assert_eq!(Ym2612::eg_debug(0, 0), (0, 0));
     assert_eq!(Ym2612::eg_debug(1, 1), (34, 32));

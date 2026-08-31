@@ -1482,17 +1482,21 @@ impl Ym2612 {
         self.channels[channel].pms = self.sample_channels[channel].pms;
         self.channels[channel].fnum = self.sample_channels[channel].fnum;
         self.channels[channel].block = self.sample_channels[channel].block;
+        /* The CH6 FM pipeline keeps running while DAC mode is enabled (phase
+         * counters, feedback history, envelopes); only the output value is
+         * replaced at this stage, as on hardware. */
+        let fm_out = self.channels[channel].clock(
+            &self.sample_registers[bank_idx],
+            ch_off,
+            self.lfo_am,
+            self.lfo_pm,
+            self.hardware_profile,
+            special_frequencies,
+        ) as i32;
         let out = if channel == 5 && self.sample_dac_en {
             (self.sample_dac_val as i32 - 128) << 6
         } else {
-            self.channels[channel].clock(
-                &self.sample_registers[bank_idx],
-                ch_off,
-                self.lfo_am,
-                self.lfo_pm,
-                self.hardware_profile,
-                special_frequencies,
-            ) as i32
+            fm_out
         };
         self.channels[channel].algorithm = live_state.algorithm;
         self.channels[channel].feedback = live_state.feedback;
