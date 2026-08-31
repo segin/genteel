@@ -35,7 +35,11 @@ fn test_ym2612_read_status() {
     ym.write_data_bank(Bank::Bank0, 0x00);
     assert_ne!(ym.read_status() & 0x80, 0); // Busy flag should be set
 
-    ym.step(32); // 32 * 7 = 224 mclocks
+    // Busy holds ~32 internal YM cycles = 1344 MCLK; step is in CPU cycles
+    // (x7 MCLK), so 191 cycles leave it set and 192 clear it.
+    ym.step(191);
+    assert_ne!(ym.read_status() & 0x80, 0); // Busy still held
+    ym.step(1);
     assert_eq!(ym.read_status() & 0x80, 0); // Busy flag should be cleared
 }
 

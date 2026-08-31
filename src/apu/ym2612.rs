@@ -1189,7 +1189,9 @@ impl Ym2612 {
 
     fn data_write_busy_cycles(&self, address: u8) -> i32 {
         match self.hardware_profile {
-            Ym2612HardwareProfile::DiscreteYm2612 => 224,
+            // Baseline: ~32 internal YM cycles after a data write, in the
+            // divide-by-6 internal-cycle domain (1 internal cycle = 42 MCLK).
+            Ym2612HardwareProfile::DiscreteYm2612 => 32 * 42,
             Ym2612HardwareProfile::Ym3438 => {
                 if (0xA0..=0xB6).contains(&address) {
                     47 * 7

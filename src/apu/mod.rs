@@ -461,8 +461,9 @@ mod tests {
         apu.write_fm_data(Bank::Bank0, 0);
         assert!((apu.read_fm_status() & 0x80) != 0);
 
-        // Tick cycles to clear busy bit (busy is 224, mclks is cycles * 7, 32 cycles should clear it)
-        apu.tick_cycles(32);
+        // Tick cycles to clear busy bit: busy is 32 internal YM cycles =
+        // 1344 MCLK; mclks is cycles * 7, so 192 CPU cycles clear it.
+        apu.tick_cycles(192);
         assert_eq!(apu.read_fm_status() & 0x80, 0);
 
         // Test Timer A
