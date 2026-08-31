@@ -1625,17 +1625,12 @@ impl Ym2612 {
         self.selected_data_bank = b;
         self.busy = self.busy.max(self.address_write_busy_cycles());
     }
-    pub fn write_data(&mut self, p: u8, v: u8) {
-        // A data write whose port A1 does not match the bank of the last
-        // address write is ignored (MAME fm2612: "verified on real YM2608").
-        let bank = if (p & 1) == 0 {
-            Bank::Bank0
-        } else {
-            Bank::Bank1
-        };
-        if bank != self.selected_data_bank {
-            return;
-        }
+    pub fn write_data(&mut self, _p: u8, v: u8) {
+        // There is one physical data port: writes via $4001 or $4003 both
+        // commit to the group selected by the last address-port write, so
+        // the data port's A1 bit is ignored (Nuked-OPN2 latches the bank at
+        // address-write time; some drivers select via $4002 but stream data
+        // through $4001).
         // No busy gating: the chip is stepped in batches, so `busy` (set by
         // the preceding address/data write and only drained in `step`) is
         // still high when the CPU writes the data port on the very next

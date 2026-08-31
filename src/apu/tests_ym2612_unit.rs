@@ -232,20 +232,17 @@ fn test_ym2612_key_on_bits_follow_real_slot_order() {
 }
 
 #[test]
-fn test_ym2612_data_write_port_must_match_selected_bank() {
+fn test_ym2612_data_write_applies_to_last_selected_group() {
     let mut ym = Ym2612::new();
 
-    // Address latched on port 1: a data write on port 0 is ignored
-    // (MAME fm2612: "verified on real YM2608").
+    // Address latched on port 1: a data write on port 0 still applies to
+    // the last-selected group — there is one physical data port and the
+    // chip only remembers which address port was written last.
     ym.write_address(1, 0xB4);
     ym.step(3);
     ym.write_data(0, 0xA7);
-    assert_eq!(ym.registers[1][0xB4], 0xC0);
-    assert_eq!(ym.registers[0][0xB4], 0xC0);
-
-    // The same write on the matching port applies.
-    ym.write_data(1, 0xA7);
     assert_eq!(ym.registers[1][0xB4], 0xA7);
+    assert_eq!(ym.registers[0][0xB4], 0xC0);
 }
 
 #[test]
