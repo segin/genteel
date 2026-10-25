@@ -4,6 +4,7 @@
 
 pub mod blip_buf;
 pub mod psg;
+pub(crate) mod state_clamp;
 pub mod ym2612;
 
 #[cfg(test)]
@@ -39,6 +40,19 @@ fn default_lpf_b1() -> f32 {
 
 fn default_lpf_a1() -> f32 {
     low_pass_coefficients(crate::audio::SAMPLE_RATE).2
+}
+
+fn default_psg_dc_pole() -> f32 {
+    dc_blocker_pole(crate::audio::SAMPLE_RATE)
+}
+
+/// Corner frequency of the PSG DC-blocking high-pass (AC coupling).
+const PSG_DC_BLOCK_HZ: f32 = 20.0;
+
+/// Pole of the one-pole DC blocker `y = x - x' + R·y'`, `R = 1 - 2π·fc/fs`.
+fn dc_blocker_pole(sample_rate: u32) -> f32 {
+    let fs = sample_rate.max(1) as f32;
+    (1.0 - 2.0 * std::f32::consts::PI * PSG_DC_BLOCK_HZ / fs).clamp(0.0, 1.0)
 }
 
 fn low_pass_coefficients(sample_rate: u32) -> (f32, f32, f32) {
@@ -90,6 +104,16 @@ pub struct Apu {
     low_pass_prev_input_left: f32,
     #[serde(default)]
     low_pass_prev_input_right: f32,
+    /* The PSG channels are unipolar (0 or +volume, as in GPGX), and the
+     * output stage is AC coupled: the DC blocker removes the level a tone,
+     * a channel parked at period 0/1 (PCM playback) or a volume change
+     * would otherwise leave on the mix. */
+    #[serde(default = "default_psg_dc_pole")]
+    psg_dc_pole: f32,
+    #[serde(default)]
+    psg_dc_prev_input: f32,
+    #[serde(default)]
+    psg_dc_prev_output: f32,
     #[serde(skip, default = "default_channel_buffers")]
     pub channel_buffers: [[i16; 128]; 10],
     #[serde(skip)]
@@ -118,6 +142,9 @@ impl Apu {
             low_pass_right: 0.0,
             low_pass_prev_input_left: 0.0,
             low_pass_prev_input_right: 0.0,
+            psg_dc_pole: default_psg_dc_pole(),
+            psg_dc_prev_input: 0.0,
+            psg_dc_prev_output: 0.0,
             channel_buffers: [[0; 128]; 10],
             buffer_idx: 0,
         };
@@ -132,6 +159,8 @@ impl Apu {
         self.low_pass_right = 0.0;
         self.low_pass_prev_input_left = 0.0;
         self.low_pass_prev_input_right = 0.0;
+        self.psg_dc_prev_input = 0.0;
+        self.psg_dc_prev_output = 0.0;
     }
 
     /// Configure the APU timing for the current region and output sample rate.
@@ -160,6 +189,7 @@ impl Apu {
         self.low_pass_b0 = b0;
         self.low_pass_b1 = b1;
         self.low_pass_a1 = a1;
+        self.psg_dc_pole = dc_blocker_pole(sample_rate);
         self.low_pass_left = 0.0;
         self.low_pass_right = 0.0;
         self.low_pass_prev_input_left = 0.0;
@@ -188,8 +218,11 @@ impl Apu {
         self.fm.write_addr(bank, data);
     }
 
-    pub fn write_fm_data(&mut self, bank: Bank, data: u8) {
-        self.fm.write_data_selected_bank(bank, data);
+    /// Write the FM data port. As on hardware there is a single data port:
+    /// the write targets the register group selected by the most recent
+    /// address-port write.
+    pub fn write_fm_data(&mut self, data: u8) {
+        self.fm.write_data(0, data);
     }
 
     pub fn tick_cycles(&mut self, m68k_cycles: u32) {
@@ -201,13 +234,11 @@ impl Apu {
     /// Returns `(left, right)` from the blip buffers.
     pub fn generate_sample(&mut self) -> (i16, i16) {
         let (fm_l, fm_r) = self.fm.generate_sample();
-        let psg = self.psg.generate_sample();
+        let psg_raw = self.psg.generate_sample();
+        let psg = self.psg_dc_block(psg_raw);
 
-        let dry_left = (((fm_l as i32) * 3) + ((psg as i32) * 2)) / 5;
-        let dry_right = (((fm_r as i32) * 3) + ((psg as i32) * 2)) / 5;
-
-        let dry_left = dry_left as f32;
-        let dry_right = dry_right as f32;
+        let dry_left = ((fm_l as f32) * 3.0 + psg * 2.0) / 5.0;
+        let dry_right = ((fm_r as f32) * 3.0 + psg * 2.0) / 5.0;
 
         let filtered_left = self.low_pass_b0 * dry_left
             + self.low_pass_b1 * self.low_pass_prev_input_left
@@ -225,6 +256,15 @@ impl Apu {
         let right = Self::mix_sample(self.low_pass_right.round() as i32);
 
         (left, right)
+    }
+
+    /// One-pole DC blocker applied to the PSG before mixing.
+    fn psg_dc_block(&mut self, sample: i16) -> f32 {
+        let x = sample as f32;
+        let y = x - self.psg_dc_prev_input + self.psg_dc_pole * self.psg_dc_prev_output;
+        self.psg_dc_prev_input = x;
+        self.psg_dc_prev_output = if y.is_finite() { y } else { 0.0 };
+        self.psg_dc_prev_output
     }
 
     /// Update visualization buffers (call once per frame)
@@ -283,7 +323,7 @@ mod tests {
     fn test_fm_passthrough() {
         let mut apu = Apu::new();
         apu.write_fm_addr(Bank::Bank0, 0x28);
-        apu.write_fm_data(Bank::Bank0, 0xF0);
+        apu.write_fm_data(0xF0);
         assert_eq!(apu.fm.registers[0][0x28], 0xF0);
     }
 
@@ -356,34 +396,41 @@ mod tests {
 
         // Write address to Bank0, and check if data written goes to this address
         apu.write_fm_addr(Bank::Bank0, 0x22);
-        apu.write_fm_data(Bank::Bank0, 0x11);
+        apu.write_fm_data(0x11);
         assert_eq!(apu.fm.registers[0][0x22], 0x11);
         apu.tick_cycles(32);
 
         // Change address in Bank0, write data, check new address is used
         apu.write_fm_addr(Bank::Bank0, 0x27);
         apu.tick_cycles(32);
-        apu.write_fm_data(Bank::Bank0, 0x33);
+        apu.write_fm_data(0x33);
         assert_eq!(apu.fm.registers[0][0x27], 0x33);
         apu.tick_cycles(32);
 
         // Verify that Bank1 operates independently
         apu.write_fm_addr(Bank::Bank1, 0x28);
         apu.tick_cycles(32);
-        apu.write_fm_data(Bank::Bank1, 0x44);
+        apu.write_fm_data(0x44);
         assert_eq!(apu.fm.registers[1][0x28], 0x44);
         apu.tick_cycles(32);
 
         // Change address in Bank1
         apu.write_fm_addr(Bank::Bank1, 0x2B);
         apu.tick_cycles(32);
-        apu.write_fm_data(Bank::Bank1, 0x55);
+        apu.write_fm_data(0x55);
         assert_eq!(apu.fm.registers[1][0x2B], 0x55);
         apu.tick_cycles(32);
 
-        // Ensure Bank0 address wasn't affected by Bank1 address writes
-        apu.write_fm_data(Bank::Bank0, 0x66);
-        assert_eq!(apu.fm.registers[0][0x27], 0x66); // The last address set for Bank0 was 0x27
+        // The single data port follows the last address write (Bank1 $2B),
+        // leaving Bank0's registers untouched.
+        apu.write_fm_data(0x66);
+        assert_eq!(apu.fm.registers[1][0x2B], 0x66);
+        assert_eq!(apu.fm.registers[0][0x27], 0x33);
+
+        // Re-selecting Bank0 routes data there again.
+        apu.write_fm_addr(Bank::Bank0, 0x27);
+        apu.write_fm_data(0x77);
+        assert_eq!(apu.fm.registers[0][0x27], 0x77);
     }
 
     #[test]
@@ -392,7 +439,7 @@ mod tests {
 
         // Write to Bank0, Register 0x24 (Timer A High)
         apu.write_fm_addr(Bank::Bank0, 0x24);
-        apu.write_fm_data(Bank::Bank0, 0xAA);
+        apu.write_fm_data(0xAA);
         assert_eq!(apu.fm.registers[0][0x24], 0xAA);
         assert!((apu.read_fm_status() & 0x80) != 0); // Busy flag should be set
 
@@ -401,7 +448,7 @@ mod tests {
         // Write to Bank1, Register 0x24
         apu.write_fm_addr(Bank::Bank1, 0x24);
         apu.tick_cycles(32);
-        apu.write_fm_data(Bank::Bank1, 0xBB);
+        apu.write_fm_data(0xBB);
         assert_eq!(apu.fm.registers[1][0x24], 0xBB);
         assert!((apu.read_fm_status() & 0x80) != 0); // Busy flag should be set
     }
@@ -416,11 +463,11 @@ mod tests {
         let mut apu = Apu::new();
 
         apu.write_fm_addr(Bank::Bank0, 0x24);
-        apu.write_fm_data(Bank::Bank0, 0xAA);
+        apu.write_fm_data(0xAA);
         assert_eq!(apu.fm.registers[0][0x24], 0xAA);
 
         apu.write_fm_addr(Bank::Bank0, 0x25);
-        apu.write_fm_data(Bank::Bank0, 0x03);
+        apu.write_fm_data(0x03);
         assert_eq!(apu.fm.registers[0][0x25], 0x03);
     }
 
@@ -430,21 +477,21 @@ mod tests {
 
         // 1. Test DAC Enable (Bank0, Register 0x2B)
         apu.write_fm_addr(Bank::Bank0, 0x2B);
-        apu.write_fm_data(Bank::Bank0, 0x80); // Enable DAC
+        apu.write_fm_data(0x80); // Enable DAC
         assert_eq!(apu.fm.registers[0][0x2B], 0x80);
         assert!((apu.read_fm_status() & 0x80) != 0); // Busy flag set
         apu.tick_cycles(32); // clear busy
 
         // 2. Test DAC Value (Bank0, Register 0x2A)
         apu.write_fm_addr(Bank::Bank0, 0x2A);
-        apu.write_fm_data(Bank::Bank0, 0xFF); // Set DAC value to maximum
+        apu.write_fm_data(0xFF); // Set DAC value to maximum
         assert_eq!(apu.fm.registers[0][0x2A], 0xFF);
         assert!((apu.read_fm_status() & 0x80) != 0); // Busy flag set
         apu.tick_cycles(32); // clear busy
 
         // 3. Test Panning Update (Bank1, Register 0xB6)
         apu.write_fm_addr(Bank::Bank1, 0xB6);
-        apu.write_fm_data(Bank::Bank1, 0xC0); // Left and Right panning
+        apu.write_fm_data(0xC0); // Left and Right panning
         assert_eq!(apu.fm.registers[1][0xB6], 0xC0);
         assert!((apu.read_fm_status() & 0x80) != 0); // Busy flag set
     }
@@ -458,7 +505,7 @@ mod tests {
         // Writing FM data should set the busy bit (bit 7)
         apu.write_fm_addr(Bank::Bank0, 0x22);
         apu.tick_cycles(32);
-        apu.write_fm_data(Bank::Bank0, 0);
+        apu.write_fm_data(0);
         assert!((apu.read_fm_status() & 0x80) != 0);
 
         // Tick cycles to clear busy bit: busy is 32 internal YM cycles =
@@ -470,15 +517,15 @@ mod tests {
         // Timer A is set via 0x24 (bits 9-2) and 0x25 (bits 1-0)
         // Set it to a very small value to trigger quickly
         apu.write_fm_addr(Bank::Bank0, 0x24);
-        apu.write_fm_data(Bank::Bank0, 0xFF);
+        apu.write_fm_data(0xFF);
         apu.write_fm_addr(Bank::Bank0, 0x25);
         apu.tick_cycles(32);
-        apu.write_fm_data(Bank::Bank0, 0x03); // Max value is 1023 (0x3FF)
+        apu.write_fm_data(0x03); // Max value is 1023 (0x3FF)
 
         // Enable and trigger timer A (bit 0 = enable, bit 2 = load bit)
         apu.write_fm_addr(Bank::Bank0, 0x27);
         apu.tick_cycles(32);
-        apu.write_fm_data(Bank::Bank0, 0x05);
+        apu.write_fm_data(0x05);
 
         // After some cycles, bit 0 should be set
         // Timer A advances on native YM2612 sample periods.
@@ -491,18 +538,18 @@ mod tests {
         // Reset status (YM2612 reset status bits via register 0x27 bits 4 and 5)
         apu.write_fm_addr(Bank::Bank0, 0x27);
         apu.tick_cycles(32);
-        apu.write_fm_data(Bank::Bank0, 0x30);
+        apu.write_fm_data(0x30);
         assert_eq!(apu.read_fm_status() & 0x03, 0);
 
         // Set Timer B to max value (255)
         apu.write_fm_addr(Bank::Bank0, 0x26);
         apu.tick_cycles(32);
-        apu.write_fm_data(Bank::Bank0, 0xFF);
+        apu.write_fm_data(0xFF);
 
         // Enable and trigger Timer B (bit 1 = enable, bit 3 = load bit)
         apu.write_fm_addr(Bank::Bank0, 0x27);
         apu.tick_cycles(32);
-        apu.write_fm_data(Bank::Bank0, 0x0A);
+        apu.write_fm_data(0x0A);
 
         // Timer B ticks once every 16 YM sample periods.
         // With the max timer value, overflow needs 16 sample periods of divider advance.
@@ -516,15 +563,15 @@ mod tests {
 
         // Enable DAC
         apu.write_fm_addr(Bank::Bank0, 0x2B);
-        apu.write_fm_data(Bank::Bank0, 0x80);
+        apu.write_fm_data(0x80);
 
         // Set DAC value to a non-zero amplitude
         apu.write_fm_addr(Bank::Bank0, 0x2A);
-        apu.write_fm_data(Bank::Bank0, 0xFF);
+        apu.write_fm_data(0xFF);
 
         // Pan Left Only to test specific output
         apu.write_fm_addr(Bank::Bank1, 0xB6);
-        apu.write_fm_data(Bank::Bank1, 0x80);
+        apu.write_fm_data(0x80);
 
         // Tick one native YM2612 sample period.
         apu.tick_cycles(144);
@@ -577,5 +624,172 @@ mod tests {
         assert_eq!(apu.psg.blip.clock_rate(), audio::NTSC_MCLK);
         assert_eq!(apu.fm.blip_l.clock_rate(), audio::NTSC_MCLK);
         assert_eq!(apu.fm.blip_r.clock_rate(), audio::NTSC_MCLK);
+    }
+
+    /// Run the APU like the frontend does: tick, then emit output samples.
+    fn run_samples(apu: &mut Apu, samples: usize) -> Vec<(i16, i16)> {
+        let cps = audio::NTSC_MCLK as f64 / apu.sample_rate as f64;
+        let mut acc = 0.0f64;
+        let mut out = Vec::with_capacity(samples);
+        while out.len() < samples {
+            apu.tick_cycles(64);
+            acc += 64.0 * 7.0;
+            while acc >= cps && out.len() < samples {
+                out.push(apu.generate_sample());
+                acc -= cps;
+            }
+        }
+        out
+    }
+
+    fn psg_only_mean(samples: &[(i16, i16)]) -> f64 {
+        samples.iter().map(|&(l, _)| l as f64).sum::<f64>() / samples.len() as f64
+    }
+
+    #[test]
+    fn test_psg_volume_change_leaves_no_dc_on_mix() {
+        let mut apu = Apu::new();
+        /* FM fully silent (YM3438 profile: no ladder offset). */
+        apu.fm
+            .set_hardware_profile(ym2612::Ym2612HardwareProfile::Ym3438);
+        let rate = apu.sample_rate as usize;
+        run_samples(&mut apu, rate / 10);
+        /* A held channel (period 0/1 toggles ultrasonically) at full volume
+         * is a DC level, as when a game parks a channel or plays PCM. */
+        apu.write_psg(0x80);
+        apu.write_psg(0x00);
+        apu.write_psg(0x90);
+        let out = run_samples(&mut apu, rate * 2);
+        let mean = psg_only_mean(&out[rate..]);
+        assert!(mean.abs() < 20.0, "PSG left DC {mean} on the mix");
+    }
+
+    #[test]
+    fn test_psg_tone_mix_is_centred() {
+        let mut apu = Apu::new();
+        apu.fm
+            .set_hardware_profile(ym2612::Ym2612HardwareProfile::Ym3438);
+        let rate = apu.sample_rate as usize;
+        apu.write_psg(0x8E); // tone 0 period 0x0FE (~440 Hz)
+        apu.write_psg(0x0F);
+        apu.write_psg(0x90);
+        let out = run_samples(&mut apu, rate * 2);
+        let mean = psg_only_mean(&out[rate..]);
+        let peak = out[rate..].iter().map(|&(l, _)| l.abs()).max().unwrap();
+        assert!(peak > 500, "tone should be audible, peak {peak}");
+        assert!(mean.abs() < 20.0, "tone mix not centred: {mean}");
+    }
+
+    #[test]
+    fn test_region_change_keeps_delta_baselines() {
+        let mut apu = Apu::new();
+        apu.write_psg(0x80);
+        apu.write_psg(0x00);
+        apu.write_psg(0x90); // channel 0 audible
+        run_samples(&mut apu, 2000);
+        let level = apu.psg.blip.read_instant();
+
+        apu.set_timing(Region::Pal, 48_000);
+        assert_eq!(apu.psg.blip.read_instant(), level);
+
+        apu.write_psg(0x9F); // silence everything
+        run_samples(&mut apu, 500);
+        assert_eq!(apu.psg.blip.read_instant(), 0, "PSG baseline offset");
+        let mut last = 1;
+        for _ in 0..64 {
+            last = apu.psg.generate_sample();
+        }
+        assert_eq!(last, 0);
+        let fm_settled = apu.fm.blip_l.read_instant();
+        let mut fm_last = (0, 0);
+        for _ in 0..64 {
+            fm_last = apu.fm.generate_sample();
+        }
+        assert_eq!(fm_last.0, fm_settled, "FM baseline offset");
+    }
+
+    #[test]
+    fn test_write_fm_data_follows_last_address_bank() {
+        let mut apu = Apu::new();
+        apu.write_fm_addr(Bank::Bank1, 0x30);
+        apu.write_fm_data(0x5A);
+        assert_eq!(apu.fm.registers[1][0x30], 0x5A);
+        assert_eq!(apu.fm.registers[0][0x30], 0x00);
+    }
+
+    /// Paths of every numeric leaf in a JSON value.
+    fn numeric_leaves(v: &Value, path: String, out: &mut Vec<String>) {
+        match v {
+            Value::Number(_) => out.push(path),
+            Value::Array(a) => {
+                for (i, e) in a.iter().enumerate() {
+                    numeric_leaves(e, format!("{path}/{i}"), out);
+                }
+            }
+            Value::Object(o) => {
+                for (k, e) in o {
+                    numeric_leaves(e, format!("{path}/{k}"), out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    const NASTY: [i64; 22] = [
+        0,
+        1,
+        3,
+        7,
+        8,
+        15,
+        16,
+        23,
+        24,
+        31,
+        32,
+        127,
+        255,
+        256,
+        1023,
+        4095,
+        65535,
+        -1,
+        i32::MAX as i64,
+        i32::MIN as i64,
+        u32::MAX as i64,
+        i64::MAX,
+    ];
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(64))]
+        /// Restoring APU state with arbitrary out-of-range numeric fields
+        /// either rejects the state or clamps it; running afterwards never
+        /// panics.
+        #[test]
+        fn prop_corrupted_state_never_panics(
+            edits in proptest::collection::vec((proptest::prelude::any::<usize>(), 0usize..22), 1..24)
+        ) {
+            let mut apu = Apu::new();
+            apu.write_psg(0x8F);
+            apu.write_psg(0x90);
+            let mut state = apu.read_state();
+            let mut leaves = Vec::new();
+            numeric_leaves(&state, String::new(), &mut leaves);
+            for (pick, value) in &edits {
+                let path = &leaves[pick % leaves.len()];
+                if let Some(slot) = state.pointer_mut(path) {
+                    *slot = serde_json::json!(NASTY[*value]);
+                }
+            }
+            apu.write_state(&state);
+            apu.set_timing(Region::Ntsc, crate::audio::SAMPLE_RATE);
+            for _ in 0..200 {
+                apu.tick_cycles(488);
+                apu.generate_sample();
+            }
+            apu.update_visualization();
+            apu.fm.read(0);
+            apu.fm.read(1);
+        }
     }
 }

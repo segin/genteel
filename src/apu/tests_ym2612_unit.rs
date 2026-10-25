@@ -44,7 +44,9 @@ fn test_ym2612_read_status() {
 }
 
 #[test]
-fn test_ym2612_discrete_undefined_reads_decay_after_status_read() {
+fn test_ym2612_discrete_undefined_reads_hold_last_status_then_zero() {
+    /* Nuked-OPN2: ports 1-3 return the status latched by the last port-0
+     * read while status_time (300000 internal cycles) runs, then 0. */
     let mut ym = Ym2612::new();
     ym.set_hardware_profile(Ym2612HardwareProfile::DiscreteYm2612);
     ym.status = 0x03;
@@ -52,12 +54,53 @@ fn test_ym2612_discrete_undefined_reads_decay_after_status_read() {
     assert_eq!(ym.read(0), 0x03);
     assert_eq!(ym.read(1), 0x03);
 
-    ym.step((audio::NTSC_MCLK / 56).max(1));
-    let decayed = ym.read(1);
-    assert!(decayed < 0x03);
+    /* The live status changing does not affect the held value. */
+    ym.status = 0x00;
+    let hold_m68k = (300_000u32 * 42) / 7;
+    ym.step(hold_m68k - 100);
+    assert_eq!(ym.read(2), 0x03, "value is held, not interpolated");
 
-    ym.step((audio::NTSC_MCLK / 28).max(1));
+    ym.step(200);
     assert_eq!(ym.read(1), 0);
+    assert_eq!(ym.read(3), 0);
+}
+
+#[test]
+fn test_ym2612_fnum_high_latch_is_shared_across_channels_and_banks() {
+    /* GPGX `OPN.ST.fn_h` / Nuked-OPN2 `reg_a4`: one latch for $A4-$A6. */
+    let mut ym = Ym2612::new();
+    ym.write_addr(Bank::Bank0, 0xA4);
+    ym.write_data_bank(Bank::Bank0, 0x22);
+    ym.write_addr(Bank::Bank0, 0xA5);
+    ym.write_data_bank(Bank::Bank0, 0x13);
+    ym.write_addr(Bank::Bank0, 0xA0);
+    ym.write_data_bank(Bank::Bank0, 0x10);
+    ym.write_addr(Bank::Bank0, 0xA1);
+    ym.write_data_bank(Bank::Bank0, 0x20);
+    assert_eq!(ym.channel_frequency_debug(0), Some((0x310, 2)));
+    assert_eq!(ym.channel_frequency_debug(1), Some((0x320, 2)));
+
+    /* A bank-1 high write is consumed by a bank-0 low write too. */
+    ym.write_addr(Bank::Bank1, 0xA6);
+    ym.write_data_bank(Bank::Bank1, 0x3F);
+    ym.write_addr(Bank::Bank0, 0xA2);
+    ym.write_data_bank(Bank::Bank0, 0x01);
+    assert_eq!(ym.channel_frequency_debug(2), Some((0x701, 7)));
+}
+
+#[test]
+fn test_ym2612_ch3_fnum_high_latch_is_shared() {
+    let mut ym = Ym2612::new();
+    ym.write_addr(Bank::Bank0, 0xAC);
+    ym.write_data_bank(Bank::Bank0, 0x0A);
+    ym.write_addr(Bank::Bank0, 0xAD);
+    ym.write_data_bank(Bank::Bank0, 0x1C);
+    ym.write_addr(Bank::Bank0, 0xA8);
+    ym.write_data_bank(Bank::Bank0, 0x40);
+    ym.write_addr(Bank::Bank0, 0xA9);
+    ym.write_data_bank(Bank::Bank0, 0x50);
+    assert_eq!(ym.ch3_slot_frequency_debug(0), Some((0x440, 3)));
+    assert_eq!(ym.ch3_slot_frequency_debug(1), Some((0x450, 3)));
 }
 
 #[test]
@@ -1248,11 +1291,10 @@ fn test_ym2612_generate_sample_drains_right_channel_even_when_left_is_silent() {
     ym.blip_r = BlipBuf::new(44_100, 44_100);
     ym.blip_r.add_delta(0, 1000);
 
-    // The band-limited kernel delays the step by half the kernel (8 samples):
-    // after draining past the latency the right channel settles at exactly
-    // 1000 while the silent left stays 0.
+    // After draining past the band-limited kernel (16 samples) the right
+    // channel settles at exactly 1000 while the silent left stays 0.
     let mut last = (0i16, 0i16);
-    for _ in 0..9 {
+    for _ in 0..20 {
         last = ym.generate_sample();
     }
     assert_eq!(last.0, 0);

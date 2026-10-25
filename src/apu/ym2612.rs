@@ -3,6 +3,7 @@
 //! Refactored to use band-limited synthesis via BlipBuf for high quality.
 
 use crate::apu::blip_buf::BlipBuf;
+use crate::apu::state_clamp;
 use crate::audio;
 use serde::{Deserialize, Serialize};
 use std::sync::LazyLock;
@@ -18,6 +19,11 @@ fn default_sample_rate() -> u32 {
 const YM2612_INTERNAL_CYCLE_MCLK_DIVIDER: u32 = 7 * 6;
 const YM2612_SAMPLE_SUBCYCLES: u8 = 24;
 const YM2612_CHANNEL_SUBCYCLE_STRIDE: u8 = 4;
+/// Internal cycles (24 per sample, 42 MCLK each) for which an undefined-port
+/// read keeps returning the last status value: Nuked-OPN2 `OPN2_Read` sets
+/// `status_time = 300000` for the discrete YM2612 and `OPN2_Clock`
+/// decrements it once per internal cycle (~235 ms on NTSC).
+const UNDEFINED_READ_HOLD_CYCLES: u64 = 300_000;
 const LFO_SAMPLES_PER_STEP: [u32; 8] = [108, 77, 71, 67, 62, 44, 8, 5];
 const LFO_AMS_DEPTH_SHIFT: [u8; 4] = [8, 3, 1, 0];
 const DT_MASK: u32 = (1 << 17) - 1;
@@ -167,9 +173,9 @@ static LFO_PM_TABLE: LazyLock<[i16; 128 * 8 * 32]> = LazyLock::new(|| {
         for fnum in 0..128 {
             for step in 0..8 {
                 let mut value = 0i16;
-                for bit in 0..7 {
+                for (bit, bit_table) in LFO_PM_OUTPUT.iter().enumerate() {
                     if (fnum & (1 << bit)) != 0 {
-                        value += LFO_PM_OUTPUT[bit][depth][step] as i16;
+                        value += bit_table[depth][step] as i16;
                     }
                 }
                 let base = (fnum * 32 * 8) + (depth * 32);
@@ -300,8 +306,10 @@ struct EnvelopeParams {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct FmOperator {
+    #[serde(deserialize_with = "state_clamp::u32_max::<_, 0xFFFFF>")]
     phase_counter: u32,
     env_phase: AdsrPhase,
+    #[serde(deserialize_with = "state_clamp::u16_max::<_, 0x3FF>")]
     env_level: u16,
     #[serde(default)]
     ssg_invert: bool,
@@ -634,18 +642,25 @@ impl FmOperator {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct FmChannel {
     operators: [FmOperator; 4],
+    #[serde(deserialize_with = "state_clamp::u8_max::<_, 7>")]
     algorithm: u8,
+    #[serde(deserialize_with = "state_clamp::u8_max::<_, 7>")]
     feedback: u8,
     panning_l: bool,
     panning_r: bool,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "state_clamp::u8_max::<_, 8>")]
     ams_shift: u8,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "state_clamp::u8_max::<_, 7>")]
     pms: u8,
+    #[serde(deserialize_with = "state_clamp::u16_max::<_, 0x7FF>")]
     fnum: u16,
+    #[serde(deserialize_with = "state_clamp::u8_max::<_, 7>")]
     block: u8,
     fnum_latch: u8,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "state_clamp::i32_range::<_, -65536, 65535>"
+    )]
     mem_value: i32,
     last_sample: i16,
 }
@@ -659,14 +674,13 @@ impl FmChannel {
      * (Nuked-OPN2 models OPN2 and OPN2C with the same 9-bit per-slot DAC
      * output); only the ladder effect is discrete-YM2612-specific. */
     fn quantize_output_mask(&self, slot: usize) -> bool {
-        let quantize_9bit = match self.algorithm {
+        match self.algorithm {
             0..=3 => slot == SLOT4,
             4 => slot == SLOT2 || slot == SLOT4,
             5 | 6 => slot == SLOT2 || slot == SLOT3 || slot == SLOT4,
             7 => true,
             _ => false,
-        };
-        quantize_9bit
+        }
     }
 
     fn mask_carrier_output(&self, slot: usize, sample: i16) -> i16 {
@@ -845,12 +859,11 @@ impl FmChannel {
             false,
         );
         let out3 = self.mask_carrier_output(SLOT3, out3);
-        match self.algorithm {
-            /* Algorithms 0-4 all route OP3 into OP4's modulation input
-             * (alg 4 is the two-stack S1->S2 + S3->S4 configuration). In
-             * 5/6/7 OP3 is a carrier and goes to the output sum instead. */
-            0..=4 => c2 += out3 as i32,
-            _ => {}
+        /* Algorithms 0-4 all route OP3 into OP4's modulation input
+         * (alg 4 is the two-stack S1->S2 + S3->S4 configuration). In
+         * 5/6/7 OP3 is a carrier and goes to the output sum instead. */
+        if self.algorithm <= 4 {
+            c2 += out3 as i32;
         }
 
         let out2 = self.operators[SLOT2].compute_output(
@@ -865,16 +878,11 @@ impl FmChannel {
             false,
         );
         let out2 = self.mask_carrier_output(SLOT2, out2);
-        match self.algorithm {
-            0 | 1 | 2 | 3 => mem += out2 as i32,
-            4 | 5 | 6 | 7 => {}
-            _ => {}
+        if self.algorithm <= 3 {
+            mem += out2 as i32;
         }
 
-        let mut carrier = match self.algorithm {
-            4 | 5 | 6 | 7 => 0i32,
-            _ => 0i32,
-        };
+        let mut carrier = 0i32;
         match self.algorithm {
             /* Carrier sets (OP4 is added below for every algorithm):
              * alg 4 -> OP2+OP4; algs 5/6 -> OP2+OP3+OP4; alg 7 -> all four.
@@ -914,7 +922,7 @@ impl FmChannel {
         self.mem_value = mem;
 
         let channel_out = match self.algorithm {
-            4 | 5 | 6 | 7 => Self::clamp_output(carrier),
+            4..=7 => Self::clamp_output(carrier),
             _ => out4,
         };
         for (i, op_offset) in op_offsets.iter().enumerate() {
@@ -966,13 +974,19 @@ fn default_selected_data_bank() -> Bank {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 struct LatchedChannelState {
+    #[serde(deserialize_with = "state_clamp::u8_max::<_, 7>")]
     algorithm: u8,
+    #[serde(deserialize_with = "state_clamp::u8_max::<_, 7>")]
     feedback: u8,
     panning_l: bool,
     panning_r: bool,
+    #[serde(deserialize_with = "state_clamp::u8_max::<_, 8>")]
     ams_shift: u8,
+    #[serde(deserialize_with = "state_clamp::u8_max::<_, 7>")]
     pms: u8,
+    #[serde(deserialize_with = "state_clamp::u16_max::<_, 0x7FF>")]
     fnum: u16,
+    #[serde(deserialize_with = "state_clamp::u8_max::<_, 7>")]
     block: u8,
 }
 
@@ -1014,7 +1028,9 @@ pub struct Ym2612 {
     pub registers: [[u8; 256]; 2],
     address: [u8; 2],
     pub status: u8,
+    #[serde(deserialize_with = "state_clamp::i32_range::<_, 0, 1024>")]
     timer_a: i32,
+    #[serde(deserialize_with = "state_clamp::i32_range::<_, 0, 256>")]
     timer_b: i32,
     #[serde(default)]
     timer_b_divider: u8,
@@ -1022,9 +1038,12 @@ pub struct Ym2612 {
     channels: [FmChannel; 6],
     #[serde(default)]
     mode: u8,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "state_clamp::u16_array_max::<_, 3, 0x7FF>"
+    )]
     ch3_fnum: [u16; 3],
-    #[serde(default)]
+    #[serde(default, deserialize_with = "state_clamp::u8_array_max::<_, 3, 7>")]
     ch3_block: [u8; 3],
     #[serde(default)]
     ch3_fnum_latch: [u8; 3],
@@ -1032,22 +1051,26 @@ pub struct Ym2612 {
     csm_key_state: u8,
     dac_val: u8,
     dac_en: bool,
+    #[serde(deserialize_with = "state_clamp::u16_max::<_, 0xFFF>")]
     env_counter: u16,
     #[serde(default)]
     eg_timer: u8,
     #[serde(default)]
     lfo_counter: u8,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "state_clamp::u32_max::<_, 108>")]
     lfo_timer: u32,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "state_clamp::u32_max::<_, 108>")]
     lfo_timer_overflow: u32,
     #[serde(default)]
     lfo_am: u8,
     #[serde(default)]
     lfo_pm: u8,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "state_clamp::u8_max::<_, 23>")]
     sample_subcycle: u8,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "state_clamp::i32_array_range::<_, 6, -8192, 8191>"
+    )]
     channel_outputs: [i32; 6],
     #[serde(with = "register_array", default = "default_latched_registers")]
     sample_registers: [[u8; 256]; 2],
@@ -1055,9 +1078,12 @@ pub struct Ym2612 {
     sample_channels: [LatchedChannelState; 6],
     #[serde(default)]
     sample_mode: u8,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "state_clamp::u16_array_max::<_, 3, 0x7FF>"
+    )]
     sample_ch3_fnum: [u16; 3],
-    #[serde(default)]
+    #[serde(default, deserialize_with = "state_clamp::u8_array_max::<_, 3, 7>")]
     sample_ch3_block: [u8; 3],
     #[serde(default)]
     sample_dac_val: u8,
@@ -1070,9 +1096,12 @@ pub struct Ym2612 {
     pub total_clocks: u64,
     pub blip_l: BlipBuf,
     pub blip_r: BlipBuf,
+    #[serde(deserialize_with = "state_clamp::i32_range::<_, -65536, 65535>")]
     pub last_left: i32,
+    #[serde(deserialize_with = "state_clamp::i32_range::<_, -65536, 65535>")]
     pub last_right: i32,
     pub total_mclocks: u64,
+    #[serde(deserialize_with = "state_clamp::u32_max::<_, 41>")]
     pub mclk_debt: u32,
     #[serde(default = "default_hardware_profile")]
     hardware_profile: Ym2612HardwareProfile,
@@ -1082,6 +1111,13 @@ pub struct Ym2612 {
     last_status_read_clock: u64,
     #[serde(default = "default_selected_data_bank")]
     selected_data_bank: Bank,
+    /// Chip-wide F-number high/block latch written by $A4-$A6 (either bank)
+    /// and consumed by the next $A0-$A2 write.
+    #[serde(default, deserialize_with = "state_clamp::u8_max::<_, 0x3F>")]
+    fnum_high_latch: u8,
+    /// Latch for the CH3 special-mode F-number high/block ($AC-$AE).
+    #[serde(default, deserialize_with = "state_clamp::u8_max::<_, 0x3F>")]
+    ch3_fnum_high_latch: u8,
 }
 
 impl Default for Ym2612 {
@@ -1137,6 +1173,8 @@ impl Ym2612 {
             last_status_read: 0,
             last_status_read_clock: 0,
             selected_data_bank: Bank::Bank0,
+            fnum_high_latch: 0,
+            ch3_fnum_high_latch: 0,
         };
         for i in 0..3 {
             ym.registers[0][0xB4 + i] = 0xC0;
@@ -1165,8 +1203,11 @@ impl Ym2612 {
         }
         self.master_clock = master_clock;
         self.sample_rate = sample_rate;
-        self.blip_l.set_timing(master_clock, sample_rate);
-        self.blip_r.set_timing(master_clock, sample_rate);
+        /* The buffers keep their settled level, so last_left/last_right stay
+         * valid delta baselines across the timing change. */
+        let now = self.current_mclk();
+        self.blip_l.set_timing(master_clock, sample_rate, now);
+        self.blip_r.set_timing(master_clock, sample_rate, now);
     }
 
     pub fn read_status(&self) -> u8 {
@@ -1178,11 +1219,7 @@ impl Ym2612 {
     }
 
     fn current_mclk(&self) -> u64 {
-        self.total_mclocks + self.mclk_debt as u64
-    }
-
-    fn undefined_read_decay_constant(&self) -> u64 {
-        (self.master_clock.max(4) / 4) as u64
+        self.total_mclocks.wrapping_add(self.mclk_debt as u64)
     }
 
     fn address_write_busy_cycles(&self) -> i32 {
@@ -1208,15 +1245,17 @@ impl Ym2612 {
         }
     }
 
+    /// Undefined ports (1-3) on the discrete YM2612 return the status value
+    /// latched by the last port-0 read until its hold time expires, then 0.
     fn decayed_undefined_read(&self) -> u8 {
         let elapsed = self
             .current_mclk()
             .saturating_sub(self.last_status_read_clock);
-        let decay = self.undefined_read_decay_constant();
-        if elapsed >= decay {
-            return 0;
+        if elapsed < UNDEFINED_READ_HOLD_CYCLES * YM2612_INTERNAL_CYCLE_MCLK_DIVIDER as u64 {
+            self.last_status_read
+        } else {
+            0
         }
-        (((self.last_status_read as u64) * (decay - elapsed)) / decay) as u8
     }
 
     pub fn set_hardware_profile(&mut self, profile: Ym2612HardwareProfile) {
@@ -1239,18 +1278,22 @@ impl Ym2612 {
     /// Step the YM2612 by a number of M68K cycles.
     /// Convert internally to MCLK (1 M68K cycle = 7 MCLK).
     pub fn step(&mut self, cycles: u32) {
-        let mclocks = cycles * 7;
+        let mclocks = cycles.saturating_mul(7);
         if self.busy > 0 {
-            self.busy = self.busy.saturating_sub(mclocks as i32);
+            self.busy = self
+                .busy
+                .saturating_sub(mclocks.min(i32::MAX as u32) as i32);
         }
 
         // YM2612 generates one native output sample every 144 chip clocks.
         // On Genesis hardware the chip clock is MCLK/7, so one sample occurs
         // every 1008 master clocks.
-        self.mclk_debt += mclocks;
+        self.mclk_debt = self.mclk_debt.saturating_add(mclocks);
 
         while self.mclk_debt >= YM2612_INTERNAL_CYCLE_MCLK_DIVIDER {
-            self.total_mclocks += YM2612_INTERNAL_CYCLE_MCLK_DIVIDER as u64;
+            self.total_mclocks = self
+                .total_mclocks
+                .wrapping_add(YM2612_INTERNAL_CYCLE_MCLK_DIVIDER as u64);
             self.internal_step();
             self.mclk_debt -= YM2612_INTERNAL_CYCLE_MCLK_DIVIDER;
         }
@@ -1540,7 +1583,9 @@ impl Ym2612 {
         /* Scale to output range. BlastEm scales each channel by 79/120
          * (ym_enable_zero_offset); the previous `>> 3` (x0.125) left the FM
          * ~5x quieter than hardware relative to the PSG and the i16 range.
-         * Worst case: 6 channels x +-8192 x 79/120 = +-32.4k, still in i16. */
+         * Worst case including the discrete-chip ladder offset:
+         * 6 x (8191 + 128) x 79/120 = +32.86k and 6 x (-8192 - 96) x 79/120
+         * = -32.74k, still within i16. */
         left = left * 79 / 120;
         right = right * 79 / 120;
         let dl = left - self.last_left;
@@ -1608,7 +1653,7 @@ impl Ym2612 {
             self.csm_key_state = 0;
         }
 
-        self.total_clocks += 1;
+        self.total_clocks = self.total_clocks.wrapping_add(1);
     }
 
     /// Advance internal FM synthesis by one internal YM2612 cycle.
@@ -1618,7 +1663,10 @@ impl Ym2612 {
             self.update_ssg_for_sample();
         }
 
-        if self.sample_subcycle % YM2612_CHANNEL_SUBCYCLE_STRIDE == 0 {
+        if self
+            .sample_subcycle
+            .is_multiple_of(YM2612_CHANNEL_SUBCYCLE_STRIDE)
+        {
             let channel = (self.sample_subcycle / YM2612_CHANNEL_SUBCYCLE_STRIDE) as usize;
             self.clock_channel_output(channel);
         }
@@ -1666,11 +1714,6 @@ impl Ym2612 {
         self.write_data_bank(self.selected_data_bank, v);
     }
 
-    pub fn write_data_selected_bank(&mut self, b: Bank, v: u8) {
-        self.selected_data_bank = b;
-        self.write_data(b as u8, v);
-    }
-
     pub fn write_data_bank(&mut self, b: Bank, v: u8) {
         let bank_idx = b as usize;
         let a = self.address[bank_idx];
@@ -1688,19 +1731,23 @@ impl Ym2612 {
                     self.apply_key_on_write(c, v);
                 }
             }
+            /* $A4-$A6 (either bank) share one F-number high/block latch,
+             * committed to a channel only by the following $A0-$A2 write
+             * (GPGX `ST.fn_h`, Nuked-OPN2 `reg_a4`). */
+            (_, 0xA4..=0xA6) => self.fnum_high_latch = v & 0x3F,
             (_, 0xA0..=0xA2) => {
                 let c = (a - 0xA0) as usize + bank_idx * 3;
-                if c < 6 {
-                    self.channels[c].fnum_latch = v;
-                    let high = self.registers[bank_idx][a as usize + 4];
-                    self.channels[c].block = (high >> 3) & 0x07;
-                    self.channels[c].fnum = (((high as u16) & 0x07) << 8) | v as u16;
-                }
+                let high = self.fnum_high_latch;
+                self.channels[c].fnum_latch = v;
+                self.channels[c].block = (high >> 3) & 0x07;
+                self.channels[c].fnum = (((high as u16) & 0x07) << 8) | v as u16;
             }
+            /* Likewise one latch for the CH3 special-mode $AC-$AE. */
+            (Bank::Bank0, 0xAC..=0xAE) => self.ch3_fnum_high_latch = v & 0x3F,
             (Bank::Bank0, 0xA8..=0xAA) => {
                 let slot = (a - 0xA8) as usize;
+                let high = self.ch3_fnum_high_latch;
                 self.ch3_fnum_latch[slot] = v;
-                let high = self.registers[0][a as usize + 4];
                 self.ch3_block[slot] = (high >> 3) & 0x07;
                 self.ch3_fnum[slot] = (((high as u16) & 0x07) << 8) | v as u16;
             }
@@ -1900,6 +1947,7 @@ impl Ym2612 {
     }
 
     #[cfg(test)]
+    #[allow(clippy::too_many_arguments)] // mirrors compute_output's inputs plus the slot address
     pub(crate) fn operator_output_debug(
         &self,
         channel: usize,
