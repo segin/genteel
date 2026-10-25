@@ -427,6 +427,51 @@ impl Bus {
         }
     }
 
+    /// Read a byte for a debugger without any hardware side effects.
+    ///
+    /// Memory (cartridge ROM/mapper/SRAM, Z80 RAM regardless of bus
+    /// ownership, work RAM) is returned directly. Device registers (I/O,
+    /// VDP, YM2612) read as 0xFF instead of being accessed.
+    pub fn peek_byte(&self, address: u32) -> u8 {
+        let addr = address & 0xFFFFFF;
+        match addr {
+            0x000000..=0x3FFFFF => self.read_cart_byte(addr),
+            0x400000..=0x9FFFFF => self.rom.get(addr as usize).copied().unwrap_or(0xFF),
+            0xA00000..=0xA03FFF => self.z80_ram[(addr & 0x1FFF) as usize],
+            0xE00000..=0xFFFFFF => self.work_ram[(addr & 0xFFFF) as usize],
+            _ => 0xFF,
+        }
+    }
+
+    /// Write a byte for a debugger without any hardware side effects.
+    ///
+    /// Memory (ROM image, mapper RAM, SRAM, Z80 RAM, work RAM) is modified
+    /// directly; writes to device registers are ignored.
+    pub fn poke_byte(&mut self, address: u32, value: u8) {
+        let addr = address & 0xFFFFFF;
+        match addr {
+            0x000000..=0x9FFFFF => {
+                if addr <= 0x3FFFFF && self.everdrive.enabled {
+                    self.everdrive.write(addr, value);
+                } else if addr <= 0x3FFFFF && self.sram.contains(addr) {
+                    self.sram.write_byte(addr, value);
+                } else {
+                    let offset = if addr <= 0x3FFFFF && self.rom_mapper.enabled {
+                        self.rom_mapper.rom_offset(addr)
+                    } else {
+                        addr as usize
+                    };
+                    if let Some(byte) = self.rom.get_mut(offset) {
+                        *byte = value;
+                    }
+                }
+            }
+            0xA00000..=0xA03FFF => self.z80_ram[(addr & 0x1FFF) as usize] = value,
+            0xE00000..=0xFFFFFF => self.work_ram[(addr & 0xFFFF) as usize] = value,
+            _ => {}
+        }
+    }
+
     /// 68k byte read in the Z80 window. Z80 RAM (8 KiB, mirrored over
     /// `$A00000-$A03FFF`) needs the Z80 bus; the bank register and the VDP
     /// window at `$A07F00` are not readable.

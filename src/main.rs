@@ -1319,30 +1319,17 @@ fn print_usage() {
     println!("  Enter            Start");
     println!("  Escape           Quit");
 }
-/// GDB memory accessor for Bus
+/// GDB memory accessor for Bus. Uses the side-effect-free debugger accessors
+/// so inspecting memory never disturbs VDP, I/O or Z80 bus state.
 struct BusGdbMemory<'a> {
     bus: &'a std::cell::RefCell<Bus>,
 }
 impl<'a> GdbMemory for BusGdbMemory<'a> {
     fn read_byte(&mut self, addr: u32) -> u8 {
-        self.bus.borrow_mut().read_byte(addr)
+        self.bus.borrow().peek_byte(addr)
     }
     fn write_byte(&mut self, addr: u32, value: u8) {
-        // Assuming Z80 RAM is mapped within the first 0x2000 bytes of the Z80's address space
-        // This is a heuristic based on the provided snippet's `addr < 0x2000` condition.
-        // The GDB `write_byte` operates on the 68k's address space, so we need to
-        // translate or ensure this is the correct place for Z80 writes.
-        // If the intent was to log Z80Bus's internal write, that function is not in this file.
-        // For now, applying the eprintln to the GDB memory write if it targets Z80 RAM.
-        // This assumes the GDB server can write directly to Z80 RAM via the main bus.
-        if addr < 0x2000 {
-            // This condition is a guess based on the user's snippet
-            eprintln!(
-                "DEBUG: GDB Z80 RAM WRITE: addr=0x{:04X} val=0x{:02X}",
-                addr, value
-            );
-        }
-        self.bus.borrow_mut().write_byte(addr, value);
+        self.bus.borrow_mut().poke_byte(addr, value);
     }
 }
 #[derive(Debug, Default)]
@@ -1984,6 +1971,36 @@ mod tests {
             initial_frames + 2,
             "Should advance when resumed"
         );
+    }
+
+    #[test]
+    fn test_gdb_memory_access_has_no_hardware_side_effects() {
+        let emulator = Emulator::new();
+        {
+            let mut bus = emulator.bus.borrow_mut();
+            bus.vdp.command.pending = true;
+            bus.vdp.status |= 0x0080; // VINT pending
+            bus.z80_bus_request = false;
+            bus.z80_ram[0x10] = 0x5A;
+        }
+        let mut mem = BusGdbMemory { bus: &emulator.bus };
+        let _ = mem.read_byte(0xC00004);
+        let _ = mem.read_byte(0xC00005);
+        let _ = mem.read_byte(0xC00000);
+        {
+            let bus = emulator.bus.borrow();
+            assert!(bus.vdp.command.pending, "status read reset the command latch");
+            assert_ne!(bus.vdp.status & 0x0080, 0, "status read cleared VINT pending");
+        }
+        /* Z80 RAM is visible to the debugger regardless of bus ownership. */
+        assert_eq!(mem.read_byte(0xA00010), 0x5A);
+        mem.write_byte(0xA00011, 0xA5);
+        assert_eq!(emulator.bus.borrow().z80_ram[0x11], 0xA5);
+        /* Writes to the VDP control port are ignored, not executed. */
+        mem.write_byte(0xC00004, 0x81);
+        assert!(emulator.bus.borrow().vdp.command.pending);
+        mem.write_byte(0xFF0000, 0x12);
+        assert_eq!(mem.read_byte(0xFF0000), 0x12);
     }
 
     #[test]
