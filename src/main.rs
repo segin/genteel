@@ -37,7 +37,7 @@ const MAX_ROM_SIZE: u64 = 32 * 1024 * 1024;
 
 use apu::{Apu, Region};
 use cpu::Cpu;
-use debugger::{GdbMemory, GdbRegisters, GdbServer, StopReason};
+use debugger::{GdbMemory, GdbRegisters, GdbServer, RunRequest, StopReason};
 use frontend::InputMapping;
 use input::{InputManager, InputScript};
 use memory::bus::Bus;
@@ -83,6 +83,18 @@ pub enum RunOutcome {
     FrameComplete,
     /// Execution stopped on a breakpoint or instruction budget.
     Stopped,
+}
+
+/// 68k run state while a GDB client is attached.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GdbExecState {
+    /// Stopped; waiting for a continue or step request.
+    #[default]
+    Halted,
+    /// Running until a breakpoint or interrupt.
+    Running,
+    /// Executing a single instruction.
+    Stepping,
 }
 
 /// Stop conditions checked before each 68k instruction.
@@ -171,6 +183,12 @@ pub struct Emulator {
     /// Z80 VINT is due at the start of the next CPU batch.
     #[serde(default)]
     pub z80_vint_pending: bool,
+    /// Run state under an attached GDB client.
+    #[serde(skip)]
+    pub gdb_exec: GdbExecState,
+    /// Execute the instruction at a breakpoint once when resuming.
+    #[serde(skip)]
+    gdb_skip_breakpoint: bool,
 }
 impl Default for Emulator {
     fn default() -> Self {
@@ -210,6 +228,8 @@ impl Emulator {
             z80_cycle_debt: 0.0,
             master_clock: 0,
             z80_vint_pending: false,
+            gdb_exec: GdbExecState::Halted,
+            gdb_skip_breakpoint: false,
         };
         {
             let mut bus = emulator.bus.borrow_mut();
@@ -521,43 +541,44 @@ impl Emulator {
         ))
     }
     /// Step one frame with current input state
+    ///
+    /// While a GDB client is attached, the debugger controls execution
+    /// instead of the pause/single-step flags (see `run_gdb_slice`); live
+    /// controller input is still applied.
     pub fn step_frame(&mut self, input: Option<&input::FrameInput>) {
+        if self.gdb_attached() {
+            if let Some(i) = input {
+                self.apply_controllers(i);
+            }
+            self.run_gdb_slice();
+            return;
+        }
         if self.paused && !self.single_step {
             return;
         }
         // Reset single_step if it was set
         self.single_step = false;
 
-        // Apply inputs from script or live input
-        let frame_input = match input {
-            Some(i) => {
-                self.input.record(i);
-                std::borrow::Cow::Borrowed(i)
-            }
-            None => self.input.advance_frame(),
-        };
-
-        let p1 = frame_input.p1;
-        let p2 = frame_input.p2;
-        let command = frame_input.command.clone();
-        drop(frame_input);
-
-        {
-            let mut bus = self.bus.borrow_mut();
-            if let Some(ctrl) = bus.io.controller(1) {
-                *ctrl = p1;
-            }
-            if let Some(ctrl) = bus.io.controller(2) {
-                *ctrl = p2;
-            }
-        }
+        // Apply inputs from script or live input (recorded when recording)
+        let frame_input = self.input.next_frame(input);
+        self.apply_controllers(&frame_input);
 
         // Handle commands (e.g., SCREENSHOT <path>)
-        if let Some(cmd) = &command {
+        if let Some(cmd) = &frame_input.command {
             self.execute_script_command(cmd);
         }
 
         self.step_frame_internal();
+    }
+
+    fn apply_controllers(&mut self, input: &input::FrameInput) {
+        let mut bus = self.bus.borrow_mut();
+        if let Some(ctrl) = bus.io.controller(1) {
+            *ctrl = input.p1;
+        }
+        if let Some(ctrl) = bus.io.controller(2) {
+            *ctrl = input.p2;
+        }
     }
 
     fn execute_script_command(&self, cmd: &str) {
@@ -1167,128 +1188,126 @@ impl Emulator {
         image::save_buffer(path, &rgb_data, 320, 240, image::ExtendedColorType::Rgb8)
             .map_err(|e| e.to_string())
     }
-    /// Poll GDB for commands and update state
+    /// Whether a GDB client is currently attached.
+    pub fn gdb_attached(&self) -> bool {
+        self.gdb.as_ref().is_some_and(|g| g.is_connected())
+    }
+
+    /// Accept a GDB client if none is attached, process its pending packets
+    /// and apply run-control requests. Halts the target when a client
+    /// attaches; an interrupt (0x03) halts a running target and sends a
+    /// stop reply.
     pub fn poll_gdb(&mut self) {
-        let Some(gdb) = &mut self.gdb else { return };
+        let Some(gdb) = self.gdb.as_mut() else {
+            return;
+        };
 
         if !gdb.is_connected() {
             if gdb.accept() {
                 println!("GDB client connected");
+                self.gdb_exec = GdbExecState::Halted;
             } else {
                 return;
             }
         }
 
+        let mut regs = GdbRegisters {
+            d: self.cpu.d,
+            a: self.cpu.a,
+            sr: self.cpu.sr,
+            pc: self.cpu.pc,
+        };
         let mut mem_access = BusGdbMemory { bus: &self.bus };
-        while let Some(cmd) = gdb.receive_packet() {
-            let mut regs = GdbRegisters {
-                d: self.cpu.d,
-                a: self.cpu.a,
-                sr: self.cpu.sr,
-                pc: self.cpu.pc,
-            };
-            let response = gdb.process_command(&cmd, &mut regs, &mut mem_access);
-            self.cpu.d = regs.d;
-            self.cpu.a = regs.a;
-            self.cpu.sr = regs.sr;
-            self.cpu.pc = regs.pc;
+        let request = gdb.service(&mut regs, &mut mem_access);
+        self.cpu.d = regs.d;
+        self.cpu.a = regs.a;
+        if regs.sr != self.cpu.sr {
+            self.cpu.set_sr(regs.sr);
+        }
+        self.cpu.pc = regs.pc;
 
-            match response.as_str() {
-                "CONTINUE" => {
-                    self.paused = false;
+        match request {
+            Some(RunRequest::Continue) => {
+                self.gdb_exec = GdbExecState::Running;
+                /* Resuming from a breakpoint must execute that instruction. */
+                self.gdb_skip_breakpoint = true;
+            }
+            Some(RunRequest::Step) => self.gdb_exec = GdbExecState::Stepping,
+            Some(RunRequest::Interrupt) => {
+                if self.gdb_exec != GdbExecState::Halted {
+                    self.gdb_exec = GdbExecState::Halted;
+                    gdb.report_stop(StopReason::Interrupt);
                 }
-                "STEP" => {
-                    self.single_step = true;
-                    self.paused = false;
-                }
-                _ if !response.is_empty() => {
-                    gdb.send_packet(&response).ok();
-                }
-                _ => {}
+            }
+            None => {}
+        }
+    }
+
+    /// Advance the full system under GDB control: nothing while halted, one
+    /// 68k instruction when stepping, otherwise up to the next frame
+    /// boundary, stopping before any breakpoint. Sends the stop reply when
+    /// execution halts. Returns true when a frame boundary was reached.
+    pub fn run_gdb_slice(&mut self) -> bool {
+        let mode = self.gdb_exec;
+        if mode == GdbExecState::Halted {
+            return false;
+        }
+        let gdb = self.gdb.take();
+        let (outcome, hit_breakpoint) = {
+            let mut limit = ExecLimit {
+                breakpoints: gdb.as_ref().map(|g| &g.breakpoints),
+                instructions_left: (mode == GdbExecState::Stepping).then_some(1),
+                skip_breakpoint_once: self.gdb_skip_breakpoint,
+                hit_breakpoint: std::cell::Cell::new(false),
+            };
+            let outcome = self.run_system(Some(&mut limit));
+            self.gdb_skip_breakpoint = limit.skip_breakpoint_once;
+            (outcome, limit.hit_breakpoint.get())
+        };
+        self.gdb = gdb;
+        if outcome == RunOutcome::Stopped {
+            let reason = if hit_breakpoint {
+                StopReason::Breakpoint
+            } else {
+                StopReason::Step
+            };
+            self.gdb_exec = GdbExecState::Halted;
+            if let Some(gdb) = self.gdb.as_mut() {
+                gdb.report_stop(reason);
             }
         }
+        outcome == RunOutcome::FrameComplete
     }
 
     /// Run with GDB debugger attached (blocking loop)
     pub fn run_with_gdb(&mut self, port: u16, password: Option<String>) -> std::io::Result<()> {
-        let gdb = GdbServer::new(port, password.clone())?;
-        self.gdb = Some(gdb);
-        let gdb = self.gdb.as_mut().unwrap();
+        self.gdb = Some(GdbServer::new(port, password)?);
         println!("Waiting for GDB connection on port {}...", port);
-        if let Some(pwd) = password {
-            println!(
-                "🔒 Password protected. After connecting, run: monitor auth {}",
-                pwd
-            );
-        }
         println!(
             "Connect with: m68k-elf-gdb -ex \"target remote :{}\" <elf_file>",
             port
         );
-        // Wait for connection
-        while !gdb.accept() {
-            std::thread::sleep(std::time::Duration::from_millis(100));
+        while !self.gdb_attached() {
+            self.poll_gdb();
+            if !self.gdb_attached() {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
         }
-        let mut stepping = false;
-        let mut running = false;
-        let mut mem_access = BusGdbMemory { bus: &self.bus };
         loop {
-            // Check for GDB commands
-            if let Some(cmd) = gdb.receive_packet() {
-                // Build register state from CPU
-                let mut regs = GdbRegisters {
-                    d: self.cpu.d,
-                    a: self.cpu.a,
-                    sr: self.cpu.sr,
-                    pc: self.cpu.pc,
-                };
-                let response = gdb.process_command(&cmd, &mut regs, &mut mem_access);
-                // Apply register changes back to CPU
-                self.cpu.d = regs.d;
-                self.cpu.a = regs.a;
-                self.cpu.sr = regs.sr;
-                self.cpu.pc = regs.pc;
-                match response.as_str() {
-                    "CONTINUE" => {
-                        running = true;
-                        stepping = false;
-                    }
-                    "STEP" => {
-                        stepping = true;
-                        running = true;
-                    }
-                    _ if !response.is_empty() => {
-                        gdb.send_packet(&response).ok();
-                    }
-                    _ => {}
-                }
-            }
-            // Execute if running
-            if running {
-                // Step one instruction
-                let mut bus = self.bus.borrow_mut();
-                self.cpu.step_instruction(&mut *bus);
-                drop(bus);
-                // Check for breakpoint
-                if gdb.is_breakpoint(self.cpu.pc) {
-                    gdb.stop_reason = StopReason::Breakpoint;
-                    gdb.send_packet(StopReason::Breakpoint.signal_string()).ok();
-                    running = false;
-                } else if stepping {
-                    gdb.stop_reason = StopReason::Step;
-                    gdb.send_packet(StopReason::Step.signal_string()).ok();
-                    running = false;
-                }
-            } else {
-                // Not running, sleep a bit to avoid spinning
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            }
-            // Check if client disconnected
-            if !gdb.is_connected() && !gdb.accept() {
+            self.poll_gdb();
+            if !self.gdb_attached() {
                 println!("GDB client disconnected");
                 break;
             }
+            if self.gdb_exec == GdbExecState::Halted {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            } else {
+                self.run_gdb_slice();
+                // Headless: nobody consumes audio.
+                self.audio_buffer.clear();
+            }
         }
+        self.save_sram();
         Ok(())
     }
     pub(crate) fn log_debug(&self, frame_count: u64) {
@@ -2107,6 +2126,183 @@ mod tests {
             frames * lines * u64::from(MCLK_PER_LINE) + carried
         );
         assert_eq!(emulator.internal_frame_count, frames);
+    }
+
+    mod gdb_session {
+        use super::*;
+        use std::io::Read;
+        use std::net::TcpStream;
+        use std::time::Duration;
+
+        /// NOP sled at the reset vector followed by an idle loop.
+        fn nop_rom() -> Vec<u8> {
+            let mut rom = idle_loop_rom();
+            for i in 0..8 {
+                rom[0x200 + i * 2..0x202 + i * 2].copy_from_slice(&[0x4E, 0x71]);
+            }
+            rom[0x210..0x212].copy_from_slice(&[0x60, 0xFE]);
+            rom
+        }
+
+        fn send(client: &mut TcpStream, data: &str) {
+            client.write_all(&GdbServer::frame_packet(data)).unwrap();
+        }
+
+        /// Read the next `$...#xx` packet payload, skipping acks.
+        fn read_packet(client: &mut TcpStream) -> String {
+            client
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut byte = [0u8; 1];
+            loop {
+                client.read_exact(&mut byte).unwrap();
+                if byte[0] == b'$' {
+                    break;
+                }
+            }
+            let mut payload = Vec::new();
+            loop {
+                client.read_exact(&mut byte).unwrap();
+                if byte[0] == b'#' {
+                    break;
+                }
+                payload.push(byte[0]);
+            }
+            let mut cs = [0u8; 2];
+            client.read_exact(&mut cs).unwrap();
+            String::from_utf8(payload).unwrap()
+        }
+
+        /// Poll until the emulator has consumed a request.
+        fn poll_until<F: Fn(&Emulator) -> bool>(emulator: &mut Emulator, done: F) {
+            for _ in 0..400 {
+                emulator.poll_gdb();
+                if done(emulator) {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            panic!("GDB request not processed");
+        }
+
+        fn attach(rom: &[u8]) -> (Emulator, TcpStream) {
+            let mut emulator = emulator_with_rom(rom);
+            emulator.gdb = Some(GdbServer::new(0, Some("pw".to_string())).unwrap());
+            let port = emulator.gdb.as_ref().unwrap().port();
+            let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            poll_until(&mut emulator, |e| e.gdb_attached());
+            let auth: String = "auth pw".bytes().map(|b| format!("{:02x}", b)).collect();
+            send(&mut client, &format!("qRcmd,{}", auth));
+            let mut peek = [0u8; 8];
+            client.set_nonblocking(true).unwrap();
+            for _ in 0..400 {
+                emulator.poll_gdb();
+                if client.peek(&mut peek).is_ok_and(|n| n >= 7) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            client.set_nonblocking(false).unwrap();
+            assert_eq!(read_packet(&mut client), "OK");
+            (emulator, client)
+        }
+
+        #[test]
+        fn attach_halts_the_target() {
+            let (mut emulator, _client) = attach(&nop_rom());
+            assert_eq!(emulator.gdb_exec, GdbExecState::Halted);
+            let pc = emulator.cpu.pc;
+            for _ in 0..3 {
+                emulator.step_frame(None);
+            }
+            assert_eq!(emulator.cpu.pc, pc);
+            assert_eq!(emulator.internal_frame_count, 0);
+        }
+
+        #[test]
+        fn step_executes_exactly_one_instruction_and_replies() {
+            let (mut emulator, mut client) = attach(&nop_rom());
+            assert_eq!(emulator.cpu.pc, 0x200);
+            send(&mut client, "s");
+            poll_until(&mut emulator, |e| e.gdb_exec == GdbExecState::Stepping);
+            emulator.step_frame(None);
+            assert_eq!(emulator.cpu.pc, 0x202);
+            assert_eq!(emulator.gdb_exec, GdbExecState::Halted);
+            assert_eq!(read_packet(&mut client), "S05");
+        }
+
+        #[test]
+        fn continue_runs_full_system_and_stops_at_breakpoint() {
+            let (mut emulator, mut client) = attach(&nop_rom());
+            send(&mut client, "Z0,20a,2");
+            poll_until(&mut emulator, |e| {
+                e.gdb.as_ref().is_some_and(|g| g.is_breakpoint(0x20A))
+            });
+            assert_eq!(read_packet(&mut client), "OK");
+            send(&mut client, "c");
+            poll_until(&mut emulator, |e| e.gdb_exec == GdbExecState::Running);
+            emulator.step_frame(None);
+            assert_eq!(emulator.cpu.pc, 0x20A);
+            assert_eq!(emulator.gdb_exec, GdbExecState::Halted);
+            assert_eq!(read_packet(&mut client), "S05");
+
+            /* Continuing from the breakpoint executes it and keeps running:
+             * the whole system (VDP included) advances by frames. */
+            send(&mut client, "z0,20a,2");
+            poll_until(&mut emulator, |e| {
+                e.gdb.as_ref().is_some_and(|g| !g.is_breakpoint(0x20A))
+            });
+            assert_eq!(read_packet(&mut client), "OK");
+            send(&mut client, "c");
+            poll_until(&mut emulator, |e| e.gdb_exec == GdbExecState::Running);
+            for _ in 0..3 {
+                emulator.step_frame(None);
+            }
+            assert_eq!(emulator.internal_frame_count, 3);
+            assert_eq!(emulator.cpu.pc, 0x210);
+            assert_eq!(emulator.bus.borrow().vdp.v_counter, 0);
+        }
+
+        #[test]
+        fn interrupt_stops_running_target() {
+            let (mut emulator, mut client) = attach(&nop_rom());
+            send(&mut client, "c");
+            poll_until(&mut emulator, |e| e.gdb_exec == GdbExecState::Running);
+            emulator.step_frame(None);
+            client.write_all(&[0x03]).unwrap();
+            poll_until(&mut emulator, |e| e.gdb_exec == GdbExecState::Halted);
+            assert_eq!(read_packet(&mut client), "S02");
+            let frames = emulator.internal_frame_count;
+            emulator.step_frame(None);
+            assert_eq!(emulator.internal_frame_count, frames);
+        }
+    }
+
+    #[test]
+    fn test_recording_captures_every_frame_with_distinct_indices() {
+        let mut emulator = emulator_with_rom(&idle_loop_rom());
+        emulator.input.start_recording();
+        for _ in 0..5 {
+            emulator.step_frame(None);
+        }
+        let script = emulator.input.stop_recording();
+        for frame in 0..5 {
+            assert!(script.get(frame).is_some(), "frame {} not recorded", frame);
+        }
+        assert_eq!(script.max_frame, 4);
+
+        let mut emulator = emulator_with_rom(&idle_loop_rom());
+        emulator.input.start_recording();
+        let mut live = crate::input::FrameInput::default();
+        for frame in 0..5u64 {
+            live.p1.a = frame % 2 == 1;
+            emulator.step_frame(Some(&live));
+        }
+        let script = emulator.input.stop_recording();
+        for frame in 0..5u64 {
+            let rec = script.get(frame).expect("live frame recorded");
+            assert_eq!(rec.p1.a, frame % 2 == 1);
+        }
     }
 
     #[test]
