@@ -1,10 +1,5 @@
 use super::constants::*;
-
-#[test]
-fn test_external_slots_length() {
-    assert_eq!(H40_EXTERNAL_SLOTS.len(), 210);
-    assert_eq!(H32_EXTERNAL_SLOTS.len(), 171);
-}
+use super::timing::{is_external_slot, H32_TIMING, H40_TIMING};
 
 #[test]
 fn test_dma_mode_constants() {
@@ -18,20 +13,16 @@ fn test_dma_mode_constants() {
 
 #[test]
 fn test_h40_external_slots_content() {
-    // Count the true values in H40_EXTERNAL_SLOTS
-    let true_count = H40_EXTERNAL_SLOTS.iter().filter(|&&x| x).count();
-    assert_eq!(
-        true_count, 18,
-        "H40_EXTERNAL_SLOTS should have exactly 18 external slots"
-    );
+    let count = (0..H40_TIMING.slots)
+        .filter(|&s| is_external_slot(s, true))
+        .count();
+    assert_eq!(count, 18, "H40 has exactly 18 external slots per line");
 }
 
 #[test]
 fn test_h32_external_slots_content() {
-    // Count the true values in H32_EXTERNAL_SLOTS
-    let true_count = H32_EXTERNAL_SLOTS.iter().filter(|&&x| x).count();
-    assert_eq!(
-        true_count, 16,
-        "H32_EXTERNAL_SLOTS should have exactly 16 external slots"
-    );
+    let count = (0..H32_TIMING.slots)
+        .filter(|&s| is_external_slot(s, false))
+        .count();
+    assert_eq!(count, 16, "H32 has exactly 16 external slots per line");
 }

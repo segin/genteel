@@ -5,6 +5,14 @@ pub const CRAM_WRITE: u8 = 0x03;
 pub const VSRAM_READ: u8 = 0x04;
 pub const VSRAM_WRITE: u8 = 0x05;
 pub const CRAM_READ: u8 = 0x08;
+/// Undocumented 8-bit VRAM read (returns the byte at address ^ 1).
+pub const VRAM_READ_8BIT: u8 = 0x0C;
+
+/// Implemented CRAM colour bits (`0000BBB0GGG0RRR0`).
+pub const CRAM_COLOR_MASK: u16 = 0x0EEE;
+/// VSRAM holds 40 entries (0x50 bytes) of 11 bits each.
+pub const VSRAM_SIZE: usize = 0x50;
+pub const VSRAM_ENTRY_MASK: u16 = 0x07FF;
 
 // Register indices
 pub const REG_MODE1: usize = 0;
@@ -35,7 +43,12 @@ pub const MODE2_V30_MODE: u8 = 0x08;
 pub const MODE2_DMA_ENABLE: u8 = 0x10;
 pub const MODE2_VINT_ENABLE: u8 = 0x20;
 pub const MODE2_DISPLAY_ENABLE: u8 = 0x40;
-pub const MODE4_H40_MODE: u8 = 0x81; // H40 mode check mask
+/// Register 12 bit 0 (RS1) selects H40 mode.
+pub const MODE4_RS1: u8 = 0x01;
+/// Register 12 bit 1 (LSM0): interlace enable.
+pub const MODE4_LSM0: u8 = 0x02;
+/// Register 12 bit 2 (LSM1): with LSM0, double-resolution interlace.
+pub const MODE4_LSM1: u8 = 0x04;
 
 // DMA Modes
 pub const DMA_MODE_MASK: u8 = 0xC0;
@@ -57,37 +70,3 @@ pub const STATUS_FIFO_FULL: u16 = 0x0100;
 pub const STATUS_FIFO_EMPTY: u16 = 0x0200;
 
 pub const NUM_REGISTERS: usize = 24;
-
-pub const H40_EXTERNAL_SLOTS: [bool; 210] = [
-    false, false, false, false, false, false, false, false, false, false, false, false, false,
-    false, true, false, false, false, false, false, false, false, true, false, false, false, false,
-    false, false, false, true, false, false, false, false, false, false, false, false, false,
-    false, false, false, false, false, false, true, false, false, false, false, false, false,
-    false, true, false, false, false, false, false, false, false, true, false, false, false, false,
-    false, false, false, false, false, false, false, false, false, false, false, true, false,
-    false, false, false, false, false, false, true, false, false, false, false, false, false,
-    false, true, false, false, false, false, false, false, false, false, false, false, false,
-    false, false, false, false, true, false, false, false, false, false, false, false, true, false,
-    false, false, false, false, false, false, true, false, false, false, false, false, false,
-    false, false, false, false, false, false, false, false, false, true, false, false, false,
-    false, false, false, false, true, false, false, false, false, false, false, false, true, false,
-    false, false, false, false, false, false, false, false, false, false, false, false, false,
-    true, true, false, false, false, false, false, false, false, false, false, false, false, false,
-    false, false, false, false, false, false, false, false, false, false, false, true, false,
-    false, false, false, false, false, false, false, false, false, false,
-];
-pub const H32_EXTERNAL_SLOTS: [bool; 171] = [
-    false, false, false, false, false, false, false, false, false, false, false, false, false,
-    false, true, false, false, false, false, false, false, false, true, false, false, false, false,
-    false, false, false, true, false, false, false, false, false, false, false, false, false,
-    false, false, false, false, false, false, true, false, false, false, false, false, false,
-    false, true, false, false, false, false, false, false, false, true, false, false, false, false,
-    false, false, false, false, false, false, false, false, false, false, false, true, false,
-    false, false, false, false, false, false, true, false, false, false, false, false, false,
-    false, true, false, false, false, false, false, false, false, false, false, false, false,
-    false, false, false, false, true, false, false, false, false, false, false, false, true, false,
-    false, false, false, false, false, false, true, false, false, false, false, false, false,
-    false, false, false, false, false, false, false, false, true, true, false, false, false, false,
-    false, false, false, false, false, false, false, false, false, true, false, false, false,
-    false, false, false, false, false, false, false, false, false, false, true,
-];

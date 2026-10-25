@@ -728,7 +728,6 @@ impl Emulator {
         }
 
         self.generate_audio_samples(samples_per_line);
-        self.bus.borrow_mut().vdp.update_v30_offset();
     }
     fn step_scanline(&mut self, line: u16, active_lines: u16, _samples_per_line: f32) {
         self.vdp_scanline_setup(line, active_lines);

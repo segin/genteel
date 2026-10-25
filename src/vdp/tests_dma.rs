@@ -75,14 +75,20 @@ fn test_dma_fill_vram() {
         "DMA pending should be false after data write"
     );
 
-    // 7. Verify VRAM
-    // Length is 0x10 (16 bytes).
-    // First byte is LSB (0x00), subsequent 15 bytes are MSB (0xAA).
-    assert_eq!(vdp.vram[0], 0x00, "Index 0 should be LSB");
-    for i in 1..0x10 {
+    // 7. Verify VRAM (GPGX `vdp_dma_fill`): the triggering word 0xAA00 is
+    // written normally at 0x0000 (MSB at 0, LSB at 1), then 16 fill steps
+    // write the MSB to (address ^ 1) for addresses 0x0001..=0x0010.
+    assert_eq!(vdp.vram[0], 0xAA, "fill step at 0x0001 lands on 0x0000");
+    assert_eq!(vdp.vram[1], 0x00, "LSB of the triggering word survives");
+    for i in 2..0x10 {
         assert_eq!(vdp.vram[i], 0xAA, "Mismatch at index 0x{:04X}", i);
     }
-    assert_eq!(vdp.vram[0x10], 0x00, "Should stop at 0x10");
+    // The last step (address 0x0010) lands on 0x0011, leaving 0x0010.
+    assert_eq!(vdp.vram[0x10], 0x00);
+    assert_eq!(vdp.vram[0x11], 0xAA);
+    assert_eq!(vdp.vram[0x12], 0x00, "Should stop after 16 fill steps");
+    assert_eq!(vdp.registers[REG_DMA_LEN_LO], 0, "length counts down to 0");
+    assert_eq!(vdp.registers[REG_DMA_LEN_HI], 0);
 }
 
 #[test]
@@ -115,17 +121,19 @@ fn test_dma_copy_vram() {
     vdp.write_control(0x8F01);
 
     // 6. Setup Destination (0x0000)
-    // Command 0x21 (DMA VRAM Write) at 0x0000.
-    vdp.write_control(0x4000);
-    vdp.write_control(0x0080);
+    // Command 0x30 (VRAM copy: CD5|CD4) at 0x0000.
+    vdp.write_control(0x0000);
+    vdp.write_control(0x00C0);
 
     assert!(vdp.command.dma_pending);
 
     // 7. Execute DMA
-    let cycles = vdp.execute_dma();
+    let cycles = vdp.execute_dma().unwrap();
 
     assert!(!vdp.command.dma_pending);
     assert_eq!(cycles, 0x10);
+    assert_eq!(vdp.registers[REG_DMA_LEN_LO], 0);
+    assert_eq!(vdp.dma_copy_source(), 0x1010, "source advances by length");
 
     // Verify VRAM
     // 0x0000 should contain what was at 0x1000
@@ -172,10 +180,9 @@ fn test_dma_fill_wrap_around() {
     );
 
     // 7. Verify VRAM
-    // Should have filled the entire 64KB VRAM.
-    // First byte at address 0 was LSB (0x00), all others MSB (0xAA).
-    assert_eq!(vdp.vram[0], 0x00, "Index 0 should be LSB");
-    for i in 1..0x10000 {
+    // 0x10000 fill steps from address 1 cover every (address ^ 1), so the
+    // whole of VRAM ends up holding the MSB.
+    for i in 0..0x10000 {
         assert_eq!(vdp.vram[i], 0xAA, "Mismatch at index 0x{:04X}", i);
     }
 }
@@ -189,8 +196,8 @@ fn test_dma_copy_wrap_around() {
     vdp.write_control(0x8114);
 
     // 2. Setup initial VRAM state
-    // Set vram[0] to 0xFF, others 0x00 (default)
-    vdp.vram[0] = 0xFF;
+    // The copy reads (source ^ 1), so the first byte read is vram[1].
+    vdp.vram[1] = 0xFF;
 
     // 3. Set DMA Length to 0 (0x0000) -> 64KB
     vdp.write_control(0x9300);
@@ -207,10 +214,10 @@ fn test_dma_copy_wrap_around() {
 
     // 6. Setup Destination (0x0001) - overlapping copy
     // Command 0x4000 (VRAM Write) + addr 0x0001
-    // Word 1: 0x4001
-    // Word 2: 0x0080 (DMA bit set).
-    vdp.write_control(0x4001);
-    vdp.write_control(0x0080); // DMA Enable bit in command
+    // Word 1: 0x0001
+    // Word 2: 0x00C0 (CD5|CD4: VRAM copy).
+    vdp.write_control(0x0001);
+    vdp.write_control(0x00C0);
 
     assert!(vdp.command.dma_pending);
 
@@ -218,7 +225,7 @@ fn test_dma_copy_wrap_around() {
     // Length 0 -> 0x10000 bytes.
     // Copy from 0 to 1.
     // This overlapping copy should propagate 0xFF through the entire VRAM.
-    let count = vdp.execute_dma();
+    let count = vdp.execute_dma().unwrap();
 
     assert!(!vdp.command.dma_pending);
     assert_eq!(count, 0x10000);
@@ -269,7 +276,7 @@ fn test_dma_copy_charges_stall_cycles_active_display() {
     vdp.registers[REG_DMA_LEN_HI] = 0x00;
     vdp.registers[REG_DMA_SRC_HI] = DMA_MODE_COPY;
     vdp.command.dma_pending = true;
-    vdp.command.code = VRAM_WRITE;
+    vdp.command.code = 0x30;
     vdp.status &= !STATUS_VBLANK;
 
     let _ = vdp.execute_dma();
@@ -284,7 +291,7 @@ fn test_dma_copy_charges_stall_cycles_vblank() {
     vdp.registers[REG_DMA_LEN_HI] = 0x00;
     vdp.registers[REG_DMA_SRC_HI] = DMA_MODE_COPY;
     vdp.command.dma_pending = true;
-    vdp.command.code = VRAM_WRITE;
+    vdp.command.code = 0x30;
     vdp.status |= STATUS_VBLANK;
 
     let _ = vdp.execute_dma();

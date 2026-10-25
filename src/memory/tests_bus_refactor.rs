@@ -104,10 +104,13 @@ fn test_write_byte_vdp() {
     // But it's a placeholder.
     assert_eq!(bus.vdp.vram[0], 0);
 
-    // Control port (byte write) -> Placeholder.
+    /* Control port byte write: the byte is mirrored to a word (0xAAAA),
+    which is a register write. Like any first control word it also loads
+    CD1-CD0 (here 0b10) but leaves CD5-CD2 alone. */
     let old_code = bus.vdp.command.code;
     bus.write_byte(0xC00004, 0xAA);
-    assert_eq!(bus.vdp.command.code, old_code);
+    assert_eq!(bus.vdp.command.code & 0x3C, old_code & 0x3C);
+    assert_eq!(bus.vdp.command.code & 0x03, 0x02);
 
     // PSG
     // 0xC00011

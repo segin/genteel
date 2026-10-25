@@ -210,9 +210,9 @@ mod unit_tests {
         vdp.write_control(0x0000);
         vdp.write_data(0x1234);
 
-        // Little-endian storage (existing behavior)
-        assert_eq!(vdp.cram[0x7E], 0x34);
-        assert_eq!(vdp.cram[0x7F], 0x12);
+        // Little-endian storage, masked to the 9 implemented colour bits.
+        assert_eq!(vdp.cram[0x7E], 0x24);
+        assert_eq!(vdp.cram[0x7F], 0x02);
     }
 
     #[test]
@@ -239,46 +239,58 @@ mod unit_tests {
         let h_out = hv as u8;
 
         assert_eq!(v_out, 0xAB);
-        assert_eq!(h_out, 0x00, "H counter starts at 0 at the line boundary");
+        assert_eq!(
+            h_out, 0x85,
+            "the line (and V counter) changes at H 0x85 in H32 mode"
+        );
     }
 
     #[test]
-    fn h_counter_h40_jump_table() {
-        // First segment fills 0..=0xB6 over the first 0xB7 ticks.
-        assert_eq!(Vdp::h_counter_value_for_tick(0, true), 0x00);
-        assert_eq!(Vdp::h_counter_value_for_tick(0xB6, true), 0xB6);
-        // Boundary jumps from 0xB6 to 0xE4.
-        assert_eq!(Vdp::h_counter_value_for_tick(0xB7, true), 0xE4);
-        assert_eq!(Vdp::h_counter_value_for_tick(0xB7 + 1, true), 0xE5);
-        // Final tick of the line.
-        assert_eq!(Vdp::h_counter_value_for_tick(210, true), 0xFF);
-        // Values in the gap should never be produced.
-        for tick in 0..=210u32 {
-            let h = Vdp::h_counter_value_for_tick(tick, true);
+    fn h_counter_h40_sequence() {
+        use crate::vdp::timing::h_counter_at;
+        assert_eq!(h_counter_at(0, true), 0xA5);
+        assert_eq!(h_counter_at(271, true), 0xB5);
+        assert_eq!(h_counter_at(272, true), 0xB6);
+        assert_eq!(h_counter_at(280, true), 0xE4);
+        assert_eq!(h_counter_at(288, true), 0xE5);
+        assert_eq!(h_counter_at(780, true), 0x00);
+        assert_eq!(h_counter_at(988, true), 0x0D);
+        assert_eq!(h_counter_at(3419, true), 0xA4);
+        let mut distinct = std::collections::BTreeSet::new();
+        for m in 0..3420u32 {
+            let h = h_counter_at(m, true);
+            distinct.insert(h);
             assert!(
                 !(0xB7..=0xE3).contains(&h),
-                "H40 produced gap value 0x{:02X} at tick {}",
+                "H40 produced gap value 0x{:02X} at MCLK {}",
                 h,
-                tick
+                m
             );
         }
+        assert_eq!(distinct.len(), 211);
     }
 
     #[test]
-    fn h_counter_h32_jump_table() {
-        assert_eq!(Vdp::h_counter_value_for_tick(0, false), 0x00);
-        assert_eq!(Vdp::h_counter_value_for_tick(0x93, false), 0x93);
-        assert_eq!(Vdp::h_counter_value_for_tick(0x94, false), 0xE9);
-        assert_eq!(Vdp::h_counter_value_for_tick(170, false), 0xFF);
-        for tick in 0..=170u32 {
-            let h = Vdp::h_counter_value_for_tick(tick, false);
+    fn h_counter_h32_sequence() {
+        use crate::vdp::timing::h_counter_at;
+        assert_eq!(h_counter_at(0, false), 0x85);
+        assert_eq!(h_counter_at(280, false), 0x93);
+        assert_eq!(h_counter_at(300, false), 0xE9);
+        assert_eq!(h_counter_at(740, false), 0xFF);
+        assert_eq!(h_counter_at(760, false), 0x00);
+        assert_eq!(h_counter_at(3419, false), 0x84);
+        let mut distinct = std::collections::BTreeSet::new();
+        for m in 0..3420u32 {
+            let h = h_counter_at(m, false);
+            distinct.insert(h);
             assert!(
                 !(0x94..=0xE8).contains(&h),
-                "H32 produced gap value 0x{:02X} at tick {}",
+                "H32 produced gap value 0x{:02X} at MCLK {}",
                 h,
-                tick
+                m
             );
         }
+        assert_eq!(distinct.len(), 171);
     }
 
     #[test]
@@ -287,14 +299,16 @@ mod unit_tests {
         assert_eq!(Vdp::v_counter_value_for_line(0xEA, false, false), 0xEA);
         assert_eq!(Vdp::v_counter_value_for_line(0xEB, false, false), 0xE5);
         assert_eq!(Vdp::v_counter_value_for_line(261, false, false), 0xFF);
+        /* After the jump the counter re-reads 0xE5..=0xEA, so every value
+        0x00..=0xFF appears, and exactly the six values 0xE5..=0xEA appear
+        twice per frame. */
+        let mut seen = [0u32; 256];
         for line in 0..262u16 {
-            let v = Vdp::v_counter_value_for_line(line, false, false);
-            assert!(
-                !(0xEB..=0xE4).contains(&v),
-                "NTSC V28 produced gap value 0x{:02X} at line {}",
-                v,
-                line
-            );
+            seen[Vdp::v_counter_value_for_line(line, false, false) as usize] += 1;
+        }
+        for (v, &n) in seen.iter().enumerate() {
+            let expected = if (0xE5..=0xEA).contains(&v) { 2 } else { 1 };
+            assert_eq!(n, expected, "NTSC V28 value 0x{:02X} seen {} times", v, n);
         }
     }
 
@@ -320,9 +334,9 @@ mod unit_tests {
         vdp.line_counter = 0;
         vdp.mclk_line_clocks = 3419;
 
-        // Tick 1 MCLK to cross the line boundary, then enough MCLK to
-        // cross HINT_OFFSET_MCLK (=200) so the deferred HINT asserts.
-        vdp.tick(1 + 200, |_| 0);
+        // Crossing the line boundary fires the line interrupt as the V
+        // counter advances.
+        vdp.tick(1, |_| 0);
 
         assert_eq!(vdp.v_counter, 223);
         assert_eq!(vdp.line_counter, 5);
@@ -330,10 +344,10 @@ mod unit_tests {
         assert_eq!(vdp.status & STATUS_VBLANK, 0);
     }
 
-    /// HINT is deferred: at the very start of the new line (mclk_line_clocks
-    /// = 0) it must NOT yet be pending; only after MCLK crosses HINT_OFFSET.
+    /// HINT is asserted at the line change (H 0xA5/0x85), together with the
+    /// V counter increment.
     #[test]
-    fn hint_is_deferred_until_threshold_crossed() {
+    fn hint_asserts_at_line_change() {
         let mut vdp = Vdp::new();
         vdp.registers[0] = MODE1_HINT_ENABLE;
         vdp.registers[REG_H_INT_COUNTER] = 0;
@@ -341,37 +355,32 @@ mod unit_tests {
         vdp.line_counter = 0;
         vdp.mclk_line_clocks = 3419;
 
-        // Tick exactly 1 MCLK: wraps to new line at mclk = 0; HINT is due
-        // but not yet asserted.
+        assert!(!vdp.hint_pending);
         vdp.tick(1, |_| 0);
-        assert!(vdp.hint_due, "HINT must be queued at line boundary");
-        assert!(!vdp.hint_pending, "HINT must not yet have asserted");
-
-        // Tick past the threshold (HINT_OFFSET = 200).
-        vdp.tick(200, |_| 0);
-        assert!(!vdp.hint_due);
+        assert_eq!(vdp.v_counter, 1);
         assert!(vdp.hint_pending);
     }
 
-    /// VINT is deferred by VINT_OFFSET_MCLK from the start of the first
-    /// VBlank line.
+    /// VINT asserts partway into the first VBlank line, at H 0x00, not at
+    /// the line change.
     #[test]
-    fn vint_is_deferred_until_threshold_crossed() {
+    fn vint_asserts_at_its_line_position() {
         let mut vdp = Vdp::new();
         vdp.registers[1] = MODE2_VINT_ENABLE;
-        // V counter is the line index 0..262; first VBlank line in V28 is 224.
         vdp.v_counter = 223;
         vdp.mclk_line_clocks = 3419;
 
-        // Wrap to v_counter = 224 (first VBlank line). VINT is due but not pending.
+        // Wrap to v_counter = 224 (first VBlank line): VBLANK set, VINT not yet.
         vdp.tick(1, |_| 0);
-        assert!(vdp.vint_due);
+        assert_ne!(vdp.status & STATUS_VBLANK, 0);
         assert_eq!(vdp.status & STATUS_VINT_PENDING, 0);
 
-        // Cross the VINT threshold (VINT_OFFSET = 480 MCLK).
-        vdp.tick(480, |_| 0);
-        assert!(!vdp.vint_due);
+        let vint = vdp.line_timing().vint;
+        vdp.tick(vint - 1, |_| 0);
+        assert_eq!(vdp.status & STATUS_VINT_PENDING, 0);
+        vdp.tick(1, |_| 0);
         assert_ne!(vdp.status & STATUS_VINT_PENDING, 0);
+        assert_eq!(vdp.read_hv_counter() & 0xFF, 0x00);
     }
 
     #[test]
@@ -380,13 +389,13 @@ mod unit_tests {
         vdp.registers[0] = MODE1_HINT_ENABLE;
         vdp.registers[REG_H_INT_COUNTER] = 7;
         vdp.v_counter = 223;
-        vdp.line_counter = 0;
+        vdp.line_counter = 1;
         vdp.mclk_line_clocks = 3419;
 
         vdp.tick(1, |_| 0);
 
         assert_eq!(vdp.v_counter, 224);
-        assert_eq!(vdp.line_counter, 7);
+        assert_eq!(vdp.line_counter, 0);
         assert!(!vdp.hint_pending());
         assert_ne!(vdp.status & STATUS_VBLANK, 0);
     }

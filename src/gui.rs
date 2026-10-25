@@ -2168,7 +2168,7 @@ fn collect_debug_info(
 
     let mut cram_raw = [0u16; 64];
     for (i, value) in cram_raw.iter_mut().enumerate() {
-        *value = u16::from_be_bytes([bus.vdp.cram[i * 2], bus.vdp.cram[i * 2 + 1]]);
+        *value = u16::from_le_bytes([bus.vdp.cram[i * 2], bus.vdp.cram[i * 2 + 1]]);
     }
 
     let wram = if gui_state.is_window_open("Memory Viewer") {
@@ -2224,7 +2224,7 @@ fn collect_debug_info(
         z80_im: emulator.z80.im,
         z80_disasm,
         frame_count: emulator.internal_frame_count,
-        vdp_status: bus.vdp.read_status(),
+        vdp_status: bus.vdp.peek_status(),
         vdp_registers: bus.vdp.registers,
         display_enabled: bus.vdp.display_enabled(),
         bg_color_index: bus.vdp.registers[7],
