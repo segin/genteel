@@ -1,44 +1,98 @@
-use std::fs::File;
-use std::io::{BufWriter, Seek, SeekFrom, Write};
+//! 16-bit PCM WAV writer used by `--dump-audio`.
+//!
+//! The writer keeps the RIFF header consistent with the bytes actually
+//! written: it stops recording (and reports why) on the first I/O error or
+//! when the 4 GiB RIFF size limit is reached, and the header written on
+//! finalization always describes exactly the data that reached the writer.
+
+use std::fs::{File, OpenOptions};
+use std::io::{BufWriter, ErrorKind, Seek, SeekFrom, Write};
+use std::path::{Component, Path, PathBuf};
+
+/// Bytes of RIFF payload preceding the sample data:
+/// "WAVE" (4) + fmt chunk (24) + data chunk header (8).
+const RIFF_HEADER_BYTES: u64 = 36;
+/// Largest data chunk whose RIFF size (`36 + data`) still fits in a u32.
+const MAX_DATA_BYTES: u64 = u32::MAX as u64 - RIFF_HEADER_BYTES;
 
 pub struct WavWriter<W: Write + Seek = BufWriter<File>> {
     writer: W,
-    data_size: u32,
+    /// Sample-data bytes accepted by `writer`.
+    data_size: u64,
     channels: u16,
+    /// Largest data chunk this writer will produce.
+    max_data_bytes: u64,
+    /// Set once recording stopped (I/O error or size limit).
+    stopped: Option<String>,
+    finalized: bool,
 }
 
 pub type FileWavWriter = WavWriter<BufWriter<File>>;
 
-impl WavWriter<BufWriter<File>> {
-    pub fn new(path: &str, sample_rate: u32, channels: u16) -> std::io::Result<Self> {
-        // Security: Restrict path to current directory or its subdirectories
-        let base_dir = std::env::current_dir()?.canonicalize()?;
-        let requested_path = std::path::Path::new(path);
-        let mut full_path = base_dir.clone();
+fn denied(path: &str) -> std::io::Error {
+    std::io::Error::new(
+        ErrorKind::PermissionDenied,
+        format!(
+            "Access denied to path: {}. Audio dumps must be within the current directory.",
+            path
+        ),
+    )
+}
 
-        for component in requested_path.components() {
-            match component {
-                std::path::Component::Normal(c) => full_path.push(c),
-                std::path::Component::CurDir => {}
-                _ => {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::PermissionDenied,
-                        format!("Access denied to path: {}. Audio dumps must be within the current directory.", path),
-                    ));
-                }
-            }
+/// Resolve `path` to a new file inside `base_dir` (which must be canonical).
+///
+/// Only plain relative components are accepted; the parent directory is
+/// canonicalized so a symlinked directory cannot lead outside `base_dir`.
+fn resolve_dump_path(base_dir: &Path, path: &str) -> std::io::Result<PathBuf> {
+    let mut relative = PathBuf::new();
+    for component in Path::new(path).components() {
+        match component {
+            Component::Normal(c) => relative.push(c),
+            Component::CurDir => {}
+            _ => return Err(denied(path)),
         }
-
-        if full_path == base_dir {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
+    }
+    let file_name = relative
+        .file_name()
+        .map(|n| n.to_os_string())
+        .ok_or_else(|| {
+            std::io::Error::new(
+                ErrorKind::InvalidInput,
                 "Invalid path: must specify a file name",
-            ));
-        }
+            )
+        })?;
+    let parent = base_dir.join(relative.parent().unwrap_or(Path::new("")));
+    let parent = parent.canonicalize()?;
+    if !parent.starts_with(base_dir) {
+        return Err(denied(path));
+    }
+    Ok(parent.join(file_name))
+}
 
-        let file = File::create(&full_path)?;
-        let writer = BufWriter::new(file);
-        Self::new_with_writer(writer, sample_rate, channels)
+impl WavWriter<BufWriter<File>> {
+    /// Create a new WAV file at `path`, which must name a file that does not
+    /// exist yet inside the current directory (or one of its subdirectories).
+    pub fn new(path: &str, sample_rate: u32, channels: u16) -> std::io::Result<Self> {
+        let base_dir = std::env::current_dir()?.canonicalize()?;
+        Self::new_in(&base_dir, path, sample_rate, channels)
+    }
+
+    /// Like [`WavWriter::new`] but relative to an explicit base directory.
+    pub fn new_in(
+        base_dir: &Path,
+        path: &str,
+        sample_rate: u32,
+        channels: u16,
+    ) -> std::io::Result<Self> {
+        let base_dir = base_dir.canonicalize()?;
+        let full_path = resolve_dump_path(&base_dir, path)?;
+        /* create_new refuses existing files and (dangling) symlinks instead
+         * of truncating or following them. */
+        let file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&full_path)?;
+        Self::new_with_writer(BufWriter::new(file), sample_rate, channels)
     }
 }
 
@@ -60,10 +114,10 @@ impl<W: Write + Seek> WavWriter<W> {
         writer.write_all(&channels.to_le_bytes())?;
         writer.write_all(&sample_rate.to_le_bytes())?;
 
-        let byte_rate = sample_rate * u32::from(channels) * 2; // 16-bit = 2 bytes
+        let byte_rate = sample_rate.saturating_mul(u32::from(channels) * 2); // 16-bit = 2 bytes
         writer.write_all(&byte_rate.to_le_bytes())?;
 
-        let block_align = channels * 2;
+        let block_align = channels.saturating_mul(2);
         writer.write_all(&block_align.to_le_bytes())?;
         writer.write_all(&16u16.to_le_bytes())?; // BitsPerSample
 
@@ -75,6 +129,9 @@ impl<W: Write + Seek> WavWriter<W> {
             writer,
             data_size: 0,
             channels,
+            max_data_bytes: MAX_DATA_BYTES,
+            stopped: None,
+            finalized: false,
         })
     }
 
@@ -82,45 +139,102 @@ impl<W: Write + Seek> WavWriter<W> {
         self.channels
     }
 
+    /// Sample-data bytes written so far.
+    pub fn data_bytes(&self) -> u64 {
+        self.data_size
+    }
+
+    /// Why recording stopped, if it did.
+    pub fn stopped_reason(&self) -> Option<&str> {
+        self.stopped.as_deref()
+    }
+
+    /// Whether recording is still active.
+    pub fn is_recording(&self) -> bool {
+        self.stopped.is_none() && !self.finalized
+    }
+
+    #[cfg(test)]
+    fn set_max_data_bytes(&mut self, max: u64) {
+        self.max_data_bytes = max.min(MAX_DATA_BYTES);
+    }
+
+    fn stop(&mut self, reason: String) -> std::io::Error {
+        log::error!("WAV dump stopped: {}", reason);
+        self.stopped = Some(reason.clone());
+        std::io::Error::other(reason)
+    }
+
+    /// Hand `bytes` to the writer, counting exactly what it accepted.
+    fn write_counted(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        let mut rest = bytes;
+        while !rest.is_empty() {
+            match self.writer.write(rest) {
+                Ok(0) => {
+                    return Err(self.stop("write accepted no bytes".to_string()));
+                }
+                Ok(n) => {
+                    self.data_size += n as u64;
+                    rest = &rest[n..];
+                }
+                Err(e) if e.kind() == ErrorKind::Interrupted => {}
+                Err(e) => return Err(self.stop(format!("write failed: {}", e))),
+            }
+        }
+        Ok(())
+    }
+
     pub fn write_samples(&mut self, samples: &[i16]) -> std::io::Result<()> {
-        if !samples.len().is_multiple_of(self.channels as usize) {
+        if let Some(reason) = &self.stopped {
+            return Err(std::io::Error::other(format!(
+                "recording already stopped: {}",
+                reason
+            )));
+        }
+        let channels = self.channels.max(1) as usize;
+        if !samples.len().is_multiple_of(channels) {
             return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
+                ErrorKind::InvalidInput,
                 "Sample count not aligned with channel count",
             ));
         }
 
+        /* Never let the data chunk outgrow the RIFF u32 size fields: keep
+         * whole frames up to the limit, then stop recording. */
+        let frame_bytes = channels as u64 * 2;
+        let room = self.max_data_bytes.saturating_sub(self.data_size);
+        let room_samples = ((room / frame_bytes) * channels as u64) as usize;
+        let (to_write, truncated) = if samples.len() > room_samples {
+            (&samples[..room_samples], true)
+        } else {
+            (samples, false)
+        };
+
         // Use a stack-allocated buffer to batch writes and reduce call overhead
         let mut buffer = [0u8; 2048];
-        let mut offset = 0;
-
-        for &sample in samples {
-            let bytes = sample.to_le_bytes();
-            buffer[offset] = bytes[0];
-            buffer[offset + 1] = bytes[1];
-            offset += 2;
-
-            if offset == buffer.len() {
-                self.writer.write_all(&buffer)?;
-                offset = 0;
+        for chunk in to_write.chunks(buffer.len() / 2) {
+            for (i, &sample) in chunk.iter().enumerate() {
+                buffer[2 * i..2 * i + 2].copy_from_slice(&sample.to_le_bytes());
             }
+            self.write_counted(&buffer[..chunk.len() * 2])?;
         }
 
-        if offset > 0 {
-            self.writer.write_all(&buffer[..offset])?;
+        if truncated {
+            return Err(self.stop("WAV size limit (4 GiB) reached".to_string()));
         }
-
-        self.data_size += (samples.len() * 2) as u32;
         Ok(())
     }
 
     fn finalize(&mut self) -> std::io::Result<()> {
+        if self.finalized {
+            return Ok(());
+        }
+        self.finalized = true;
         self.writer.flush()?;
 
-        // Total file size = 36 + data_size
-        // 36 comes from: 4 (WAVE) + 24 (fmt chunk) + 8 (data header)
         // RIFF Size = File size - 8 = 36 + data_size
-        let file_size = 36 + self.data_size;
+        let data_size = self.data_size.min(MAX_DATA_BYTES) as u32;
+        let file_size = RIFF_HEADER_BYTES as u32 + data_size;
 
         // Update RIFF size (offset 4)
         self.writer.seek(SeekFrom::Start(4))?;
@@ -128,16 +242,23 @@ impl<W: Write + Seek> WavWriter<W> {
 
         // Update data size (offset 40)
         self.writer.seek(SeekFrom::Start(40))?;
-        self.writer.write_all(&self.data_size.to_le_bytes())?;
+        self.writer.write_all(&data_size.to_le_bytes())?;
 
         self.writer.seek(SeekFrom::End(0))?;
-        Ok(())
+        self.writer.flush()
+    }
+
+    /// Finalize the header now, reporting any error.
+    pub fn finish(mut self) -> std::io::Result<()> {
+        self.finalize()
     }
 }
 
 impl<W: Write + Seek> Drop for WavWriter<W> {
     fn drop(&mut self) {
-        let _ = self.finalize();
+        if let Err(e) = self.finalize() {
+            log::error!("Failed to finalize WAV dump: {}", e);
+        }
     }
 }
 
@@ -178,7 +299,7 @@ mod tests {
 
         // Check data chunk header
         assert_eq!(&buffer[36..40], b"data");
-        // Size placeholder
+        // Empty data chunk
         assert_eq!(&buffer[40..44], &[0; 4]);
     }
 
@@ -192,19 +313,26 @@ mod tests {
             let mut wav = WavWriter::new_with_writer(writer, 44100, 1).unwrap();
 
             wav.write_samples(&samples).unwrap();
-            assert_eq!(wav.data_size, 6); // 3 samples * 2 bytes
+            assert_eq!(wav.data_bytes(), 6); // 3 samples * 2 bytes
         } // wav dropped here
 
         // Verify samples are written after header (44 bytes)
-        let expected_data_start = 44;
-        let data = &buffer[expected_data_start..];
-
-        let mut expected_bytes = Vec::new();
-        for s in &samples {
-            expected_bytes.extend_from_slice(&s.to_le_bytes());
-        }
-
+        let data = &buffer[44..];
+        let expected_bytes: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
         assert_eq!(data, expected_bytes.as_slice());
+    }
+
+    #[test]
+    fn test_large_write_spans_batches() {
+        let mut buffer = Vec::new();
+        let samples: Vec<i16> = (0..5000).map(|i| i as i16).collect();
+        {
+            let mut wav = WavWriter::new_with_writer(Cursor::new(&mut buffer), 8000, 2).unwrap();
+            wav.write_samples(&samples).unwrap();
+        }
+        let expected: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
+        assert_eq!(&buffer[44..], expected.as_slice());
+        assert_eq!(&buffer[40..44], &10_000u32.to_le_bytes());
     }
 
     #[test]
@@ -215,54 +343,8 @@ mod tests {
         let samples = vec![0, 0, 100]; // 3 samples, 2 channels => unaligned
         let result = writer.write_samples(&samples);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::InvalidInput);
-    }
-
-    #[test]
-    fn test_wav_writer_new() {
-        let file_path = "test_wav_writer_new.wav";
-
-        // Ensure file does not exist before test
-        let _ = std::fs::remove_file(file_path);
-
-        {
-            let wav = WavWriter::new(file_path, 44100, 2).unwrap();
-            assert_eq!(wav.channels(), 2);
-        } // wav dropped here, file is closed
-
-        // Check that the file was actually created and exists
-        assert!(std::path::Path::new(file_path).exists());
-
-        // Check basic file size to ensure headers were written
-        let metadata = std::fs::metadata(file_path).unwrap();
-        assert_eq!(metadata.len(), 44); // 44 bytes for an empty WAV file header
-
-        // Clean up
-        std::fs::remove_file(file_path).unwrap();
-    }
-
-    #[test]
-    fn test_wav_writer_new_invalid_path() {
-        // Test with an invalid path within the current directory that should fail to create a file
-        let invalid_path = "non_existent_dir/test.wav";
-
-        let result = WavWriter::new(invalid_path, 44100, 2);
-        match result {
-            Err(e) => assert!(
-                e.kind() == std::io::ErrorKind::NotFound
-                    || e.kind() == std::io::ErrorKind::PermissionDenied
-            ),
-            _ => panic!("Expected error"),
-        }
-    }
-
-    #[test]
-    fn test_wav_writer_new_directory_error() {
-        // Test with a path that is an existing directory within the project
-        let path_str = "src";
-
-        let result = WavWriter::new(path_str, 44100, 2);
-        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), ErrorKind::InvalidInput);
+        assert!(writer.is_recording());
     }
 
     #[test]
@@ -275,86 +357,204 @@ mod tests {
             wav.write_samples(&samples).unwrap();
         } // wav dropped here, finalize called
 
-        // Check File Size at offset 4
         // File size = 36 + data_size = 36 + 20 = 56
-        let expected_file_size = 56u32;
-        assert_eq!(&buffer[4..8], &expected_file_size.to_le_bytes());
+        assert_eq!(&buffer[4..8], &56u32.to_le_bytes());
+        assert_eq!(&buffer[40..44], &20u32.to_le_bytes());
+    }
 
-        // Check Data Size at offset 40
-        // Data size = 20
-        let expected_data_size = 20u32;
-        assert_eq!(&buffer[40..44], &expected_data_size.to_le_bytes());
+    #[test]
+    fn test_size_limit_finalizes_without_overflow() {
+        let mut buffer = Vec::new();
+        {
+            let mut wav = WavWriter::new_with_writer(Cursor::new(&mut buffer), 44100, 2).unwrap();
+            wav.set_max_data_bytes(18); // room for 4 whole stereo frames (16 bytes)
+            wav.write_samples(&[1, 2, 3, 4]).unwrap();
+            let err = wav.write_samples(&[5, 6, 7, 8, 9, 10]).unwrap_err();
+            assert_eq!(err.kind(), ErrorKind::Other);
+            assert!(!wav.is_recording());
+            assert_eq!(wav.data_bytes(), 16);
+            assert!(wav.write_samples(&[0, 0]).is_err());
+            assert_eq!(wav.data_bytes(), 16);
+        }
+        assert_eq!(&buffer[4..8], &(36u32 + 16).to_le_bytes());
+        assert_eq!(&buffer[40..44], &16u32.to_le_bytes());
+        assert_eq!(buffer.len(), 44 + 16);
+    }
+
+    #[test]
+    fn test_real_limit_keeps_riff_size_in_u32() {
+        let wav = WavWriter::new_with_writer(Cursor::new(Vec::new()), 44100, 2).unwrap();
+        assert_eq!(wav.max_data_bytes, u32::MAX as u64 - 36);
+        assert!(RIFF_HEADER_BYTES + wav.max_data_bytes <= u32::MAX as u64);
+    }
+
+    /// Writer that accepts `budget` bytes and then fails.
+    struct FailingWriter {
+        inner: Cursor<Vec<u8>>,
+        budget: usize,
+    }
+
+    impl Write for FailingWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            if self.budget == 0 {
+                return Err(std::io::Error::other("disk full"));
+            }
+            let n = buf.len().min(self.budget);
+            self.budget -= n;
+            self.inner.write(&buf[..n])
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl Seek for FailingWriter {
+        fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+            self.inner.seek(pos)
+        }
+    }
+
+    #[test]
+    fn test_write_error_stops_recording_and_keeps_header_consistent() {
+        let writer = FailingWriter {
+            inner: Cursor::new(Vec::new()),
+            budget: 44 + 10,
+        };
+        let mut wav = WavWriter::new_with_writer(writer, 22050, 2).unwrap();
+        let err = wav.write_samples(&[1; 8]).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Other);
+        assert!(!wav.is_recording());
+        assert!(wav.stopped_reason().unwrap().contains("disk full"));
+        assert_eq!(wav.data_bytes(), 10);
+        assert!(wav.write_samples(&[1, 1]).is_err());
+
+        /* Restore budget so the header rewrite can succeed. */
+        wav.writer.budget = usize::MAX;
+        wav.finalize().unwrap();
+        let bytes = wav.writer.inner.get_ref().clone();
+        assert_eq!(bytes.len(), 44 + 10);
+        assert_eq!(&bytes[4..8], &(36u32 + 10).to_le_bytes());
+        assert_eq!(&bytes[40..44], &10u32.to_le_bytes());
     }
 
     #[test]
     fn test_wav_writer_channels() {
-        let mut buffer = Vec::new();
-
-        // Test with 1 channel
-        {
-            let writer = Cursor::new(&mut buffer);
-            let wav_mono = WavWriter::new_with_writer(writer, 44100, 1).unwrap();
-            assert_eq!(wav_mono.channels(), 1);
+        for channels in [1u16, 2] {
+            let wav = WavWriter::new_with_writer(Cursor::new(Vec::new()), 44100, channels).unwrap();
+            assert_eq!(wav.channels(), channels);
         }
+    }
 
-        buffer.clear();
+    /// Fresh scratch directory under `target/` (inside the crate root).
+    fn scratch_dir(name: &str) -> PathBuf {
+        let dir = std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join("wav_writer_tests")
+            .join(format!("{}_{}", name, std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.canonicalize().unwrap()
+    }
 
-        // Test with 2 channels
+    #[test]
+    fn test_wav_writer_new_in_relative_path() {
+        let dir = scratch_dir("relative");
+        std::fs::create_dir(dir.join("sub")).unwrap();
         {
-            let writer = Cursor::new(&mut buffer);
-            let wav_stereo = WavWriter::new_with_writer(writer, 44100, 2).unwrap();
-            assert_eq!(wav_stereo.channels(), 2);
+            let wav = WavWriter::new_in(&dir, "./sub/out.wav", 44100, 2).unwrap();
+            assert_eq!(wav.channels(), 2);
+        }
+        assert_eq!(
+            std::fs::metadata(dir.join("sub/out.wav")).unwrap().len(),
+            44
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_wav_writer_new_cwd_relative() {
+        std::fs::create_dir_all("target").unwrap();
+        let file_path = format!("target/test_wav_writer_new_{}.wav", std::process::id());
+        let _ = std::fs::remove_file(&file_path);
+        {
+            let wav = WavWriter::new(&file_path, 44100, 2).unwrap();
+            assert_eq!(wav.channels(), 2);
+        }
+        assert_eq!(std::fs::metadata(&file_path).unwrap().len(), 44);
+        std::fs::remove_file(&file_path).unwrap();
+    }
+
+    #[test]
+    fn test_refuses_existing_file() {
+        let dir = scratch_dir("existing");
+        let target = dir.join("keep.wav");
+        std::fs::write(&target, b"precious").unwrap();
+        let err = WavWriter::new_in(&dir, "keep.wav", 44100, 2)
+            .err()
+            .expect("existing file must be refused");
+        assert_eq!(err.kind(), ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read(&target).unwrap(), b"precious");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_refuses_symlink_escape() {
+        let dir = scratch_dir("symlink_base");
+        let outside = scratch_dir("symlink_outside");
+        std::os::unix::fs::symlink(&outside, dir.join("escape")).unwrap();
+        let err = WavWriter::new_in(&dir, "escape/out.wav", 44100, 2)
+            .err()
+            .expect("symlinked directory leading outside must be refused");
+        assert_eq!(err.kind(), ErrorKind::PermissionDenied);
+        assert!(!outside.join("out.wav").exists());
+
+        /* A symlinked file target is refused rather than followed. */
+        let victim = outside.join("victim.wav");
+        std::fs::write(&victim, b"keep").unwrap();
+        std::os::unix::fs::symlink(&victim, dir.join("link.wav")).unwrap();
+        assert!(WavWriter::new_in(&dir, "link.wav", 44100, 2).is_err());
+        assert_eq!(std::fs::read(&victim).unwrap(), b"keep");
+
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&outside);
+    }
+
+    #[test]
+    fn test_wav_writer_new_invalid_path() {
+        let result = WavWriter::new("non_existent_dir/test.wav", 44100, 2);
+        match result {
+            Err(e) => {
+                assert!(e.kind() == ErrorKind::NotFound || e.kind() == ErrorKind::PermissionDenied)
+            }
+            _ => panic!("Expected error"),
         }
     }
 
     #[test]
-    fn test_channels_getter_comprehensive() {
-        // Test various channel counts without I/O overhead by directly instantiating the struct.
-        // The tests module has access to private fields since it's in the same file.
-        let channel_counts: [u16; 7] = [0, 1, 2, 4, 8, 255, 65535];
-
-        for &channels in &channel_counts {
-            // Using a dummy writer (an empty Vec)
-            let writer = Cursor::new(Vec::new());
-            let wav = WavWriter {
-                writer,
-                data_size: 0,
-                channels,
-            };
-
-            assert_eq!(
-                wav.channels(),
-                channels,
-                "WavWriter::channels() returned incorrect value for {} channels",
-                channels
-            );
-        }
+    fn test_wav_writer_new_directory_error() {
+        // An existing directory is never truncated or replaced.
+        assert!(WavWriter::new("src", 44100, 2).is_err());
+        assert!(WavWriter::new(".", 44100, 2).is_err());
     }
 
     #[test]
     fn test_wav_writer_new_path_traversal_protection() {
-        // Test with a path containing path traversal
         let traversal_path = "../traversal_test.wav";
-        let result = WavWriter::new(traversal_path, 44100, 2);
-
-        match result {
-            Err(e) => assert_eq!(e.kind(), std::io::ErrorKind::PermissionDenied),
+        match WavWriter::new(traversal_path, 44100, 2) {
+            Err(e) => assert_eq!(e.kind(), ErrorKind::PermissionDenied),
             Ok(_) => panic!("Should have failed with PermissionDenied"),
         }
+        assert!(!Path::new(traversal_path).exists());
 
-        // Verify file was NOT created
-        assert!(!std::path::Path::new(traversal_path).exists());
-
-        // Test with an absolute path outside the current directory (heuristic for unix/windows)
         let absolute_path = if cfg!(windows) {
             "C:\\Windows\\test.wav"
         } else {
             "/etc/test.wav"
         };
-        let result = WavWriter::new(absolute_path, 44100, 2);
-
-        match result {
-            Err(e) => assert_eq!(e.kind(), std::io::ErrorKind::PermissionDenied),
+        match WavWriter::new(absolute_path, 44100, 2) {
+            Err(e) => assert_eq!(e.kind(), ErrorKind::PermissionDenied),
             Ok(_) => panic!("Should have failed with PermissionDenied"),
         }
     }
