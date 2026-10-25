@@ -7,6 +7,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 pub mod bus;
 pub mod byte_utils;
+pub mod cart;
 pub mod everdrive;
 pub mod tests_performance;
 pub mod z80_bus;
@@ -15,6 +16,8 @@ pub use z80_bus::Z80Bus;
 
 use crate::cpu::decoder::Size;
 
+#[cfg(test)]
+mod tests_bus_map;
 #[cfg(test)]
 mod tests_bus_refactor;
 #[cfg(test)]
@@ -237,44 +240,43 @@ impl Memory {
     }
 }
 
+/// Out-of-range accesses read as open bus (`0xFF`) and writes are ignored,
+/// so a stray address in a test can't panic.
 impl MemoryInterface for Memory {
     fn read_byte(&mut self, address: u32) -> u8 {
-        self.data[address as usize]
+        self.data.get(address as usize).copied().unwrap_or(0xFF)
     }
 
     fn write_byte(&mut self, address: u32, value: u8) {
-        self.data[address as usize] = value;
+        if let Some(cell) = self.data.get_mut(address as usize) {
+            *cell = value;
+        }
     }
 
     fn read_word(&mut self, address: u32) -> u16 {
-        let address = address as usize;
-        byte_utils::join_u16(self.data[address], self.data[address + 1])
+        byte_utils::join_u16(
+            self.read_byte(address),
+            self.read_byte(address.wrapping_add(1)),
+        )
     }
 
     fn write_word(&mut self, address: u32, value: u16) {
-        let address = address as usize;
         let (high, low) = byte_utils::split_u16(value);
-        self.data[address] = high;
-        self.data[address + 1] = low;
+        self.write_byte(address, high);
+        self.write_byte(address.wrapping_add(1), low);
     }
 
     fn read_long(&mut self, address: u32) -> u32 {
-        let address = address as usize;
-        byte_utils::join_u32(
-            self.data[address],
-            self.data[address + 1],
-            self.data[address + 2],
-            self.data[address + 3],
+        byte_utils::join_u32_words(
+            self.read_word(address),
+            self.read_word(address.wrapping_add(2)),
         )
     }
 
     fn write_long(&mut self, address: u32, value: u32) {
-        let address = address as usize;
-        let (b0, b1, b2, b3) = byte_utils::split_u32(value);
-        self.data[address] = b0;
-        self.data[address + 1] = b1;
-        self.data[address + 2] = b2;
-        self.data[address + 3] = b3;
+        let (high, low) = byte_utils::split_u32_to_words(value);
+        self.write_word(address, high);
+        self.write_word(address.wrapping_add(2), low);
     }
 }
 
@@ -341,6 +343,21 @@ mod tests {
         for (i, actual_line) in actual_lines.iter().enumerate() {
             assert_eq!(*actual_line, expected_lines[i]);
         }
+    }
+
+    #[test]
+    fn out_of_range_access_reads_open_bus_and_ignores_writes() {
+        let mut mem = Memory::new(4);
+        assert_eq!(mem.read_byte(4), 0xFF);
+        assert_eq!(mem.read_byte(u32::MAX), 0xFF);
+        assert_eq!(mem.read_word(3), 0x00FF);
+        assert_eq!(mem.read_long(2), 0x0000_FFFF);
+        mem.write_long(2, 0x1122_3344);
+        assert_eq!(mem.data, vec![0, 0, 0x11, 0x22]);
+        // A word write at the last address wraps its low byte to address 0.
+        mem.write_byte(u32::MAX, 0xAA);
+        mem.write_word(u32::MAX, 0xBBCC);
+        assert_eq!(mem.data, vec![0xCC, 0, 0x11, 0x22]);
     }
 
     #[test]

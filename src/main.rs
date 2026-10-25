@@ -219,23 +219,17 @@ impl Emulator {
         }
 
         println!("Loading SRAM from {:?}", sram_path);
-        let mut bus = self.bus.borrow_mut();
-        if data.len() == bus.sram.len() {
-            bus.sram.copy_from_slice(&data);
-        } else {
-            let len = data.len().min(bus.sram.len());
-            bus.sram[..len].copy_from_slice(&data[..len]);
-        }
+        self.bus.borrow_mut().sram.load_image(&data);
     }
 
     pub fn save_sram(&self) {
         let Some(path) = &self.current_rom_path else {
             return;
         };
-        let bus = self.bus.borrow();
-        if !bus.sram.is_empty() {
+        let image = self.bus.borrow().sram.image();
+        if !image.is_empty() {
             let sram_path = path.with_extension("srm");
-            if let Err(e) = std::fs::write(&sram_path, &*bus.sram) {
+            if let Err(e) = std::fs::write(&sram_path, &image) {
                 eprintln!("Failed to save SRAM to {:?}: {}", sram_path, e);
             } else {
                 println!("Saved SRAM to {:?}", sram_path);
@@ -758,7 +752,7 @@ impl Emulator {
             }
             *ctx.z80_last_bus_req = bus.z80_bus_request;
 
-            let z80_can_run = !bus.z80_reset && !bus.z80_bus_request;
+            let z80_can_run = bus.z80_can_run();
             let z80_is_reset = bus.z80_reset;
             let cycles_per_sample = if bus.vdp.is_pal {
                 audio::PAL_MCLK as f64 / bus.sample_rate as f64
@@ -1917,13 +1911,13 @@ mod tests {
         let mut emulator = Emulator::new();
         emulator.current_rom_path = Some(path.clone());
 
-        let initial_sram_len = emulator.bus.borrow().sram.len();
+        let initial_sram_len = emulator.bus.borrow().sram.data.len();
 
         // Attempt to load - should fail/print warning and not change sram contents or crash
         emulator.load_sram();
 
         // SRAM size should not have changed to the large size
-        assert_eq!(emulator.bus.borrow().sram.len(), initial_sram_len);
+        assert_eq!(emulator.bus.borrow().sram.data.len(), initial_sram_len);
 
         // Cleanup
         let _ = std::fs::remove_file(srm_path);
