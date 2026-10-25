@@ -5,9 +5,9 @@
 
 #![cfg(test)]
 
-use crate::memory::{IoInterface, MemoryInterface};
+use crate::memory::MemoryInterface;
+use crate::z80::flags;
 use crate::z80::test_utils::create_z80;
-use crate::z80::{flags, Z80};
 
 // ============================================================================
 // Block Instructions (Items 21-24)
@@ -16,17 +16,17 @@ use crate::z80::{flags, Z80};
 /// Item 21: LDIR with BC=0 should copy 65536 bytes
 #[test]
 fn test_ldir_bc_zero_wraps() {
-    let (mut cpu, mut bus) = create_z80(&[0xED, 0xB0]); // LDIR
+    let mut cpu = create_z80(&[0xED, 0xB0]); // LDIR
 
     cpu.set_hl(0x1000); // Source
     cpu.set_de(0x2000); // Dest
     cpu.set_bc(0); // BC=0 means 65536 iterations
 
     // Write a single byte at source
-    bus.memory.write_byte(0x1000, 0xAB);
+    cpu.memory.write_byte(0x1000, 0xAB);
 
     // Execute one iteration
-    cpu.step(&mut bus);
+    cpu.step();
 
     // After one LDI iteration: HL++, DE++, BC-- (wraps to 0xFFFF)
     assert_eq!(
@@ -34,54 +34,54 @@ fn test_ldir_bc_zero_wraps() {
         0xFFFF,
         "BC should wrap to 0xFFFF after first transfer"
     );
-    assert_eq!(bus.memory.read_byte(0x2000), 0xAB, "Byte should be copied");
+    assert_eq!(cpu.memory.read_byte(0x2000), 0xAB, "Byte should be copied");
 }
 
 /// Item 22: LDDR with overlapping src/dest - backward copy
 #[test]
 fn test_lddr_overlapping_regions() {
-    let (mut cpu, mut bus) = create_z80(&[0xED, 0xB8]); // LDDR
+    let mut cpu = create_z80(&[0xED, 0xB8]); // LDDR
 
     // Set up overlapping region: copy 3 bytes backward
     cpu.set_hl(0x1002); // Source end (points to last byte to copy)
     cpu.set_de(0x1004); // Dest end
     cpu.set_bc(3);
 
-    bus.memory.write_byte(0x1000, 0xAA);
-    bus.memory.write_byte(0x1001, 0xBB);
-    bus.memory.write_byte(0x1002, 0xCC);
+    cpu.memory.write_byte(0x1000, 0xAA);
+    cpu.memory.write_byte(0x1001, 0xBB);
+    cpu.memory.write_byte(0x1002, 0xCC);
 
     // Run until BC=0
     while cpu.bc() != 0 && !cpu.halted {
-        cpu.step(&mut bus);
+        cpu.step();
         if cpu.pc != 0 {
             break;
         } // Exit if PC advanced past LDDR
     }
 
     // Verify backward copy preserved order
-    assert_eq!(bus.memory.read_byte(0x1002), 0xAA);
-    assert_eq!(bus.memory.read_byte(0x1003), 0xBB);
-    assert_eq!(bus.memory.read_byte(0x1004), 0xCC);
+    assert_eq!(cpu.memory.read_byte(0x1002), 0xAA);
+    assert_eq!(cpu.memory.read_byte(0x1003), 0xBB);
+    assert_eq!(cpu.memory.read_byte(0x1004), 0xCC);
 }
 
 /// Item 23: CPIR not finding match - should exit with Z=0, P/V=0
 #[test]
 fn test_cpir_no_match() {
-    let (mut cpu, mut bus) = create_z80(&[0xED, 0xB1]); // CPIR
+    let mut cpu = create_z80(&[0xED, 0xB1]); // CPIR
 
     cpu.a = 0xFF; // Value to find
     cpu.set_hl(0x1000);
     cpu.set_bc(3); // Search 3 bytes
 
     // Fill with non-matching values
-    bus.memory.write_byte(0x1000, 0x00);
-    bus.memory.write_byte(0x1001, 0x01);
-    bus.memory.write_byte(0x1002, 0x02);
+    cpu.memory.write_byte(0x1000, 0x00);
+    cpu.memory.write_byte(0x1001, 0x01);
+    cpu.memory.write_byte(0x1002, 0x02);
 
     // Run until BC=0
     while cpu.bc() != 0 && !cpu.halted {
-        cpu.step(&mut bus);
+        cpu.step();
         if cpu.pc != 0 {
             break;
         }
@@ -95,19 +95,19 @@ fn test_cpir_no_match() {
 /// Item 24: CPDR wrap around 0x0000
 #[test]
 fn test_cpdr_address_wrap() {
-    let (mut cpu, mut bus) = create_z80(&[0xED, 0xB9]); // CPDR
+    let mut cpu = create_z80(&[0xED, 0xB9]); // CPDR
 
     cpu.a = 0x42;
     cpu.set_hl(0x0001); // Will wrap to 0xFFFF
     cpu.set_bc(3);
 
-    bus.memory.write_byte(0x0001, 0x00);
-    bus.memory.write_byte(0x0000, 0x00);
-    bus.memory.write_byte(0xFFFF, 0x42); // Match at wrapped address
+    cpu.memory.write_byte(0x0001, 0x00);
+    cpu.memory.write_byte(0x0000, 0x00);
+    cpu.memory.write_byte(0xFFFF, 0x42); // Match at wrapped address
 
     // Run until match or BC=0
     while cpu.bc() != 0 && !cpu.halted {
-        cpu.step(&mut bus);
+        cpu.step();
         if cpu.get_flag(flags::ZERO) {
             break;
         }
@@ -126,13 +126,13 @@ fn test_cpdr_address_wrap() {
 /// Item 25: INI - B decremented before operation affects flags
 #[test]
 fn test_ini_b_decrement_timing() {
-    let (mut cpu, mut bus) = create_z80(&[0xED, 0xA2]); // INI
+    let mut cpu = create_z80(&[0xED, 0xA2]); // INI
 
     cpu.b = 1; // Will become 0
     cpu.c = 0x10; // Port
     cpu.set_hl(0x2000);
 
-    cpu.step(&mut bus);
+    cpu.step();
 
     assert_eq!(cpu.b, 0, "B should be decremented");
     assert!(
@@ -145,14 +145,14 @@ fn test_ini_b_decrement_timing() {
 /// Item 26: OTIR timing with B=1 - final iteration
 #[test]
 fn test_otir_final_iteration() {
-    let (mut cpu, mut bus) = create_z80(&[0xED, 0xB3]); // OTIR
+    let mut cpu = create_z80(&[0xED, 0xB3]); // OTIR
 
     cpu.b = 1;
     cpu.c = 0x20;
     cpu.set_hl(0x3000);
-    bus.memory.write_byte(0x3000, 0x55);
+    cpu.memory.write_byte(0x3000, 0x55);
 
-    cpu.step(&mut bus);
+    cpu.step();
 
     assert_eq!(cpu.b, 0, "B should be 0 after final iteration");
     assert_eq!(cpu.hl(), 0x3001, "HL should increment");
@@ -163,12 +163,12 @@ fn test_otir_final_iteration() {
 /// Item 27: IN r,(C) with full port range
 #[test]
 fn test_in_c_port_ff() {
-    let (mut cpu, mut bus) = create_z80(&[0xED, 0x78]); // IN A,(C)
+    let mut cpu = create_z80(&[0xED, 0x78]); // IN A,(C)
 
     cpu.b = 0xFF; // High byte of port
     cpu.c = 0xFF; // Low byte: port 0xFFFF
 
-    cpu.step(&mut bus);
+    cpu.step();
 
     // Should execute without panic (I/O returns 0xFF typically)
     assert_eq!(cpu.pc, 2);
@@ -177,12 +177,12 @@ fn test_in_c_port_ff() {
 /// Item 28: OUT (C),0 undocumented behavior
 #[test]
 fn test_out_c_0_undocumented() {
-    let (mut cpu, mut bus) = create_z80(&[0xED, 0x71]); // OUT (C),0 (undocumented)
+    let mut cpu = create_z80(&[0xED, 0x71]); // OUT (C),0 (undocumented)
 
     cpu.b = 0x00;
     cpu.c = 0x10;
 
-    cpu.step(&mut bus);
+    cpu.step();
 
     // Should execute without panic - outputs 0
     assert_eq!(cpu.pc, 2);
@@ -195,9 +195,9 @@ fn test_out_c_0_undocumented() {
 /// Item 29: IM 2 vector table read
 #[test]
 fn test_im2_vector_calculation() {
-    let (mut cpu, mut bus) = create_z80(&[0xED, 0x5E]); // IM 2
+    let mut cpu = create_z80(&[0xED, 0x5E]); // IM 2
 
-    cpu.step(&mut bus);
+    cpu.step();
 
     assert_eq!(cpu.im, 2, "IM should be set to 2");
 }
@@ -206,15 +206,15 @@ fn test_im2_vector_calculation() {
 #[test]
 fn test_nmi_during_ei_shadow() {
     // EI followed by NOP, then NMI
-    let (mut cpu, mut bus) = create_z80(&[0xFB, 0x00]); // EI, NOP
+    let mut cpu = create_z80(&[0xFB, 0x00]); // EI, NOP
 
     cpu.iff1 = false;
     cpu.iff2 = false;
 
-    cpu.step(&mut bus); // Execute EI - sets pending_ei
+    cpu.step(); // Execute EI - sets pending_ei
 
     // NMI should still be possible during EI shadow
-    cpu.trigger_nmi(&mut bus);
+    cpu.trigger_nmi();
 
     // NMI disables IFF1
     assert!(!cpu.iff1, "IFF1 should be disabled by NMI");
@@ -223,7 +223,7 @@ fn test_nmi_during_ei_shadow() {
 /// Item 31: Interrupt during LDIR should happen after repeat
 #[test]
 fn test_interrupt_after_ldir_repeat() {
-    let (mut cpu, mut bus) = create_z80(&[0xED, 0xB0]); // LDIR
+    let mut cpu = create_z80(&[0xED, 0xB0]); // LDIR
 
     cpu.set_hl(0x1000);
     cpu.set_de(0x2000);
@@ -232,7 +232,7 @@ fn test_interrupt_after_ldir_repeat() {
     cpu.im = 1;
 
     // First step: one LDI iteration, repeats
-    cpu.step(&mut bus);
+    cpu.step();
 
     // PC should be back at start (repeat)
     assert_eq!(cpu.pc, 0, "Should repeat to start");
@@ -242,15 +242,15 @@ fn test_interrupt_after_ldir_repeat() {
 /// Item 32: RETN restores IFF1 from IFF2
 #[test]
 fn test_retn_restores_iff() {
-    let (mut cpu, mut bus) = create_z80(&[0xED, 0x45]); // RETN
+    let mut cpu = create_z80(&[0xED, 0x45]); // RETN
 
     cpu.iff1 = false;
     cpu.iff2 = true; // IFF2 was preserved
     cpu.sp = 0xFF00;
-    bus.memory.write_byte(0xFF00, 0x00); // Return address low
-    bus.memory.write_byte(0xFF01, 0x10); // Return address high
+    cpu.memory.write_byte(0xFF00, 0x00); // Return address low
+    cpu.memory.write_byte(0xFF01, 0x10); // Return address high
 
-    cpu.step(&mut bus);
+    cpu.step();
 
     assert!(cpu.iff1, "IFF1 should be restored from IFF2");
     assert_eq!(cpu.pc, 0x1000, "Should return to address");
@@ -264,12 +264,12 @@ fn test_retn_restores_iff() {
 #[test]
 fn test_bit_ixd_xy_flags() {
     // BIT 0,(IX+5)
-    let (mut cpu, mut bus) = create_z80(&[0xDD, 0xCB, 0x05, 0x46]);
+    let mut cpu = create_z80(&[0xDD, 0xCB, 0x05, 0x46]);
 
     cpu.ix = 0x1000;
-    bus.memory.write_byte(0x1005, 0x01); // Bit 0 set
+    cpu.memory.write_byte(0x1005, 0x01); // Bit 0 set
 
-    cpu.step(&mut bus);
+    cpu.step();
 
     // X/Y flags should come from (IX+d) high byte or MEMPTR
     assert!(!cpu.get_flag(flags::ZERO), "Bit 0 is set");
@@ -279,11 +279,11 @@ fn test_bit_ixd_xy_flags() {
 #[test]
 fn test_sll_undocumented_shifts_in_1() {
     // SLL A (undocumented CB 37)
-    let (mut cpu, mut bus) = create_z80(&[0xCB, 0x37]);
+    let mut cpu = create_z80(&[0xCB, 0x37]);
 
     cpu.a = 0x00;
 
-    cpu.step(&mut bus);
+    cpu.step();
 
     // SLL shifts left and sets bit 0 to 1
     assert_eq!(cpu.a, 0x01, "SLL should shift in 1");
@@ -293,13 +293,13 @@ fn test_sll_undocumented_shifts_in_1() {
 #[test]
 fn test_prefix_cancellation() {
     // DD DD 21 00 10 = LD IX, $1000 (DD prefix is effective)
-    let (mut cpu, mut bus) = create_z80(&[0xDD, 0xDD, 0x21, 0x00, 0x10]);
+    let mut cpu = create_z80(&[0xDD, 0xDD, 0x21, 0x00, 0x10]);
 
     cpu.ix = 0x0000;
     cpu.set_hl(0x0000);
 
-    cpu.step(&mut bus); // First DD
-    cpu.step(&mut bus); // Second DD + LD IX,nn
+    cpu.step(); // First DD
+    cpu.step(); // Second DD + LD IX,nn
 
     // Second DD should take effect, loading IX
     // (or first DD is consumed as NOP-like prefix)
@@ -310,12 +310,12 @@ fn test_prefix_cancellation() {
 #[test]
 fn test_ld_a_i_pv_from_iff2() {
     // LD A,I (ED 57)
-    let (mut cpu, mut bus) = create_z80(&[0xED, 0x57]);
+    let mut cpu = create_z80(&[0xED, 0x57]);
 
     cpu.i = 0x42;
     cpu.iff2 = true;
 
-    cpu.step(&mut bus);
+    cpu.step();
 
     assert_eq!(cpu.a, 0x42);
     assert!(cpu.get_flag(flags::PARITY), "P/V should reflect IFF2=1");
@@ -325,12 +325,12 @@ fn test_ld_a_i_pv_from_iff2() {
 #[test]
 fn test_ld_a_r() {
     // LD A,R (ED 5F)
-    let (mut cpu, mut bus) = create_z80(&[0xED, 0x5F]);
+    let mut cpu = create_z80(&[0xED, 0x5F]);
 
     cpu.r = 0x7F;
     cpu.iff2 = false;
 
-    cpu.step(&mut bus);
+    cpu.step();
 
     // R is modified during fetch, so may not be exact
     // Just verify it executed
@@ -346,11 +346,11 @@ fn test_ld_a_r() {
 #[test]
 fn test_r_increment_on_prefix() {
     // DD 21 00 10 = LD IX, $1000
-    let (mut cpu, mut bus) = create_z80(&[0xDD, 0x21, 0x00, 0x10]);
+    let mut cpu = create_z80(&[0xDD, 0x21, 0x00, 0x10]);
 
     cpu.r = 0;
 
-    cpu.step(&mut bus);
+    cpu.step();
 
     // R should increment during instruction execution
     // The exact count may vary by implementation, but should be non-zero
@@ -365,12 +365,12 @@ fn test_r_increment_on_prefix() {
 #[test]
 fn test_jp_hl_memptr() {
     // JP (HL) = E9
-    let (mut cpu, mut bus) = create_z80(&[0xE9]);
+    let mut cpu = create_z80(&[0xE9]);
 
     cpu.set_hl(0x1234);
     cpu.memptr = 0x0000;
 
-    cpu.step(&mut bus);
+    cpu.step();
 
     assert_eq!(cpu.pc, 0x1234, "Should jump to HL");
     // MEMPTR behavior for JP (HL) varies - just verify execution
@@ -380,12 +380,12 @@ fn test_jp_hl_memptr() {
 #[test]
 fn test_ld_a_nn_memptr() {
     // LD A,(nn) = 3A nn nn
-    let (mut cpu, mut bus) = create_z80(&[0x3A, 0x00, 0x20]); // LD A,($2000)
+    let mut cpu = create_z80(&[0x3A, 0x00, 0x20]); // LD A,($2000)
 
-    bus.memory.write_byte(0x2000, 0x42);
+    cpu.memory.write_byte(0x2000, 0x42);
     cpu.memptr = 0x0000;
 
-    cpu.step(&mut bus);
+    cpu.step();
 
     assert_eq!(cpu.a, 0x42);
     assert_eq!(cpu.memptr, 0x2001, "MEMPTR should be nn+1");
