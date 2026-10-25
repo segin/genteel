@@ -61,6 +61,12 @@ class TestAuditRegex(unittest.TestCase):
         pattern = audit_tool.UNSAFE_PATTERN
         self.assertTrue(pattern.search("un" + "safe {"))
         self.assertTrue(pattern.search("un" + "safe  {"))
+        self.assertTrue(pattern.search("pub un" + "safe fn read(p: *const u8)"))
+        self.assertTrue(pattern.search("un" + "safe impl Send for Foo {}"))
+        self.assertTrue(pattern.search("un" + "safe trait Bar {}"))
+        self.assertTrue(pattern.search("un" + "safe extern \"C\" {"))
+        self.assertFalse(pattern.search("#![forbid(un" + "safe_code)]"))
+        self.assertFalse(pattern.search("fn test_un" + "safe_fn_names()"))
 
     def test_todo_pattern_match(self):
         pattern = audit_tool.TODO_PATTERN

@@ -66,7 +66,7 @@ SECRET_PATTERN_COMBINED = re.compile(
 )
 
 TODO_PATTERN = re.compile(r"(TODO|FIXME|XXX):")
-UNSAFE_PATTERN = re.compile(r"unsafe\s*\{")
+UNSAFE_PATTERN = re.compile(r"\bunsafe\s*(?:\{|fn\b|impl\b|trait\b|extern\b)")
 
 def add_finding(title, severity, description, file_path, line_number=None):
     findings.append({
@@ -138,7 +138,7 @@ def scan_text_patterns():
                         add_finding(
                             title="Unsafe Code",
                             severity="Medium",
-                            description="Manual audit required for unsafe block",
+                            description="Manual audit required for unsafe code",
                             file_path=f,
                             line_number=i+1
                         )
@@ -147,7 +147,12 @@ def scan_text_patterns():
 
 def run_audit():
     parser = argparse.ArgumentParser(description="Security & Quality Audit Tool for genteel")
-    parser.parse_args()
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help=f"print findings as JSON to stdout instead of writing {REPORT_DIR}/",
+    )
+    args = parser.parse_args()
 
     # Ensure we are in root
     if not os.path.exists("Cargo.toml"):
@@ -157,10 +162,16 @@ def run_audit():
     print("🚀 Starting genteel security & quality audit...")
     print(f"📂 Project root: {os.getcwd()}")
     
+    scan_text_patterns()
+
+    if args.dry_run:
+        json.dump(findings, sys.stdout, indent=2)
+        print()
+        print(f"✅ Audit complete! Found {len(findings)} issues (dry run, nothing written).")
+        return
+
     if not os.path.exists(REPORT_DIR):
         os.makedirs(REPORT_DIR)
-
-    scan_text_patterns()
     
     # Save Findings (JSON)
     with open(FINDINGS_JSON, 'w') as f:

@@ -822,10 +822,10 @@ Status: `[ ]` open, `[x]` satisfied.
 - [x] **BLD-24** · L · Ubiquitous — `README.md` build instructions shall not include redundant feature flags.
   - *Evidence:* `--features gui` (default).
   - *Verify:* I.
-- [ ] **BLD-25** · L · Ubiquitous — `scripts/audit_tool.py` shall detect `unsafe` blocks, functions, impls and traits.
+- [x] **BLD-25** · L · Ubiquitous — `scripts/audit_tool.py` shall detect `unsafe` blocks, functions, impls and traits.
   - *Evidence:* `UNSAFE_PATTERN` matches only `unsafe {`.
   - *Verify:* T — `tests/test_audit_regex.py`.
-- [ ] **BLD-26** · L · Optional — Where invoked with a dry-run option, `audit_tool.py` shall write results to stdout only.
+- [x] **BLD-26** · L · Optional — Where invoked with a dry-run option, `audit_tool.py` shall write results to stdout only.
   - *Evidence:* always writes `audit_reports/`.
   - *Verify:* T.
 - [ ] **BLD-27** · L · Ubiquitous — Both crate roots shall declare `#![forbid(unsafe_code)]`.
