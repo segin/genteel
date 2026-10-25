@@ -173,9 +173,9 @@ static LFO_PM_TABLE: LazyLock<[i16; 128 * 8 * 32]> = LazyLock::new(|| {
         for fnum in 0..128 {
             for step in 0..8 {
                 let mut value = 0i16;
-                for bit in 0..7 {
+                for (bit, bit_table) in LFO_PM_OUTPUT.iter().enumerate() {
                     if (fnum & (1 << bit)) != 0 {
-                        value += LFO_PM_OUTPUT[bit][depth][step] as i16;
+                        value += bit_table[depth][step] as i16;
                     }
                 }
                 let base = (fnum * 32 * 8) + (depth * 32);
@@ -674,14 +674,13 @@ impl FmChannel {
      * (Nuked-OPN2 models OPN2 and OPN2C with the same 9-bit per-slot DAC
      * output); only the ladder effect is discrete-YM2612-specific. */
     fn quantize_output_mask(&self, slot: usize) -> bool {
-        let quantize_9bit = match self.algorithm {
+        match self.algorithm {
             0..=3 => slot == SLOT4,
             4 => slot == SLOT2 || slot == SLOT4,
             5 | 6 => slot == SLOT2 || slot == SLOT3 || slot == SLOT4,
             7 => true,
             _ => false,
-        };
-        quantize_9bit
+        }
     }
 
     fn mask_carrier_output(&self, slot: usize, sample: i16) -> i16 {
@@ -860,12 +859,11 @@ impl FmChannel {
             false,
         );
         let out3 = self.mask_carrier_output(SLOT3, out3);
-        match self.algorithm {
-            /* Algorithms 0-4 all route OP3 into OP4's modulation input
-             * (alg 4 is the two-stack S1->S2 + S3->S4 configuration). In
-             * 5/6/7 OP3 is a carrier and goes to the output sum instead. */
-            0..=4 => c2 += out3 as i32,
-            _ => {}
+        /* Algorithms 0-4 all route OP3 into OP4's modulation input
+         * (alg 4 is the two-stack S1->S2 + S3->S4 configuration). In
+         * 5/6/7 OP3 is a carrier and goes to the output sum instead. */
+        if self.algorithm <= 4 {
+            c2 += out3 as i32;
         }
 
         let out2 = self.operators[SLOT2].compute_output(
@@ -880,16 +878,11 @@ impl FmChannel {
             false,
         );
         let out2 = self.mask_carrier_output(SLOT2, out2);
-        match self.algorithm {
-            0 | 1 | 2 | 3 => mem += out2 as i32,
-            4 | 5 | 6 | 7 => {}
-            _ => {}
+        if self.algorithm <= 3 {
+            mem += out2 as i32;
         }
 
-        let mut carrier = match self.algorithm {
-            4 | 5 | 6 | 7 => 0i32,
-            _ => 0i32,
-        };
+        let mut carrier = 0i32;
         match self.algorithm {
             /* Carrier sets (OP4 is added below for every algorithm):
              * alg 4 -> OP2+OP4; algs 5/6 -> OP2+OP3+OP4; alg 7 -> all four.
@@ -929,7 +922,7 @@ impl FmChannel {
         self.mem_value = mem;
 
         let channel_out = match self.algorithm {
-            4 | 5 | 6 | 7 => Self::clamp_output(carrier),
+            4..=7 => Self::clamp_output(carrier),
             _ => out4,
         };
         for (i, op_offset) in op_offsets.iter().enumerate() {
@@ -1670,7 +1663,10 @@ impl Ym2612 {
             self.update_ssg_for_sample();
         }
 
-        if self.sample_subcycle % YM2612_CHANNEL_SUBCYCLE_STRIDE == 0 {
+        if self
+            .sample_subcycle
+            .is_multiple_of(YM2612_CHANNEL_SUBCYCLE_STRIDE)
+        {
             let channel = (self.sample_subcycle / YM2612_CHANNEL_SUBCYCLE_STRIDE) as usize;
             self.clock_channel_output(channel);
         }
@@ -1951,6 +1947,7 @@ impl Ym2612 {
     }
 
     #[cfg(test)]
+    #[allow(clippy::too_many_arguments)] // mirrors compute_output's inputs plus the slot address
     pub(crate) fn operator_output_debug(
         &self,
         channel: usize,
