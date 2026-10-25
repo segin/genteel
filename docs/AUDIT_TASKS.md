@@ -749,7 +749,7 @@ Status: `[ ]` open, `[x]` satisfied.
 
 ## 8. Build, tests, tooling, repository (BLD)
 
-- [ ] **BLD-01** · C · Ubiquitous — The repository shall not track build output directories.
+- [x] **BLD-01** · C · Ubiquitous — The repository shall not track build output directories.
   - *Evidence:* `fuzz/target/` 317 files (~72 MB) tracked; `.gitignore` covers only `/target`. (verified)
   - *Verify:* I — `git ls-files fuzz/target` empty; `**/target/` ignored.
 - [ ] **BLD-02** · H · Ubiquitous — The codebase shall pass `cargo clippy --all-targets` with warnings denied.
@@ -785,21 +785,22 @@ Status: `[ ]` open, `[x]` satisfied.
 - [ ] **BLD-12** · M · Ubiquitous — The binary crate shall consume emulator modules from the library crate.
   - *Evidence:* `main.rs:10-25` redeclares all modules → double compile, tests run twice (~245 s).
   - *Verify:* I — only `gui`/`tests_gui` local.
-- [ ] **BLD-13** · M · Ubiquitous — `Cargo.toml` shall declare no unused dependencies.
+- [x] **BLD-13** · M · Ubiquitous — `Cargo.toml` shall declare no unused dependencies.
   - *Evidence:* `chrono`, `image`, `rodio`.
   - *Verify:* T — `cargo machete`/`udeps`.
+  - *Resolution:* `image` is used for PNG screenshots (`src/main.rs` `save_screenshot`), so it was kept but restricted to the `png` feature; `chrono` and `rodio` were removed.
 - [ ] **BLD-14** · M · Ubiquitous — Dependencies shall be on maintained releases without future-incompatibility warnings.
   - *Evidence:* `winit 0.29`, `egui*/0.26`, `pixels 0.15`, `cpal 0.15`, `rodio 0.17`, `gilrs 0.10`, `rfd 0.14`, `zip 2.x`; `ashpd 0.8.1` future-incompat.
   - *Verify:* T — `cargo report future-incompatibilities` clean.
 - [ ] **BLD-15** · M · Ubiquitous — The dependency graph shall minimize duplicate crate versions.
   - *Evidence:* bitflags 1/2, getrandom 0.2/0.3/0.4, rand 0.8/0.10, rand_core 0.6/0.10, hashbrown, libloading, rustix, linux-raw-sys, raw-window-handle 0.5/0.6, thiserror 1/2, zune-core/zune-jpeg.
   - *Verify:* T — `cargo tree -d`.
-- [ ] **BLD-16** · M · Ubiquitous — `Cargo.toml` shall define a release profile with LTO and `codegen-units = 1`.
+- [x] **BLD-16** · M · Ubiquitous — `Cargo.toml` shall define a release profile with LTO and `codegen-units = 1`.
   - *Evidence:* no `[profile.release]`. (Debug overflow checks are what make many arithmetic findings panic.)
   - *Verify:* I.
-- [ ] **BLD-17** · M · Ubiquitous — `Cargo.toml` shall declare `rust-version` and `license`.
+- [x] **BLD-17** · M · Ubiquitous — `Cargo.toml` shall declare `rust-version` and `license`.
   - *Verify:* I.
-- [ ] **BLD-18** · M · Ubiquitous — Benchmarks depending on GUI crates shall declare `required-features = ["gui"]`.
+- [x] **BLD-18** · M · Ubiquitous — Benchmarks depending on GUI crates shall declare `required-features = ["gui"]`.
   - *Evidence:* `benches/gui_bench.rs`, `benches/gui_texture_clone.rs` break `--no-default-features --all-targets`.
   - *Verify:* T.
 - [ ] **BLD-19** · M · Ubiquitous — The default `cargo test` run shall exclude timing-only benchmarks.
@@ -808,9 +809,10 @@ Status: `[ ]` open, `[x]` satisfied.
 - [ ] **BLD-20** · L · Ubiquitous — Every unit test shall contain at least one assertion on observable behaviour.
   - *Evidence:* `z80/tests_memptr.rs:4` (no assertion, unresolved comment); possibly `vdp/tests_draw_row_refactor.rs:33`, `vdp/tests_render.rs:1065`.
   - *Verify:* I.
-- [ ] **BLD-21** · L · Ubiquitous — The repository shall not track stray or one-off files.
+- [x] **BLD-21** · L · Ubiquitous — The repository shall not track stray or one-off files.
   - *Evidence:* `fix_params.py`, `gleylancer.png` (commercial game screenshot), `src/main.rs_perf_test.rs`, `src/debugger/dummy.txt`, empty `.codex`, `conductor/` (~20 planning files).
   - *Verify:* I.
+  - *Resolution:* Removed `fix_params.py`, `gleylancer.png`, `src/main.rs_perf_test.rs`, `src/debugger/dummy.txt`. Kept `conductor/` (active Gemini Conductor planning workspace, referenced by its own workflow) and `.codex` (tool marker); delete them by hand if no longer used.
 - [ ] **BLD-22** · L · Ubiquitous — Test-only modules shall be gated by `#[cfg(test)]`.
   - *Evidence:* `memory/mod.rs:11` `pub mod tests_performance;`.
   - *Verify:* I.
