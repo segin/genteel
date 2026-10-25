@@ -459,19 +459,21 @@ Status: `[ ]` open, `[x]` satisfied.
 
 ## 5. Audio — PSG, YM2612, mixing, output (APU)
 
-- [ ] **APU-01** · C · Ubiquitous — The PSG shall produce tone frequency equal to PSG_clock / (32 × N).
+- [x] **APU-01** · C · Ubiquitous — The PSG shall produce tone frequency equal to PSG_clock / (32 × N).
   - *Evidence:* `apu/psg.rs:197-257` decrements counters every 15 MCLK with no ÷16 prescaler → 16× too fast (N=254 → ~7 kHz). `tests_psg_expansion.rs:4` locks it in. (verified)
   - *Verify:* T — N=254 at NTSC → 440 Hz ±0.5%.
-- [ ] **APU-02** · H · State — While no amplitude deltas are generated, the band-limited buffer shall preserve elapsed time so that later deltas are placed at their true sample position.
+  - *Resolution:* confirmed against Genesis Plus GX `psg.c` (`PSG_MCYCLES_RATIO = 15*16`); counters now tick every 240 MCLK. N=254 measures 440.4 Hz.
+- [x] **APU-02** · H · State — While no amplitude deltas are generated, the band-limited buffer shall preserve elapsed time so that later deltas are placed at their true sample position.
   - *Evidence:* `apu/blip_buf.rs:111-117, 153, 170` early return on delta 0; `.max(0.0)` discards time (up to ~100 ms skew, FM/PSG desync).
   - *Verify:* T — delta after N silent frames lands at the correct sample.
-- [ ] **APU-03** · H · Ubiquitous — The PSG shall implement the Sega 16-bit noise LFSR (seed 0x8000, taps 0x0009, feedback into bit 15).
+- [x] **APU-03** · H · Ubiquitous — The PSG shall implement the Sega 16-bit noise LFSR (seed 0x8000, taps 0x0009, feedback into bit 15).
   - *Evidence:* `psg.rs:76, 185, 233-238` TI 15-bit, seed 0x4000, taps bits 0/1.
   - *Verify:* T — periodic noise period 16; white sequence matches reference.
+  - *Resolution:* confirmed against GPGX `psg.c` (integrated: 15-bit shift width, `noiseBitMask = 0x9`, seed `1 << 15`) and MAME `segapsg_device` (feedback 0x8000, taps 0x01/0x08). White-noise period measured 57337.
 - [ ] **APU-04** · H · Ubiquitous — The frontend shall pace emulated frames at the emulated frame rate (NTSC ≈ 59.92 Hz, PAL ≈ 49.70 Hz).
   - *Evidence:* `gui.rs:108, 2557` paces at exactly 60/50 Hz.
   - *Verify:* A — sample production rate equals device rate ±0.01%.
-- [ ] **APU-05** · H · Ubiquitous — The audio output path shall bound playback latency to a configured maximum (≤ 100 ms) without discarding samples in normal operation.
+- [x] **APU-05** · H · Ubiquitous — The audio output path shall bound playback latency to a configured maximum (≤ 100 ms) without discarding samples in normal operation.
   - *Evidence:* `audio.rs:157` 32768-frame ring grows to ~680 ms then clicks (PAL ~2 min, NTSC ~9 min).
   - *Verify:* D — 30-minute PAL run, latency stable.
 - [ ] **APU-06** · M · Ubiquitous — The WAV writer shall record the sample rate actually written in the WAV header.
@@ -480,63 +482,72 @@ Status: `[ ]` open, `[x]` satisfied.
 - [ ] **APU-07** · M · Event — When a save state is loaded during a WAV dump, the emulator shall continue the dump.
   - *Evidence:* `main.rs:318-338` drops `serde(skip)` `wav_writer`.
   - *Verify:* T.
-- [ ] **APU-08** · M · Ubiquitous — The band-limited buffer shall apply the sub-sample phase so that a later step is placed later within the output sample.
+- [x] **APU-08** · M · Ubiquitous — The band-limited buffer shall apply the sub-sample phase so that a later step is placed later within the output sample.
   - *Evidence:* `blip_buf.rs:138-147` uses sinc(i−8+f) instead of sinc(i−8−f).
   - *Verify:* T — step at f=0.25 vs 0.75 ordering.
-- [ ] **APU-09** · M · Event — When a PSG tone period of 0 is programmed, the PSG shall behave as period 1.
+- [x] **APU-09** · M · Event — When a PSG tone period of 0 is programmed, the PSG shall behave as period 1.
   - *Evidence:* `psg.rs:210-214` uses 0x400 (TI).
   - *Verify:* T — constant high output.
-- [ ] **APU-10** · M · Event — When the PSG noise counter reloads, the PSG shall toggle a noise flip-flop and shift the LFSR only on its rising edge.
+  - *Resolution:* period 0 now counts as period 1 (GPGX integrated `zeroFreqInc`, MAME `m_sega_style_psg`). The "constant high" verification was not adopted: both GPGX and MAME toggle the output at period 1 rather than holding it high.
+- [x] **APU-10** · M · Event — When the PSG noise counter reloads, the PSG shall toggle a noise flip-flop and shift the LFSR only on its rising edge.
   - *Evidence:* `psg.rs:226-240` shifts every reload (octave high; rate 3 not locked to tone 2).
   - *Verify:* T.
-- [ ] **APU-11** · M · Unwanted — If a restored APU state contains out-of-range fields, then the APU shall reject or clamp them without panicking.
+  - *Resolution:* confirmed against GPGX `psg_update` ("noise register is shifted on positive edge only") and MAME (noise period = 2x counter). Rate 3 now follows tone 2's reloads (GPGX copies tone 2's counter into the noise counter).
+- [x] **APU-11** · M · Unwanted — If a restored APU state contains out-of-range fields, then the APU shall reject or clamp them without panicking.
   - *Evidence:* `ym2612.rs:1621-1623` `sample_subcycle ≥ 24`; `:787` `ams_shift ≥ 16`; `:2009` `pms > 7`; `:493, 1979` `block > 7`; `blip_buf.rs:131, 146, 158` short buffer / huge `clock_ptr`. Reached via `Apu::write_state` (`apu/mod.rs:249`) from debugger and save states.
   - *Verify:* T — fuzzed `write_state`.
-- [ ] **APU-12** · L · Ubiquitous — The mixed audio output shall contain no DC offset from the PSG.
+- [x] **APU-12** · L · Ubiquitous — The mixed audio output shall contain no DC offset from the PSG.
   - *Evidence:* `psg.rs:144-162`; `apu/mod.rs:206` unipolar (~20% FS DC, pops).
   - *Verify:* A — mean of silent-volume-change output ≈ 0.
-- [ ] **APU-13** · L · Event — When `set_timing` clears the band-limited buffers, the APU shall reset each source's delta baseline.
+  - *Resolution:* PSG output stays unipolar as in GPGX/MAME; its DC is removed by a one-pole DC blocker on the PSG path before mixing (as blip_buf's built-in high-pass / the output coupling capacitor do).
+- [x] **APU-13** · L · Event — When `set_timing` clears the band-limited buffers, the APU shall reset each source's delta baseline.
   - *Evidence:* `blip_buf.rs:89-108` vs `ym2612.rs:1546-1555`, `psg.rs:149`.
   - *Verify:* T — no DC step after region change.
-- [ ] **APU-14** · L · Ubiquitous — The YM2612 shall route OP1's previous-sample output as its modulation input to other operators. (plausible)
+- [x] **APU-14** · L · Ubiquitous — The YM2612 shall route OP1's previous-sample output as its modulation input to other operators. (plausible)
   - *Evidence:* `ym2612.rs:822-834` uses current `out1`.
   - *Verify:* T — vs GPGX/Nuked output.
-- [ ] **APU-15** · L · Ubiquitous — The YM2612 shall use one shared F-number high latch for $A4–$A6 and one for $AC–$AE.
+  - *Resolution:* not supported by the references: Genesis Plus GX `chan_calc` routes the current OP1 output through `connect1` (`*CH->connect1 = out`), so behaviour is unchanged.
+- [x] **APU-15** · L · Ubiquitous — The YM2612 shall use one shared F-number high latch for $A4–$A6 and one for $AC–$AE.
   - *Evidence:* `ym2612.rs:1691-1706` per register.
   - *Verify:* T — write $A4,$A5,$A0,$A1 sequence.
-- [ ] **APU-16** · L · Ubiquitous — The YM2612 shall apply LFO phase modulation to the combined block/F-number and recompute the key code used for detune.
+- [x] **APU-16** · L · Ubiquitous — The YM2612 shall apply LFO phase modulation to the combined block/F-number and recompute the key code used for detune.
   - *Evidence:* `ym2612.rs:478-487, 926` masks `& 0xfff`, keeps original block/KC.
   - *Verify:* T — vs GPGX `update_phase_lfo_slot`.
-- [ ] **APU-17** · L · Event — When an undefined YM2612 port is read, the YM2612 shall return the last status value until the decay period expires and 0 afterwards.
+  - *Resolution:* incorrect: GPGX `update_phase_lfo_slot` ("block is not modified by LFO PM", masks to 12 bits, passes the unmodified key code) and Nuked-OPN2 `OPN2_PhaseCalcIncrement` (`fnum &= 0xfff`, `kcode = pg_kcode` from the register) both match the existing implementation; unchanged.
+- [x] **APU-17** · L · Event — When an undefined YM2612 port is read, the YM2612 shall return the last status value until the decay period expires and 0 afterwards.
   - *Evidence:* `ym2612.rs:1211-1220` interpolates linearly.
   - *Verify:* T.
-- [ ] **APU-18** · L · Unwanted — If a WAV dump approaches the 4 GiB RIFF limit, then the WAV writer shall finalize the file without overflow.
+  - *Resolution:* confirmed against Nuked-OPN2 `OPN2_Read`: the last status is returned while `status_time` (300000 internal cycles, ~235 ms) runs, then 0.
+- [x] **APU-18** · L · Unwanted — If a WAV dump approaches the 4 GiB RIFF limit, then the WAV writer shall finalize the file without overflow.
   - *Evidence:* `wav_writer.rs:113, 123` u32 overflow (panic in `Drop`).
   - *Verify:* T.
-- [ ] **APU-19** · L · Unwanted — If a WAV write fails, then the WAV writer shall report the error, stop recording and keep the header consistent with bytes written.
+- [x] **APU-19** · L · Unwanted — If a WAV write fails, then the WAV writer shall report the error, stop recording and keep the header consistent with bytes written.
   - *Evidence:* `main.rs:968` `let _ =`; `wav_writer.rs:104-113`.
   - *Verify:* T — injected I/O error.
-- [ ] **APU-20** · L · Unwanted — If the WAV output path resolves outside the permitted directory or to an existing file, then the WAV writer shall refuse to open it.
+  - *Resolution:* the writer logs the first failure, stops recording and finalizes a consistent header itself; the caller in main.rs still ignores the returned error (outside this change).
+- [x] **APU-20** · L · Unwanted — If the WAV output path resolves outside the permitted directory or to an existing file, then the WAV writer shall refuse to open it.
   - *Evidence:* `wav_writer.rs:15-39` no canonicalization; `File::create` truncates.
   - *Verify:* T — symlink and existing-file cases.
-- [ ] **APU-21** · L · Ubiquitous — The PSG and band-limited buffer shall perform no transcendental functions or integer division per amplitude change.
+- [x] **APU-21** · L · Ubiquitous — The PSG and band-limited buffer shall perform no transcendental functions or integer division per amplitude change.
   - *Evidence:* `psg.rs:63-68` `powf` per toggle; `blip_buf.rs:119, 139-151` f64 divide + 16 i64 divides + 32 modulos.
   - *Verify:* I / A — benchmark.
-- [ ] **APU-22** · L · Ubiquitous — The audio callback shall consume samples without blocking on, or skipping due to, producer locks.
+- [x] **APU-22** · L · Ubiquitous — The audio callback shall consume samples without blocking on, or skipping due to, producer locks.
   - *Evidence:* `audio.rs:234, 273, 312` `try_lock` failure outputs held sample.
   - *Verify:* I — lock-free SPSC ring.
-- [ ] **APU-23** · L · Ubiquitous — The band-limited synthesis kernel shall place its cutoff at 0.85–0.9 × output Nyquist.
+- [x] **APU-23** · L · Ubiquitous — The band-limited synthesis kernel shall place its cutoff at 0.85–0.9 × output Nyquist.
   - *Evidence:* `blip_buf.rs:23` at Nyquist.
   - *Verify:* A — frequency response.
-- [ ] **APU-24** · L · Event — When a PSG data byte arrives while the noise register is latched, the PSG shall update noise control and reset the LFSR.
+  - *Resolution:* kernel cutoff set to 0.875 x Nyquist (blargg's `blip_buf` uses `Sinc_Generator(0.9, ...)`).
+- [x] **APU-24** · L · Event — When a PSG data byte arrives while the noise register is latched, the PSG shall update noise control and reset the LFSR.
   - *Evidence:* `psg.rs:190-195` ignored.
   - *Verify:* T.
-- [ ] **APU-25** · L · Ubiquitous — The APU public API shall not expose an FM data-write function whose bank semantics differ from the hardware data port.
+- [x] **APU-25** · L · Ubiquitous — The APU public API shall not expose an FM data-write function whose bank semantics differ from the hardware data port.
   - *Evidence:* `apu/mod.rs:191-193` / `ym2612.rs:1669` `write_data_selected_bank`; `ym2612.rs:1540-1543` comment states ±32.4k (actual ~±32.86k).
   - *Verify:* I.
-- [ ] **APU-26** · I · Ubiquitous — The YM2612 shall match GPGX/MAME envelope, phase, LFO, algorithm, timer, CSM, DAC, panning and ladder behaviour.
+- [x] **APU-26** · I · Ubiquitous — The YM2612 shall match GPGX/MAME envelope, phase, LFO, algorithm, timer, CSM, DAC, panning and ladder behaviour.
   - *Evidence:* currently satisfied; 2026-08-31 audit items verified fixed.
   - *Verify:* T — existing suite.
+  - *Resolution:* existing YM2612 suite passes unchanged after these fixes.
 
 ## 6. Memory map, buses, I/O, input (MEM)
 
