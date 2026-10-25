@@ -1,13 +1,19 @@
 //! Audio Output Module
 //!
 //! Provides cross-platform audio output using cpal.
-//! Uses a ring buffer to transfer samples from emulation thread to audio callback.
+//!
+//! Samples travel from the emulation thread to the audio callback through
+//! [`AudioBuffer`], a lock-free single-producer/single-consumer ring of packed
+//! stereo frames: the callback never blocks on, or skips because of, the
+//! producer. The consumer side ([`AudioConsumer`]) bounds playback latency
+//! with dynamic rate control: it resamples by at most ±0.5 % to keep the
+//! ring near a target fill level, so host/emulator clock drift neither grows
+//! the latency nor forces samples to be discarded in normal operation.
 
 #[cfg(feature = "gui")]
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-#[cfg(feature = "gui")]
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::Arc;
 
 /// Sample rate for audio output (Native Genesis FM rate: 53693175 / 7 / 144 = ~53267)
 pub const SAMPLE_RATE: u32 = 53267;
@@ -24,137 +30,381 @@ pub const PAL_FPS: u32 = 50;
 /// Audio buffer size (in stereo sample pairs)
 pub const BUFFER_SIZE: usize = 512;
 
-/// Ring buffer for transferring audio samples between threads
+/// Fill level the consumer steers the ring towards.
+pub const TARGET_LATENCY_MS: u32 = 40;
+/// Hard upper bound on buffered audio; beyond it the consumer skips ahead.
+pub const MAX_LATENCY_MS: u32 = 100;
+/// Largest resampling-ratio deviation used by the dynamic rate control.
+pub const MAX_RATE_ADJUST: f64 = 0.005;
+
+fn pack_stereo(left: i16, right: i16) -> u32 {
+    ((left as u16 as u32) << 16) | right as u16 as u32
+}
+
+fn unpack_stereo(packed: u32) -> (i16, i16) {
+    (((packed >> 16) as u16) as i16, (packed as u16) as i16)
+}
+
+fn frames_for_ms(sample_rate: u32, ms: u32) -> usize {
+    (sample_rate as u64 * ms as u64 / 1000) as usize
+}
+
+/// Lock-free SPSC ring of stereo frames shared between the emulation thread
+/// (producer) and the audio callback (consumer).
+///
+/// `push` must only be called from one producer thread and the `pop*`/
+/// `clear` family only from one consumer thread at a time.
 #[derive(Debug)]
 pub struct AudioBuffer {
-    /// Sample storage (stereo i16)
-    buffer: Vec<i16>,
-    /// Write position
-    write_pos: usize,
-    /// Read position
-    read_pos: usize,
-    /// Number of samples available
-    available: usize,
+    /// Packed stereo frames (`left << 16 | right`).
+    slots: Box<[AtomicU32]>,
+    /// `slots.len() - 1`; the capacity is a power of two.
+    mask: usize,
+    /// Total frames ever consumed (owned by the consumer).
+    read: AtomicUsize,
+    /// Total frames ever produced (owned by the producer).
+    write: AtomicUsize,
+    /// Producer-only: a left sample awaiting its right partner
+    /// (`1 << 16 | sample`), or 0.
+    pending_left: AtomicU32,
+    /// Frames the consumer steers towards.
+    target_frames: AtomicUsize,
+    /// Frames beyond which the consumer skips ahead.
+    max_frames: AtomicUsize,
+    /// Frames rejected because the ring was full.
+    overflow_frames: AtomicU64,
+    /// Frames skipped by the consumer to enforce the latency bound.
+    skipped_frames: AtomicU64,
 }
 
 impl AudioBuffer {
-    fn discard_oldest(&mut self, mut count: usize) {
-        count = count.min(self.available);
-        if count == 0 {
-            return;
-        }
-        self.read_pos = (self.read_pos + count) % self.buffer.len();
-        self.available -= count;
-    }
-
-    /// Create a new audio buffer
+    /// Create a new audio buffer holding at least `capacity` stereo frames.
     pub fn new(capacity: usize) -> Self {
+        let size = capacity.max(2).next_power_of_two();
+        let slots: Vec<AtomicU32> = (0..size).map(|_| AtomicU32::new(0)).collect();
+        let max = frames_for_ms(SAMPLE_RATE, MAX_LATENCY_MS).min(size);
+        let target = frames_for_ms(SAMPLE_RATE, TARGET_LATENCY_MS).min(max / 2);
         Self {
-            buffer: vec![0; capacity * 2], // Stereo
-            write_pos: 0,
-            read_pos: 0,
-            available: 0,
+            slots: slots.into_boxed_slice(),
+            mask: size - 1,
+            read: AtomicUsize::new(0),
+            write: AtomicUsize::new(0),
+            pending_left: AtomicU32::new(0),
+            target_frames: AtomicUsize::new(target),
+            max_frames: AtomicUsize::new(max),
+            overflow_frames: AtomicU64::new(0),
+            skipped_frames: AtomicU64::new(0),
         }
     }
 
-    /// Push samples into the buffer
-    pub fn push(&mut self, samples: &[i16]) {
-        if self.buffer.is_empty() || samples.is_empty() {
-            return;
-        }
-
-        let capacity = self.buffer.len();
-        let samples = if samples.len() > capacity {
-            &samples[samples.len() - capacity..]
-        } else {
-            samples
-        };
-
-        let overflow = samples
-            .len()
-            .saturating_sub(capacity.saturating_sub(self.available));
-        if overflow > 0 {
-            self.discard_oldest(overflow);
-        }
-
-        let samples_to_write = samples.len();
-        let first_chunk_len = std::cmp::min(samples_to_write, capacity - self.write_pos);
-        self.buffer[self.write_pos..self.write_pos + first_chunk_len]
-            .copy_from_slice(&samples[..first_chunk_len]);
-
-        let second_chunk_len = samples_to_write - first_chunk_len;
-        if second_chunk_len > 0 {
-            self.buffer[..second_chunk_len].copy_from_slice(&samples[first_chunk_len..]);
-        }
-
-        self.write_pos = (self.write_pos + samples_to_write) % capacity;
-        self.available += samples_to_write;
+    /// Capacity in stereo frames.
+    pub fn capacity_frames(&self) -> usize {
+        self.slots.len()
     }
 
-    /// Pop samples from the buffer into destination
-    pub fn pop(&mut self, dest: &mut [i16]) {
-        let samples_to_read = std::cmp::min(dest.len(), self.available);
-
-        if samples_to_read > 0 {
-            let first_chunk_len = std::cmp::min(samples_to_read, self.buffer.len() - self.read_pos);
-            dest[..first_chunk_len]
-                .copy_from_slice(&self.buffer[self.read_pos..self.read_pos + first_chunk_len]);
-
-            let second_chunk_len = samples_to_read - first_chunk_len;
-            if second_chunk_len > 0 {
-                dest[first_chunk_len..samples_to_read]
-                    .copy_from_slice(&self.buffer[..second_chunk_len]);
-            }
-
-            self.read_pos = (self.read_pos + samples_to_read) % self.buffer.len();
-            self.available -= samples_to_read;
-        }
-
-        if samples_to_read < dest.len() {
-            // Underrun - output silence for the remainder
-            dest[samples_to_read..].fill(0);
-        }
+    /// Configure the latency window for a device running at `sample_rate`.
+    pub fn set_latency(&self, sample_rate: u32, target_ms: u32, max_ms: u32) {
+        let max = frames_for_ms(sample_rate, max_ms.max(1)).clamp(2, self.slots.len());
+        let target = frames_for_ms(sample_rate, target_ms).clamp(1, max / 2);
+        self.max_frames.store(max, Ordering::Relaxed);
+        self.target_frames.store(target, Ordering::Relaxed);
     }
 
-    /// Pop samples as f32 (for cpal)
-    pub fn pop_f32(&mut self, dest: &mut [f32]) {
-        if self.available == 0 {
-            dest.fill(0.0);
-            return;
-        }
-
-        for sample in dest.iter_mut() {
-            if self.available > 0 {
-                let i16_sample = self.buffer[self.read_pos];
-                self.read_pos = (self.read_pos + 1) % self.buffer.len();
-                self.available -= 1;
-                // Convert i16 to f32 [-1.0, 1.0]
-                *sample = i16_sample as f32 / 32768.0;
-            } else {
-                *sample = 0.0;
-            }
-        }
+    /// Fill level (frames) the consumer steers towards.
+    pub fn target_frames(&self) -> usize {
+        self.target_frames.load(Ordering::Relaxed)
     }
 
-    /// Get number of available samples
+    /// Maximum buffered frames before the consumer skips ahead.
+    pub fn max_frames(&self) -> usize {
+        self.max_frames.load(Ordering::Relaxed)
+    }
+
+    /// Frames rejected by `push` because the ring was full.
+    pub fn overflow_frames(&self) -> u64 {
+        self.overflow_frames.load(Ordering::Relaxed)
+    }
+
+    /// Frames skipped by the consumer to enforce the latency bound.
+    pub fn skipped_frames(&self) -> u64 {
+        self.skipped_frames.load(Ordering::Relaxed)
+    }
+
+    /// Buffered stereo frames.
+    pub fn available_frames(&self) -> usize {
+        let w = self.write.load(Ordering::Acquire);
+        let r = self.read.load(Ordering::Acquire);
+        w.wrapping_sub(r).min(self.slots.len())
+    }
+
+    /// Get number of available samples (two per stereo frame).
     pub fn available(&self) -> usize {
-        self.available
+        self.available_frames() * 2
     }
 
-    /// Clear the buffer
-    pub fn clear(&mut self) {
-        self.write_pos = 0;
-        self.read_pos = 0;
-        self.available = 0;
+    /// Push interleaved stereo samples (producer side). A trailing odd sample
+    /// is held until its right partner arrives. Frames that do not fit are
+    /// dropped and counted; the consumer's rate control keeps this from
+    /// happening in normal operation.
+    pub fn push(&self, samples: &[i16]) {
+        let mut iter = samples.iter().copied();
+        let pending = self.pending_left.swap(0, Ordering::Relaxed);
+        let mut w = self.write.load(Ordering::Relaxed);
+        let r = self.read.load(Ordering::Acquire);
+        let mut free = self.slots.len() - w.wrapping_sub(r).min(self.slots.len());
+        let mut dropped = 0u64;
+        let mut put = |w: &mut usize, free: &mut usize, frame: u32| {
+            if *free == 0 {
+                dropped += 1;
+                return;
+            }
+            self.slots[*w & self.mask].store(frame, Ordering::Relaxed);
+            *w = w.wrapping_add(1);
+            *free -= 1;
+        };
+        if pending != 0 {
+            match iter.next() {
+                Some(right) => put(&mut w, &mut free, pack_stereo(pending as u16 as i16, right)),
+                None => {
+                    self.pending_left.store(pending, Ordering::Relaxed);
+                    return;
+                }
+            }
+        }
+        loop {
+            match (iter.next(), iter.next()) {
+                (Some(left), Some(right)) => put(&mut w, &mut free, pack_stereo(left, right)),
+                (Some(left), None) => {
+                    self.pending_left
+                        .store((1 << 16) | left as u16 as u32, Ordering::Relaxed);
+                    break;
+                }
+                _ => break,
+            }
+        }
+        self.write.store(w, Ordering::Release);
+        if dropped > 0 {
+            self.overflow_frames.fetch_add(dropped, Ordering::Relaxed);
+        }
+    }
+
+    /// Pop one stereo frame (consumer side).
+    pub fn pop_frame(&self) -> Option<(i16, i16)> {
+        let r = self.read.load(Ordering::Relaxed);
+        let w = self.write.load(Ordering::Acquire);
+        if w == r {
+            return None;
+        }
+        let frame = self.slots[r & self.mask].load(Ordering::Relaxed);
+        self.read.store(r.wrapping_add(1), Ordering::Release);
+        Some(unpack_stereo(frame))
+    }
+
+    /// Discard up to `frames` of the oldest buffered frames (consumer side).
+    fn skip_frames(&self, frames: usize) {
+        let frames = frames.min(self.available_frames());
+        if frames == 0 {
+            return;
+        }
+        let r = self.read.load(Ordering::Relaxed);
+        self.read.store(r.wrapping_add(frames), Ordering::Release);
+        self.skipped_frames
+            .fetch_add(frames as u64, Ordering::Relaxed);
+    }
+
+    /// Pop interleaved samples into `dest` (consumer side); underruns and a
+    /// trailing odd slot are filled with silence.
+    pub fn pop(&self, dest: &mut [i16]) {
+        for pair in dest.chunks_mut(2) {
+            let (l, r) = self.pop_frame().unwrap_or((0, 0));
+            pair[0] = l;
+            if pair.len() > 1 {
+                pair[1] = r;
+            } else {
+                pair[0] = 0;
+            }
+        }
+    }
+
+    /// Pop samples as f32 in [-1.0, 1.0) (consumer side).
+    pub fn pop_f32(&self, dest: &mut [f32]) {
+        for pair in dest.chunks_mut(2) {
+            let (l, r) = self.pop_frame().unwrap_or((0, 0));
+            pair[0] = l as f32 / 32768.0;
+            if pair.len() > 1 {
+                pair[1] = r as f32 / 32768.0;
+            } else {
+                pair[0] = 0.0;
+            }
+        }
+    }
+
+    /// Drop all buffered frames (consumer side, or while no producer runs).
+    pub fn clear(&self) {
+        let w = self.write.load(Ordering::Acquire);
+        self.read.store(w, Ordering::Release);
     }
 }
 
-/// Shared audio buffer type
-pub type SharedAudioBuffer = Arc<Mutex<AudioBuffer>>;
+/// Producer handle returned by [`SharedAudioBuffer::try_lock`].
+pub struct AudioProducer<'a>(&'a AudioBuffer);
+
+impl AudioProducer<'_> {
+    /// Push interleaved stereo samples.
+    pub fn push(&mut self, samples: &[i16]) {
+        self.0.push(samples);
+    }
+
+    /// Get number of available samples.
+    pub fn available(&self) -> usize {
+        self.0.available()
+    }
+}
+
+/// Error type of [`SharedAudioBuffer::try_lock`]; the lock-free ring never
+/// produces it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AudioBufferBusy;
+
+/// Shared handle to the lock-free audio ring.
+#[derive(Debug, Clone)]
+pub struct SharedAudioBuffer(Arc<AudioBuffer>);
+
+impl SharedAudioBuffer {
+    /// Access the producer side. The ring is lock-free, so this always
+    /// succeeds; it keeps the call shape of the former mutex-based buffer.
+    pub fn try_lock(&self) -> Result<AudioProducer<'_>, AudioBufferBusy> {
+        Ok(AudioProducer(&self.0))
+    }
+
+    /// Push interleaved stereo samples (producer side).
+    pub fn push(&self, samples: &[i16]) {
+        self.0.push(samples);
+    }
+
+    /// The underlying ring.
+    pub fn ring(&self) -> &AudioBuffer {
+        &self.0
+    }
+}
+
+impl std::ops::Deref for SharedAudioBuffer {
+    type Target = AudioBuffer;
+
+    fn deref(&self) -> &AudioBuffer {
+        &self.0
+    }
+}
 
 /// Create a new shared audio buffer
 pub fn create_audio_buffer() -> SharedAudioBuffer {
-    Arc::new(Mutex::new(AudioBuffer::new(BUFFER_SIZE * 64)))
+    SharedAudioBuffer(Arc::new(AudioBuffer::new(BUFFER_SIZE * 64)))
+}
+
+/// Consumer side of the audio ring: dynamic rate control, latency bound and
+/// underrun handling for the audio callback.
+#[derive(Debug)]
+pub struct AudioConsumer {
+    buffer: Arc<AudioBuffer>,
+    /// Interpolation position between `prev` and `next`, in [0, 1).
+    pos: f64,
+    prev: (f32, f32),
+    next: (f32, f32),
+    /// Smoothed fill level in frames.
+    fill_avg: f64,
+    /// Output is held silent until the ring first reaches the target.
+    primed: bool,
+    /// Ratio of input frames consumed per output frame.
+    ratio: f64,
+}
+
+impl AudioConsumer {
+    pub fn new(buffer: SharedAudioBuffer) -> Self {
+        Self {
+            buffer: buffer.0,
+            pos: 0.0,
+            prev: (0.0, 0.0),
+            next: (0.0, 0.0),
+            fill_avg: 0.0,
+            primed: false,
+            ratio: 1.0,
+        }
+    }
+
+    /// Current resampling ratio (input frames per output frame).
+    pub fn ratio(&self) -> f64 {
+        self.ratio
+    }
+
+    /// Call once per audio callback before producing frames: enforces the
+    /// latency bound and updates the rate control from the fill level.
+    pub fn begin_callback(&mut self) {
+        let fill = self.buffer.available_frames();
+        let target = self.buffer.target_frames().max(1);
+        let max = self.buffer.max_frames();
+        if fill > max {
+            /* Abnormal backlog (e.g. a producer burst after a stall):
+             * skip back to the target instead of playing it late. */
+            self.buffer.skip_frames(fill - target);
+            self.fill_avg = target as f64;
+        }
+        let fill = self.buffer.available_frames();
+        if !self.primed {
+            if fill >= target {
+                self.primed = true;
+                self.fill_avg = fill as f64;
+            }
+            self.ratio = 1.0;
+            return;
+        }
+        self.fill_avg += (fill as f64 - self.fill_avg) * 0.1;
+        let error = ((self.fill_avg - target as f64) / target as f64).clamp(-1.0, 1.0);
+        self.ratio = 1.0 + MAX_RATE_ADJUST * error;
+    }
+
+    fn decay(v: f32) -> f32 {
+        let d = v * (31.0 / 32.0);
+        if d.abs() < 1.0 {
+            0.0
+        } else {
+            d
+        }
+    }
+
+    fn advance_input(&mut self) {
+        self.prev = self.next;
+        self.next = match self.buffer.pop_frame() {
+            Some((l, r)) => (l as f32, r as f32),
+            None => {
+                /* Underrun: hold the last frame, decaying toward zero so a
+                 * stopped producer does not park DC on the output, and
+                 * re-prime before resuming. */
+                self.primed = false;
+                (Self::decay(self.next.0), Self::decay(self.next.1))
+            }
+        };
+    }
+
+    /// Produce the next output frame.
+    pub fn next_frame(&mut self) -> (i16, i16) {
+        if !self.primed {
+            self.prev = (Self::decay(self.prev.0), Self::decay(self.prev.1));
+            self.next = self.prev;
+            return (self.prev.0 as i16, self.prev.1 as i16);
+        }
+        self.pos += self.ratio;
+        while self.pos >= 1.0 {
+            self.pos -= 1.0;
+            self.advance_input();
+        }
+        let t = self.pos as f32;
+        let l = self.prev.0 + (self.next.0 - self.prev.0) * t;
+        let r = self.prev.1 + (self.next.1 - self.prev.1) * t;
+        (
+            l.round().clamp(-32768.0, 32767.0) as i16,
+            r.round().clamp(-32768.0, 32767.0) as i16,
+        )
+    }
 }
 
 /// Audio output stream wrapper
@@ -166,88 +416,17 @@ pub struct AudioOutput {
 
 #[cfg(feature = "gui")]
 impl AudioOutput {
-    fn pack_stereo(left: i16, right: i16) -> u32 {
-        ((left as u16 as u32) << 16) | right as u16 as u32
-    }
-
-    fn unpack_stereo(packed: u32) -> (i16, i16) {
-        (((packed >> 16) as u16) as i16, (packed as u16) as i16)
-    }
-
-    fn decay_toward_zero(v: i16) -> i16 {
-        if v == 0 {
-            return 0;
-        }
-        let stepped = v - v / 32;
-        if stepped == v {
-            v - v.signum()
-        } else {
-            stepped
-        }
-    }
-
-    /// Sample to emit when the producer has no data. Holding the last sample
-    /// avoids a click on a brief underrun, but decaying the held value keeps a
-    /// stopped producer from parking a constant DC level on the output.
-    fn held_sample_decayed(last_sample: &AtomicU32) -> (i16, i16) {
-        let (left, right) = Self::unpack_stereo(last_sample.load(Ordering::Relaxed));
-        last_sample.store(
-            Self::pack_stereo(
-                Self::decay_toward_zero(left),
-                Self::decay_toward_zero(right),
-            ),
-            Ordering::Relaxed,
-        );
-        (left, right)
-    }
-
-    fn next_stereo_sample(buf: &mut AudioBuffer) -> Option<(i16, i16)> {
-        if buf.available < 2 {
-            if buf.available == 1 {
-                buf.discard_oldest(1);
-            }
-            return None;
-        }
-
-        let left = buf.buffer[buf.read_pos];
-        buf.read_pos = (buf.read_pos + 1) % buf.buffer.len();
-        buf.available -= 1;
-
-        let right = buf.buffer[buf.read_pos];
-        buf.read_pos = (buf.read_pos + 1) % buf.buffer.len();
-        buf.available -= 1;
-
-        Some((left, right))
-    }
-
-    fn write_output_f32(
-        data: &mut [f32],
-        channels: usize,
-        buffer: &SharedAudioBuffer,
-        last_sample: &AtomicU32,
-    ) {
+    fn write_output_f32(data: &mut [f32], channels: usize, consumer: &mut AudioConsumer) {
         if channels == 0 {
             /* chunks_mut(0) panics; a device reporting no output channels
              * gets silence by doing nothing. */
             return;
         }
-        let mut guard = buffer.try_lock().ok();
+        consumer.begin_callback();
         for frame in data.chunks_mut(channels) {
-            let (left, right) = if let Some(buf) = guard.as_mut() {
-                if let Some((left, right)) = Self::next_stereo_sample(buf) {
-                    last_sample.store(Self::pack_stereo(left, right), Ordering::Relaxed);
-                    (left, right)
-                } else {
-                    Self::held_sample_decayed(last_sample)
-                }
-            } else {
-                Self::held_sample_decayed(last_sample)
-            };
+            let (left, right) = consumer.next_frame();
             match channels {
-                0 => {}
-                1 => {
-                    frame[0] = ((left as i32 + right as i32) as f32 / 2.0) / 32768.0;
-                }
+                1 => frame[0] = ((left as i32 + right as i32) as f32 / 2.0) / 32768.0,
                 _ => {
                     frame[0] = left as f32 / 32768.0;
                     frame[1] = right as f32 / 32768.0;
@@ -259,34 +438,15 @@ impl AudioOutput {
         }
     }
 
-    fn write_output_i16(
-        data: &mut [i16],
-        channels: usize,
-        buffer: &SharedAudioBuffer,
-        last_sample: &AtomicU32,
-    ) {
+    fn write_output_i16(data: &mut [i16], channels: usize, consumer: &mut AudioConsumer) {
         if channels == 0 {
-            /* chunks_mut(0) panics; a device reporting no output channels
-             * gets silence by doing nothing. */
             return;
         }
-        let mut guard = buffer.try_lock().ok();
+        consumer.begin_callback();
         for frame in data.chunks_mut(channels) {
-            let (left, right) = if let Some(buf) = guard.as_mut() {
-                if let Some((left, right)) = Self::next_stereo_sample(buf) {
-                    last_sample.store(Self::pack_stereo(left, right), Ordering::Relaxed);
-                    (left, right)
-                } else {
-                    Self::held_sample_decayed(last_sample)
-                }
-            } else {
-                Self::held_sample_decayed(last_sample)
-            };
+            let (left, right) = consumer.next_frame();
             match channels {
-                0 => {}
-                1 => {
-                    frame[0] = ((left as i32 + right as i32) / 2) as i16;
-                }
+                1 => frame[0] = ((left as i32 + right as i32) / 2) as i16,
                 _ => {
                     frame[0] = left;
                     frame[1] = right;
@@ -298,39 +458,18 @@ impl AudioOutput {
         }
     }
 
-    fn write_output_u16(
-        data: &mut [u16],
-        channels: usize,
-        buffer: &SharedAudioBuffer,
-        last_sample: &AtomicU32,
-    ) {
+    fn write_output_u16(data: &mut [u16], channels: usize, consumer: &mut AudioConsumer) {
         if channels == 0 {
-            /* chunks_mut(0) panics; a device reporting no output channels
-             * gets silence by doing nothing. */
             return;
         }
-        let mut guard = buffer.try_lock().ok();
+        consumer.begin_callback();
         for frame in data.chunks_mut(channels) {
-            let (left, right) = if let Some(buf) = guard.as_mut() {
-                if let Some((left, right)) = Self::next_stereo_sample(buf) {
-                    last_sample.store(Self::pack_stereo(left, right), Ordering::Relaxed);
-                    (left, right)
-                } else {
-                    Self::held_sample_decayed(last_sample)
-                }
-            } else {
-                Self::held_sample_decayed(last_sample)
-            };
-            let left_u = (left as i32 + 32768) as u16;
-            let right_u = (right as i32 + 32768) as u16;
+            let (left, right) = consumer.next_frame();
             match channels {
-                0 => {}
-                1 => {
-                    frame[0] = (((left as i32 + right as i32) / 2) + 32768) as u16;
-                }
+                1 => frame[0] = (((left as i32 + right as i32) / 2) + 32768) as u16,
                 _ => {
-                    frame[0] = left_u;
-                    frame[1] = right_u;
+                    frame[0] = (left as i32 + 32768) as u16;
+                    frame[1] = (right as i32 + 32768) as u16;
                     for sample in &mut frame[2..] {
                         *sample = u16::MAX / 2;
                     }
@@ -392,45 +531,28 @@ impl AudioOutput {
         let sample_format = supported_config.sample_format();
         let stream_config: cpal::StreamConfig = supported_config.into();
         let err_fn = |err| eprintln!("Audio stream error: {}", err);
-        let last_sample = Arc::new(AtomicU32::new(Self::pack_stereo(0, 0)));
+        buffer.set_latency(sample_rate, TARGET_LATENCY_MS, MAX_LATENCY_MS);
+        let mut consumer = AudioConsumer::new(buffer);
 
         let stream = match sample_format {
-            cpal::SampleFormat::F32 => {
-                let buffer = buffer.clone();
-                let last_sample = last_sample.clone();
-                device.build_output_stream(
-                    &stream_config,
-                    move |data: &mut [f32], _| {
-                        Self::write_output_f32(data, channels, &buffer, &last_sample)
-                    },
-                    err_fn,
-                    None,
-                )
-            }
-            cpal::SampleFormat::I16 => {
-                let buffer = buffer.clone();
-                let last_sample = last_sample.clone();
-                device.build_output_stream(
-                    &stream_config,
-                    move |data: &mut [i16], _| {
-                        Self::write_output_i16(data, channels, &buffer, &last_sample)
-                    },
-                    err_fn,
-                    None,
-                )
-            }
-            cpal::SampleFormat::U16 => {
-                let buffer = buffer.clone();
-                let last_sample = last_sample.clone();
-                device.build_output_stream(
-                    &stream_config,
-                    move |data: &mut [u16], _| {
-                        Self::write_output_u16(data, channels, &buffer, &last_sample)
-                    },
-                    err_fn,
-                    None,
-                )
-            }
+            cpal::SampleFormat::F32 => device.build_output_stream(
+                &stream_config,
+                move |data: &mut [f32], _| Self::write_output_f32(data, channels, &mut consumer),
+                err_fn,
+                None,
+            ),
+            cpal::SampleFormat::I16 => device.build_output_stream(
+                &stream_config,
+                move |data: &mut [i16], _| Self::write_output_i16(data, channels, &mut consumer),
+                err_fn,
+                None,
+            ),
+            cpal::SampleFormat::U16 => device.build_output_stream(
+                &stream_config,
+                move |data: &mut [u16], _| Self::write_output_u16(data, channels, &mut consumer),
+                err_fn,
+                None,
+            ),
             other => {
                 return Err(format!("Unsupported audio sample format: {:?}", other));
             }
@@ -470,552 +592,278 @@ mod tests {
 
     #[test]
     fn test_pack_unpack_stereo_round_trip() {
-        #[cfg(feature = "gui")]
-        {
-            let packed = AudioOutput::pack_stereo(-1234, 5678);
-            assert_eq!(AudioOutput::unpack_stereo(packed), (-1234, 5678));
-        }
-    }
-
-    #[test]
-    fn test_audio_callback_reuses_last_sample_on_stereo_underrun() {
-        #[cfg(feature = "gui")]
-        {
-            use std::sync::atomic::AtomicU32;
-
-            let shared_buf = create_audio_buffer();
-            {
-                let mut buf = shared_buf.lock().unwrap();
-                buf.push(&[1000]);
-            }
-
-            let last_sample = AtomicU32::new(AudioOutput::pack_stereo(111, -222));
-            let mut out = [0i16; 2];
-            AudioOutput::write_output_i16(&mut out, 2, &shared_buf, &last_sample);
-
-            assert_eq!(out, [111, -222]);
-        }
-    }
-
-    #[test]
-    fn test_audio_callback_discards_stray_sample_before_reuse() {
-        #[cfg(feature = "gui")]
-        {
-            use std::sync::atomic::AtomicU32;
-
-            let shared_buf = create_audio_buffer();
-            {
-                let mut buf = shared_buf.lock().unwrap();
-                buf.push(&[100, 200]);
-                let write_pos = buf.write_pos;
-                buf.buffer[write_pos] = 77;
-                buf.write_pos = (write_pos + 1) % buf.buffer.len();
-                buf.available += 1;
-            }
-
-            let last_sample = AtomicU32::new(AudioOutput::pack_stereo(5, 6));
-            let mut out = [0i16; 2];
-            AudioOutput::write_output_i16(&mut out, 2, &shared_buf, &last_sample);
-            assert_eq!(out, [100, 200]);
-
-            let mut underrun = [0i16; 2];
-            AudioOutput::write_output_i16(&mut underrun, 2, &shared_buf, &last_sample);
-            assert_eq!(underrun, [100, 200]);
-        }
+        let packed = pack_stereo(-1234, 5678);
+        assert_eq!(unpack_stereo(packed), (-1234, 5678));
     }
 
     #[test]
     fn test_create_audio_buffer() {
-        let shared_buf = create_audio_buffer();
-        let buf = shared_buf.lock().unwrap();
-
-        // capacity is BUFFER_SIZE * 64 (512 * 64 = 32768)
-        // internal buffer length is capacity * 2 for stereo (32768 * 2 = 65536)
-        assert_eq!(buf.buffer.len(), BUFFER_SIZE * 128);
-        assert_eq!(buf.available(), 0);
-        assert_eq!(buf.read_pos, 0);
-        assert_eq!(buf.write_pos, 0);
+        let shared = create_audio_buffer();
+        assert_eq!(shared.capacity_frames(), BUFFER_SIZE * 64);
+        assert_eq!(shared.available(), 0);
     }
 
     #[test]
-    fn test_create_audio_buffer_lock_state() {
-        let shared_buf = create_audio_buffer();
-
-        // Check initial ref counts
-        assert_eq!(Arc::strong_count(&shared_buf), 1);
-        assert_eq!(Arc::weak_count(&shared_buf), 0);
-
-        // Verify successful lock acquisition
-        let buf_lock = shared_buf.lock();
-        assert!(
-            buf_lock.is_ok(),
-            "Mutex should not be poisoned and should be lockable"
-        );
-
-        let buf = buf_lock.unwrap();
-        // Verify dimensions and capacity matches BUFFER_SIZE * 64 stereo (128)
-        assert_eq!(buf.buffer.len(), BUFFER_SIZE * 128);
-        assert_eq!(buf.available(), 0);
-        assert_eq!(buf.read_pos, 0);
-        assert_eq!(buf.write_pos, 0);
-
-        // Drop the lock so other threads could acquire it
-        drop(buf);
-
-        // Verify it can be shared and locked in a different thread
-        let buf_clone = Arc::clone(&shared_buf);
-        assert_eq!(Arc::strong_count(&shared_buf), 2);
-
-        let handle = std::thread::spawn(move || {
-            let buf_lock = buf_clone.lock();
-            assert!(
-                buf_lock.is_ok(),
-                "Mutex should be lockable from another thread"
-            );
-        });
-
-        handle.join().expect("Thread should not panic");
-    }
-
-    #[test]
-    fn test_audio_buffer_new() {
-        let buf = AudioBuffer::new(1024);
-        assert_eq!(buf.available(), 0);
-    }
-
-    #[test]
-    fn test_create_audio_buffer_layout() {
-        let shared_buf = create_audio_buffer();
-        let buf = shared_buf.lock().unwrap();
-
-        // BUFFER_SIZE is 512, capacity passed to AudioBuffer::new is BUFFER_SIZE * 64.
-        // Inside AudioBuffer::new, buffer length is capacity * 2.
-        assert_eq!(buf.buffer.len(), BUFFER_SIZE * 64 * 2);
-        assert_eq!(buf.available(), 0);
-        assert_eq!(buf.write_pos, 0);
-        assert_eq!(buf.read_pos, 0);
+    fn test_try_lock_always_grants_producer_access() {
+        let shared = create_audio_buffer();
+        let other = shared.clone();
+        {
+            let mut producer = shared.try_lock().expect("lock-free ring never blocks");
+            producer.push(&[1, 2, 3, 4]);
+            assert_eq!(producer.available(), 4);
+        }
+        assert_eq!(other.available(), 4);
+        assert_eq!(other.pop_frame(), Some((1, 2)));
     }
 
     #[test]
     fn test_audio_buffer_push_pop() {
-        let mut buf = AudioBuffer::new(64);
-
-        let samples = [100i16, 200, 300, 400];
-        buf.push(&samples);
-
-        assert_eq!(buf.available(), 4);
-
-        let mut out = [0i16; 4];
+        let buf = AudioBuffer::new(64);
+        buf.push(&[1, 2, 3, 4, 5, 6]);
+        assert_eq!(buf.available(), 6);
+        let mut out = [0i16; 6];
         buf.pop(&mut out);
-
-        assert_eq!(out, samples);
+        assert_eq!(out, [1, 2, 3, 4, 5, 6]);
         assert_eq!(buf.available(), 0);
     }
 
     #[test]
-    fn test_audio_buffer_underrun() {
-        let mut buf = AudioBuffer::new(64);
-
-        // Push only 2 samples
-        buf.push(&[100i16, 200]);
-
-        // Try to pop 4
-        let mut out = [0i16; 4];
+    fn test_audio_buffer_underrun_fills_silence() {
+        let buf = AudioBuffer::new(64);
+        buf.push(&[7, 8]);
+        let mut out = [9i16; 6];
         buf.pop(&mut out);
-
-        // First two should be valid, rest should be 0 (silence)
-        assert_eq!(out[0], 100);
-        assert_eq!(out[1], 200);
-        assert_eq!(out[2], 0);
-        assert_eq!(out[3], 0);
+        assert_eq!(out, [7, 8, 0, 0, 0, 0]);
     }
 
     #[test]
-    fn test_audio_buffer_wrap() {
-        let mut buf = AudioBuffer::new(4); // 8 samples total (stereo)
+    fn test_odd_sample_waits_for_partner() {
+        let buf = AudioBuffer::new(64);
+        buf.push(&[10, 20, 30]);
+        assert_eq!(buf.available(), 2);
+        buf.push(&[40]);
+        assert_eq!(buf.available(), 4);
+        assert_eq!(buf.pop_frame(), Some((10, 20)));
+        assert_eq!(buf.pop_frame(), Some((30, 40)));
+    }
 
-        // Fill most of it
-        buf.push(&[1i16, 2, 3, 4, 5, 6]);
+    #[test]
+    fn test_full_ring_rejects_newest_and_counts() {
+        let buf = AudioBuffer::new(4);
+        buf.push(&[1, 1, 2, 2, 3, 3, 4, 4, 5, 5]);
+        assert_eq!(buf.available_frames(), 4);
+        assert_eq!(buf.overflow_frames(), 1);
+        assert_eq!(buf.pop_frame(), Some((1, 1)));
+    }
 
-        // Pop some
-        let mut out = [0i16; 4];
-        buf.pop(&mut out);
+    #[test]
+    fn test_wrap_around() {
+        let buf = AudioBuffer::new(4);
+        for round in 0..10i16 {
+            buf.push(&[round, -round, round + 1, -round - 1]);
+            assert_eq!(buf.pop_frame(), Some((round, -round)));
+            assert_eq!(buf.pop_frame(), Some((round + 1, -round - 1)));
+        }
+        assert_eq!(buf.pop_frame(), None);
+    }
 
-        // Push more (should wrap)
-        buf.push(&[7i16, 8, 9, 10]);
+    #[test]
+    fn test_pop_f32_scaling() {
+        let buf = AudioBuffer::new(8);
+        buf.push(&[i16::MIN, i16::MAX, 0, 16384]);
+        let mut out = [1.0f32; 6];
+        buf.pop_f32(&mut out);
+        assert_eq!(out[0], -1.0);
+        assert!((out[1] - 32767.0 / 32768.0).abs() < 1e-6);
+        assert_eq!(out[2], 0.0);
+        assert_eq!(out[3], 0.5);
+        assert_eq!(&out[4..], &[0.0, 0.0]);
+    }
 
-        // Pop all
-        let mut out2 = [0i16; 6];
-        buf.pop(&mut out2);
-
-        assert_eq!(out2[0], 5);
-        assert_eq!(out2[1], 6);
-        assert_eq!(out2[2], 7);
-        assert_eq!(out2[3], 8);
-        assert_eq!(out2[4], 9);
-        assert_eq!(out2[5], 10);
+    #[test]
+    fn test_clear_drops_buffered_frames() {
+        let buf = AudioBuffer::new(8);
+        buf.push(&[1, 2, 3, 4]);
+        buf.clear();
+        assert_eq!(buf.available(), 0);
+        buf.push(&[5, 6]);
+        assert_eq!(buf.pop_frame(), Some((5, 6)));
     }
 
     #[test]
     fn test_samples_per_frame() {
-        let spf = samples_per_frame();
-        assert_eq!(spf, 888); // 53267 / 60 = 887.78 -> 888
+        assert_eq!(
+            samples_per_frame(),
+            (SAMPLE_RATE as f32 / 60.0).ceil() as usize
+        );
+        assert_eq!(samples_per_frame_for_rate(48_000), 800);
     }
 
     #[test]
     fn test_samples_per_frame_for_pal_rate() {
-        let spf = samples_per_frame_for_rate_and_region(50_000, true);
-        assert_eq!(spf, 1000);
+        assert_eq!(samples_per_frame_for_rate_and_region(48_000, true), 960);
     }
 
     #[test]
-    fn test_pop_f32() {
-        let mut buf = AudioBuffer::new(64);
-        buf.push(&[16384i16, -16384]); // Half max positive/negative
-
-        let mut out = [0.0f32; 2];
-        buf.pop_f32(&mut out);
-
-        assert!((out[0] - 0.5).abs() < 0.001);
-        assert!((out[1] + 0.5).abs() < 0.001);
+    fn test_set_latency_converts_milliseconds() {
+        let buf = AudioBuffer::new(BUFFER_SIZE * 64);
+        buf.set_latency(48_000, 40, 100);
+        assert_eq!(buf.target_frames(), 1920);
+        assert_eq!(buf.max_frames(), 4800);
     }
 
     #[test]
-    fn test_audio_buffer_clear() {
-        let mut buf = AudioBuffer::new(64);
-
-        // 1. Push data
-        buf.push(&[10i16, 20]);
-
-        // 2. Pop 1 sample (advances read_pos to 1)
-        let mut out = [0i16; 1];
-        buf.pop(&mut out);
-        assert_eq!(out[0], 10);
-        assert_eq!(buf.available(), 1);
-
-        // 3. Clear the buffer
-        buf.clear();
-
-        // 4. Verify state reset
-        assert_eq!(buf.available(), 0);
-        assert_eq!(buf.read_pos, 0);
-        assert_eq!(buf.write_pos, 0);
-
-        // 5. Verify pop returns silence
-        let mut out_silence = [0i16; 1];
-        buf.pop(&mut out_silence);
-        assert_eq!(out_silence[0], 0);
-
-        // 6. Verify reset state by pushing new data and checking order
-        buf.push(&[30i16]);
-
-        let mut out2 = [0i16; 1];
-        buf.pop(&mut out2);
-
-        assert_eq!(out2[0], 30);
-        assert_eq!(buf.buffer[0], 30);
+    fn test_consumer_holds_silence_until_primed() {
+        let shared = create_audio_buffer();
+        shared.set_latency(1000, 10, 40); // target 10 frames
+        let mut consumer = AudioConsumer::new(shared.clone());
+        shared.push(&[100, 100, 100, 100]);
+        consumer.begin_callback();
+        assert_eq!(consumer.next_frame(), (0, 0));
+        shared.push(&[100; 20]);
+        consumer.begin_callback();
+        let mut last = (0, 0);
+        for _ in 0..4 {
+            last = consumer.next_frame();
+        }
+        assert_eq!(last, (100, 100));
     }
 
     #[test]
-    fn test_audio_buffer_clear_edge_cases() {
-        let mut buf = AudioBuffer::new(2); // total capacity is 4 (stereo)
-
-        // Edge Case 1: Completely full buffer
-        buf.push(&[1i16, 2, 3, 4]);
-        assert_eq!(buf.available(), 4);
-        assert_eq!(buf.write_pos, 0); // wrapped around
-        assert_eq!(buf.read_pos, 0);
-
-        buf.clear();
-        assert_eq!(buf.available(), 0);
-        assert_eq!(buf.write_pos, 0);
-        assert_eq!(buf.read_pos, 0);
-
-        // Edge Case 2: Wrap-around state (read_pos > write_pos)
-        // Push 3 samples
-        buf.push(&[10i16, 20, 30]);
-        assert_eq!(buf.available(), 3);
-        assert_eq!(buf.write_pos, 3);
-
-        // Pop 2 samples (read_pos moves to 2)
-        let mut out = [0i16; 2];
-        buf.pop(&mut out);
-        assert_eq!(buf.available(), 1);
-        assert_eq!(buf.read_pos, 2);
-
-        // Push 2 more samples (write_pos wraps to 1)
-        buf.push(&[40i16, 50]);
-        assert_eq!(buf.available(), 3);
-        assert_eq!(buf.write_pos, 1);
-        assert_eq!(buf.read_pos, 2);
-
-        // Clear in wrap-around state
-        buf.clear();
-        assert_eq!(buf.available(), 0);
-        assert_eq!(buf.write_pos, 0);
-        assert_eq!(buf.read_pos, 0);
-
-        // Verify buffer works normally after wrap-around clear
-        buf.push(&[100i16]);
-        let mut out2 = [0i16; 1];
-        buf.pop(&mut out2);
-        assert_eq!(out2[0], 100);
+    fn test_consumer_decays_held_sample_on_underrun() {
+        let shared = create_audio_buffer();
+        shared.set_latency(1000, 2, 10);
+        let mut consumer = AudioConsumer::new(shared.clone());
+        shared.push(&[8000, -8000, 8000, -8000]);
+        consumer.begin_callback();
+        let mut seen = Vec::new();
+        for _ in 0..400 {
+            seen.push(consumer.next_frame());
+        }
+        assert!(seen.iter().any(|&(l, _)| l >= 7000));
+        assert_eq!(*seen.last().unwrap(), (0, 0));
     }
 
     #[test]
-    fn test_audio_buffer_clear_completely_empty() {
-        let mut buf = AudioBuffer::new(64);
+    fn test_consumer_skips_backlog_beyond_latency_bound() {
+        let shared = create_audio_buffer();
+        shared.set_latency(1000, 10, 50);
+        let mut consumer = AudioConsumer::new(shared.clone());
+        shared.push(&vec![1i16; 2 * 200]);
+        consumer.begin_callback();
+        assert_eq!(shared.available_frames(), 10);
+        assert_eq!(shared.skipped_frames(), 190);
+    }
 
-        // Clear a brand new, empty buffer
-        buf.clear();
-        assert_eq!(buf.available(), 0);
-        assert_eq!(buf.read_pos, 0);
-        assert_eq!(buf.write_pos, 0);
+    /// Simulate a producer whose clock runs `drift` faster/slower than the
+    /// consumer's and check the fill level settles inside the latency bound
+    /// without skipping or overflowing.
+    fn simulate_drift(drift: f64) -> (usize, u64, u64) {
+        let rate = 48_000u32;
+        let shared = create_audio_buffer();
+        shared.set_latency(rate, TARGET_LATENCY_MS, MAX_LATENCY_MS);
+        let mut consumer = AudioConsumer::new(shared.clone());
+        let frame_samples = (rate as f64 / 60.0) * (1.0 + drift);
+        let callback_frames = 512usize;
+        let mut produced = 0.0f64;
+        let mut consumed = 0usize;
+        let mut max_fill = 0usize;
+        /* Ten simulated minutes. */
+        let total = rate as usize * 60 * 10;
+        while consumed < total {
+            /* Producer pushes whole emulated frames when it falls behind. */
+            while produced < consumed as f64 + frame_samples {
+                let n = frame_samples.round() as usize;
+                shared.push(&vec![0i16; n * 2]);
+                produced += frame_samples;
+            }
+            consumer.begin_callback();
+            for _ in 0..callback_frames {
+                consumer.next_frame();
+            }
+            consumed += callback_frames;
+            if consumed > rate as usize * 60 {
+                max_fill = max_fill.max(shared.available_frames());
+            }
+        }
+        (max_fill, shared.skipped_frames(), shared.overflow_frames())
     }
 
     #[test]
-    fn test_audio_buffer_clear_empty_shifted() {
-        let mut buf = AudioBuffer::new(64);
-
-        // Push 4, pop 4 so it's empty but read_pos and write_pos are 4
-        buf.push(&[1i16, 2, 3, 4]);
-        let mut out = [0i16; 4];
-        buf.pop(&mut out);
-
-        assert_eq!(buf.available(), 0);
-        assert_eq!(buf.read_pos, 4);
-        assert_eq!(buf.write_pos, 4);
-
-        // Clear it
-        buf.clear();
-        assert_eq!(buf.available(), 0);
-        assert_eq!(buf.read_pos, 0);
-        assert_eq!(buf.write_pos, 0);
-    }
-
-    #[test]
-    fn test_audio_buffer_clear_partially_full() {
-        let mut buf = AudioBuffer::new(64);
-
-        // Push 4 samples, do not pop any
-        buf.push(&[1i16, 2, 3, 4]);
-
-        assert_eq!(buf.available(), 4);
-        assert_eq!(buf.read_pos, 0);
-        assert_eq!(buf.write_pos, 4);
-
-        // Clear it
-        buf.clear();
-        assert_eq!(buf.available(), 0);
-        assert_eq!(buf.read_pos, 0);
-        assert_eq!(buf.write_pos, 0);
-    }
-
-    #[test]
-    fn test_pop_f32_precision_and_range() {
-        let mut buf = AudioBuffer::new(64);
-
-        // Test edge cases explicitly
-        let samples = [i16::MAX, i16::MIN, 0, 1, -1];
-        buf.push(&samples);
-
-        let mut out = [0.0f32; 5];
-        buf.pop_f32(&mut out);
-
-        // i16::MAX is 32767. 32767 / 32768.0 = 0.999969482421875
-        let expected_max = 32767.0 / 32768.0;
-        assert!((out[0] - expected_max).abs() < f32::EPSILON);
-
-        // i16::MIN is -32768. -32768 / 32768.0 = -1.0
-        assert!((out[1] - (-1.0)).abs() < f32::EPSILON);
-
-        // 0 / 32768.0 = 0.0
-        assert!((out[2] - 0.0).abs() < f32::EPSILON);
-
-        // 1 / 32768.0
-        assert!((out[3] - (1.0 / 32768.0)).abs() < f32::EPSILON);
-
-        // -1 / 32768.0
-        assert!((out[4] - (-1.0 / 32768.0)).abs() < f32::EPSILON);
-    }
-
-    #[test]
-    fn test_pop_f32_underrun() {
-        let mut buf = AudioBuffer::new(64);
-        buf.push(&[1000]);
-
-        let mut out = [0.0f32; 3];
-        buf.pop_f32(&mut out);
-
-        // First sample should be valid
-        assert!((out[0] - (1000.0 / 32768.0)).abs() < f32::EPSILON);
-        // Rest should be silence (0.0)
-        assert_eq!(out[1], 0.0);
-        assert_eq!(out[2], 0.0);
-    }
-
-    #[test]
-    fn test_pop_f32_exhaustive() {
-        let mut buf = AudioBuffer::new(10);
-
-        // Test all possible i16 values to ensure no precision issues across the entire range
-        for sample in i16::MIN..=i16::MAX {
-            buf.push(&[sample]);
-
-            let mut out = [0.0f32; 1];
-            buf.pop_f32(&mut out);
-
-            let expected = sample as f32 / 32768.0;
+    fn test_rate_control_bounds_latency_under_clock_drift() {
+        for drift in [-0.003, -0.0013, 0.0, 0.0013, 0.003] {
+            let (max_fill, skipped, overflow) = simulate_drift(drift);
             assert!(
-                (out[0] - expected).abs() < f32::EPSILON,
-                "Failed precision check for sample: {}",
-                sample
+                max_fill <= frames_for_ms(48_000, MAX_LATENCY_MS),
+                "drift {drift}: fill {max_fill} exceeds bound"
             );
-
-            // Verify range
-            assert!(
-                out[0] >= -1.0,
-                "Failed lower bound check for sample: {}",
-                sample
-            );
-            assert!(
-                out[0] < 1.0,
-                "Failed upper bound check for sample: {}",
-                sample
-            );
-
-            // Ensure buffer state is clean
-            assert_eq!(buf.available(), 0);
+            assert_eq!(skipped, 0, "drift {drift}: samples were skipped");
+            assert_eq!(overflow, 0, "drift {drift}: ring overflowed");
         }
     }
 
     #[test]
-    fn test_push_overflow_keeps_newest_samples() {
-        let mut buf = AudioBuffer::new(2);
-        buf.push(&[1, 2, 3, 4, 5, 6]);
-
-        let mut out = [0i16; 4];
-        buf.pop(&mut out);
-
-        assert_eq!(out, [3, 4, 5, 6]);
-    }
-
-    #[test]
-    fn test_push_overflow_discards_oldest_buffered_samples() {
-        let mut buf = AudioBuffer::new(2);
-        buf.push(&[10, 20, 30]);
-        buf.push(&[40, 50, 60]);
-
-        let mut out = [0i16; 4];
-        buf.pop(&mut out);
-
-        assert_eq!(out, [30, 40, 50, 60]);
-    }
-
-    #[test]
-    fn test_pop_f32_boundaries() {
-        let mut buf = AudioBuffer::new(4);
-
-        // Push extreme values: MIN (-32768), MAX (32767), 0, and a mid-value
-        let samples = [i16::MIN, i16::MAX, 0, 16384];
-        buf.push(&samples);
-
-        let mut dest = [0.0f32; 4];
-        buf.pop_f32(&mut dest);
-
-        // MIN should be exactly -1.0
-        assert!((dest[0] - (-1.0)).abs() < f32::EPSILON);
-        // MAX should be 32767 / 32768
-        assert!((dest[1] - (32767.0 / 32768.0)).abs() < f32::EPSILON);
-        // 0 should be exactly 0.0
-        assert!((dest[2] - 0.0).abs() < f32::EPSILON);
-        // 16384 should be exactly 0.5
-        assert!((dest[3] - 0.5).abs() < f32::EPSILON);
-    }
-
-    #[test]
-    fn test_pop_f32_wrap_around() {
-        let mut buf = AudioBuffer::new(2); // capacity 4 samples (2*2)
-
-        // Push 3 samples
-        buf.push(&[16384, 16384, 16384]);
-
-        // Pop 2
-        let mut dest2 = [0.0f32; 2];
-        buf.pop_f32(&mut dest2);
-        assert!((dest2[0] - 0.5).abs() < f32::EPSILON);
-        assert!((dest2[1] - 0.5).abs() < f32::EPSILON);
-
-        // Push 2 more (wraps)
-        buf.push(&[-16384, -32768]);
-
-        // Pop 3 (should get the one remaining + two new ones)
-        let mut dest3 = [0.0f32; 3];
-        buf.pop_f32(&mut dest3);
-
-        assert!((dest3[0] - 0.5).abs() < f32::EPSILON);
-        assert!((dest3[1] - (-0.5)).abs() < f32::EPSILON);
-        assert!((dest3[2] - (-1.0)).abs() < f32::EPSILON);
-    }
-
-    // Reference implementation (old slow loop) for property testing
-    fn push_reference(buffer: &mut AudioBuffer, samples: &[i16]) {
-        if buffer.buffer.is_empty() || samples.is_empty() {
-            return;
+    fn test_spsc_threads_deliver_frames_in_order() {
+        let shared = create_audio_buffer();
+        let producer = shared.clone();
+        let total = 200_000i32;
+        let handle = std::thread::spawn(move || {
+            let mut next = 0i32;
+            while next < total {
+                let chunk: Vec<i16> = (next..(next + 64).min(total))
+                    .flat_map(|v| [(v & 0x7FFF) as i16, !(v & 0x7FFF) as i16])
+                    .collect();
+                while producer.available_frames() + 64 > producer.capacity_frames() {
+                    std::thread::yield_now();
+                }
+                producer.push(&chunk);
+                next += 64;
+            }
+        });
+        let mut expect = 0i32;
+        while expect < total {
+            if let Some((l, r)) = shared.pop_frame() {
+                assert_eq!(l, (expect & 0x7FFF) as i16);
+                assert_eq!(r, !(expect & 0x7FFF) as i16);
+                expect += 1;
+            } else {
+                std::thread::yield_now();
+            }
         }
-
-        let capacity = buffer.buffer.len();
-        let samples = if samples.len() > capacity {
-            &samples[samples.len() - capacity..]
-        } else {
-            samples
-        };
-
-        let overflow = samples
-            .len()
-            .saturating_sub(capacity.saturating_sub(buffer.available));
-        if overflow > 0 {
-            buffer.read_pos = (buffer.read_pos + overflow) % capacity;
-            buffer.available -= overflow;
-        }
-
-        for &sample in samples {
-            buffer.buffer[buffer.write_pos] = sample;
-            buffer.write_pos = (buffer.write_pos + 1) % capacity;
-            buffer.available += 1;
-        }
+        handle.join().unwrap();
+        assert_eq!(shared.overflow_frames(), 0);
     }
 
     proptest! {
         #[test]
-        fn test_push_equivalence(
-            buffer_size in 10usize..1000usize,
-            ref initial_fill in prop::collection::vec(any::<i16>(), 0..1000),
-            ref push_data in prop::collection::vec(any::<i16>(), 0..2000)
+        fn prop_push_pop_preserves_frames(
+            capacity in 2usize..512,
+            chunks in prop::collection::vec(prop::collection::vec(any::<i16>(), 0..64), 0..32)
         ) {
-            // Setup two identical buffers
-            let mut buf1 = AudioBuffer::new(buffer_size);
-            let mut buf2 = AudioBuffer::new(buffer_size);
-
-            // Pre-fill both buffers identically
-            push_reference(&mut buf1, initial_fill);
-            push_reference(&mut buf2, initial_fill);
-
-            // Verify they start identical
-            prop_assert_eq!(&buf1.buffer, &buf2.buffer);
-            prop_assert_eq!(buf1.write_pos, buf2.write_pos);
-            prop_assert_eq!(buf1.available, buf2.available);
-
-            // Apply push operation
-            // buf1 uses reference implementation
-            push_reference(&mut buf1, push_data);
-            // buf2 uses new optimized implementation
-            buf2.push(push_data);
-
-            // Verify they end up identical
-            prop_assert_eq!(&buf1.buffer, &buf2.buffer, "Buffer content mismatch");
-            prop_assert_eq!(buf1.write_pos, buf2.write_pos, "Write position mismatch");
-            prop_assert_eq!(buf1.available, buf2.available, "Available count mismatch");
+            let buf = AudioBuffer::new(capacity);
+            let mut model: std::collections::VecDeque<(i16, i16)> = Default::default();
+            let mut carry: Option<i16> = None;
+            for chunk in &chunks {
+                buf.push(chunk);
+                for &s in chunk {
+                    match carry.take() {
+                        Some(l) => {
+                            if model.len() < buf.capacity_frames() {
+                                model.push_back((l, s));
+                            }
+                        }
+                        None => carry = Some(s),
+                    }
+                }
+                /* Drain half of the model each step. */
+                for _ in 0..model.len() / 2 {
+                    prop_assert_eq!(buf.pop_frame(), model.pop_front());
+                }
+            }
+            while let Some(frame) = model.pop_front() {
+                prop_assert_eq!(buf.pop_frame(), Some(frame));
+            }
+            prop_assert_eq!(buf.pop_frame(), None);
         }
     }
 }
