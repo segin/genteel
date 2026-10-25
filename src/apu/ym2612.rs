@@ -19,6 +19,11 @@ fn default_sample_rate() -> u32 {
 const YM2612_INTERNAL_CYCLE_MCLK_DIVIDER: u32 = 7 * 6;
 const YM2612_SAMPLE_SUBCYCLES: u8 = 24;
 const YM2612_CHANNEL_SUBCYCLE_STRIDE: u8 = 4;
+/// Internal cycles (24 per sample, 42 MCLK each) for which an undefined-port
+/// read keeps returning the last status value: Nuked-OPN2 `OPN2_Read` sets
+/// `status_time = 300000` for the discrete YM2612 and `OPN2_Clock`
+/// decrements it once per internal cycle (~235 ms on NTSC).
+const UNDEFINED_READ_HOLD_CYCLES: u64 = 300_000;
 const LFO_SAMPLES_PER_STEP: [u32; 8] = [108, 77, 71, 67, 62, 44, 8, 5];
 const LFO_AMS_DEPTH_SHIFT: [u8; 4] = [8, 3, 1, 0];
 const DT_MASK: u32 = (1 << 17) - 1;
@@ -1113,6 +1118,13 @@ pub struct Ym2612 {
     last_status_read_clock: u64,
     #[serde(default = "default_selected_data_bank")]
     selected_data_bank: Bank,
+    /// Chip-wide F-number high/block latch written by $A4-$A6 (either bank)
+    /// and consumed by the next $A0-$A2 write.
+    #[serde(default, deserialize_with = "state_clamp::u8_max::<_, 0x3F>")]
+    fnum_high_latch: u8,
+    /// Latch for the CH3 special-mode F-number high/block ($AC-$AE).
+    #[serde(default, deserialize_with = "state_clamp::u8_max::<_, 0x3F>")]
+    ch3_fnum_high_latch: u8,
 }
 
 impl Default for Ym2612 {
@@ -1168,6 +1180,8 @@ impl Ym2612 {
             last_status_read: 0,
             last_status_read_clock: 0,
             selected_data_bank: Bank::Bank0,
+            fnum_high_latch: 0,
+            ch3_fnum_high_latch: 0,
         };
         for i in 0..3 {
             ym.registers[0][0xB4 + i] = 0xC0;
@@ -1212,11 +1226,7 @@ impl Ym2612 {
     }
 
     fn current_mclk(&self) -> u64 {
-        self.total_mclocks + self.mclk_debt as u64
-    }
-
-    fn undefined_read_decay_constant(&self) -> u64 {
-        (self.master_clock.max(4) / 4) as u64
+        self.total_mclocks.wrapping_add(self.mclk_debt as u64)
     }
 
     fn address_write_busy_cycles(&self) -> i32 {
@@ -1242,15 +1252,17 @@ impl Ym2612 {
         }
     }
 
+    /// Undefined ports (1-3) on the discrete YM2612 return the status value
+    /// latched by the last port-0 read until its hold time expires, then 0.
     fn decayed_undefined_read(&self) -> u8 {
         let elapsed = self
             .current_mclk()
             .saturating_sub(self.last_status_read_clock);
-        let decay = self.undefined_read_decay_constant();
-        if elapsed >= decay {
-            return 0;
+        if elapsed < UNDEFINED_READ_HOLD_CYCLES * YM2612_INTERNAL_CYCLE_MCLK_DIVIDER as u64 {
+            self.last_status_read
+        } else {
+            0
         }
-        (((self.last_status_read as u64) * (decay - elapsed)) / decay) as u8
     }
 
     pub fn set_hardware_profile(&mut self, profile: Ym2612HardwareProfile) {
@@ -1726,19 +1738,23 @@ impl Ym2612 {
                     self.apply_key_on_write(c, v);
                 }
             }
+            /* $A4-$A6 (either bank) share one F-number high/block latch,
+             * committed to a channel only by the following $A0-$A2 write
+             * (GPGX `ST.fn_h`, Nuked-OPN2 `reg_a4`). */
+            (_, 0xA4..=0xA6) => self.fnum_high_latch = v & 0x3F,
             (_, 0xA0..=0xA2) => {
                 let c = (a - 0xA0) as usize + bank_idx * 3;
-                if c < 6 {
-                    self.channels[c].fnum_latch = v;
-                    let high = self.registers[bank_idx][a as usize + 4];
-                    self.channels[c].block = (high >> 3) & 0x07;
-                    self.channels[c].fnum = (((high as u16) & 0x07) << 8) | v as u16;
-                }
+                let high = self.fnum_high_latch;
+                self.channels[c].fnum_latch = v;
+                self.channels[c].block = (high >> 3) & 0x07;
+                self.channels[c].fnum = (((high as u16) & 0x07) << 8) | v as u16;
             }
+            /* Likewise one latch for the CH3 special-mode $AC-$AE. */
+            (Bank::Bank0, 0xAC..=0xAE) => self.ch3_fnum_high_latch = v & 0x3F,
             (Bank::Bank0, 0xA8..=0xAA) => {
                 let slot = (a - 0xA8) as usize;
+                let high = self.ch3_fnum_high_latch;
                 self.ch3_fnum_latch[slot] = v;
-                let high = self.registers[0][a as usize + 4];
                 self.ch3_block[slot] = (high >> 3) & 0x07;
                 self.ch3_fnum[slot] = (((high as u16) & 0x07) << 8) | v as u16;
             }
