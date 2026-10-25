@@ -20,6 +20,8 @@ Each finding is restated as a single, verifiable requirement following the INCOS
 Fields: **ID** · **Severity** (C Critical, H High, M Medium, L Low, I Info) · **Pattern** — statement.
 *Evidence* = current defect and location. *Verify* = verification method (**T** Test, **I** Inspection, **A** Analysis, **D** Demonstration) and acceptance criterion.
 `(verified)` = re-checked by hand during the audit. `(plausible)` = auditor not fully certain; confirm against references before implementing.
+
+> **Treat every item as a lead, not a confirmed defect.** The audit was produced by reading code and recalling other emulators' behaviour, not by running reference tests, and at least one item (68000 ASR carry) was disproven by SingleStepTests data. Before changing exact flag values, masks, counters or timing, confirm the claim against test data (SingleStepTests 68000/Z80) or a reference you have actually read (Genesis Plus GX, BlastEm, MAME, Nuked, hardware docs), and cite it. Items that turn out wrong are closed with a *Resolution:* note.
 Status: `[ ]` open, `[x]` satisfied.
 
 ---
