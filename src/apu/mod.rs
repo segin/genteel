@@ -41,6 +41,19 @@ fn default_lpf_a1() -> f32 {
     low_pass_coefficients(crate::audio::SAMPLE_RATE).2
 }
 
+fn default_psg_dc_pole() -> f32 {
+    dc_blocker_pole(crate::audio::SAMPLE_RATE)
+}
+
+/// Corner frequency of the PSG DC-blocking high-pass (AC coupling).
+const PSG_DC_BLOCK_HZ: f32 = 20.0;
+
+/// Pole of the one-pole DC blocker `y = x - x' + R·y'`, `R = 1 - 2π·fc/fs`.
+fn dc_blocker_pole(sample_rate: u32) -> f32 {
+    let fs = sample_rate.max(1) as f32;
+    (1.0 - 2.0 * std::f32::consts::PI * PSG_DC_BLOCK_HZ / fs).clamp(0.0, 1.0)
+}
+
 fn low_pass_coefficients(sample_rate: u32) -> (f32, f32, f32) {
     let cutoff_hz = 3390.0_f32;
     let sample_rate = sample_rate.max(1) as f32;
@@ -90,6 +103,16 @@ pub struct Apu {
     low_pass_prev_input_left: f32,
     #[serde(default)]
     low_pass_prev_input_right: f32,
+    /* The PSG channels are unipolar (0 or +volume, as in GPGX), and the
+     * output stage is AC coupled: the DC blocker removes the level a tone,
+     * a channel parked at period 0/1 (PCM playback) or a volume change
+     * would otherwise leave on the mix. */
+    #[serde(default = "default_psg_dc_pole")]
+    psg_dc_pole: f32,
+    #[serde(default)]
+    psg_dc_prev_input: f32,
+    #[serde(default)]
+    psg_dc_prev_output: f32,
     #[serde(skip, default = "default_channel_buffers")]
     pub channel_buffers: [[i16; 128]; 10],
     #[serde(skip)]
@@ -118,6 +141,9 @@ impl Apu {
             low_pass_right: 0.0,
             low_pass_prev_input_left: 0.0,
             low_pass_prev_input_right: 0.0,
+            psg_dc_pole: default_psg_dc_pole(),
+            psg_dc_prev_input: 0.0,
+            psg_dc_prev_output: 0.0,
             channel_buffers: [[0; 128]; 10],
             buffer_idx: 0,
         };
@@ -132,6 +158,8 @@ impl Apu {
         self.low_pass_right = 0.0;
         self.low_pass_prev_input_left = 0.0;
         self.low_pass_prev_input_right = 0.0;
+        self.psg_dc_prev_input = 0.0;
+        self.psg_dc_prev_output = 0.0;
     }
 
     /// Configure the APU timing for the current region and output sample rate.
@@ -160,6 +188,7 @@ impl Apu {
         self.low_pass_b0 = b0;
         self.low_pass_b1 = b1;
         self.low_pass_a1 = a1;
+        self.psg_dc_pole = dc_blocker_pole(sample_rate);
         self.low_pass_left = 0.0;
         self.low_pass_right = 0.0;
         self.low_pass_prev_input_left = 0.0;
@@ -201,13 +230,11 @@ impl Apu {
     /// Returns `(left, right)` from the blip buffers.
     pub fn generate_sample(&mut self) -> (i16, i16) {
         let (fm_l, fm_r) = self.fm.generate_sample();
-        let psg = self.psg.generate_sample();
+        let psg_raw = self.psg.generate_sample();
+        let psg = self.psg_dc_block(psg_raw);
 
-        let dry_left = (((fm_l as i32) * 3) + ((psg as i32) * 2)) / 5;
-        let dry_right = (((fm_r as i32) * 3) + ((psg as i32) * 2)) / 5;
-
-        let dry_left = dry_left as f32;
-        let dry_right = dry_right as f32;
+        let dry_left = ((fm_l as f32) * 3.0 + psg * 2.0) / 5.0;
+        let dry_right = ((fm_r as f32) * 3.0 + psg * 2.0) / 5.0;
 
         let filtered_left = self.low_pass_b0 * dry_left
             + self.low_pass_b1 * self.low_pass_prev_input_left
@@ -225,6 +252,15 @@ impl Apu {
         let right = Self::mix_sample(self.low_pass_right.round() as i32);
 
         (left, right)
+    }
+
+    /// One-pole DC blocker applied to the PSG before mixing.
+    fn psg_dc_block(&mut self, sample: i16) -> f32 {
+        let x = sample as f32;
+        let y = x - self.psg_dc_prev_input + self.psg_dc_pole * self.psg_dc_prev_output;
+        self.psg_dc_prev_input = x;
+        self.psg_dc_prev_output = if y.is_finite() { y } else { 0.0 };
+        self.psg_dc_prev_output
     }
 
     /// Update visualization buffers (call once per frame)
@@ -577,5 +613,87 @@ mod tests {
         assert_eq!(apu.psg.blip.clock_rate(), audio::NTSC_MCLK);
         assert_eq!(apu.fm.blip_l.clock_rate(), audio::NTSC_MCLK);
         assert_eq!(apu.fm.blip_r.clock_rate(), audio::NTSC_MCLK);
+    }
+
+    /// Run the APU like the frontend does: tick, then emit output samples.
+    fn run_samples(apu: &mut Apu, samples: usize) -> Vec<(i16, i16)> {
+        let cps = audio::NTSC_MCLK as f64 / apu.sample_rate as f64;
+        let mut acc = 0.0f64;
+        let mut out = Vec::with_capacity(samples);
+        while out.len() < samples {
+            apu.tick_cycles(64);
+            acc += 64.0 * 7.0;
+            while acc >= cps && out.len() < samples {
+                out.push(apu.generate_sample());
+                acc -= cps;
+            }
+        }
+        out
+    }
+
+    fn psg_only_mean(samples: &[(i16, i16)]) -> f64 {
+        samples.iter().map(|&(l, _)| l as f64).sum::<f64>() / samples.len() as f64
+    }
+
+    #[test]
+    fn test_psg_volume_change_leaves_no_dc_on_mix() {
+        let mut apu = Apu::new();
+        /* FM fully silent (YM3438 profile: no ladder offset). */
+        apu.fm
+            .set_hardware_profile(ym2612::Ym2612HardwareProfile::Ym3438);
+        let rate = apu.sample_rate as usize;
+        run_samples(&mut apu, rate / 10);
+        /* A held channel (period 0/1 toggles ultrasonically) at full volume
+         * is a DC level, as when a game parks a channel or plays PCM. */
+        apu.write_psg(0x80);
+        apu.write_psg(0x00);
+        apu.write_psg(0x90);
+        let out = run_samples(&mut apu, rate * 2);
+        let mean = psg_only_mean(&out[rate..]);
+        assert!(mean.abs() < 20.0, "PSG left DC {mean} on the mix");
+    }
+
+    #[test]
+    fn test_psg_tone_mix_is_centred() {
+        let mut apu = Apu::new();
+        apu.fm
+            .set_hardware_profile(ym2612::Ym2612HardwareProfile::Ym3438);
+        let rate = apu.sample_rate as usize;
+        apu.write_psg(0x8E); // tone 0 period 0x0FE (~440 Hz)
+        apu.write_psg(0x0F);
+        apu.write_psg(0x90);
+        let out = run_samples(&mut apu, rate * 2);
+        let mean = psg_only_mean(&out[rate..]);
+        let peak = out[rate..].iter().map(|&(l, _)| l.abs()).max().unwrap();
+        assert!(peak > 500, "tone should be audible, peak {peak}");
+        assert!(mean.abs() < 20.0, "tone mix not centred: {mean}");
+    }
+
+    #[test]
+    fn test_region_change_keeps_delta_baselines() {
+        let mut apu = Apu::new();
+        apu.write_psg(0x80);
+        apu.write_psg(0x00);
+        apu.write_psg(0x90); // channel 0 audible
+        run_samples(&mut apu, 2000);
+        let level = apu.psg.blip.read_instant();
+
+        apu.set_timing(Region::Pal, 48_000);
+        assert_eq!(apu.psg.blip.read_instant(), level);
+
+        apu.write_psg(0x9F); // silence everything
+        run_samples(&mut apu, 500);
+        assert_eq!(apu.psg.blip.read_instant(), 0, "PSG baseline offset");
+        let mut last = 1;
+        for _ in 0..64 {
+            last = apu.psg.generate_sample();
+        }
+        assert_eq!(last, 0);
+        let fm_settled = apu.fm.blip_l.read_instant();
+        let mut fm_last = (0, 0);
+        for _ in 0..64 {
+            fm_last = apu.fm.generate_sample();
+        }
+        assert_eq!(fm_last.0, fm_settled, "FM baseline offset");
     }
 }
