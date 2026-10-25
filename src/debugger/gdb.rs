@@ -3,8 +3,8 @@
 //! Implements a GDB stub for debugging M68k code running in the emulator.
 //! Connect with: `m68k-elf-gdb -ex "target remote :1234"`
 
-use std::collections::HashSet;
-use std::io::{BufReader, Read, Write};
+use std::collections::{HashSet, VecDeque};
+use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::time::{Duration, Instant};
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
@@ -12,8 +12,15 @@ use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 /// Default GDB server port
 pub const DEFAULT_PORT: u16 = 1234;
 
-/// Maximum GDB packet size to prevent unbounded memory consumption
+/// Maximum GDB packet size to prevent unbounded memory consumption.
+/// Advertised to the client (in hex, as the protocol requires) via
+/// `qSupported`; it bounds both received payloads and reply payloads.
 pub const MAX_PACKET_SIZE: usize = 4096;
+
+/// Largest `m` request that fits in one reply (two hex digits per byte).
+pub const MAX_MEMORY_READ: usize = MAX_PACKET_SIZE / 2;
+
+const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
 
 /// Maximum number of breakpoints
 pub const MAX_BREAKPOINTS: usize = 1024;
@@ -131,12 +138,152 @@ impl GdbListener {
     }
 }
 
+/// Events produced by the incremental packet parser.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ParseEvent {
+    /// A complete packet with a valid checksum. The payload is raw bytes.
+    Packet(Vec<u8>),
+    /// A packet whose checksum did not match or was not two hex digits.
+    BadChecksum,
+    /// A packet whose payload exceeded `MAX_PACKET_SIZE`.
+    Oversized,
+    /// An out-of-band interrupt request (0x03).
+    Interrupt,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum ParseState {
+    #[default]
+    Idle,
+    Data,
+    ChecksumHigh,
+    ChecksumLow,
+}
+
+/// Incremental GDB Remote Serial Protocol framing parser.
+///
+/// Bytes may be fed in arbitrary chunks (split packets, several packets in
+/// one segment); parser state is retained between calls so nothing is lost.
+#[derive(Debug, Default)]
+pub struct PacketParser {
+    state: ParseState,
+    data: Vec<u8>,
+    checksum: u8,
+    received_high: u8,
+    oversized: bool,
+}
+
+fn hex_digit_value(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
+impl PacketParser {
+    /// Create an idle parser.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Discard any partially received packet.
+    pub fn reset(&mut self) {
+        self.state = ParseState::Idle;
+        self.data.clear();
+        self.checksum = 0;
+        self.received_high = 0;
+        self.oversized = false;
+    }
+
+    /// Feed one byte; returns an event when a frame completes.
+    pub fn push(&mut self, byte: u8) -> Option<ParseEvent> {
+        match self.state {
+            ParseState::Idle => match byte {
+                b'$' => {
+                    self.reset();
+                    self.state = ParseState::Data;
+                    None
+                }
+                0x03 => Some(ParseEvent::Interrupt),
+                /* ACK/NAK and stray bytes outside a packet are ignored. */
+                _ => None,
+            },
+            ParseState::Data => {
+                match byte {
+                    b'#' => self.state = ParseState::ChecksumHigh,
+                    b'$' => {
+                        /* A new start marker resynchronises on the new packet. */
+                        self.reset();
+                        self.state = ParseState::Data;
+                    }
+                    _ => {
+                        self.checksum = self.checksum.wrapping_add(byte);
+                        if self.data.len() < MAX_PACKET_SIZE {
+                            self.data.push(byte);
+                        } else {
+                            self.oversized = true;
+                        }
+                    }
+                }
+                None
+            }
+            ParseState::ChecksumHigh => match hex_digit_value(byte) {
+                Some(v) => {
+                    self.received_high = v;
+                    self.state = ParseState::ChecksumLow;
+                    None
+                }
+                None => {
+                    self.reset();
+                    Some(ParseEvent::BadChecksum)
+                }
+            },
+            ParseState::ChecksumLow => {
+                let event = match hex_digit_value(byte) {
+                    Some(v) if ((self.received_high << 4) | v) == self.checksum => {
+                        if self.oversized {
+                            ParseEvent::Oversized
+                        } else {
+                            ParseEvent::Packet(std::mem::take(&mut self.data))
+                        }
+                    }
+                    _ => ParseEvent::BadChecksum,
+                };
+                self.reset();
+                Some(event)
+            }
+        }
+    }
+}
+
+/// Run-control request decoded from the client.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunRequest {
+    /// Resume execution (`c`, `vCont;c`).
+    Continue,
+    /// Execute one instruction (`s`, `vCont;s`).
+    Step,
+    /// Stop execution (0x03 break).
+    Interrupt,
+}
+
+/// How long a reply may block on a slow reader before the client is dropped.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// GDB Server state
 pub struct GdbServer {
     /// TCP listener
     listener: GdbListener,
     /// Connected client stream
     client: Option<TcpStream>,
+    /// Incremental receive-side framing state (persists across polls)
+    parser: PacketParser,
+    /// Parsed events not yet consumed by `receive_packet`
+    pending_events: VecDeque<ParseEvent>,
+    /// Close the connection once the current reply has been sent
+    close_after_reply: bool,
     /// Breakpoints (set of addresses)
     pub breakpoints: HashSet<u32>,
     /// Last stop reason
@@ -183,31 +330,56 @@ impl GdbServer {
             Some(token)
         };
 
+        Ok(Self::with_listener(listener, final_password))
+    }
+
+    fn with_listener(listener: GdbListener, password: Option<String>) -> Self {
         let mut password_bytes = [0u8; MAX_PASSWORD_CHECK_LEN];
         let mut password_len = 0;
-        if let Some(ref pwd) = final_password {
+        if let Some(ref pwd) = password {
             let bytes = pwd.as_bytes();
             password_len = bytes.len();
             let copy_len = password_len.min(MAX_PASSWORD_CHECK_LEN);
             password_bytes[..copy_len].copy_from_slice(&bytes[..copy_len]);
         }
 
-        // Always start unauthenticated to enforce token check
-        let authenticated = false;
-
-        Ok(Self {
+        Self {
             listener,
             client: None,
+            parser: PacketParser::new(),
+            pending_events: VecDeque::new(),
+            close_after_reply: false,
             breakpoints: HashSet::new(),
             stop_reason: StopReason::Halted,
             no_ack_mode: false,
-            password: final_password,
+            password,
             password_bytes,
             password_len,
-            authenticated,
+            /* Always start unauthenticated to enforce the token check. */
+            authenticated: false,
             auth_failed_attempts: 0,
             auth_lockout_until: None,
-        })
+        }
+    }
+
+    /// Reset all per-connection protocol state. Authentication lockout
+    /// counters are deliberately kept so reconnecting cannot bypass them.
+    fn reset_session(&mut self) {
+        self.parser.reset();
+        self.pending_events.clear();
+        self.close_after_reply = false;
+        self.breakpoints.clear();
+        self.stop_reason = StopReason::Halted;
+        self.no_ack_mode = false;
+        self.authenticated = false;
+    }
+
+    /// Drop the current client (if any) and reset session state.
+    pub fn disconnect(&mut self) {
+        if let Some(client) = self.client.take() {
+            let _ = client.shutdown(std::net::Shutdown::Both);
+        }
+        self.reset_session();
     }
 
     /// Check for new connections (non-blocking)
@@ -228,7 +400,11 @@ impl GdbServer {
                 }
 
                 eprintln!("ℹ️  Accepted GDB connection from {}", addr);
-                stream.set_nonblocking(true).ok();
+                if stream.set_nonblocking(true).is_err() {
+                    return false;
+                }
+                let _ = stream.set_nodelay(true);
+                self.reset_session();
                 self.client = Some(stream);
                 true
             }
@@ -241,120 +417,178 @@ impl GdbServer {
         self.client.is_some()
     }
 
-    /// Send a packet to the client
-    pub fn send_packet(&mut self, data: &str) -> std::io::Result<()> {
-        if let Some(ref mut client) = self.client {
-            let checksum = data.bytes().fold(0u8, |acc, b| acc.wrapping_add(b));
-            let packet = format!("${}#{:02x}", data, checksum);
-            client.write_all(packet.as_bytes())?;
-            client.flush()?;
+    /// Write `bytes` completely to the client.
+    ///
+    /// The socket is non-blocking, so short writes and `WouldBlock` are
+    /// retried until the whole buffer has been sent or `WRITE_TIMEOUT`
+    /// expires. On failure the client is dropped, because a partially sent
+    /// packet would desynchronise the stream.
+    fn write_fully(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        let Some(client) = self.client.as_mut() else {
+            return Ok(());
+        };
+        let deadline = Instant::now() + WRITE_TIMEOUT;
+        let mut written = 0;
+        let result = loop {
+            if written == bytes.len() {
+                break client.flush();
+            }
+            match client.write(&bytes[written..]) {
+                Ok(0) => break Err(std::io::Error::from(std::io::ErrorKind::WriteZero)),
+                Ok(n) => written += n,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        break Err(std::io::Error::from(std::io::ErrorKind::TimedOut));
+                    }
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                Err(e) => break Err(e),
+            }
+        };
+        if result.is_err() {
+            self.disconnect();
         }
-        Ok(())
+        result
     }
 
-    /// Receive a packet from the client (non-blocking)
-    pub fn receive_packet(&mut self) -> Option<String> {
-        let client = self.client.as_mut()?;
-        let mut reader = BufReader::new(client.try_clone().ok()?);
+    /// Frame `data` as an RSP packet (`$data#cs`).
+    pub fn frame_packet(data: &str) -> Vec<u8> {
+        let checksum = data.bytes().fold(0u8, |acc, b| acc.wrapping_add(b));
+        let mut packet = Vec::with_capacity(data.len() + 4);
+        packet.push(b'$');
+        packet.extend_from_slice(data.as_bytes());
+        packet.push(b'#');
+        packet.push(HEX_DIGITS[(checksum >> 4) as usize]);
+        packet.push(HEX_DIGITS[(checksum & 0xF) as usize]);
+        packet
+    }
 
-        let mut buf = [0u8; 1];
+    /// Send a packet to the client
+    pub fn send_packet(&mut self, data: &str) -> std::io::Result<()> {
+        let packet = Self::frame_packet(data);
+        self.write_fully(&packet)
+    }
 
-        // Look for packet start
-        loop {
-            match reader.read(&mut buf) {
-                Ok(0) => {
-                    // Connection closed
-                    self.client = None;
-                    return None;
-                }
-                Ok(1) => {
-                    if buf[0] == b'$' {
-                        break;
-                    } else if buf[0] == b'+' || buf[0] == b'-' {
-                        // ACK/NAK, ignore
-                        continue;
-                    } else if buf[0] == 0x03 {
-                        // Ctrl+C interrupt
-                        self.stop_reason = StopReason::Interrupt;
-                        return Some("INTERRUPT".to_string());
-                    }
-                }
-                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    return None;
-                }
-                Err(_) => {
-                    self.client = None;
-                    return None;
-                }
-                _ => {}
-            }
-        }
-
-        // Read until #
-        let mut data = String::new();
-        let mut calculated_checksum = 0u8;
-        let mut oversized = false;
-
-        loop {
-            match reader.read(&mut buf) {
-                Ok(1) => {
-                    if buf[0] == b'#' {
-                        break;
-                    }
-                    calculated_checksum = calculated_checksum.wrapping_add(buf[0]);
-
-                    // Security: Prevent unbounded memory consumption by ignoring oversized packets
-                    // but stay in sync with the protocol by continuing to read until the checksum.
-                    if data.len() >= MAX_PACKET_SIZE {
-                        if !oversized {
-                            eprintln!("⚠️  SECURITY ALERT: GDB packet exceeded maximum size of {}. Refusing.", MAX_PACKET_SIZE);
-                            oversized = true;
-                        }
-                    } else {
-                        data.push(buf[0] as char);
-                    }
-                }
-                Ok(0) => {
-                    self.client = None;
-                    return None;
-                }
-                _ => return None,
-            }
-        }
-
-        // Read checksum (2 chars)
-        let mut checksum_buf = [0u8; 2];
-        if reader.read_exact(&mut checksum_buf).is_err() {
-            return None;
-        }
-
-        // Validate checksum
-        let received_checksum =
-            u8::from_str_radix(std::str::from_utf8(&checksum_buf).unwrap_or("00"), 16).unwrap_or(0);
-
-        // Send ACK/NAK
-        if !self.no_ack_mode {
-            if let Some(ref mut c) = self.client {
-                let ack = if received_checksum == calculated_checksum {
-                    b'+'
-                } else {
-                    b'-'
-                };
-                c.write_all(&[ack]).ok();
-                c.flush().ok();
-            }
-        }
-
-        if received_checksum == calculated_checksum {
-            if oversized {
-                self.send_packet("E01").ok();
-                None
-            } else {
-                Some(data)
-            }
+    /// Send a command reply and then honour a pending detach/kill by
+    /// closing the connection. An empty reply to a kill request is not sent.
+    pub fn reply(&mut self, response: &str) -> std::io::Result<()> {
+        let result = if response.is_empty() && self.close_after_reply {
+            Ok(())
         } else {
-            None
+            self.send_packet(response)
+        };
+        if self.close_after_reply {
+            self.disconnect();
         }
+        result
+    }
+
+    /// Record why the target stopped and send the stop reply packet.
+    pub fn report_stop(&mut self, reason: StopReason) {
+        self.stop_reason = reason;
+        let _ = self.send_packet(reason.signal_string());
+    }
+
+    /// Read whatever bytes are available from the socket into the parser.
+    fn fill_events(&mut self) {
+        let mut chunk = [0u8; 1024];
+        loop {
+            let Some(client) = self.client.as_mut() else {
+                return;
+            };
+            match client.read(&mut chunk) {
+                Ok(0) => {
+                    // Connection closed by peer
+                    self.disconnect();
+                    return;
+                }
+                Ok(n) => {
+                    for &b in &chunk[..n] {
+                        if let Some(ev) = self.parser.push(b) {
+                            self.pending_events.push_back(ev);
+                        }
+                    }
+                }
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => return,
+                Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(_) => {
+                    self.disconnect();
+                    return;
+                }
+            }
+        }
+    }
+
+    fn send_ack(&mut self, ok: bool) {
+        if !self.no_ack_mode {
+            let _ = self.write_fully(if ok { b"+" } else { b"-" });
+        }
+    }
+
+    /// Receive a packet from the client (non-blocking).
+    ///
+    /// Returns `Some("INTERRUPT")` for an out-of-band break. Packets with a
+    /// bad checksum are NAKed; oversized or non-ASCII packets are answered
+    /// with `E01`. None of those are returned to the caller.
+    pub fn receive_packet(&mut self) -> Option<String> {
+        if self.pending_events.is_empty() {
+            self.fill_events();
+        }
+        while let Some(event) = self.pending_events.pop_front() {
+            match event {
+                ParseEvent::Interrupt => {
+                    self.stop_reason = StopReason::Interrupt;
+                    return Some("INTERRUPT".to_string());
+                }
+                ParseEvent::BadChecksum => self.send_ack(false),
+                ParseEvent::Oversized => {
+                    eprintln!(
+                        "⚠️  SECURITY ALERT: GDB packet exceeded maximum size of {}. Refusing.",
+                        MAX_PACKET_SIZE
+                    );
+                    self.send_ack(true);
+                    let _ = self.send_packet("E01");
+                }
+                ParseEvent::Packet(data) => {
+                    self.send_ack(true);
+                    if data.is_ascii() {
+                        /* ASCII bytes are always valid UTF-8. */
+                        return String::from_utf8(data).ok();
+                    }
+                    let _ = self.send_packet("E01");
+                }
+            }
+        }
+        None
+    }
+
+    /// Process every packet currently available, sending replies, and
+    /// return the most recent run-control request (if any).
+    pub fn service(
+        &mut self,
+        registers: &mut GdbRegisters,
+        memory: &mut dyn GdbMemory,
+    ) -> Option<RunRequest> {
+        let mut request = None;
+        while let Some(cmd) = self.receive_packet() {
+            if cmd == "INTERRUPT" {
+                request = Some(RunRequest::Interrupt);
+                continue;
+            }
+            let response = self.process_command(&cmd, registers, memory);
+            match response.as_str() {
+                "CONTINUE" => request = Some(RunRequest::Continue),
+                "STEP" => request = Some(RunRequest::Step),
+                _ => {
+                    let _ = self.reply(&response);
+                }
+            }
+            if !self.is_connected() {
+                break;
+            }
+        }
+        request
     }
 
     fn check_authentication(&self, cmd: &str) -> bool {
@@ -391,13 +625,13 @@ impl GdbServer {
                 "OK".to_string()
             }
             'D' => {
-                // Detach
-                self.client = None;
+                // Detach: the connection is closed after the reply is sent.
+                self.close_after_reply = true;
                 "OK".to_string()
             }
             'k' => {
-                // Kill
-                self.client = None;
+                // Kill: no reply; the connection is closed afterwards.
+                self.close_after_reply = true;
                 "".to_string()
             }
             _ => {
@@ -481,6 +715,11 @@ impl GdbServer {
         registers: &mut GdbRegisters,
         memory: &mut dyn GdbMemory,
     ) -> String {
+        /* Every handler below slices commands by byte offset; restricting the
+         * input to ASCII guarantees those offsets are character boundaries. */
+        if !cmd.is_ascii() {
+            return "E01".to_string();
+        }
         let first_char = cmd.chars().next().unwrap_or('?');
 
         // Always allow disconnect/kill/interrupt
@@ -619,8 +858,8 @@ impl GdbServer {
         };
 
         let len = match usize::from_str_radix(len_part, 16) {
-            Ok(l) => l,
-            Err(_) => return "E01".to_string(),
+            Ok(l) if l <= MAX_MEMORY_READ => l,
+            _ => return "E01".to_string(),
         };
 
         let mut result = String::with_capacity(len * 2);
@@ -632,6 +871,18 @@ impl GdbServer {
         result
     }
 
+    /// Decode a string of hex digit pairs into bytes.
+    fn decode_hex_bytes(hex: &str) -> Option<Vec<u8>> {
+        let bytes = hex.as_bytes();
+        if !bytes.len().is_multiple_of(2) {
+            return None;
+        }
+        bytes
+            .chunks_exact(2)
+            .map(|pair| Some((hex_digit_value(pair[0])? << 4) | hex_digit_value(pair[1])?))
+            .collect()
+    }
+
     fn write_memory(&self, cmd: &str, memory: &mut dyn GdbMemory) -> String {
         let mut parts = cmd.split(':');
         let (addr_len_str, data) = match (parts.next(), parts.next(), parts.next()) {
@@ -640,7 +891,7 @@ impl GdbServer {
         };
 
         let mut addr_len_parts = addr_len_str.split(',');
-        let (addr_part, _len_part) = match (
+        let (addr_part, len_part) = match (
             addr_len_parts.next(),
             addr_len_parts.next(),
             addr_len_parts.next(),
@@ -653,20 +904,21 @@ impl GdbServer {
             Ok(a) => a,
             Err(_) => return "E01".to_string(),
         };
+        let Ok(len) = usize::from_str_radix(len_part, 16) else {
+            return "E01".to_string();
+        };
 
-        if !data.len().is_multiple_of(2) {
+        /* Validate the whole payload before touching memory so a malformed
+         * request has no partial effect. */
+        let Some(bytes) = Self::decode_hex_bytes(data) else {
+            return "E01".to_string();
+        };
+        if bytes.len() != len {
             return "E01".to_string();
         }
 
-        let mut i = 0;
-        while i + 2 <= data.len() {
-            match u8::from_str_radix(&data[i..i + 2], 16) {
-                Ok(byte) => {
-                    memory.write_byte(addr.wrapping_add((i / 2) as u32), byte);
-                }
-                Err(_) => return "E01".to_string(),
-            }
-            i += 2;
+        for (i, byte) in bytes.into_iter().enumerate() {
+            memory.write_byte(addr.wrapping_add(i as u32), byte);
         }
 
         "OK".to_string()
@@ -724,7 +976,7 @@ impl GdbServer {
     fn handle_query(&mut self, cmd: &str) -> String {
         if cmd.starts_with("qSupported") {
             // Report supported features
-            format!("PacketSize={};swbreak+;QStartNoAckMode+", MAX_PACKET_SIZE)
+            format!("PacketSize={:x};swbreak+;QStartNoAckMode+", MAX_PACKET_SIZE)
         } else if cmd == "qC" {
             // Current thread
             "QC1".to_string()
@@ -772,20 +1024,7 @@ impl GdbServer {
     }
 
     fn decode_hex_command(&self, hex: &str) -> Option<String> {
-        if !hex.len().is_multiple_of(2) {
-            return None;
-        }
-
-        let mut bytes = Vec::with_capacity(hex.len() / 2);
-        let mut i = 0;
-        while i + 2 <= hex.len() {
-            match u8::from_str_radix(&hex[i..i + 2], 16) {
-                Ok(byte) => bytes.push(byte),
-                Err(_) => return None,
-            }
-            i += 2;
-        }
-
+        let bytes = Self::decode_hex_bytes(hex)?;
         Some(String::from_utf8_lossy(&bytes).into_owned())
     }
 
@@ -934,19 +1173,12 @@ mod tests {
     }
 
     fn create_test_server() -> GdbServer {
-        GdbServer {
-            listener: GdbListener::Real(TcpListener::bind("127.0.0.1:0").unwrap()),
-            client: None,
-            breakpoints: HashSet::new(),
-            stop_reason: StopReason::Halted,
-            no_ack_mode: false,
-            password: None,
-            password_bytes: [0u8; MAX_PASSWORD_CHECK_LEN],
-            password_len: 0,
-            authenticated: true,
-            auth_failed_attempts: 0,
-            auth_lockout_until: None,
-        }
+        let mut server = GdbServer::with_listener(
+            GdbListener::Real(TcpListener::bind("127.0.0.1:0").unwrap()),
+            None,
+        );
+        server.authenticated = true;
+        server
     }
 
     #[test]
@@ -1146,7 +1378,7 @@ mod tests {
 
         // Strict check for qSupported
         let expected_supported =
-            format!("PacketSize={};swbreak+;QStartNoAckMode+", MAX_PACKET_SIZE);
+            format!("PacketSize={:x};swbreak+;QStartNoAckMode+", MAX_PACKET_SIZE);
         assert_eq!(
             server.process_command("qSupported", &mut regs, &mut mem),
             expected_supported
@@ -1568,7 +1800,7 @@ mod tests {
         let mut mem = MockMemory::new();
 
         let expected_supported =
-            format!("PacketSize={};swbreak+;QStartNoAckMode+", MAX_PACKET_SIZE);
+            format!("PacketSize={:x};swbreak+;QStartNoAckMode+", MAX_PACKET_SIZE);
         assert_eq!(
             server.process_command("qSupported", &mut regs, &mut mem),
             expected_supported
@@ -1841,5 +2073,388 @@ mod tests {
 
         // Should return false even if they are equal, because they exceed the checked length
         assert!(!constant_time_eq(&too_long, &too_long_copy));
+    }
+
+    fn feed_all(parser: &mut PacketParser, bytes: &[u8]) -> Vec<ParseEvent> {
+        bytes.iter().filter_map(|&b| parser.push(b)).collect()
+    }
+
+    fn connected_pair(password: Option<String>) -> (GdbServer, TcpStream) {
+        let mut server = GdbServer::new(0, password).expect("server");
+        let client = TcpStream::connect(format!("127.0.0.1:{}", server.port())).expect("connect");
+        for _ in 0..100 {
+            if server.accept() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(server.is_connected());
+        (server, client)
+    }
+
+    fn receive_with_retry(server: &mut GdbServer) -> Option<String> {
+        for _ in 0..100 {
+            if let Some(p) = server.receive_packet() {
+                return Some(p);
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        None
+    }
+
+    fn service_until<F>(server: &mut GdbServer, mut done: F) -> Option<RunRequest>
+    where
+        F: FnMut(&GdbServer, Option<RunRequest>) -> bool,
+    {
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+        let mut req = None;
+        for _ in 0..200 {
+            req = server.service(&mut regs, &mut mem);
+            if done(server, req) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        req
+    }
+
+    #[test]
+    fn test_parser_two_packets_in_one_chunk() {
+        let mut parser = PacketParser::new();
+        let events = feed_all(&mut parser, b"$g#67$?#3f");
+        assert_eq!(
+            events,
+            vec![
+                ParseEvent::Packet(b"g".to_vec()),
+                ParseEvent::Packet(b"?".to_vec())
+            ]
+        );
+    }
+
+    #[test]
+    fn test_parser_reassembles_split_packet() {
+        let mut parser = PacketParser::new();
+        assert!(feed_all(&mut parser, b"$O").is_empty());
+        assert!(feed_all(&mut parser, b"K#9").is_empty());
+        assert_eq!(
+            feed_all(&mut parser, b"a"),
+            vec![ParseEvent::Packet(b"OK".to_vec())]
+        );
+    }
+
+    #[test]
+    fn test_parser_rejects_non_hex_checksum() {
+        let mut parser = PacketParser::new();
+        /* "zz" used to parse as checksum 0; a payload summing to 0 must not pass. */
+        assert_eq!(
+            feed_all(&mut parser, b"$#zz"),
+            vec![ParseEvent::BadChecksum]
+        );
+        assert_eq!(
+            feed_all(&mut parser, b"$#0z"),
+            vec![ParseEvent::BadChecksum]
+        );
+        assert_eq!(
+            feed_all(&mut parser, b"$#00"),
+            vec![ParseEvent::Packet(Vec::new())]
+        );
+        assert_eq!(
+            feed_all(&mut parser, b"$OK#00"),
+            vec![ParseEvent::BadChecksum]
+        );
+    }
+
+    #[test]
+    fn test_parser_interrupt_between_packets() {
+        let mut parser = PacketParser::new();
+        assert_eq!(
+            feed_all(&mut parser, b"+\x03$c#63"),
+            vec![ParseEvent::Interrupt, ParseEvent::Packet(b"c".to_vec())]
+        );
+    }
+
+    #[test]
+    fn test_parser_oversized_packet_reports_and_resyncs() {
+        let mut parser = PacketParser::new();
+        let payload = vec![b'A'; MAX_PACKET_SIZE + 10];
+        let sum = payload.iter().fold(0u8, |a, &b| a.wrapping_add(b));
+        let mut bytes = vec![b'$'];
+        bytes.extend_from_slice(&payload);
+        bytes.extend_from_slice(format!("#{:02x}$OK#9a", sum).as_bytes());
+        assert_eq!(
+            feed_all(&mut parser, &bytes),
+            vec![ParseEvent::Oversized, ParseEvent::Packet(b"OK".to_vec())]
+        );
+    }
+
+    #[test]
+    fn test_non_ascii_packet_is_rejected_without_panic() {
+        let mut server = GdbServer::new(0, Some("pw".to_string())).unwrap();
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+        /* Reachable before authentication. */
+        assert_eq!(
+            server.process_command("qRcmd,a\u{e9}b", &mut regs, &mut mem),
+            "E01"
+        );
+        server.authenticated = true;
+        let g_cmd = format!("G{}\u{e9}", "0".repeat(150));
+        assert_eq!(server.process_command(&g_cmd, &mut regs, &mut mem), "E01");
+        assert_eq!(
+            server.process_command("M0,2:\u{e9}", &mut regs, &mut mem),
+            "E01"
+        );
+    }
+
+    #[test]
+    fn test_non_ascii_packet_over_socket_gets_error_reply() {
+        let (mut server, mut client) = connected_pair(None);
+        let payload: &[u8] = b"qRcmd,a\xC3b";
+        let sum = payload.iter().fold(0u8, |a, &b| a.wrapping_add(b));
+        let mut bytes = vec![b'$'];
+        bytes.extend_from_slice(payload);
+        bytes.extend_from_slice(format!("#{:02x}", sum).as_bytes());
+        client.write_all(&bytes).unwrap();
+        std::thread::sleep(Duration::from_millis(20));
+        assert_eq!(server.receive_packet(), None);
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let mut buf = [0u8; 8];
+        client.read_exact(&mut buf).unwrap();
+        assert_eq!(&buf, b"+$E01#a6");
+    }
+
+    #[test]
+    fn test_memory_read_length_is_capped() {
+        let mut server = create_test_server();
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+        assert_eq!(
+            server.process_command("m0,ffffffffffffffff", &mut regs, &mut mem),
+            "E01"
+        );
+        assert_eq!(
+            server.process_command("m0,7fffffff", &mut regs, &mut mem),
+            "E01"
+        );
+        let max = format!("m0,{:x}", MAX_MEMORY_READ);
+        assert_eq!(
+            server.process_command(&max, &mut regs, &mut mem).len(),
+            MAX_PACKET_SIZE
+        );
+        let over = format!("m0,{:x}", MAX_MEMORY_READ + 1);
+        assert_eq!(server.process_command(&over, &mut regs, &mut mem), "E01");
+    }
+
+    #[test]
+    fn test_packet_size_is_advertised_in_hex() {
+        let mut server = create_test_server();
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+        let reply = server.process_command("qSupported", &mut regs, &mut mem);
+        assert!(reply.starts_with("PacketSize=1000;"), "{}", reply);
+    }
+
+    #[test]
+    fn test_write_memory_length_mismatch_is_rejected() {
+        let mut server = create_test_server();
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+        assert_eq!(
+            server.process_command("M100,4:aabb", &mut regs, &mut mem),
+            "E01"
+        );
+        assert!(mem.data.is_empty(), "rejected write must not modify memory");
+    }
+
+    #[test]
+    fn test_second_connection_requires_authentication() {
+        let (mut server, client) = connected_pair(Some("secret".to_string()));
+        let mut regs = GdbRegisters::default();
+        let mut mem = MockMemory::new();
+        let auth: String = "auth secret"
+            .bytes()
+            .map(|b| format!("{:02x}", b))
+            .collect();
+        let auth_cmd = format!("qRcmd,{}", auth);
+        assert_eq!(server.process_command(&auth_cmd, &mut regs, &mut mem), "OK");
+        assert_eq!(
+            server.process_command("QStartNoAckMode", &mut regs, &mut mem),
+            "OK"
+        );
+        server.stop_reason = StopReason::Breakpoint;
+        server.breakpoints.insert(0x1234);
+        drop(client);
+        for _ in 0..100 {
+            server.receive_packet();
+            if !server.is_connected() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(!server.is_connected());
+
+        let _client2 = TcpStream::connect(format!("127.0.0.1:{}", server.port())).unwrap();
+        for _ in 0..100 {
+            if server.accept() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(server.is_connected());
+        assert!(!server.authenticated);
+        assert!(!server.no_ack_mode);
+        assert_eq!(server.stop_reason, StopReason::Halted);
+        assert!(server.breakpoints.is_empty());
+        assert_eq!(server.process_command("g", &mut regs, &mut mem), "E01");
+    }
+
+    #[test]
+    fn test_pipelined_packets_are_all_processed() {
+        let (mut server, mut client) = connected_pair(None);
+        client.write_all(b"$g#67$?#3f\x03").unwrap();
+        assert_eq!(receive_with_retry(&mut server), Some("g".to_string()));
+        assert_eq!(server.receive_packet(), Some("?".to_string()));
+        assert_eq!(server.receive_packet(), Some("INTERRUPT".to_string()));
+    }
+
+    #[test]
+    fn test_split_packet_over_socket_is_reassembled() {
+        let (mut server, mut client) = connected_pair(None);
+        client.write_all(b"$O").unwrap();
+        client.flush().unwrap();
+        std::thread::sleep(Duration::from_millis(20));
+        assert_eq!(server.receive_packet(), None);
+        assert!(server.is_connected());
+        client.write_all(b"K#9a").unwrap();
+        assert_eq!(receive_with_retry(&mut server), Some("OK".to_string()));
+    }
+
+    #[test]
+    fn test_reply_is_complete_for_slow_reader() {
+        let (mut server, client) = connected_pair(None);
+        /* Far larger than the socket buffers, so the non-blocking writer
+         * must wait for the reader instead of failing mid-packet. */
+        let data: String = (0..8 * 1024 * 1024)
+            .map(|i| (b'a' + (i % 26) as u8) as char)
+            .collect();
+        let expected = GdbServer::frame_packet(&data);
+        let expected_len = expected.len();
+        let reader = std::thread::spawn(move || {
+            let mut client = client;
+            std::thread::sleep(Duration::from_millis(100));
+            let mut received = Vec::with_capacity(expected_len);
+            let mut chunk = [0u8; 65536];
+            while received.len() < expected_len {
+                std::thread::sleep(Duration::from_micros(200));
+                let n = client.read(&mut chunk).unwrap();
+                if n == 0 {
+                    break;
+                }
+                received.extend_from_slice(&chunk[..n]);
+            }
+            received
+        });
+        server.send_packet(&data).expect("complete send");
+        let received = reader.join().unwrap();
+        assert_eq!(received.len(), expected.len());
+        assert!(received == expected, "reply corrupted");
+    }
+
+    #[test]
+    fn test_detach_reply_is_sent_before_close() {
+        let (mut server, mut client) = connected_pair(None);
+        client.write_all(b"$D#44").unwrap();
+        service_until(&mut server, |s, _| !s.is_connected());
+        assert!(!server.is_connected());
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let mut received = Vec::new();
+        client.read_to_end(&mut received).unwrap();
+        assert_eq!(received, b"+$OK#9a");
+    }
+
+    #[test]
+    fn test_kill_closes_connection() {
+        let (mut server, mut client) = connected_pair(None);
+        client.write_all(b"$k#6b").unwrap();
+        service_until(&mut server, |s, _| !s.is_connected());
+        assert!(!server.is_connected());
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let mut received = Vec::new();
+        client.read_to_end(&mut received).unwrap();
+        assert_eq!(received, b"+");
+    }
+
+    #[test]
+    fn test_service_reports_run_requests() {
+        let (mut server, mut client) = connected_pair(None);
+        server.authenticated = true;
+        client.write_all(b"$c#63").unwrap();
+        let req = service_until(&mut server, |_, r| r.is_some());
+        assert_eq!(req, Some(RunRequest::Continue));
+        client.write_all(b"\x03").unwrap();
+        let req = service_until(&mut server, |_, r| r.is_some());
+        assert_eq!(req, Some(RunRequest::Interrupt));
+    }
+
+    #[test]
+    fn test_server_binds_loopback_only() {
+        let server = GdbServer::new(0, None).unwrap();
+        let addr = server.listener.local_addr().unwrap();
+        assert!(addr.ip().is_loopback());
+    }
+
+    mod fuzz {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn parser_never_panics_and_is_chunking_invariant(
+                bytes in proptest::collection::vec(any::<u8>(), 0..2048),
+                split in any::<usize>(),
+            ) {
+                let mut whole = PacketParser::new();
+                let all = feed_all(&mut whole, &bytes);
+                let cut = if bytes.is_empty() { 0 } else { split % bytes.len() };
+                let mut chunked = PacketParser::new();
+                let mut parts = feed_all(&mut chunked, &bytes[..cut]);
+                parts.extend(feed_all(&mut chunked, &bytes[cut..]));
+                prop_assert_eq!(all, parts);
+            }
+
+            #[test]
+            fn process_command_never_panics(
+                bytes in proptest::collection::vec(any::<u8>(), 0..512),
+                authenticated in any::<bool>(),
+            ) {
+                let mut server = create_test_server();
+                server.authenticated = authenticated;
+                let mut regs = GdbRegisters::default();
+                let mut mem = MockMemory::new();
+                let cmd = String::from_utf8_lossy(&bytes);
+                let _ = server.process_command(&cmd, &mut regs, &mut mem);
+            }
+
+            #[test]
+            fn process_command_structured_inputs_never_panic(
+                prefix in prop::sample::select(vec![
+                    "m", "M", "g", "G", "p", "P", "Z0,", "z0,", "qRcmd,", "vCont;", "H", "q", "Q"
+                ]),
+                body in "[0-9a-fA-F,:;=\u{80}-\u{ff}]{0,200}",
+            ) {
+                let mut server = create_test_server();
+                let mut regs = GdbRegisters::default();
+                let mut mem = MockMemory::new();
+                let cmd = format!("{}{}", prefix, body);
+                let _ = server.process_command(&cmd, &mut regs, &mut mem);
+            }
+        }
     }
 }
