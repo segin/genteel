@@ -177,20 +177,22 @@ fn fifo_overflow_preserves_write_order() {
 #[test]
 fn step_dma_copy_uses_byte_source() {
     let mut vdp = Vdp::new();
-    vdp.vram[0x20] = 0xAB;
+    // The copy reads and writes the adjacent (address ^ 1) bytes.
+    vdp.vram[0x21] = 0xAB;
     vdp.registers[REG_DMA_SRC_HI] = DMA_MODE_COPY;
     vdp.registers[REG_DMA_SRC_MID] = 0x00;
     vdp.registers[REG_DMA_SRC_LO] = 0x20; // byte source 0x0020
     vdp.registers[REG_DMA_LEN_LO] = 0x02;
     vdp.registers[REG_AUTO_INC] = 1;
     vdp.command.dma_pending = true;
+    vdp.command.code = 0x30;
     vdp.command.address = 0x100;
 
     let mut read = |_: u32| 0u16;
     vdp.step_dma(&mut read);
 
     assert_eq!(
-        vdp.vram[0x100], 0xAB,
+        vdp.vram[0x101], 0xAB,
         "copied from byte source 0x20 (not doubled)"
     );
     let src = ((vdp.registers[REG_DMA_SRC_MID] as u16) << 8) | vdp.registers[REG_DMA_SRC_LO] as u16;

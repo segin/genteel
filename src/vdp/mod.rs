@@ -6,7 +6,7 @@ pub mod constants;
 pub use constants::*;
 
 pub mod dma;
-pub use dma::DmaOps;
+pub use dma::{DmaError, DmaOps};
 
 pub mod render;
 pub use render::{RenderOps, SpriteAttributes, SpriteIterator};
@@ -461,6 +461,19 @@ impl Vdp {
             the fill afterwards. */
             self.flush_fifo();
             self.record_fifo_write(value);
+            /* The triggering word is written normally first (GPGX
+            `vdp_68k_data_w_m5`), then the fill continues from the next
+            address. */
+            self.process_fifo_entry(FifoEntry {
+                address: self.command.address,
+                code: self.command.code,
+                value,
+            });
+            self.command.address = self
+                .command
+                .address
+                .wrapping_add(self.auto_increment() as u16);
+            // A fill never needs the 68k bus, so this cannot fail.
             let _ = self.execute_dma();
             return;
         }
@@ -812,12 +825,17 @@ impl Vdp {
         ((self.registers[REG_HSCROLL] as usize) & 0x3F) << 10
     }
 
+    /// Word write to VRAM: the MSB goes to `addr` and the LSB to `addr ^ 1`
+    /// (so an odd address stores the word byte-swapped at the even pair).
     pub fn write_vram_word(&mut self, addr: u16, value: u16) {
-        let addr = addr as usize;
-        if addr < 0x10000 {
-            self.vram[addr] = (value >> 8) as u8;
-            self.vram[addr ^ 1] = (value & 0xFF) as u8;
-        }
+        self.write_vram_byte(addr, (value >> 8) as u8);
+        self.write_vram_byte(addr ^ 1, (value & 0xFF) as u8);
+    }
+
+    /// Byte write to VRAM.
+    #[inline]
+    pub(crate) fn write_vram_byte(&mut self, addr: u16, value: u8) {
+        self.vram[addr as usize] = value;
     }
 
     pub fn set_vblank(&mut self, active: bool) {
@@ -1356,3 +1374,6 @@ mod tests_data_port;
 
 #[cfg(test)]
 mod tests_timeline;
+
+#[cfg(test)]
+mod tests_dma_semantics;

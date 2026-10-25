@@ -28,7 +28,7 @@ fn bench_dma_fill_performance() {
     // We want to measure the execution time of the loop inside execute_dma.
 
     for _ in 0..iterations {
-        vdp.execute_dma();
+        let _ = vdp.execute_dma();
     }
 
     let duration = start.elapsed();

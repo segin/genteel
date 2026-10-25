@@ -1,6 +1,24 @@
 use super::constants::*;
 use super::Vdp;
 
+/// Reasons a DMA operation cannot be executed synchronously.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DmaError {
+    /// A 68k-bus to VDP transfer needs a bus reader; it runs slot by slot
+    /// through `tick`/`step_dma` instead.
+    NoBusReader,
+}
+
+impl std::fmt::Display for DmaError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DmaError::NoBusReader => write!(f, "68k-bus DMA requires a bus reader"),
+        }
+    }
+}
+
+impl std::error::Error for DmaError {}
+
 pub trait DmaOps {
     fn dma_mode(&self) -> u8;
     fn dma_source(&self) -> u32;
@@ -9,11 +27,50 @@ pub trait DmaOps {
     fn dma_source_transfer(&self) -> u32;
     fn is_dma_transfer(&self) -> bool;
     fn is_dma_fill(&self) -> bool;
-    fn execute_dma(&mut self) -> u32;
+    /// Run a pending DMA fill or VRAM copy to completion and return the
+    /// number of units processed. 68k-bus transfers are rejected with
+    /// `DmaError::NoBusReader` and left pending.
+    fn execute_dma(&mut self) -> Result<u32, DmaError>;
     fn perform_dma_fill(&mut self, len: u32);
     fn step_dma<F>(&mut self, read_bus_word: &mut F)
     where
         F: FnMut(u32) -> u16;
+}
+
+impl Vdp {
+    /// One VRAM copy step. The copy reads and writes the byte-swapped
+    /// (adjacent) addresses, and only transfers data when CD4 is set in the
+    /// command (GPGX `vdp_dma_copy`). Source and destination advance
+    /// regardless.
+    fn dma_copy_step(&mut self) {
+        let source = self.dma_copy_source();
+        let addr = self.command.address;
+        if (self.command.code & 0x10) != 0 {
+            let data = self.vram[(source ^ 1) as usize];
+            self.write_vram_byte(addr ^ 1, data);
+        }
+        let next_source = source.wrapping_add(1);
+        self.registers[REG_DMA_SRC_LO] = (next_source & 0xFF) as u8;
+        self.registers[REG_DMA_SRC_MID] = (next_source >> 8) as u8;
+        self.command.address = addr.wrapping_add(self.registers[REG_AUTO_INC] as u16);
+    }
+
+    fn charge_dma_stall(&mut self, mode: u8, len: u32) {
+        /* Charge 68k stall cycles for the duration of the DMA. Slot
+        availability differs by ~7x between active display (~14 slots per
+        line) and VBlank (~167 slots per line), so the stall calibration
+        differs accordingly:
+          active display: Fill=2/byte, Copy=4/byte
+          VBlank:         Fill=1 per 4 bytes, Copy=1 per 2 bytes */
+        let in_vblank = (self.status & STATUS_VBLANK) != 0;
+        let stall = match (mode, in_vblank) {
+            (DMA_MODE_COPY, true) => len / 2,
+            (DMA_MODE_COPY, false) => len.saturating_mul(4),
+            (_, true) => len / 4,
+            (_, false) => len.saturating_mul(2),
+        };
+        self.dma_stall_cycles = self.dma_stall_cycles.saturating_add(stall);
+    }
 }
 
 impl DmaOps for Vdp {
@@ -63,110 +120,80 @@ impl DmaOps for Vdp {
         (self.registers[REG_DMA_SRC_HI] & DMA_MODE_MASK) == DMA_MODE_FILL
     }
 
+    /// DMA fill of `len` units starting at the current address. The data-port
+    /// write that triggered the fill has already been written normally and
+    /// advanced the address (GPGX `vdp_68k_data_w_m5` + `vdp_dma_fill`):
+    ///   * VRAM: the MSB of that data word is written to `address ^ 1` on
+    ///     each step.
+    ///   * CRAM / VSRAM: the word in the next FIFO slot (not the fill data)
+    ///     is written to each entry.
+    ///   * other targets: nothing is written, the address still advances.
     fn perform_dma_fill(&mut self, len: u32) {
-        let fill_msb = (self.last_data_write >> 8) as u8;
-        let fill_lsb = (self.last_data_write & 0xFF) as u8;
-        let mut addr = self.command.address;
         let inc = self.registers[REG_AUTO_INC] as u16;
-
-        if len > 0 {
-            // First write is always LSB. SAT cache is NOT updated here — it
-            // refreshes once per line at HBlank.
-            self.vram[addr as usize] = fill_lsb;
-            addr = addr.wrapping_add(inc);
-
-            // Remaining writes are MSB
-            if len > 1 {
-                let remaining_len = len - 1;
-                if inc == 1 {
-                    let start = addr as usize;
-                    let count = remaining_len as usize;
-                    let vram_len = self.vram.len();
-
-                    // Handle wrapping
-                    if start + count <= vram_len {
-                        self.vram[start..start + count].fill(fill_msb);
-                    } else {
-                        let first_part = vram_len - start;
-                        self.vram[start..vram_len].fill(fill_msb);
-                        let remaining = count - first_part;
-                        if remaining > 0 {
-                            self.vram[0..remaining].fill(fill_msb);
-                        }
-                    }
-                    addr = addr.wrapping_add(remaining_len as u16);
-                } else if inc == 0 {
-                    self.vram[addr as usize] = fill_msb;
-                } else {
-                    for _ in 0..remaining_len {
-                        self.vram[addr as usize] = fill_msb;
-                        addr = addr.wrapping_add(inc);
-                    }
+        let mut addr = self.command.address;
+        match self.command.code & 0x0F {
+            VRAM_WRITE => {
+                let last = self.fifo_history[(self.fifo_history_idx + 3) & 3];
+                let data = (last >> 8) as u8;
+                for _ in 0..len {
+                    self.write_vram_byte(addr ^ 1, data);
+                    addr = addr.wrapping_add(inc);
                 }
+            }
+            CRAM_WRITE => {
+                let data = self.fifo_next_entry();
+                for _ in 0..len {
+                    self.write_cram_word(addr, data);
+                    addr = addr.wrapping_add(inc);
+                }
+            }
+            VSRAM_WRITE => {
+                let data = self.fifo_next_entry();
+                for _ in 0..len {
+                    self.write_vsram_word(addr, data);
+                    addr = addr.wrapping_add(inc);
+                }
+            }
+            _ => {
+                addr = addr.wrapping_add(inc.wrapping_mul(len as u16));
             }
         }
         self.command.address = addr;
     }
 
-    fn execute_dma(&mut self) -> u32 {
-        let length = self.dma_length();
-        let len = if length == 0 { 0x10000 } else { length };
-
+    fn execute_dma(&mut self) -> Result<u32, DmaError> {
         let mode = self.registers[REG_DMA_SRC_HI] & DMA_MODE_MASK;
+        if mode != DMA_MODE_FILL && mode != DMA_MODE_COPY {
+            return Err(DmaError::NoBusReader);
+        }
 
-        // Charge 68k stall cycles for the duration of the DMA. Slot
-        // availability differs by ~7x between active display (~14 slots
-        // per line) and VBlank (~167 slots per line), so the stall
-        // calibration differs accordingly. Calibration:
-        //   active display: Fill=2/byte, Copy=4/byte, Mem->VDP=2/word
-        //   VBlank:         Fill=1 per 4 bytes, Copy=1 per 2 bytes,
-        //                   Mem->VDP=1 per 4 words
-        // (i.e. 8x cheaper in VBlank, matching the slot-availability ratio).
-        let in_vblank = (self.status & STATUS_VBLANK) != 0;
-        let stall = if in_vblank {
-            match mode {
-                DMA_MODE_FILL => len / 4,
-                DMA_MODE_COPY => len / 2,
-                _ => len / 4,
-            }
+        let len_regs = self.dma_length() as u16;
+        let len = if len_regs == 0 {
+            0x10000
         } else {
-            match mode {
-                DMA_MODE_FILL => len.saturating_mul(2),
-                DMA_MODE_COPY => len.saturating_mul(4),
-                _ => len.saturating_mul(2),
-            }
+            len_regs as u32
         };
-        self.dma_stall_cycles = self.dma_stall_cycles.saturating_add(stall);
+        self.charge_dma_stall(mode, len);
 
-        match mode {
-            DMA_MODE_FILL => {
-                self.perform_dma_fill(len);
-            }
-            DMA_MODE_COPY => {
-                let mut source = self.dma_copy_source();
-                let mut dest = self.command.address;
-                let inc = self.registers[REG_AUTO_INC] as u16;
-
-                for _ in 0..len {
-                    let val = self.vram[source as usize];
-                    self.vram[dest as usize] = val;
-                    source = source.wrapping_add(1);
-                    dest = dest.wrapping_add(inc);
-                }
-                self.command.address = dest;
-                // Leave the source registers pointing past the copied region.
-                self.registers[REG_DMA_SRC_LO] = (source & 0xFF) as u8;
-                self.registers[REG_DMA_SRC_MID] = (source >> 8) as u8;
-            }
-            _ => {
-                for _ in 0..len {
-                    self.step_dma(&mut |_| 0xFFFF);
-                }
+        if mode == DMA_MODE_FILL {
+            self.perform_dma_fill(len);
+            /* The source registers advance by the length even for a fill
+            (GPGX `vdp_dma_update`). */
+            let end = self.dma_copy_source().wrapping_add(len_regs);
+            self.registers[REG_DMA_SRC_LO] = (end & 0xFF) as u8;
+            self.registers[REG_DMA_SRC_MID] = (end >> 8) as u8;
+        } else {
+            // Each copy step advances the source registers itself.
+            for _ in 0..len {
+                self.dma_copy_step();
             }
         }
 
+        // The length counter has run down to zero.
+        self.registers[REG_DMA_LEN_LO] = 0;
+        self.registers[REG_DMA_LEN_HI] = 0;
         self.command.dma_pending = false;
-        len
+        Ok(len)
     }
 
     fn step_dma<F>(&mut self, read_bus_word: &mut F)
@@ -187,26 +214,12 @@ impl DmaOps for Vdp {
 
         match mode {
             DMA_MODE_FILL => {
-                // A VRAM fill does nothing until the fill byte is written to the
-                // data port; `write_data` then completes it synchronously via
-                // `execute_dma`. Do not step (and do not consume length) here —
-                // the previous logic ran with a stale `last_data_write` and
-                // always mis-selected the fill byte.
+                /* A VRAM fill does nothing until the fill data is written to
+                the data port; `write_data` then completes it synchronously via
+                `execute_dma`. Do not step (and do not consume length) here. */
                 return;
             }
-            DMA_MODE_COPY => {
-                // VRAM copy: byte source (regs 21/22, no <<1) -> destination VRAM.
-                // Copy always targets VRAM.
-                let source = self.dma_copy_source();
-                let addr = self.command.address;
-
-                self.vram[addr as usize] = self.vram[source as usize];
-
-                let next_source = source.wrapping_add(1);
-                self.registers[REG_DMA_SRC_LO] = (next_source & 0xFF) as u8;
-                self.registers[REG_DMA_SRC_MID] = (next_source >> 8) as u8;
-                self.command.address = addr.wrapping_add(inc);
-            }
+            DMA_MODE_COPY => self.dma_copy_step(),
             _ => {
                 // Memory-to-VDP
                 let source = self.dma_source_transfer();
@@ -222,11 +235,14 @@ impl DmaOps for Vdp {
 
                 self.command.address = addr.wrapping_add(inc);
 
-                let next_source = source.wrapping_add(2);
-                self.registers[REG_DMA_SRC_LO] = ((next_source >> 1) & 0xFF) as u8;
-                self.registers[REG_DMA_SRC_MID] = ((next_source >> 9) & 0xFF) as u8;
-                self.registers[REG_DMA_SRC_HI] =
-                    (self.registers[REG_DMA_SRC_HI] & 0x80) | (((next_source >> 17) & 0x7F) as u8);
+                /* The source advances within its 128 KiB block: only the
+                word address in registers 21/22 increments (and wraps);
+                register 23 is never modified (GPGX `vdp_dma_68k_*`). */
+                let word = (((self.registers[REG_DMA_SRC_MID] as u16) << 8)
+                    | (self.registers[REG_DMA_SRC_LO] as u16))
+                    .wrapping_add(1);
+                self.registers[REG_DMA_SRC_LO] = (word & 0xFF) as u8;
+                self.registers[REG_DMA_SRC_MID] = (word >> 8) as u8;
             }
         }
 
