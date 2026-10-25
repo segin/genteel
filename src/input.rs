@@ -95,7 +95,8 @@ impl InputScript {
                 continue;
             }
 
-            let parts: Vec<&str> = line.split(',').collect();
+            // The command field is last and may itself contain commas.
+            let parts: Vec<&str> = line.splitn(4, ',').collect();
             if parts.len() < 2 {
                 return Err(format!("Line {}: expected at least 2 fields", line_num + 1));
             }
@@ -117,7 +118,7 @@ impl InputScript {
                 if cmd.is_empty() {
                     None
                 } else {
-                    Some(cmd.to_string())
+                    Some(Self::unescape_command(cmd))
                 }
             } else {
                 None
@@ -155,6 +156,45 @@ impl InputScript {
         state
     }
 
+    /// Escape a command for the one-line script format: backslash, newline
+    /// and carriage return become `\\`, `\n` and `\r`. Commas need no
+    /// escaping because the command is the last field.
+    fn escape_command(cmd: &str) -> String {
+        let mut out = String::with_capacity(cmd.len());
+        for c in cmd.chars() {
+            match c {
+                '\\' => out.push_str("\\\\"),
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                c => out.push(c),
+            }
+        }
+        out
+    }
+
+    /// Inverse of [`Self::escape_command`]. Unknown escapes are kept as is.
+    fn unescape_command(cmd: &str) -> String {
+        let mut out = String::with_capacity(cmd.len());
+        let mut chars = cmd.chars();
+        while let Some(c) = chars.next() {
+            if c != '\\' {
+                out.push(c);
+                continue;
+            }
+            match chars.next() {
+                Some('\\') => out.push('\\'),
+                Some('n') => out.push('\n'),
+                Some('r') => out.push('\r'),
+                Some(other) => {
+                    out.push('\\');
+                    out.push(other);
+                }
+                None => out.push('\\'),
+            }
+        }
+        out
+    }
+
     /// Get input for a specific frame
     pub fn get(&self, frame: u64) -> Option<&FrameInput> {
         self.frames.get(&frame)
@@ -175,7 +215,7 @@ impl InputScript {
         for (frame, input) in frames_list {
             write!(file, "{},{},{}", frame, input.p1, input.p2).map_err(|e| e.to_string())?;
             if let Some(cmd) = &input.command {
-                write!(file, ",{}", cmd).map_err(|e| e.to_string())?;
+                write!(file, ",{}", Self::escape_command(cmd)).map_err(|e| e.to_string())?;
             }
             writeln!(file).map_err(|e| e.to_string())?;
         }
@@ -740,5 +780,56 @@ mod tests {
         // State should remain unchanged if load fails
         assert_eq!(manager.current_frame, 50);
         assert!(manager.last_input.p1.b);
+    }
+
+    #[test]
+    fn command_field_keeps_commas() {
+        let script = InputScript::parse("5,....A...,........,say a,b,c").unwrap();
+        assert_eq!(script.get(5).unwrap().command.as_deref(), Some("say a,b,c"));
+    }
+
+    fn save_and_reload(cmd: &str) -> Option<String> {
+        let mut script = InputScript::new();
+        script.frames.insert(
+            3,
+            FrameInput {
+                command: Some(cmd.to_string()),
+                ..Default::default()
+            },
+        );
+        script.max_frame = 3;
+        let path = std::env::temp_dir().join(format!(
+            "genteel_cmd_roundtrip_{}_{}.txt",
+            std::process::id(),
+            cmd.len()
+        ));
+        script.save(&path).unwrap();
+        let loaded = InputScript::load(&path);
+        let _ = std::fs::remove_file(&path);
+        loaded.unwrap().get(3).and_then(|f| f.command.clone())
+    }
+
+    #[test]
+    fn command_with_commas_and_newlines_round_trips() {
+        let cmd = "screenshot a,b\nthen\\quit\r";
+        assert_eq!(save_and_reload(cmd).as_deref(), Some(cmd));
+    }
+
+    #[test]
+    fn unknown_escapes_are_preserved() {
+        assert_eq!(
+            InputScript::unescape_command("C:\\games\\x"),
+            "C:\\games\\x"
+        );
+        assert_eq!(InputScript::unescape_command("trailing\\"), "trailing\\");
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn prop_escape_round_trip(cmd in ".*") {
+            let escaped = InputScript::escape_command(&cmd);
+            proptest::prop_assert!(!escaped.contains('\n') && !escaped.contains('\r'));
+            proptest::prop_assert_eq!(InputScript::unescape_command(&escaped), cmd);
+        }
     }
 }

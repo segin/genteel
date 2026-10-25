@@ -193,9 +193,9 @@ fn test_non_ssf_keeps_sram_enable_register() {
     bus.load_rom(&normal_rom());
 
     bus.write_byte(0xA130F1, 0x01);
-    assert!(bus.sram_enabled);
+    assert!(bus.sram.mapped);
     bus.write_byte(0xA130F1, 0x00);
-    assert!(!bus.sram_enabled);
+    assert!(!bus.sram.mapped);
     // The mapper stays inactive and its banks untouched.
     assert!(!bus.everdrive.enabled);
 }

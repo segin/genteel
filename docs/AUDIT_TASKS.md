@@ -551,16 +551,17 @@ Status: `[ ]` open, `[x]` satisfied.
 
 ## 6. Memory map, buses, I/O, input (MEM)
 
-- [ ] **MEM-01** · H · Ubiquitous — The bus shall map cartridge SRAM to odd, even or both byte lanes according to the ROM header SRAM type byte (0x1B2).
+- [x] **MEM-01** · H · Ubiquitous — The bus shall map cartridge SRAM to odd, even or both byte lanes according to the ROM header SRAM type byte (0x1B2).
   - *Evidence:* `memory/bus.rs:155-161, 295-316` masks start `& 0xFFFFFE` and accepts even addresses only; Sonic 3 (`RA F8 20`, 0x200001–0x203FFF) never saves; buffer 2× size; `.srm` layout ≠ GPGX. (verified)
   - *Verify:* T — odd-lane write/read round-trip.
-- [ ] **MEM-02** · H · State — While SRAM is enabled, the bus shall serve word and long reads within the SRAM range from SRAM.
+  - *Resolution:* Fixed differently: as in Genesis Plus GX `sram.c`, every byte address in the header window is backed (odd-lane SRAM such as Sonic 3 now saves). Gating the unused lane to open bus was not implemented because no reference read confirmed it. The `.srm` layout matches GPGX (`addr & 0xFFFF`), which is not one byte per SRAM byte for 8-bit SRAM.
+- [x] **MEM-02** · H · State — While SRAM is enabled, the bus shall serve word and long reads within the SRAM range from SRAM.
   - *Evidence:* `bus.rs:488-501, 570-579` ROM fast path ignores SRAM.
   - *Verify:* T — byte and word reads agree.
-- [ ] **MEM-03** · H · Event — When the console is reset, the bus shall preserve SRAM contents.
+- [x] **MEM-03** · H · Event — When the console is reset, the bus shall preserve SRAM contents.
   - *Evidence:* `bus.rs:211` `sram.fill(0)`; close-ROM then writes zeros to `.srm`. (verified)
   - *Verify:* T.
-- [ ] **MEM-04** · H · Event — When the console is reset, the bus shall re-derive the SRAM enable state from the ROM header.
+- [x] **MEM-04** · H · Event — When the console is reset, the bus shall re-derive the SRAM enable state from the ROM header.
   - *Evidence:* `bus.rs:212` `sram_enabled = false`.
   - *Verify:* T.
 - [ ] **MEM-05** · H · Event — When a save state is loaded, the emulator shall retain the SRAM contents deserialized from that state.
@@ -569,100 +570,107 @@ Status: `[ ]` open, `[x]` satisfied.
 - [ ] **MEM-06** · H · Event — When a save state is loaded, the emulator shall obtain ROM bytes through the same validated loader used for initial ROM load (zip extraction, `MAX_ROM_SIZE`).
   - *Evidence:* `main.rs:323-324` raw `std::fs::read` — zipped ROM loads archive bytes; unbounded; failed read leaves ROM empty silently.
   - *Verify:* T — zipped ROM state round-trip.
-- [ ] **MEM-07** · H · Ubiquitous — The I/O subsystem shall implement the 6-button pad TH protocol per hardware (3rd TH-low: SA0000; 4th TH-high: CBMXYZ; active-low).
+- [x] **MEM-07** · H · Ubiquitous — The I/O subsystem shall implement the 6-button pad TH protocol per hardware (3rd TH-low: SA0000; 4th TH-high: CBMXYZ; active-low).
   - *Evidence:* `io/mod.rs:232-307` active-high, wrong counter phase.
   - *Verify:* T — vs GPGX sequence.
-- [ ] **MEM-08** · H · Event — When ~1.5 ms elapse without a TH transition, the I/O subsystem shall reset the 6-button counter.
+- [x] **MEM-08** · H · Event — When ~1.5 ms elapse without a TH transition, the I/O subsystem shall reset the 6-button counter.
   - *Evidence:* `io/mod.rs:394` `Io::update` never called outside tests; threshold 1500 unitless.
   - *Verify:* T — tick in 68k cycles (~11k).
-- [ ] **MEM-09** · M · Unwanted — If a restored state contains `work_ram` not 0x10000 bytes or `z80_ram` not 0x2000 bytes, then the emulator shall reject the state.
+  - *Resolution:* Ticked from `Bus::tick` in 68k cycles (11505, about 1.5 ms); the counter advances on TH rising edges as in GPGX `gamepad.c`, which times out after 26 scanlines (about 1.65 ms).
+- [x] **MEM-09** · M · Unwanted — If a restored state contains `work_ram` not 0x10000 bytes or `z80_ram` not 0x2000 bytes, then the emulator shall reject the state.
   - *Evidence:* `bus.rs:56, 59, 790-799`; index panics at `bus.rs:323, 396, 522`, `z80_bus.rs:45`. Reachable via debugger `write_state`.
   - *Verify:* T.
-- [ ] **MEM-10** · M · Ubiquitous — The bus shall compute header SRAM size without integer overflow.
+- [x] **MEM-10** · M · Ubiquitous — The bus shall compute header SRAM size without integer overflow.
   - *Evidence:* `bus.rs:170` (start 0, end 0xFFFFFFFF) panics in debug.
   - *Verify:* T.
-- [ ] **MEM-11** · M · Ubiquitous — The I/O subsystem shall report region and video standard in the version register according to the configured or header-derived region.
+- [x] **MEM-11** · M · Ubiquitous — The I/O subsystem shall report region and video standard in the version register according to the configured or header-derived region.
   - *Evidence:* `io/mod.rs:337` hardcoded 0xA0; header 0x1F0 unused.
   - *Verify:* T — JP/US/EU ROMs.
-- [ ] **MEM-12** · M · Event — When the region is PAL, the emulator shall run the VDP in PAL timing.
+- [x] **MEM-12** · M · Event — When the region is PAL, the emulator shall run the VDP in PAL timing.
   - *Evidence:* `vdp/mod.rs:440` `set_pal` has no non-test callers.
   - *Verify:* T — 313 lines/frame.
-- [ ] **MEM-13** · M · Event — When the 68k performs a word read in the Z80 address window, the bus shall return the even-address byte in both halves.
+- [x] **MEM-13** · M · Event — When the 68k performs a word read in the Z80 address window, the bus shall return the even-address byte in both halves.
   - *Evidence:* `bus.rs:318-332, 399-424`.
   - *Verify:* T.
-- [ ] **MEM-14** · M · Event — When the 68k performs a word write in the Z80 address window, the bus shall write only the high byte to the even address.
+- [x] **MEM-14** · M · Event — When the 68k performs a word write in the Z80 address window, the bus shall write only the high byte to the even address.
   - *Evidence:* `bus.rs:526-527` writes both (clobbers 0xA00001).
   - *Verify:* T.
-- [ ] **MEM-15** · M · Ubiquitous — The bus shall mirror Z80 RAM at 0xA02000–0xA03FFF.
+- [x] **MEM-15** · M · Ubiquitous — The bus shall mirror Z80 RAM at 0xA02000–0xA03FFF.
   - *Evidence:* reads 0xFF, writes ignored.
   - *Verify:* T.
-- [ ] **MEM-16** · M · Ubiquitous — The bus shall decode VDP ports identically for reads and writes of every size across all VDP mirror addresses (`(addr & 0xE700E0) == 0xC00000`).
+- [x] **MEM-16** · M · Ubiquitous — The bus shall decode VDP ports identically for reads and writes of every size across all VDP mirror addresses (`(addr & 0xE700E0) == 0xC00000`).
   - *Evidence:* `bus.rs:251, 280, 362-393, 456-476, 532-562` (writes mask, reads don't; 0xC10000–0xDFFFFF unmapped; `write_word(0xC00100)` splits into two byte writes → 0x1212, 0x3434).
   - *Verify:* T.
-- [ ] **MEM-17** · M · Ubiquitous — The VDP DMA source reader shall apply the active mapper bank mapping and SRAM mapping.
+- [x] **MEM-17** · M · Ubiquitous — The VDP DMA source reader shall apply the active mapper bank mapping and SRAM mapping.
   - *Evidence:* `bus.rs:669-693` reads raw `rom`.
   - *Verify:* T — DMA after SSF bank switch.
-- [ ] **MEM-18** · M · Optional — Where the ROM exceeds 4 MiB, the bus shall enable the standard Sega mapper (0xA130F3–FF; slot 0 fixed).
+- [x] **MEM-18** · M · Optional — Where the ROM exceeds 4 MiB, the bus shall enable the standard Sega mapper (0xA130F3–FF; slot 0 fixed).
   - *Evidence:* `bus.rs:270-278` requires "SEGA SSF" header (Super Street Fighter II).
   - *Verify:* D.
 - [ ] **MEM-19** · M · Event — When a ROM file with an SMD header (size % 16384 == 512, bytes 8–9 = 0xAA 0xBB) is loaded, the emulator shall de-interleave it.
   - *Evidence:* `main.rs:379-387, 438` accepts `.smd` raw.
   - *Verify:* T.
-- [ ] **MEM-20** · M · Event — When a ROM larger than 2 MiB is loaded, the bus shall keep ROM mapped at 0x200000 until SRAM is enabled via 0xA130F1.
+- [x] **MEM-20** · M · Event — When a ROM larger than 2 MiB is loaded, the bus shall keep ROM mapped at 0x200000 until SRAM is enabled via 0xA130F1.
   - *Evidence:* `bus.rs:176` enables at load.
   - *Verify:* T.
-- [ ] **MEM-21** · M · State — While 0xA130F1 bit 1 (write-protect) is set, the bus shall discard SRAM writes.
+- [x] **MEM-21** · M · State — While 0xA130F1 bit 1 (write-protect) is set, the bus shall discard SRAM writes.
   - *Evidence:* ignored.
   - *Verify:* T.
 - [ ] **MEM-22** · M · Event — When headless input recording is active, the emulator shall record the effective input for every frame under a distinct frame index.
   - *Evidence:* `main.rs:480-486, 1022-1037`; `input.rs:287-290` (`record()` only in `Some` branch; `current_frame` not advanced).
   - *Verify:* T — N-frame recording has N entries.
-- [ ] **MEM-23** · L · Ubiquitous — The bus shall report BUSACK granted (0xA11100 bit 0 = 0) only while bus request is asserted and Z80 reset is released.
+- [x] **MEM-23** · L · Ubiquitous — The bus shall report BUSACK granted (0xA11100 bit 0 = 0) only while bus request is asserted and Z80 reset is released.
   - *Evidence:* `bus.rs:337-343`.
   - *Verify:* T.
-- [ ] **MEM-24** · L · Event — When Z80 reset is asserted, the bus shall reset the YM2612. (plausible)
+- [x] **MEM-24** · L · Event — When Z80 reset is asserted, the bus shall reset the YM2612. (plausible)
   - *Evidence:* `bus.rs:438-443` only clears bank register.
   - *Verify:* T.
-- [ ] **MEM-25** · L · Ubiquitous — The Z80 bus shall forward accesses at 0x7F00–0x7F1F to the VDP port decode.
+  - *Resolution:* Confirmed by GPGX `gen_zreset_w`, which also resets the YM2612 when reset is released.
+- [x] **MEM-25** · L · Ubiquitous — The Z80 bus shall forward accesses at 0x7F00–0x7F1F to the VDP port decode.
   - *Evidence:* `z80_bus.rs:54, 97-101` (V counter at 0x7F08 unreadable).
   - *Verify:* T.
-- [ ] **MEM-26** · L · Ubiquitous — The Z80 bus shall accept PSG writes at every PSG mirror (0x7F11, 0x7F13, 0x7F15, 0x7F17).
+- [x] **MEM-26** · L · Ubiquitous — The Z80 bus shall accept PSG writes at every PSG mirror (0x7F11, 0x7F13, 0x7F15, 0x7F17).
   - *Verify:* T.
-- [ ] **MEM-27** · L · Ubiquitous — The I/O subsystem shall return `(latch & ctrl) | (pad & !ctrl)` on data-port reads and derive TH from the latch only when TH is configured as output.
+- [x] **MEM-27** · L · Ubiquitous — The I/O subsystem shall return `(latch & ctrl) | (pad & !ctrl)` on data-port reads and derive TH from the latch only when TH is configured as output.
   - *Evidence:* `io/mod.rs:283-296, 349-360`.
   - *Verify:* T.
-- [ ] **MEM-28** · L · Ubiquitous — The I/O subsystem shall decode I/O registers on both byte lanes (`(addr >> 1) & 0xF`).
+- [x] **MEM-28** · L · Ubiquitous — The I/O subsystem shall decode I/O registers on both byte lanes (`(addr >> 1) & 0xF`).
   - *Evidence:* even addresses read 0xFF, drop writes.
   - *Verify:* T.
-- [ ] **MEM-29** · L · Ubiquitous — The I/O subsystem shall return hardware reset values for the serial registers.
+- [x] **MEM-29** · L · Ubiquitous — The I/O subsystem shall return hardware reset values for the serial registers.
   - *Verify:* T.
 - [ ] **MEM-30** · L · Event — When TH falls on a light-gun port with VDP M3 set, the bus shall latch the HV counter; otherwise the bus shall not latch it.
   - *Evidence:* `bus.rs:433-435` latches on every data-port write.
   - *Verify:* T.
-- [ ] **MEM-31** · L · Event — When the 68k writes a long to the VDP data port, the bus shall charge the FIFO stall per word.
+  - *Status:* Pad data-port writes no longer latch the HV counter (GPGX latches only from a light gun's beam position in `lightgun.c`). No light-gun device is emulated, so the latching half remains.
+- [x] **MEM-31** · L · Event — When the 68k writes a long to the VDP data port, the bus shall charge the FIFO stall per word.
   - *Evidence:* `bus.rs:632-638`.
   - *Verify:* T.
-- [ ] **MEM-32** · L · Ubiquitous — The EverDrive mapper shall treat 0xA130F1 according to the krikzz extended-SSF specification. (plausible)
+- [x] **MEM-32** · L · Ubiquitous — The EverDrive mapper shall treat 0xA130F1 according to the krikzz extended-SSF specification. (plausible)
   - *Evidence:* `everdrive.rs:204` makes slot 0 bank-selectable via 0xA130F1.
   - *Verify:* I — spec check.
+  - *Resolution:* Already correct, no change: `$A130F1` is the low byte of the slot-0 bank register, the same as GPGX `mapper_512k_w` for "SEGA SSF" ROMs.
 - [ ] **MEM-33** · L · Ubiquitous — The EverDrive mapper shall hold a single copy of the ROM image.
   - *Evidence:* `everdrive.rs:125-136` keeps `rom` Vec plus up-to-16 MiB copy.
   - *Verify:* A.
+  - *Status:* Not done. The SSF backing buffer still copies the ROM; removing `Bus::rom` for SSF carts needs the GUI's `has_rom` check (reads `bus.rom`) to change. Only affects "SEGA SSF" ROMs (at most 16 MiB extra).
 - [ ] **MEM-34** · L · Ubiquitous — The Z80 bus shall acquire the shared-bus borrow at most once per Z80 instruction.
   - *Evidence:* `z80_bus.rs:114-144` borrow per byte. (No BorrowMutError possible.)
   - *Verify:* A — benchmark.
-- [ ] **MEM-35** · L · Event — When the Z80 bank register points at the Z80 window (0xA00000) and the Z80 accesses 0x8000–0xFFFF, the bus shall emulate the hardware lock-up behaviour.
+  - *Status:* Not done. Needs a Z80 core API that borrows the bus once per instruction; a `RefCell` borrow is a counter check and cannot fail here, so there is no correctness issue.
+- [x] **MEM-35** · L · Event — When the Z80 bank register points at the Z80 window (0xA00000) and the Z80 accesses 0x8000–0xFFFF, the bus shall emulate the hardware lock-up behaviour.
   - *Evidence:* returns 0xFF unless 68k holds bus.
   - *Verify:* T.
-- [ ] **MEM-36** · L · Ubiquitous — The input script parser shall round-trip commands containing commas and newlines.
+- [x] **MEM-36** · L · Ubiquitous — The input script parser shall round-trip commands containing commas and newlines.
   - *Evidence:* `input.rs:98, 115-124, 176-178` (truncate at 4th field; unescaped save).
   - *Verify:* T — `splitn(4, ',')` + escaping.
-- [ ] **MEM-37** · L · Unwanted — If the test `Memory` helper is accessed out of range, then it shall return 0xFF (reads) or ignore the write rather than panic.
+- [x] **MEM-37** · L · Unwanted — If the test `Memory` helper is accessed out of range, then it shall return 0xFF (reads) or ignore the write rather than panic.
   - *Evidence:* `memory/mod.rs:224-261`.
   - *Verify:* T.
-- [ ] **MEM-38** · I · Ubiquitous — `byte_utils.rs` shall convert big-endian values correctly.
+- [x] **MEM-38** · I · Ubiquitous — `byte_utils.rs` shall convert big-endian values correctly.
   - *Evidence:* currently satisfied; no `unsafe` in scope; everdrive accessors bounds-checked.
   - *Verify:* T — existing suite.
+  - *Resolution:* Already satisfied; existing suite passes.
 
 ## 7. Frontend, GUI, debugger (FE)
 

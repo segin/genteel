@@ -1,11 +1,13 @@
 //! Z80 Bus Adapter for Genesis Sound System
 //!
 //! Routes Z80 memory accesses to the appropriate Genesis components:
-//! - 0000h-1FFFh: Z80 Sound RAM (8KB)
-//! - 4000h-4003h: YM2612 FM Chip
+//! - 0000h-1FFFh: Z80 Sound RAM (8KB), mirrored at 2000h-3FFFh
+//! - 4000h-4003h: YM2612 FM Chip, mirrored to 5FFFh
 //! - 6000h: Bank Register (sets 32KB window into 68k memory)
-//! - 7F11h: SN76489 PSG
+//! - 7F00h-7FFFh: VDP ports via the 68k bus (PSG on 7F11h/13h/15h/17h)
 //! - 8000h-FFFFh: Banked 68k Memory (32KB window)
+//!
+//! Decode follows Genesis Plus GX `memz80.c`.
 
 use super::bus::Bus;
 use super::{byte_utils, IoInterface, MemoryInterface, SharedBus};
@@ -50,15 +52,37 @@ impl Z80Bus {
             // YM2612: 4000h-4003h, mirrored across 4000h-5FFFh
             0x4000..=0x5FFF => bus.apu.fm.read((addr & 3) as u8),
 
-            // Bank register area: 6000h (write-only)
-            0x6000..=0x7FFF => 0xFF,
+            // Bank register area: 6000h (write-only), unused space
+            0x6000..=0x7EFF => 0xFF,
+
+            // VDP ports, reached through the 68k bus
+            0x7F00..=0x7FFF => bus.read_byte(Self::vdp_address(addr)),
 
             // Banked 68k memory: 8000h-FFFFh
-            0x8000..=0xFFFF => {
-                let bank_addr = bus.z80_bank_addr;
-                let effective_addr = bank_addr | ((addr as u32) & 0x7FFF);
-                bus.read_byte(effective_addr)
-            }
+            0x8000..=0xFFFF => match Self::banked_address(bus, addr) {
+                Some(effective_addr) => bus.read_byte(effective_addr),
+                None => 0xFF,
+            },
+        }
+    }
+
+    /// 68k address of a Z80 access to the VDP window (`7F00h-7FFFh`).
+    #[inline]
+    fn vdp_address(addr: u16) -> u32 {
+        0xC00000 | (addr as u32 & 0xFF)
+    }
+
+    /// 68k address of a banked access (`8000h-FFFFh`). Pointing the bank at
+    /// the Z80's own window (`$A00000-$A0FFFF`) hangs the Z80 on hardware:
+    /// the access is dropped and the Z80 halts until its next reset.
+    #[inline]
+    fn banked_address(bus: &mut Bus, addr: u16) -> Option<u32> {
+        let effective_addr = bus.z80_bank_addr | ((addr as u32) & 0x7FFF);
+        if (0xA00000..=0xA0FFFF).contains(&effective_addr) {
+            bus.z80_lockup = true;
+            None
+        } else {
+            Some(effective_addr)
         }
     }
 
@@ -93,18 +117,17 @@ impl Z80Bus {
                 bus.write_byte(0xA06000, value);
             }
 
-            // Reserved / PSG area
-            0x6100..=0x7F10 => {}
-            0x7F11 => {
-                bus.apu.psg.write(value);
-            }
-            0x7F12..=0x7FFF => {}
+            // Reserved
+            0x6100..=0x7EFF => {}
+
+            // VDP ports and PSG (odd bytes of 7F10h-7F17h), via the 68k bus
+            0x7F00..=0x7FFF => bus.write_byte(Self::vdp_address(addr), value),
 
             // Banked 68k memory: 8000h-FFFFh
             0x8000..=0xFFFF => {
-                let bank_addr = bus.z80_bank_addr;
-                let effective_addr = bank_addr | ((addr as u32) & 0x7FFF);
-                bus.write_byte(effective_addr, value);
+                if let Some(effective_addr) = Self::banked_address(bus, addr) {
+                    bus.write_byte(effective_addr, value);
+                }
             }
         }
     }
