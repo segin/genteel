@@ -47,11 +47,11 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use z80::Z80;
 
-#[derive(Debug, Clone, Copy)]
-struct Z80Change {
-    new_req: bool,
-    new_rst: bool,
-}
+/// Master clocks per scanline (Genesis Plus GX `MCYCLES_PER_LINE`).
+pub const MCLK_PER_LINE: u32 = 3420;
+/// The 68000 is clocked at MCLK / 7.
+const MCLK_PER_M68K_CYCLE: u32 = 7;
+
 struct SystemContext<'a> {
     cpu: &'a mut Cpu,
     bus_rc: &'a Rc<RefCell<Bus>>,
@@ -60,14 +60,63 @@ struct SystemContext<'a> {
     z80_last_bus_req: &'a mut bool,
     z80_last_reset: &'a mut bool,
     z80_trace_count: &'a mut u32,
+    master_clock: &'a mut u64,
     internal_frame_count: u64,
     debug: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct CpuBatchResult {
-    cycles: u32,
-    z80_change: Option<Z80Change>,
+    stopped: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ScanlineOutcome {
+    frame_done: bool,
+    stopped: bool,
+}
+
+/// Result of a debugger-limited run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunOutcome {
+    /// The VDP reached the next frame boundary.
+    FrameComplete,
+    /// Execution stopped on a breakpoint or instruction budget.
+    Stopped,
+}
+
+/// Stop conditions checked before each 68k instruction.
+#[derive(Debug, Default)]
+pub struct ExecLimit<'a> {
+    /// Stop before executing an instruction at one of these addresses.
+    pub breakpoints: Option<&'a std::collections::HashSet<u32>>,
+    /// Stop after this many instructions.
+    pub instructions_left: Option<u32>,
+    /// Ignore a breakpoint at the current PC until one instruction has run
+    /// (used when resuming from a breakpoint).
+    pub skip_breakpoint_once: bool,
+    /// Set when execution stopped on a breakpoint.
+    pub hit_breakpoint: std::cell::Cell<bool>,
+}
+
+impl ExecLimit<'_> {
+    fn should_stop(&self, pc: u32) -> bool {
+        if self.instructions_left == Some(0) {
+            return true;
+        }
+        if !self.skip_breakpoint_once && self.breakpoints.is_some_and(|b| b.contains(&pc)) {
+            self.hit_breakpoint.set(true);
+            return true;
+        }
+        false
+    }
+
+    fn instruction_executed(&mut self) {
+        self.skip_breakpoint_once = false;
+        if let Some(n) = self.instructions_left.as_mut() {
+            *n = n.saturating_sub(1);
+        }
+    }
 }
 
 mod shared_bus_serde {
@@ -116,6 +165,12 @@ pub struct Emulator {
     pub allowed_paths: Vec<std::path::PathBuf>,
     pub current_rom_path: Option<std::path::PathBuf>,
     pub z80_cycle_debt: f32,
+    /// Total master clocks executed (68k cycles x 7).
+    #[serde(default)]
+    pub master_clock: u64,
+    /// Z80 VINT is due at the start of the next CPU batch.
+    #[serde(default)]
+    pub z80_vint_pending: bool,
 }
 impl Default for Emulator {
     fn default() -> Self {
@@ -153,6 +208,8 @@ impl Emulator {
             current_rom_path: None,
             allowed_paths: Vec::new(),
             z80_cycle_debt: 0.0,
+            master_clock: 0,
+            z80_vint_pending: false,
         };
         {
             let mut bus = emulator.bus.borrow_mut();
@@ -698,38 +755,107 @@ impl Emulator {
             println!("Script LOG: {}", parts[1..].join(" "));
         }
     }
+    /// Run until the VDP reaches the next frame boundary.
     pub fn step_frame_internal(&mut self) {
-        let (lines, active_lines) = {
-            let bus = self.bus.borrow();
-            let lines: u16 = if bus.vdp.is_pal { 313 } else { 262 };
-            // Active lines follow the VDP's V28/V30 mode (reg 1 bit 3), not a
-            // region constant — PAL games are almost always V28 (224), so the
-            // Z80 VINT and audio sync must fire at 224, in phase with the 68k.
-            (lines, bus.vdp.screen_height())
-        };
-        let samples_per_line = audio::samples_per_frame_for_rate_and_region(
-            self.bus.borrow().sample_rate,
-            lines == 313,
-        ) as f32
-            / lines as f32;
+        self.run_system(None);
+    }
 
-        for line in 0..lines {
-            self.step_scanline(line, active_lines, samples_per_line);
+    /// Run the whole system (68k, VDP, Z80, APU, interrupts) until the VDP
+    /// wraps to the next frame, or until `limit` stops execution.
+    ///
+    /// Scanline and frame boundaries are taken from the VDP's own
+    /// master-clock counters, so resuming after a mid-frame stop continues
+    /// exactly where execution left off.
+    fn run_system(&mut self, mut limit: Option<&mut ExecLimit>) -> RunOutcome {
+        loop {
+            let line = self.run_scanline(limit.as_deref_mut());
+            if line.frame_done {
+                self.finish_frame();
+                return if line.stopped {
+                    RunOutcome::Stopped
+                } else {
+                    RunOutcome::FrameComplete
+                };
+            }
+            if line.stopped {
+                return RunOutcome::Stopped;
+            }
         }
+    }
+
+    fn finish_frame(&mut self) {
         self.internal_frame_count += 1;
         if self.debug && self.internal_frame_count.is_multiple_of(60) {
             self.log_debug(self.internal_frame_count);
         }
+        self.generate_audio_samples();
+    }
 
-        self.generate_audio_samples(samples_per_line);
-    }
-    fn step_scanline(&mut self, line: u16, active_lines: u16, _samples_per_line: f32) {
-        self.vdp_scanline_setup(line, active_lines);
-        self.run_cpu_loop(line, active_lines);
+    /// Execute until the VDP leaves its current scanline (or `limit` stops).
+    ///
+    /// Each CPU batch is sized to the master clocks remaining in the VDP's
+    /// current line (MCLK_PER_LINE per line, 7 MCLK per 68k cycle); the
+    /// VDP carries any overshoot of the last instruction into the next line.
+    fn run_scanline(&mut self, mut limit: Option<&mut ExecLimit>) -> ScanlineOutcome {
+        let start_line = self.bus.borrow().vdp.v_counter;
+        let mut stopped = false;
+        {
+            let mut ctx = SystemContext {
+                cpu: &mut self.cpu,
+                bus_rc: &self.bus,
+                z80: &mut self.z80,
+                z80_cycle_debt: &mut self.z80_cycle_debt,
+                z80_last_bus_req: &mut self.z80_last_bus_req,
+                z80_last_reset: &mut self.z80_last_reset,
+                z80_trace_count: &mut self.z80_trace_count,
+                master_clock: &mut self.master_clock,
+                internal_frame_count: self.internal_frame_count,
+                debug: self.debug,
+            };
+            loop {
+                let (line, line_clocks) = {
+                    let bus = ctx.bus_rc.borrow();
+                    (bus.vdp.v_counter, bus.vdp.mclk_line_clocks)
+                };
+                if line != start_line {
+                    break;
+                }
+                let remaining = MCLK_PER_LINE
+                    .saturating_sub(line_clocks)
+                    .div_ceil(MCLK_PER_M68K_CYCLE)
+                    .max(1);
+                // Z80 VINT fires at the start of the first blanking line.
+                let trigger_vint = std::mem::take(&mut self.z80_vint_pending);
+                let result = Self::run_cpu_batch_static(
+                    &mut ctx,
+                    remaining,
+                    trigger_vint,
+                    limit.as_deref_mut(),
+                );
+                if result.stopped {
+                    stopped = true;
+                    if ctx.bus_rc.borrow().vdp.v_counter == start_line {
+                        return ScanlineOutcome {
+                            frame_done: false,
+                            stopped,
+                        };
+                    }
+                    break;
+                }
+            }
+        }
         self.handle_interrupts();
-    }
-    fn vdp_scanline_setup(&mut self, line: u16, _active_lines: u16) {
-        let _ = (line, _active_lines);
+        let (end_line, active_lines) = {
+            let bus = self.bus.borrow();
+            (bus.vdp.v_counter, bus.vdp.screen_height())
+        };
+        if end_line == active_lines {
+            self.z80_vint_pending = true;
+        }
+        ScanlineOutcome {
+            frame_done: end_line < start_line,
+            stopped,
+        }
     }
 
     fn sync_audio_z80(ctx: &mut SystemContext, m68k_cycles: u32, trigger_vint: bool) {
@@ -737,7 +863,7 @@ impl Emulator {
             return;
         }
 
-        let mclk = m68k_cycles * 7;
+        let mclk = m68k_cycles * MCLK_PER_M68K_CYCLE;
 
         let (z80_can_run, z80_is_reset, cycles_per_sample) = {
             let bus = ctx.bus_rc.borrow();
@@ -818,11 +944,37 @@ impl Emulator {
         }
     }
 
+    /// Raise or cancel the 68k VINT (level 6) and HINT (level 4) requests
+    /// to match the VDP's pending flags.
+    fn update_m68k_irqs(cpu: &mut Cpu, bus: &Bus) {
+        if bus.vdp.vblank_pending() {
+            cpu.request_interrupt(6);
+        } else {
+            cpu.cancel_interrupt(6);
+        }
+        if bus.vdp.hint_pending() {
+            cpu.request_interrupt(4);
+        } else {
+            cpu.cancel_interrupt(4);
+        }
+    }
+
+    /// Bring the bus/VDP, IRQ lines, Z80 and APU up to date with
+    /// `m68k_cycles` of 68k execution.
+    fn sync_system(ctx: &mut SystemContext, m68k_cycles: u32, trigger_vint: bool) {
+        if m68k_cycles > 0 {
+            let mut bus = ctx.bus_rc.borrow_mut();
+            bus.tick(m68k_cycles * MCLK_PER_M68K_CYCLE);
+            Self::update_m68k_irqs(ctx.cpu, &bus);
+        }
+        Self::sync_audio_z80(ctx, m68k_cycles, trigger_vint);
+    }
+
     fn run_cpu_batch_static(
         ctx: &mut SystemContext,
         max_cycles: u32,
-        line: u16,
-        active_lines: u16,
+        trigger_vint: bool,
+        mut limit: Option<&mut ExecLimit>,
     ) -> CpuBatchResult {
         // R3: tighter HINT/VINT sensing during active display so the CPU
         // can ack HINT in time to update the road palette before line render.
@@ -833,31 +985,14 @@ impl Emulator {
             (bus.z80_bus_request, bus.z80_reset)
         };
         let mut pending_cycles = 0;
-        let mut deferred_bus_cycles = 0;
-        let mut deferred_audio_cycles = 0;
+        let mut deferred_cycles = 0;
+        let mut trigger_vint = trigger_vint;
         loop {
-            if pending_cycles >= max_cycles {
+            let stopped = limit.as_deref().is_some_and(|l| l.should_stop(ctx.cpu.pc));
+            if pending_cycles >= max_cycles || stopped {
                 // Final sync for the batch
-                let trigger_vint = line == active_lines && pending_cycles < 10;
-                if deferred_bus_cycles > 0 {
-                    let mut bus = ctx.bus_rc.borrow_mut();
-                    bus.tick(deferred_bus_cycles * 7);
-                    if bus.vdp.vblank_pending() {
-                        ctx.cpu.request_interrupt(6);
-                    } else {
-                        ctx.cpu.cancel_interrupt(6);
-                    }
-                    if bus.vdp.hint_pending() {
-                        ctx.cpu.request_interrupt(4);
-                    } else {
-                        ctx.cpu.cancel_interrupt(4);
-                    }
-                }
-                Self::sync_audio_z80(ctx, deferred_audio_cycles, trigger_vint);
-                return CpuBatchResult {
-                    cycles: pending_cycles,
-                    z80_change: None,
-                };
+                Self::sync_system(ctx, deferred_cycles, std::mem::take(&mut trigger_vint));
+                return CpuBatchResult { stopped };
             }
 
             let m68k_cycles = {
@@ -865,7 +1000,11 @@ impl Emulator {
                 if bus.dma_active() {
                     2 // Yield 2 cycles to let the bus step during DMA
                 } else {
-                    ctx.cpu.step_instruction(&mut *bus)
+                    let cycles = ctx.cpu.step_instruction(&mut *bus);
+                    if let Some(l) = limit.as_deref_mut() {
+                        l.instruction_executed();
+                    }
+                    cycles
                 }
             };
 
@@ -875,35 +1014,20 @@ impl Emulator {
                 _ => {}
             }
 
-            deferred_bus_cycles += m68k_cycles;
-            deferred_audio_cycles += m68k_cycles;
+            deferred_cycles += m68k_cycles;
+            pending_cycles += m68k_cycles;
+            *ctx.master_clock += u64::from(m68k_cycles * MCLK_PER_M68K_CYCLE);
 
-            let trigger_vint = line == active_lines && pending_cycles < 10;
             let slice = if ctx.bus_rc.borrow().vdp.in_active_display() {
                 Z80_AUDIO_SYNC_SLICE_ACTIVE
             } else {
                 Z80_AUDIO_SYNC_SLICE_VBLANK
             };
             let should_sync_audio =
-                deferred_bus_cycles >= slice || trigger_vint || ctx.bus_rc.borrow().dma_active();
+                deferred_cycles >= slice || trigger_vint || ctx.bus_rc.borrow().dma_active();
             if should_sync_audio {
-                {
-                    let mut bus = ctx.bus_rc.borrow_mut();
-                    bus.tick(deferred_bus_cycles * 7);
-                    if bus.vdp.vblank_pending() {
-                        ctx.cpu.request_interrupt(6);
-                    } else {
-                        ctx.cpu.cancel_interrupt(6);
-                    }
-                    if bus.vdp.hint_pending() {
-                        ctx.cpu.request_interrupt(4);
-                    } else {
-                        ctx.cpu.cancel_interrupt(4);
-                    }
-                }
-                Self::sync_audio_z80(ctx, deferred_audio_cycles, trigger_vint);
-                deferred_bus_cycles = 0;
-                deferred_audio_cycles = 0;
+                Self::sync_system(ctx, deferred_cycles, std::mem::take(&mut trigger_vint));
+                deferred_cycles = 0;
             }
 
             // Check for Z80 state change (rare but needs early exit)
@@ -912,56 +1036,12 @@ impl Emulator {
                 (bus.z80_bus_request, bus.z80_reset)
             };
             if req != initial_req || rst != initial_rst {
-                if deferred_bus_cycles > 0 {
-                    ctx.bus_rc.borrow_mut().tick(deferred_bus_cycles * 7);
-                }
-                if deferred_audio_cycles > 0 {
-                    Self::sync_audio_z80(ctx, deferred_audio_cycles, false);
-                }
-                return CpuBatchResult {
-                    cycles: pending_cycles + m68k_cycles,
-                    z80_change: Some(Z80Change {
-                        new_req: req,
-                        new_rst: rst,
-                    }),
-                };
-            }
-
-            pending_cycles += m68k_cycles;
-        }
-    }
-    fn run_cpu_loop(&mut self, line: u16, active_lines: u16) {
-        const CYCLES_PER_LINE: u32 = 488;
-        let mut cycles_scanline: u32 = 0;
-
-        // One context for the entire scanline loop
-        let mut ctx = SystemContext {
-            cpu: &mut self.cpu,
-            bus_rc: &self.bus,
-            z80: &mut self.z80,
-            z80_cycle_debt: &mut self.z80_cycle_debt,
-            z80_last_bus_req: &mut self.z80_last_bus_req,
-            z80_last_reset: &mut self.z80_last_reset,
-            z80_trace_count: &mut self.z80_trace_count,
-            internal_frame_count: self.internal_frame_count,
-            debug: self.debug,
-        };
-
-        while cycles_scanline < CYCLES_PER_LINE {
-            let remaining = CYCLES_PER_LINE - cycles_scanline;
-            // Batch size of remaining line
-            let result = Self::run_cpu_batch_static(&mut ctx, remaining, line, active_lines);
-
-            cycles_scanline += result.cycles;
-
-            if let Some(change) = result.z80_change {
-                let mut bus = ctx.bus_rc.borrow_mut();
-                bus.z80_bus_request = change.new_req;
-                bus.z80_reset = change.new_rst;
+                Self::sync_system(ctx, deferred_cycles, std::mem::take(&mut trigger_vint));
+                return CpuBatchResult { stopped: false };
             }
         }
     }
-    fn generate_audio_samples(&mut self, _samples_per_line: f32) {
+    fn generate_audio_samples(&mut self) {
         let mut bus = self.bus.borrow_mut();
         if bus.audio_buffer.is_empty() {
             return;
@@ -1973,6 +2053,62 @@ mod tests {
         );
     }
 
+    /// Program that idles forever (BRA.S *) so frame timing does not depend
+    /// on executing garbage.
+    fn idle_loop_rom() -> Vec<u8> {
+        let mut rom = vec![0u8; 0x400];
+        rom[0..4].copy_from_slice(&0x00FF_FFF0u32.to_be_bytes());
+        rom[4..8].copy_from_slice(&0x0000_0200u32.to_be_bytes());
+        rom[0x200..0x202].copy_from_slice(&[0x60, 0xFE]);
+        rom
+    }
+
+    fn emulator_with_rom(rom: &[u8]) -> Emulator {
+        let mut emulator = Emulator::new();
+        emulator.bus.borrow_mut().load_rom(rom);
+        let mut bus = emulator.bus.borrow_mut();
+        emulator.cpu.reset(&mut *bus);
+        drop(bus);
+        emulator
+    }
+
+    #[test]
+    fn test_frames_end_on_vdp_frame_boundary() {
+        for &pal in &[false, true] {
+            let mut emulator = emulator_with_rom(&idle_loop_rom());
+            emulator.bus.borrow_mut().vdp.set_pal(pal);
+            for frame in 0..600 {
+                emulator.step_frame_internal();
+                let bus = emulator.bus.borrow();
+                assert_eq!(
+                    bus.vdp.v_counter, 0,
+                    "frame {} (pal={}) ended off the VDP frame boundary",
+                    frame, pal
+                );
+                /* Overshoot past the boundary is at most one instruction. */
+                assert!(bus.vdp.mclk_line_clocks < 7 * 200);
+            }
+        }
+    }
+
+    #[test]
+    fn test_scheduler_accumulates_master_clocks_per_line() {
+        let mut emulator = emulator_with_rom(&idle_loop_rom());
+        let frames = 10_000u64;
+        for _ in 0..frames {
+            emulator.step_frame_internal();
+        }
+        let lines = 262u64;
+        let carried = u64::from(emulator.bus.borrow().vdp.mclk_line_clocks);
+        /* Every master clock executed is accounted to the VDP: whole lines
+         * plus the overshoot carried into the next line. */
+        assert_eq!(
+            emulator.master_clock,
+            frames * lines * u64::from(MCLK_PER_LINE) + carried
+        );
+        assert_eq!(emulator.internal_frame_count, frames);
+    }
+
     #[test]
     fn test_gdb_memory_access_has_no_hardware_side_effects() {
         let emulator = Emulator::new();
@@ -1989,8 +2125,15 @@ mod tests {
         let _ = mem.read_byte(0xC00000);
         {
             let bus = emulator.bus.borrow();
-            assert!(bus.vdp.command.pending, "status read reset the command latch");
-            assert_ne!(bus.vdp.status & 0x0080, 0, "status read cleared VINT pending");
+            assert!(
+                bus.vdp.command.pending,
+                "status read reset the command latch"
+            );
+            assert_ne!(
+                bus.vdp.status & 0x0080,
+                0,
+                "status read cleared VINT pending"
+            );
         }
         /* Z80 RAM is visible to the debugger regardless of bus ownership. */
         assert_eq!(mem.read_byte(0xA00010), 0x5A);
