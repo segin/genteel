@@ -8,7 +8,7 @@ pub trait CbOps {
 
 impl<M: MemoryInterface, I: IoInterface> CbOps for Z80<M, I> {
     fn execute_cb_prefix(&mut self) -> u8 {
-        let opcode = self.fetch_byte();
+        let opcode = self.fetch_opcode();
         let x = (opcode >> 6) & 0x03;
         let y = (opcode >> 3) & 0x07;
         let z = opcode & 0x07;
@@ -28,17 +28,14 @@ impl<M: MemoryInterface, I: IoInterface> CbOps for Z80<M, I> {
             }
             1 => {
                 // BIT y, r
-                cb_bit(self, val, y);
-
-                if z != 6 {
-                    let f = self.f & !(flags::X_FLAG | flags::Y_FLAG);
-                    self.f = f | (val & (flags::X_FLAG | flags::Y_FLAG));
+                /* X/Y come from the register, or for (HL) from MEMPTR's
+                high byte. */
+                let xy_src = if z == 6 {
+                    (self.memptr >> 8) as u8
                 } else {
-                    // For (HL), X/Y come from MEMPTR (WZ) high byte.
-                    let h_memptr = (self.memptr >> 8) as u8;
-                    let f = self.f & !(flags::X_FLAG | flags::Y_FLAG);
-                    self.f = f | (h_memptr & (flags::X_FLAG | flags::Y_FLAG));
-                }
+                    val
+                };
+                cb_bit(self, val, y, xy_src);
 
                 if z == 6 {
                     12
@@ -88,12 +85,8 @@ impl<M: MemoryInterface, I: IoInterface> CbOps for Z80<M, I> {
             }
             1 => {
                 // BIT y, (IX/IY+d)
-                cb_bit(self, val, y);
-
-                // X/Y from High Byte of EA
-                let h_ea = (addr >> 8) as u8;
-                let f = self.f & !(flags::X_FLAG | flags::Y_FLAG);
-                self.f = f | (h_ea & (flags::X_FLAG | flags::Y_FLAG));
+                // X/Y from the high byte of the effective address
+                cb_bit(self, val, y, (addr >> 8) as u8);
                 20
             }
             2 => {
@@ -180,11 +173,17 @@ fn cb_rotate_shift<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, val:
     result
 }
 
-fn cb_bit<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, val: u8, bit: u8) {
-    let b = (val >> bit) & 1;
-    cpu.set_flag(flags::ZERO, b == 0);
-    cpu.set_flag(flags::HALF_CARRY, true);
-    cpu.set_flag(flags::ADD_SUB, false);
+/// BIT: Z and P/V set when the bit is clear, S set only for a set bit 7,
+/// H=1, N=0, C preserved, X/Y copied from `xy_src`.
+fn cb_bit<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, val: u8, bit: u8, xy_src: u8) {
+    let tested = val & (1 << bit);
+    let mut f = (cpu.f & flags::CARRY) | flags::HALF_CARRY;
+    f |= tested & flags::SIGN;
+    if tested == 0 {
+        f |= flags::ZERO | flags::PARITY;
+    }
+    f |= xy_src & (flags::X_FLAG | flags::Y_FLAG);
+    cpu.set_f(f);
 }
 
 fn cb_res(val: u8, bit: u8) -> u8 {

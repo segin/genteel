@@ -23,9 +23,9 @@ fn test_ldir_basic() {
     assert_eq!(c.hl(), 0x1001);
     assert_eq!(c.de(), 0x2001);
     assert_eq!(c.bc(), 0x0001);
-    assert_eq!(c.get_flag(flags::HALF_CARRY), false);
-    assert_eq!(c.get_flag(flags::ADD_SUB), false);
-    assert_eq!(c.get_flag(flags::PARITY), true); // BC != 0
+    assert!(!c.get_flag(flags::HALF_CARRY));
+    assert!(!c.get_flag(flags::ADD_SUB));
+    assert!(c.get_flag(flags::PARITY)); // BC != 0
 
     // Second step
     let t2 = c.step();
@@ -35,7 +35,7 @@ fn test_ldir_basic() {
     assert_eq!(c.hl(), 0x1002);
     assert_eq!(c.de(), 0x2002);
     assert_eq!(c.bc(), 0x0000);
-    assert_eq!(c.get_flag(flags::PARITY), false); // BC == 0
+    assert!(!c.get_flag(flags::PARITY)); // BC == 0
 }
 
 // ============ LDDR ============
@@ -57,7 +57,7 @@ fn test_lddr_basic() {
     assert_eq!(c.hl(), 0x1000);
     assert_eq!(c.de(), 0x2000);
     assert_eq!(c.bc(), 0x0001);
-    assert_eq!(c.get_flag(flags::PARITY), true);
+    assert!(c.get_flag(flags::PARITY));
 
     // Second step
     let t2 = c.step();
@@ -67,7 +67,7 @@ fn test_lddr_basic() {
     assert_eq!(c.hl(), 0x0FFF);
     assert_eq!(c.de(), 0x1FFF);
     assert_eq!(c.bc(), 0x0000);
-    assert_eq!(c.get_flag(flags::PARITY), false);
+    assert!(!c.get_flag(flags::PARITY));
 }
 
 // ============ CPIR ============
@@ -88,9 +88,9 @@ fn test_cpir_match() {
     assert_eq!(c.memptr, 1);
     assert_eq!(c.hl(), 0x1001);
     assert_eq!(c.bc(), 0x0002);
-    assert_eq!(c.get_flag(flags::ZERO), false);
-    assert_eq!(c.get_flag(flags::PARITY), true);
-    assert_eq!(c.get_flag(flags::ADD_SUB), true);
+    assert!(!c.get_flag(flags::ZERO));
+    assert!(c.get_flag(flags::PARITY));
+    assert!(c.get_flag(flags::ADD_SUB));
 
     // Second step (match)
     let t2 = c.step();
@@ -100,8 +100,8 @@ fn test_cpir_match() {
     assert_eq!(c.memptr, 2);
     assert_eq!(c.hl(), 0x1002);
     assert_eq!(c.bc(), 0x0001);
-    assert_eq!(c.get_flag(flags::ZERO), true); // Match found!
-    assert_eq!(c.get_flag(flags::PARITY), true); // BC != 0
+    assert!(c.get_flag(flags::ZERO)); // Match found!
+    assert!(c.get_flag(flags::PARITY)); // BC != 0
 }
 
 #[test]
@@ -122,8 +122,8 @@ fn test_cpir_no_match() {
     assert_eq!(t2, 16);
     assert_eq!(c.pc, 2);
     assert_eq!(c.bc(), 0);
-    assert_eq!(c.get_flag(flags::ZERO), false);
-    assert_eq!(c.get_flag(flags::PARITY), false);
+    assert!(!c.get_flag(flags::ZERO));
+    assert!(!c.get_flag(flags::PARITY));
 }
 
 // ============ CPDR ============
@@ -148,11 +148,12 @@ fn test_cpdr_match() {
     let t2 = c.step();
     assert_eq!(t2, 16);
     assert_eq!(c.pc, 2);
-    assert_eq!(c.memptr, 2);
+    // CPD decrements MEMPTR (PC+1 = 1 after the repeat) to 0
+    assert_eq!(c.memptr, 0);
     assert_eq!(c.hl(), 0x0FFF);
     assert_eq!(c.bc(), 0x0000);
-    assert_eq!(c.get_flag(flags::ZERO), true);
-    assert_eq!(c.get_flag(flags::PARITY), false);
+    assert!(c.get_flag(flags::ZERO));
+    assert!(!c.get_flag(flags::PARITY));
 }
 
 // ============ INIR ============
@@ -171,8 +172,8 @@ fn test_inir() {
     assert_eq!(c.hl(), 0x1001);
     assert_eq!(c.b, 0x01);
     assert_eq!(c.memory.read_byte(0x1000), 0xFF);
-    assert_eq!(c.get_flag(flags::ZERO), false);
-    assert_eq!(c.get_flag(flags::ADD_SUB), true);
+    assert!(!c.get_flag(flags::ZERO));
+    assert!(c.get_flag(flags::ADD_SUB));
 
     // Second step
     let t2 = c.step();
@@ -181,7 +182,7 @@ fn test_inir() {
     assert_eq!(c.hl(), 0x1002);
     assert_eq!(c.b, 0x00);
     assert_eq!(c.memory.read_byte(0x1001), 0xFF);
-    assert_eq!(c.get_flag(flags::ZERO), true);
+    assert!(c.get_flag(flags::ZERO));
 }
 
 // ============ INDR ============
@@ -206,7 +207,7 @@ fn test_indr() {
     assert_eq!(c.hl(), 0x0FFF);
     assert_eq!(c.b, 0x00);
     assert_eq!(c.memory.read_byte(0x1000), 0xFF);
-    assert_eq!(c.get_flag(flags::ZERO), true);
+    assert!(c.get_flag(flags::ZERO));
 }
 
 // ============ OTIR ============
@@ -224,8 +225,9 @@ fn test_otir() {
     assert_eq!(c.pc, 0);
     assert_eq!(c.hl(), 0x1001);
     assert_eq!(c.b, 0x01);
-    assert_eq!(c.get_flag(flags::ZERO), false);
-    assert_eq!(c.get_flag(flags::ADD_SUB), true);
+    assert!(!c.get_flag(flags::ZERO));
+    // N is bit 7 of the byte written (0x11, 0x22)
+    assert!(!c.get_flag(flags::ADD_SUB));
 
     // Second step
     let t2 = c.step();
@@ -233,7 +235,7 @@ fn test_otir() {
     assert_eq!(c.pc, 2);
     assert_eq!(c.hl(), 0x1002);
     assert_eq!(c.b, 0x00);
-    assert_eq!(c.get_flag(flags::ZERO), true);
+    assert!(c.get_flag(flags::ZERO));
 }
 
 // ============ OTDR ============
@@ -258,5 +260,5 @@ fn test_otdr() {
     assert_eq!(c.pc, 2);
     assert_eq!(c.hl(), 0x0FFF);
     assert_eq!(c.b, 0x00);
-    assert_eq!(c.get_flag(flags::ZERO), true);
+    assert!(c.get_flag(flags::ZERO));
 }

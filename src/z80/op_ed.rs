@@ -7,15 +7,8 @@ pub trait EdOps {
 
 impl<M: MemoryInterface, I: IoInterface> EdOps for Z80<M, I> {
     fn execute_ed_prefix(&mut self) -> u8 {
-        let opcode = self.fetch_byte();
-        let params = OpParams {
-            opcode,
-            x: (opcode >> 6) & 0x03,
-            y: (opcode >> 3) & 0x07,
-            z: opcode & 0x07,
-            p: ((opcode >> 3) & 0x07) >> 1,
-            q: ((opcode >> 3) & 0x07) & 1,
-        };
+        let opcode = self.fetch_opcode();
+        let params = OpParams::decode(opcode);
 
         match params.x {
             1 => dispatch_z!(
@@ -42,6 +35,7 @@ fn execute_ed_in_r_c<M: MemoryInterface, I: IoInterface>(
     // IN r, (C)
     let port = cpu.bc();
     let val = cpu.read_port(port);
+    cpu.memptr = port.wrapping_add(1);
     if params.y != 6 {
         cpu.set_reg(params.y, val);
     }
@@ -64,6 +58,7 @@ fn execute_ed_out_c_r<M: MemoryInterface, I: IoInterface>(
         cpu.get_reg(params.y)
     };
     cpu.write_port(port, val);
+    cpu.memptr = port.wrapping_add(1);
     12
 }
 
@@ -79,16 +74,12 @@ fn execute_ed_retn_reti<M: MemoryInterface, I: IoInterface>(
     cpu: &mut Z80<M, I>,
     params: &OpParams,
 ) -> u8 {
-    if params.q == 0 {
-        // RETN
-        cpu.iff1 = cpu.iff2;
-        cpu.pc = cpu.pop();
-        14
-    } else {
-        // RETI
-        cpu.pc = cpu.pop();
-        14
-    }
+    /* RETN and RETI (and their mirrors) both copy IFF2 to IFF1. */
+    let _ = params;
+    cpu.iff1 = cpu.iff2;
+    cpu.pc = cpu.pop();
+    cpu.memptr = cpu.pc;
+    14
 }
 
 fn execute_ed_im<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, params: &OpParams) -> u8 {
@@ -128,6 +119,7 @@ fn execute_ed_sbc_adc_hl<M: MemoryInterface, I: IoInterface>(
     cpu: &mut Z80<M, I>,
     params: &OpParams,
 ) -> u8 {
+    cpu.memptr = cpu.hl().wrapping_add(1);
     if params.q == 0 {
         // SBC HL, rp
         let hl = cpu.hl() as u32;
@@ -233,6 +225,7 @@ fn execute_ed_misc<M: MemoryInterface, I: IoInterface>(
         4 => {
             // RRD
             let hl = cpu.hl();
+            cpu.memptr = hl.wrapping_add(1);
             let m = cpu.read_byte(hl);
             let new_m = (cpu.a << 4) | (m >> 4);
             cpu.a = (cpu.a & 0xF0) | (m & 0x0F);
@@ -246,6 +239,7 @@ fn execute_ed_misc<M: MemoryInterface, I: IoInterface>(
         5 => {
             // RLD
             let hl = cpu.hl();
+            cpu.memptr = hl.wrapping_add(1);
             let m = cpu.read_byte(hl);
             let new_m = (m << 4) | (cpu.a & 0x0F);
             cpu.a = (cpu.a & 0xF0) | (m >> 4);
@@ -292,6 +286,7 @@ fn execute_ldi_ldd<M: MemoryInterface, I: IoInterface>(
     if params.y >= 6 && bc != 0 {
         cpu.pc = cpu.pc.wrapping_sub(2);
         cpu.memptr = cpu.pc.wrapping_add(1);
+        block_repeat_xy(cpu);
         21
     } else {
         16
@@ -332,16 +327,86 @@ fn execute_cpi_cpd<M: MemoryInterface, I: IoInterface>(
     cpu.set_flag(flags::Y_FLAG, (x_val & 0x02) != 0);
     cpu.set_flag(flags::X_FLAG, (x_val & 0x08) != 0);
 
-    cpu.memptr = cpu.memptr.wrapping_add(1);
+    cpu.memptr = if (params.y & 1) == 0 {
+        cpu.memptr.wrapping_add(1)
+    } else {
+        cpu.memptr.wrapping_sub(1)
+    };
 
     // CPIR/CPDR
     if params.y >= 6 && bc != 0 && result != 0 {
         cpu.pc = cpu.pc.wrapping_sub(2);
         cpu.memptr = cpu.pc.wrapping_add(1);
+        block_repeat_xy(cpu);
         21
     } else {
         16
     }
+}
+
+/// While a block instruction repeats, X/Y are taken from bits 11 and 13 of
+/// the rewound PC (the instruction address).
+fn block_repeat_xy<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>) {
+    let pch = (cpu.pc >> 8) as u8;
+    let f = (cpu.f & !(flags::X_FLAG | flags::Y_FLAG)) | (pch & (flags::X_FLAG | flags::Y_FLAG));
+    cpu.set_f(f);
+}
+
+fn parity_even(v: u8) -> bool {
+    v.count_ones().is_multiple_of(2)
+}
+
+/// Flags for INI/IND/OUTI/OUTD and, when `repeat` is set, the extra
+/// adjustments made by the repeat cycle of INIR/INDR/OTIR/OTDR.
+///
+/// `val` is the byte transferred, `k` the 8-bit addend (C±1 for input,
+/// the updated L for output); `cpu.b` already holds the decremented B.
+fn block_io_flags<M: MemoryInterface, I: IoInterface>(
+    cpu: &mut Z80<M, I>,
+    val: u8,
+    k: u8,
+    repeat: bool,
+) {
+    let b = cpu.b;
+    let sum = val as u16 + k as u16;
+    let carry = sum > 0xFF;
+
+    let mut f = b & (flags::SIGN | flags::Y_FLAG | flags::X_FLAG);
+    if b == 0 {
+        f |= flags::ZERO;
+    }
+    if val & 0x80 != 0 {
+        f |= flags::ADD_SUB;
+    }
+    if carry {
+        f |= flags::HALF_CARRY | flags::CARRY;
+    }
+    let mut pv = parity_even(((sum as u8) & 7) ^ b);
+
+    if repeat {
+        let pch = (cpu.pc >> 8) as u8;
+        f = (f & !(flags::X_FLAG | flags::Y_FLAG)) | (pch & (flags::X_FLAG | flags::Y_FLAG));
+        if carry {
+            f &= !flags::HALF_CARRY;
+            if val & 0x80 != 0 {
+                pv ^= !parity_even(b.wrapping_sub(1) & 7);
+                if b & 0x0F == 0x00 {
+                    f |= flags::HALF_CARRY;
+                }
+            } else {
+                pv ^= !parity_even(b.wrapping_add(1) & 7);
+                if b & 0x0F == 0x0F {
+                    f |= flags::HALF_CARRY;
+                }
+            }
+        } else {
+            pv ^= !parity_even(b & 7);
+        }
+    }
+    if pv {
+        f |= flags::PARITY;
+    }
+    cpu.set_f(f);
 }
 
 fn execute_ini_ind<M: MemoryInterface, I: IoInterface>(
@@ -352,31 +417,37 @@ fn execute_ini_ind<M: MemoryInterface, I: IoInterface>(
 
     let port = cpu.bc();
     let hl = cpu.hl();
+    let dec = (params.y & 1) != 0;
 
     let io_val = cpu.read_port(port);
     cpu.write_byte(hl, io_val);
-
-    let b = cpu.b.wrapping_sub(1);
-    cpu.b = b;
-
-    let new_hl = if (params.y & 1) == 0 {
-        hl.wrapping_add(1)
+    cpu.memptr = if dec {
+        port.wrapping_sub(1)
     } else {
-        hl.wrapping_sub(1)
+        port.wrapping_add(1)
     };
-    cpu.set_hl(new_hl);
 
-    // Flags:
-    // Z: set if B=0
-    // N: Set (bit 7 of internal calculation?) -> Z80 manual says N is Set.
-    cpu.set_flag(flags::ZERO, b == 0);
-    cpu.set_flag(flags::ADD_SUB, true);
+    cpu.b = cpu.b.wrapping_sub(1);
+    cpu.set_hl(if dec {
+        hl.wrapping_sub(1)
+    } else {
+        hl.wrapping_add(1)
+    });
+
+    let k = if dec {
+        cpu.c.wrapping_sub(1)
+    } else {
+        cpu.c.wrapping_add(1)
+    };
 
     // Repeat logic for INIR/INDR (params.y>=6)
-    if params.y >= 6 && b != 0 {
+    if params.y >= 6 && cpu.b != 0 {
         cpu.pc = cpu.pc.wrapping_sub(2);
+        cpu.memptr = cpu.pc.wrapping_add(1);
+        block_io_flags(cpu, io_val, k, true);
         21
     } else {
+        block_io_flags(cpu, io_val, k, false);
         16
     }
 }
@@ -388,28 +459,33 @@ fn execute_outi_outd<M: MemoryInterface, I: IoInterface>(
     // OUTI (params.y=4), OUTD (params.y=5), OTIR (params.y=6), OTDR (params.y=7)
 
     let hl = cpu.hl();
+    let dec = (params.y & 1) != 0;
     let val = cpu.read_byte(hl);
 
+    /* B is decremented before it is placed on the upper address lines. */
+    cpu.b = cpu.b.wrapping_sub(1);
     let port = cpu.bc();
     cpu.write_port(port, val);
-
-    let b = cpu.b.wrapping_sub(1);
-    cpu.b = b;
-
-    let new_hl = if (params.y & 1) == 0 {
-        hl.wrapping_add(1)
+    cpu.memptr = if dec {
+        port.wrapping_sub(1)
     } else {
-        hl.wrapping_sub(1)
+        port.wrapping_add(1)
     };
-    cpu.set_hl(new_hl);
 
-    cpu.set_flag(flags::ZERO, b == 0);
-    cpu.set_flag(flags::ADD_SUB, true);
+    cpu.set_hl(if dec {
+        hl.wrapping_sub(1)
+    } else {
+        hl.wrapping_add(1)
+    });
+    let k = cpu.l;
 
-    if params.y >= 6 && b != 0 {
+    if params.y >= 6 && cpu.b != 0 {
         cpu.pc = cpu.pc.wrapping_sub(2);
+        cpu.memptr = cpu.pc.wrapping_add(1);
+        block_io_flags(cpu, val, k, true);
         21
     } else {
+        block_io_flags(cpu, val, k, false);
         16
     }
 }

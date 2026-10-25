@@ -47,6 +47,21 @@ pub struct OpParams {
     pub q: u8,
 }
 
+impl OpParams {
+    /// Split an opcode into its x/y/z/p/q decoding fields.
+    pub fn decode(opcode: u8) -> Self {
+        let y = (opcode >> 3) & 0x07;
+        Self {
+            opcode,
+            x: opcode >> 6,
+            y,
+            z: opcode & 0x07,
+            p: y >> 1,
+            q: y & 1,
+        }
+    }
+}
+
 /// Z80 CPU
 #[derive(Debug)]
 pub struct Z80<M: MemoryInterface, I: IoInterface> {
@@ -98,6 +113,19 @@ pub struct Z80<M: MemoryInterface, I: IoInterface> {
     // Interrupt logic
     pub pending_ei: bool,
 
+    /* Q: the flag value written by the most recently completed instruction,
+    or 0 if that instruction left F untouched. SCF/CCF read it to form the
+    undocumented X/Y bits. */
+    pub q: u8,
+
+    /* Set by any flag write during the current instruction; used to derive Q. */
+    flags_written: bool,
+
+    /* Remaining T-states for which the INT line stays asserted, and the
+    vector byte the bus supplies during acknowledge (used by IM 2). */
+    pub int_pending_cycles: u32,
+    pub int_vector: u8,
+
     // Memory interface (Generic for static dispatch performance)
     pub memory: M,
 
@@ -141,7 +169,17 @@ pub struct Z80SaveState {
     pub memptr: u16,
     pub halted: bool,
     pub pending_ei: bool,
+    #[serde(default)]
+    pub q: u8,
+    #[serde(default)]
+    pub int_pending_cycles: u32,
+    #[serde(default = "default_int_vector")]
+    pub int_vector: u8,
     pub cycles: u64,
+}
+
+fn default_int_vector() -> u8 {
+    0xFF
 }
 
 impl<M: MemoryInterface, I: IoInterface> Serialize for Z80<M, I> {
@@ -178,6 +216,9 @@ impl<M: MemoryInterface, I: IoInterface> Serialize for Z80<M, I> {
             memptr: self.memptr,
             halted: self.halted,
             pending_ei: self.pending_ei,
+            q: self.q,
+            int_pending_cycles: self.int_pending_cycles,
+            int_vector: self.int_vector,
             cycles: self.cycles,
         };
         state.serialize(serializer)
@@ -190,6 +231,12 @@ impl<'de, M: MemoryInterface + Default, I: IoInterface + Default> Deserialize<'d
         D: serde::Deserializer<'de>,
     {
         let state = Z80SaveState::deserialize(deserializer)?;
+        if state.im > 2 {
+            return Err(serde::de::Error::custom(format!(
+                "invalid Z80 interrupt mode {}",
+                state.im
+            )));
+        }
         Ok(Z80 {
             a: state.a,
             f: state.f,
@@ -219,6 +266,10 @@ impl<'de, M: MemoryInterface + Default, I: IoInterface + Default> Deserialize<'d
             memptr: state.memptr,
             halted: state.halted,
             pending_ei: state.pending_ei,
+            q: state.q,
+            flags_written: false,
+            int_pending_cycles: state.int_pending_cycles,
+            int_vector: state.int_vector,
             cycles: state.cycles,
             memory: M::default(),
             io: I::default(),
@@ -258,6 +309,10 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
             memptr: 0,
             halted: false,
             pending_ei: false,
+            q: 0,
+            flags_written: false,
+            int_pending_cycles: 0,
+            int_vector: 0xFF,
             memory,
             io,
             cycles: 0,
@@ -326,6 +381,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
     }
 
     pub fn set_flag(&mut self, flag: u8, value: bool) {
+        self.flags_written = true;
         if value {
             self.f |= flag;
         } else {
@@ -339,7 +395,13 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         if value == 0 {
             new_f |= flags::ZERO;
         }
-        self.f = new_f;
+        self.set_f(new_f);
+    }
+
+    /// Write the whole F register as an instruction result (tracked for Q).
+    pub(crate) fn set_f(&mut self, value: u8) {
+        self.f = value;
+        self.flags_written = true;
     }
 
     pub(crate) fn set_parity_flag(&mut self, value: u8) {
@@ -349,15 +411,22 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
 
     // ========== Memory access helpers ==========
 
+    /// Fetch an operand or displacement byte (not an M1 cycle; R unchanged).
     pub(crate) fn fetch_byte(&mut self) -> u8 {
         let byte = self.memory.read_byte(self.pc as u32);
         self.pc = self.pc.wrapping_add(1);
-
-        // Refresh register (R) increments on every instruction fetch
-        // Bits 0-6 increment, Bit 7 is stable
-        self.r = (self.r & 0x80) | ((self.r.wrapping_add(1)) & 0x7F);
-
         byte
+    }
+
+    /// Fetch an opcode or prefix byte in an M1 cycle, which refreshes R.
+    pub(crate) fn fetch_opcode(&mut self) -> u8 {
+        self.inc_r();
+        self.fetch_byte()
+    }
+
+    /// Increment the low 7 bits of R; bit 7 is stable.
+    pub(crate) fn inc_r(&mut self) {
+        self.r = (self.r & 0x80) | (self.r.wrapping_add(1) & 0x7F);
     }
 
     pub(crate) fn fetch_word(&mut self) -> u16 {
@@ -440,7 +509,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         if self.a == 0 {
             f |= flags::ZERO;
         }
-        self.f = f;
+        self.set_f(f);
     }
 
     pub(crate) fn sub_a(&mut self, value: u8, with_carry: bool, store: bool) {
@@ -476,7 +545,75 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         if res_u8 == 0 {
             f |= flags::ZERO;
         }
-        self.f = f;
+        self.set_f(f);
+    }
+
+    /// CP: flags as for SUB, but X/Y are copied from the operand.
+    pub(crate) fn cp_a(&mut self, value: u8) {
+        self.sub_a(value, false, false);
+        let f =
+            (self.f & !(flags::X_FLAG | flags::Y_FLAG)) | (value & (flags::X_FLAG | flags::Y_FLAG));
+        self.set_f(f);
+    }
+
+    /// Dispatch one of the eight accumulator ALU operations (ADD, ADC, SUB,
+    /// SBC, AND, XOR, OR, CP) selected by opcode field `y`.
+    pub(crate) fn alu_op(&mut self, y: u8, value: u8) {
+        match y & 7 {
+            0 => self.add_a(value, false),
+            1 => self.add_a(value, true),
+            2 => self.sub_a(value, false, true),
+            3 => self.sub_a(value, true, true),
+            4 => self.and_a(value),
+            5 => self.xor_a(value),
+            6 => self.or_a(value),
+            _ => self.cp_a(value),
+        }
+    }
+
+    /// DAA: decimal-adjust A from the N, H and C flags and A itself.
+    pub(crate) fn daa(&mut self) {
+        let a = self.a;
+        let n = self.f & flags::ADD_SUB != 0;
+        let h = self.f & flags::HALF_CARRY != 0;
+        let c = self.f & flags::CARRY != 0;
+        let lo = a & 0x0F;
+
+        let mut correction = 0u8;
+        if h || lo > 9 {
+            correction |= 0x06;
+        }
+        let carry = c || a > 0x99;
+        if carry {
+            correction |= 0x60;
+        }
+        self.a = if n {
+            a.wrapping_sub(correction)
+        } else {
+            a.wrapping_add(correction)
+        };
+        let half = if n { h && lo < 6 } else { lo > 9 };
+
+        let mut f = self.f & flags::ADD_SUB;
+        f |= self.a & (flags::SIGN | flags::Y_FLAG | flags::X_FLAG);
+        if self.a == 0 {
+            f |= flags::ZERO;
+        }
+        if self.a.count_ones().is_multiple_of(2) {
+            f |= flags::PARITY;
+        }
+        if half {
+            f |= flags::HALF_CARRY;
+        }
+        if carry {
+            f |= flags::CARRY;
+        }
+        self.set_f(f);
+    }
+
+    /// Undocumented X/Y result of SCF/CCF: `(A | (F ^ Q)) & 0x28`.
+    pub(crate) fn scf_ccf_xy(&self) -> u8 {
+        (self.a | (self.f ^ self.q)) & (flags::X_FLAG | flags::Y_FLAG)
     }
 
     pub(crate) fn and_a(&mut self, value: u8) {
@@ -497,7 +634,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
             f |= flags::PARITY;
         }
 
-        self.f = f;
+        self.set_f(f);
     }
 
     pub(crate) fn or_a(&mut self, value: u8) {
@@ -518,7 +655,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
             f |= flags::PARITY;
         }
 
-        self.f = f;
+        self.set_f(f);
     }
 
     pub(crate) fn xor_a(&mut self, value: u8) {
@@ -539,7 +676,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
             f |= flags::PARITY;
         }
 
-        self.f = f;
+        self.set_f(f);
     }
 
     pub(crate) fn inc(&mut self, value: u8) -> u8 {
@@ -559,7 +696,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
             f |= flags::ZERO;
         }
 
-        self.f = f;
+        self.set_f(f);
         result
     }
 
@@ -579,7 +716,7 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
             f |= flags::ZERO;
         }
 
-        self.f = f;
+        self.set_f(f);
         result
     }
 
@@ -629,50 +766,41 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
 
     // ========== Rotate/Shift operations ==========
 
+    /// Flags shared by RLCA/RRCA/RLA/RRA: S, Z, P/V kept; H=N=0; C from the
+    /// shifted-out bit; X/Y from the new A.
+    fn set_accum_rotate_flags(&mut self, carry: bool) {
+        let mut f = self.f & (flags::SIGN | flags::ZERO | flags::PARITY);
+        f |= self.a & (flags::X_FLAG | flags::Y_FLAG);
+        if carry {
+            f |= flags::CARRY;
+        }
+        self.set_f(f);
+    }
+
     pub(crate) fn rlca(&mut self) {
         let carry = (self.a & 0x80) != 0;
         self.a = (self.a << 1) | if carry { 1 } else { 0 };
-        self.set_flag(flags::CARRY, carry);
-        self.set_flag(flags::HALF_CARRY, false);
-        self.set_flag(flags::ADD_SUB, false);
-        // X/Y from A
-        self.set_flag(flags::X_FLAG, (self.a & 0x08) != 0);
-        self.set_flag(flags::Y_FLAG, (self.a & 0x20) != 0);
+        self.set_accum_rotate_flags(carry);
     }
 
     pub(crate) fn rrca(&mut self) {
         let carry = (self.a & 0x01) != 0;
         self.a = (self.a >> 1) | if carry { 0x80 } else { 0 };
-        self.set_flag(flags::CARRY, carry);
-        self.set_flag(flags::HALF_CARRY, false);
-        self.set_flag(flags::ADD_SUB, false);
-        // X/Y from A
-        self.set_flag(flags::X_FLAG, (self.a & 0x08) != 0);
-        self.set_flag(flags::Y_FLAG, (self.a & 0x20) != 0);
+        self.set_accum_rotate_flags(carry);
     }
 
     pub(crate) fn rla(&mut self) {
         let old_carry = self.get_flag(flags::CARRY);
         let new_carry = (self.a & 0x80) != 0;
         self.a = (self.a << 1) | if old_carry { 1 } else { 0 };
-        self.set_flag(flags::CARRY, new_carry);
-        self.set_flag(flags::HALF_CARRY, false);
-        self.set_flag(flags::ADD_SUB, false);
-        // X/Y from A
-        self.set_flag(flags::X_FLAG, (self.a & 0x08) != 0);
-        self.set_flag(flags::Y_FLAG, (self.a & 0x20) != 0);
+        self.set_accum_rotate_flags(new_carry);
     }
 
     pub(crate) fn rra(&mut self) {
         let old_carry = self.get_flag(flags::CARRY);
         let new_carry = (self.a & 0x01) != 0;
         self.a = (self.a >> 1) | if old_carry { 0x80 } else { 0 };
-        self.set_flag(flags::CARRY, new_carry);
-        self.set_flag(flags::HALF_CARRY, false);
-        self.set_flag(flags::ADD_SUB, false);
-        // X/Y from A
-        self.set_flag(flags::X_FLAG, (self.a & 0x08) != 0);
-        self.set_flag(flags::Y_FLAG, (self.a & 0x20) != 0);
+        self.set_accum_rotate_flags(new_carry);
     }
 
     // ========== Helper to get/set register by index ==========
@@ -764,7 +892,10 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
 
     // ========== Main execution ==========
 
-    /// Trigger a maskable interrupt
+    /// Accept a maskable interrupt if IFF1 is set and no EI shadow is active.
+    ///
+    /// Returns the acknowledge T-states (0 if the interrupt was not accepted).
+    /// IM 0 assumes the Genesis bus, which supplies 0xFF (RST 38h).
     pub fn trigger_interrupt(&mut self, vector: u8) -> u8 {
         if !self.iff1 || self.pending_ei {
             return 0;
@@ -773,23 +904,26 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         self.halted = false;
         self.iff1 = false;
         self.iff2 = false;
+        self.inc_r();
+        self.q = 0;
 
-        match self.im {
-            0 | 1 => {
-                self.push(self.pc);
-                self.pc = 0x0038;
-                13
-            }
+        let t_states = match self.im {
             2 => {
                 self.push(self.pc);
                 let addr = ((self.i as u16) << 8) | vector as u16;
-                self.memptr = addr;
-                let handler = self.read_word(addr);
-                self.pc = handler;
-                8
+                self.pc = self.read_word(addr);
+                self.memptr = self.pc;
+                19
             }
-            _ => 0,
-        }
+            _ => {
+                self.push(self.pc);
+                self.pc = 0x0038;
+                self.memptr = self.pc;
+                13
+            }
+        };
+        self.cycles += t_states as u64;
+        t_states
     }
 
     /// Trigger a non-maskable interrupt (NMI)
@@ -797,48 +931,86 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         self.halted = false;
         self.iff2 = self.iff1;
         self.iff1 = false;
+        self.inc_r();
+        self.q = 0;
         self.push(self.pc);
         self.pc = 0x0066;
+        self.memptr = self.pc;
+        self.cycles += 11;
         11
     }
 
-    /// Execute one instruction, returns number of T-states used
+    /// Assert the INT line for `t_states` Z80 clocks (a level, not an edge).
+    ///
+    /// While asserted, the line is sampled at every instruction boundary in
+    /// [`step`](Self::step), so an interrupt is still taken if IFF1 becomes
+    /// set (e.g. by EI) before the line drops.
+    pub fn assert_int_for(&mut self, t_states: u32, vector: u8) {
+        self.int_pending_cycles = t_states;
+        self.int_vector = vector;
+    }
+
+    /// Whether the INT line is currently asserted.
+    pub fn int_asserted(&self) -> bool {
+        self.int_pending_cycles > 0
+    }
+
+    /// Let `t_states` Z80 clocks elapse on the INT line without executing
+    /// (e.g. while the 68000 holds the Z80 bus or reset).
+    pub fn advance_int_line(&mut self, t_states: u32) {
+        self.int_pending_cycles = self.int_pending_cycles.saturating_sub(t_states);
+    }
+
+    /// Execute one instruction (or accept a pending interrupt), returning the
+    /// number of T-states used.
     pub fn step(&mut self) -> u8 {
+        let t_states = self.step_inner();
+        self.advance_int_line(t_states as u32);
+        t_states
+    }
+
+    fn step_inner(&mut self) -> u8 {
+        if self.int_asserted() && self.iff1 && !self.pending_ei {
+            return self.trigger_interrupt(self.int_vector);
+        }
+
         if self.halted {
+            /* The CPU keeps executing NOP M1 cycles, refreshing memory. */
+            self.inc_r();
+            self.pending_ei = false;
+            self.q = 0;
+            self.cycles += 4;
             return 4;
         }
 
-        // Handle EI shadow: iff1/iff2 are set but interrupts are inhibited for one instruction
-        let _interrupts_inhibited = self.pending_ei;
+        // EI shadow: interrupts are inhibited until this instruction completes
         self.pending_ei = false;
+        self.flags_written = false;
 
-        let _pc_before = self.pc;
-        let opcode = self.fetch_byte();
+        let pc_before = self.pc;
+        let opcode = self.fetch_opcode();
 
         if self.debug {
-            log::debug!("Z80 | PC:{:04X} OP:{:02X} | A:{:02X} F:{:02X} | BC:{:04X} DE:{:04X} HL:{:04X} SP:{:04X} | CYC:{}", 
-                _pc_before, opcode, self.a, self.f, self.bc(), self.de(), self.hl(), self.sp, self.cycles);
+            log::debug!("Z80 | PC:{:04X} OP:{:02X} | A:{:02X} F:{:02X} | BC:{:04X} DE:{:04X} HL:{:04X} SP:{:04X} | CYC:{}",
+                pc_before, opcode, self.a, self.f, self.bc(), self.de(), self.hl(), self.sp, self.cycles);
         }
 
-        let op_params = OpParams {
-            opcode,
-            x: (opcode >> 6) & 0x03,
-            y: (opcode >> 3) & 0x07,
-            z: opcode & 0x07,
-            p: ((opcode >> 3) & 0x07) >> 1,
-            q: ((opcode >> 3) & 0x07) & 1,
-        };
+        let t_states = self.execute_opcode(opcode);
 
-        let t_states = match op_params.x {
+        self.q = if self.flags_written { self.f } else { 0 };
+        self.cycles += t_states as u64;
+        t_states
+    }
+
+    /// Execute an unprefixed opcode whose M1 fetch has already happened.
+    pub(crate) fn execute_opcode(&mut self, opcode: u8) -> u8 {
+        let op_params = OpParams::decode(opcode);
+        match op_params.x {
             0 => self.execute_x0(op_params),
             1 => self.execute_x1(op_params),
             2 => self.execute_x2(op_params),
-            3 => self.execute_x3(op_params),
-            _ => 4,
-        };
-
-        self.cycles += t_states as u64;
-        t_states
+            _ => self.execute_x3(op_params),
+        }
     }
 }
 
@@ -936,7 +1108,10 @@ impl<M: MemoryInterface, I: IoInterface> Debuggable for Z80<M, I> {
             self.iff2 = v;
         }
         if let Some(v) = z80_state.im {
-            self.im = v;
+            /* Only IM 0, 1 and 2 exist; reject anything else. */
+            if v <= 2 {
+                self.im = v;
+            }
         }
         if let Some(v) = z80_state.halted {
             self.halted = v;
@@ -950,23 +1125,9 @@ impl<M: MemoryInterface, I: IoInterface> Debuggable for Z80<M, I> {
 #[cfg(test)]
 mod tests;
 
-// #[cfg(test)]
-// mod tests_alu;
-
-// #[cfg(test)]
-// mod tests_cb;
-
-// #[cfg(test)]
-// mod tests_control;
-
-// #[cfg(test)]
-// mod tests_load;
 
 #[cfg(test)]
 mod tests_regression;
-
-// #[cfg(test)]
-// mod tests_undoc;
 
 #[cfg(test)]
 mod tests_exhaustive;
@@ -980,35 +1141,16 @@ mod tests_daa;
 #[cfg(test)]
 mod tests_index;
 
-// #[cfg(test)]
-// mod tests_halfcarry;
-
-// #[cfg(test)]
-// mod tests_interrupt;
-
 #[cfg(test)]
 mod tests_reset;
 
-// #[cfg(test)]
-// mod tests_rrd_rld;
 
-// #[cfg(test)]
-// mod tests_timing;
-
-// #[cfg(test)]
-// mod tests_torture;
-
-// #[cfg(test)]
-// mod tests_gaps;
-
-// #[cfg(test)]
-// mod tests_memptr;
-
-// #[cfg(test)]
-// mod tests_ddcb;
-
-// #[cfg(test)]
-// mod tests_ex_sp_hl_expanded;
 
 #[cfg(test)]
 mod tests_ed;
+
+#[cfg(test)]
+mod tests_sst;
+
+#[cfg(test)]
+mod tests_conformance;

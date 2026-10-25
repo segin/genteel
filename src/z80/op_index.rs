@@ -33,38 +33,6 @@ fn set_index_val<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, val: u
     }
 }
 
-fn get_index_h<M: MemoryInterface, I: IoInterface>(cpu: &Z80<M, I>, is_ix: bool) -> u8 {
-    if is_ix {
-        cpu.ixh()
-    } else {
-        cpu.iyh()
-    }
-}
-
-fn set_index_h<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, val: u8, is_ix: bool) {
-    if is_ix {
-        cpu.set_ixh(val);
-    } else {
-        cpu.set_iyh(val);
-    }
-}
-
-fn get_index_l<M: MemoryInterface, I: IoInterface>(cpu: &Z80<M, I>, is_ix: bool) -> u8 {
-    if is_ix {
-        cpu.ixl()
-    } else {
-        cpu.iyl()
-    }
-}
-
-fn set_index_l<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, val: u8, is_ix: bool) {
-    if is_ix {
-        cpu.set_ixl(val);
-    } else {
-        cpu.set_iyl(val);
-    }
-}
-
 fn add_index<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, value: u16, is_ix: bool) {
     let idx = if is_ix { cpu.ix } else { cpu.iy } as u32;
     let v = value as u32;
@@ -75,6 +43,10 @@ fn add_index<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, value: u16
     cpu.set_flag(flags::ADD_SUB, false);
 
     cpu.memptr = idx.wrapping_add(1) as u16;
+    // X/Y from the high byte of the result
+    let h_res = (result >> 8) as u8;
+    cpu.set_flag(flags::X_FLAG, (h_res & 0x08) != 0);
+    cpu.set_flag(flags::Y_FLAG, (h_res & 0x20) != 0);
     if is_ix {
         cpu.ix = result as u16;
     } else {
@@ -88,27 +60,9 @@ fn calc_index_addr<M: MemoryInterface, I: IoInterface>(
     is_ix: bool,
 ) -> u16 {
     let idx = get_index_val(cpu, is_ix);
-    let addr = (idx as i16 + offset as i16) as u16;
+    let addr = idx.wrapping_add(offset as i16 as u16);
     cpu.memptr = addr;
     addr
-}
-
-fn execute_index_alu<M: MemoryInterface, I: IoInterface>(
-    cpu: &mut Z80<M, I>,
-    params: &OpParams,
-    val: u8,
-) {
-    match params.y {
-        0 => cpu.add_a(val, false),
-        1 => cpu.add_a(val, true),
-        2 => cpu.sub_a(val, false, true),
-        3 => cpu.sub_a(val, true, true),
-        4 => cpu.and_a(val),
-        5 => cpu.xor_a(val),
-        6 => cpu.or_a(val),
-        7 => cpu.sub_a(val, false, false),
-        _ => {}
-    }
 }
 
 fn execute_index_add_16<M: MemoryInterface, I: IoInterface>(
@@ -155,12 +109,14 @@ fn execute_index_load_store_16<M: MemoryInterface, I: IoInterface>(
             let addr = cpu.fetch_word();
             let val = get_index_val(cpu, is_ix);
             cpu.write_word(addr, val);
+            cpu.memptr = addr.wrapping_add(1);
             20
         }
         0x2A => {
             let addr = cpu.fetch_word();
             let val = cpu.read_word(addr);
             set_index_val(cpu, val, is_ix);
+            cpu.memptr = addr.wrapping_add(1);
             20
         }
         _ => 8,
@@ -194,37 +150,37 @@ fn execute_index_8bit_halves<M: MemoryInterface, I: IoInterface>(
 ) -> u8 {
     match params.opcode {
         0x24 => {
-            let val = get_index_h(cpu, is_ix);
+            let val = get_index_byte(cpu, 4, is_ix);
             let res = cpu.inc(val);
-            set_index_h(cpu, res, is_ix);
+            set_index_byte(cpu, 4, res, is_ix);
             8
         }
         0x25 => {
-            let val = get_index_h(cpu, is_ix);
+            let val = get_index_byte(cpu, 4, is_ix);
             let res = cpu.dec(val);
-            set_index_h(cpu, res, is_ix);
+            set_index_byte(cpu, 4, res, is_ix);
             8
         }
         0x26 => {
             let n = cpu.fetch_byte();
-            set_index_h(cpu, n, is_ix);
+            set_index_byte(cpu, 4, n, is_ix);
             11
         }
         0x2C => {
-            let val = get_index_l(cpu, is_ix);
+            let val = get_index_byte(cpu, 5, is_ix);
             let res = cpu.inc(val);
-            set_index_l(cpu, res, is_ix);
+            set_index_byte(cpu, 5, res, is_ix);
             8
         }
         0x2D => {
-            let val = get_index_l(cpu, is_ix);
+            let val = get_index_byte(cpu, 5, is_ix);
             let res = cpu.dec(val);
-            set_index_l(cpu, res, is_ix);
+            set_index_byte(cpu, 5, res, is_ix);
             8
         }
         0x2E => {
             let n = cpu.fetch_byte();
-            set_index_l(cpu, n, is_ix);
+            set_index_byte(cpu, 5, n, is_ix);
             11
         }
         _ => 8,
@@ -268,7 +224,7 @@ fn execute_index_alu_mem<M: MemoryInterface, I: IoInterface>(
     let d = cpu.fetch_byte() as i8;
     let addr = calc_index_addr(cpu, d, is_ix);
     let val = cpu.read_byte(addr);
-    execute_index_alu(cpu, params, val);
+    cpu.alu_op(params.y, val);
     19
 }
 
@@ -312,9 +268,7 @@ fn execute_index_stack_control<M: MemoryInterface, I: IoInterface>(
         0xE3 => {
             let val = cpu.read_word(cpu.sp);
             let idx = get_index_val(cpu, is_ix);
-            cpu.memptr = val;
             cpu.write_word(cpu.sp, idx);
-            cpu.memptr = val;
             set_index_val(cpu, val, is_ix);
             cpu.memptr = val;
             23
@@ -355,7 +309,7 @@ fn execute_index_undoc_alu<M: MemoryInterface, I: IoInterface>(
     is_ix: bool,
 ) -> u8 {
     let val = get_index_byte(cpu, params.z, is_ix);
-    execute_index_alu(cpu, params, val);
+    cpu.alu_op(params.y, val);
     8
 }
 
@@ -363,15 +317,11 @@ fn execute_index_prefix<M: MemoryInterface, I: IoInterface>(
     cpu: &mut Z80<M, I>,
     is_ix: bool,
 ) -> u8 {
-    let opcode = cpu.fetch_byte();
-    let params = OpParams {
-        opcode,
-        x: (opcode >> 6) & 0x03,
-        y: (opcode >> 3) & 0x07,
-        z: opcode & 0x07,
-        p: ((opcode >> 3) & 0x07) >> 1,
-        q: ((opcode >> 3) & 0x07) & 1,
-    };
+    /* The prefix is executed like an instruction that writes no flags, so the
+    following opcode sees Q = 0 (visible through SCF/CCF). */
+    cpu.q = 0;
+    let opcode = cpu.fetch_opcode();
+    let params = OpParams::decode(opcode);
 
     match params.opcode {
         0x09 | 0x19 | 0x29 | 0x39 => execute_index_add_16(cpu, &params, is_ix),
@@ -413,7 +363,9 @@ fn execute_index_prefix<M: MemoryInterface, I: IoInterface>(
             let opcode = cpu.fetch_byte();
             cpu.execute_indexed_cb(opcode, addr)
         }
-        _ => 8, // Treat as NOP
+        /* Any other opcode (including ED and further DD/FD prefixes) runs
+        with its unprefixed semantics; the ignored prefix costs 4 T-states. */
+        _ => 4 + cpu.execute_opcode(opcode),
     }
 }
 

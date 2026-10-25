@@ -48,12 +48,12 @@ fn test_reset_behavior() {
     assert_eq!(z80.sp, 0xFFFF, "SP should be reset to 0xFFFF");
     assert_eq!(z80.i, 0, "I should be reset to 0");
     assert_eq!(z80.r, 0, "R should be reset to 0");
-    assert_eq!(z80.iff1, false, "IFF1 should be reset to false");
-    assert_eq!(z80.iff2, false, "IFF2 should be reset to false");
+    assert!(!z80.iff1, "IFF1 should be reset to false");
+    assert!(!z80.iff2, "IFF2 should be reset to false");
     assert_eq!(z80.im, 0, "IM should be reset to 0");
     assert_eq!(z80.memptr, 0, "MEMPTR should be reset to 0");
-    assert_eq!(z80.halted, false, "HALTED should be reset to false");
-    assert_eq!(z80.pending_ei, false, "PENDING_EI should be reset to false");
+    assert!(!z80.halted, "HALTED should be reset to false");
+    assert!(!z80.pending_ei, "PENDING_EI should be reset to false");
 
     // 5. Verify fields that SHOULD NOT be reset
     assert_eq!(z80.b, 0xBB, "B should not be reset");
