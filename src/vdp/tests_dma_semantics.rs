@@ -65,7 +65,10 @@ fn execute_dma_rejects_68k_transfer_without_bus_reader() {
     vdp.write_control(0x0080);
     assert_eq!(vdp.execute_dma(), Err(DmaError::NoBusReader));
     assert!(vdp.command.dma_pending, "transfer stays pending for tick");
-    assert!(vdp.vram.iter().all(|&b| b == 0), "no 0xFFFF garbage written");
+    assert!(
+        vdp.vram.iter().all(|&b| b == 0),
+        "no 0xFFFF garbage written"
+    );
     assert_eq!(vdp.registers[REG_DMA_LEN_LO], 4);
 }
 
@@ -91,7 +94,10 @@ fn dma_fill_commits_queued_fifo_writes_first() {
 
     // Let any (incorrectly) remaining FIFO entries drain.
     vdp.tick(3420 * 2, |_| 0);
-    assert_eq!(vdp.vram[0x02], 0x77, "queued write must not land after the fill");
+    assert_eq!(
+        vdp.vram[0x02], 0x77,
+        "queued write must not land after the fill"
+    );
     assert_eq!(vdp.vram[0x03], 0x77);
 }
 
@@ -106,7 +112,11 @@ fn dma_fill_and_copy_leave_length_registers_zero() {
     vdp.write_control(0x0080);
     vdp.write_data(0x5500);
     assert_eq!(vdp.dma_length(), 0);
-    assert_eq!(vdp.dma_copy_source(), 0x0120, "source advanced by the length");
+    assert_eq!(
+        vdp.dma_copy_source(),
+        0x0120,
+        "source advanced by the length"
+    );
 
     let mut vdp = dma_vdp();
     vdp.registers[REG_AUTO_INC] = 1;
@@ -170,7 +180,10 @@ fn vram_fill_writes_msb_to_adjacent_addresses() {
     vdp.write_control(0x0080);
     vdp.write_data(0xABCD);
     // Trigger word at 0x100/0x101, then MSB at 0x103, 0x105, 0x107.
-    assert_eq!(&vdp.vram[0x100..0x108], &[0xAB, 0xCD, 0, 0xAB, 0, 0xAB, 0, 0xAB]);
+    assert_eq!(
+        &vdp.vram[0x100..0x108],
+        &[0xAB, 0xCD, 0, 0xAB, 0, 0xAB, 0, 0xAB]
+    );
 }
 
 proptest! {

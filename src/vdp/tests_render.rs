@@ -967,12 +967,15 @@ fn test_h40_partial_left_column_uses_last_vscroll_strip() {
     vdp.vram[row31_col31] = 0x00;
     vdp.vram[row31_col31 + 1] = 0x02;
 
-    // H40 column-0 VSRAM quirk: column 0 uses (strip18 AND strip19).
-    // Set both strips to -8 so the AND is also -8.
-    vdp.vsram[72] = 0xFF;
-    vdp.vsram[73] = 0xF8;
-    vdp.vsram[76] = 0xFF;
+    /* H40: the partially shown left column uses the plane A AND plane B
+    values of VSRAM entry 19 (GPGX `render_bg_m5_vs`). Set both to -8 so the
+    AND is also -8, and give entry 0 a different value. */
+    vdp.vsram[0] = 0x00;
+    vdp.vsram[1] = 0x10;
+    vdp.vsram[76] = 0x07;
     vdp.vsram[77] = 0xF8;
+    vdp.vsram[78] = 0x07;
+    vdp.vsram[79] = 0xF8;
 
     vdp.render_line(0);
 
@@ -1549,118 +1552,6 @@ fn test_mid_line_cram_write_segments_the_scanline() {
             x, split_x
         );
     }
-}
-
-/// SAT cache (LSU) latches at line boundary. A mid-line write to the
-/// SAT region of VRAM must not be visible to the SAT cache until the
-/// next line wrap re-latches it.
-#[test]
-fn test_sat_cache_latches_at_line_boundary() {
-    let mut vdp = Vdp::new();
-    vdp.registers[REG_MODE2] = MODE2_DISPLAY_ENABLE;
-    vdp.registers[REG_MODE4] = 0x81; // H40
-    vdp.registers[REG_SPRITE_TABLE] = 0x6A; // SAT @ 0xD400
-    let sat_base = 0xD400;
-
-    // Write sprite 0 directly to VRAM, then force a latch.
-    vdp.vram[sat_base] = 0x00;
-    vdp.vram[sat_base + 1] = 138; // raw Y = 138 -> on-screen Y = 10
-    vdp.vram[sat_base + 2] = 0x00;
-    vdp.vram[sat_base + 3] = 0;
-    vdp.vram[sat_base + 6] = 0x00;
-    vdp.vram[sat_base + 7] = 168; // raw X = 168 -> on-screen X = 40
-    vdp.sync_sat_cache();
-
-    let captured_y_before = vdp.sat[1];
-    assert_eq!(captured_y_before, 138);
-
-    // Mid-line VRAM write to the SAT region: change Y to something else.
-    vdp.vram[sat_base + 1] = 0xAA;
-
-    // SAT cache must still reflect the latched value, not the new VRAM.
-    assert_eq!(
-        vdp.sat[1], 138,
-        "Mid-line VRAM write to SAT region must not update the cache"
-    );
-
-    // Tick a full line to trigger the line-boundary re-latch.
-    // 3420 MCLK = full line.
-    vdp.tick(3420, |_| 0);
-
-    assert_eq!(
-        vdp.sat[1], 0xAA,
-        "Line-boundary tick must re-latch the SAT cache from VRAM"
-    );
-}
-
-/// R5: If one of the last two VSRAM strips is zero, the H40 column-0
-/// quirk falls back to strip 19 alone rather than AND-ing (which would
-/// clobber strip 19's value with zero). Games that keep strip 18 unused
-/// rely on this.
-#[test]
-fn test_h40_column0_quirk_falls_back_when_strip_zero() {
-    let mut vdp = Vdp::new();
-    vdp.registers[REG_MODE4] = 0x81; // H40
-    vdp.registers[REG_MODE3] = 0x04; // 2-cell VSCROLL
-                                     // Strip 18 left at zero.
-    vdp.vsram[72] = 0x00;
-    vdp.vsram[73] = 0x00;
-    // Strip 19 has a meaningful value.
-    vdp.vsram[76] = 0x12;
-    vdp.vsram[77] = 0x34;
-    vdp.latch_scroll_state_for_line(0);
-
-    let vs_strip19 = vdp.get_v_scroll(true, 38, 0);
-    let vs_strip18 = vdp.get_v_scroll(true, 36, 0);
-    assert_eq!(vs_strip19, 0x1234);
-    assert_eq!(vs_strip18, 0x0000);
-    // The render path's combiner must NOT produce 0x0000 here — that
-    // would mean we lost strip 19's value. The fallback uses strip 19.
-    let combined = if vs_strip19 != 0 && vs_strip18 != 0 {
-        vs_strip19 & vs_strip18
-    } else {
-        vs_strip19
-    };
-    assert_eq!(combined, 0x1234, "AND fallback must preserve strip 19");
-}
-
-/// H40 + 2-cell VSCROLL + non-zero H-scroll: column 0 receives the AND of
-/// the last two VSRAM strip entries (strips 18 and 19) for the relevant plane
-/// rather than strip 0.
-#[test]
-fn test_h40_column0_vsram_and_quirk() {
-    let mut vdp = Vdp::new();
-    vdp.registers[REG_MODE4] = 0x81; // H40
-    vdp.registers[REG_MODE3] = 0x04; // 2-cell VSCROLL
-                                     // Plant a non-zero horizontal scroll value at HSCROLL table base (=0).
-    vdp.vram[0] = 0x00;
-    vdp.vram[1] = 0x01; // hscroll = 1 for plane A → nonzero
-    vdp.registers[REG_HSCROLL] = 0;
-
-    // Strip 0: V scroll = 0xAAAA for plane A (so the visible column 0 v_scroll
-    // shouldn't be this if the quirk fires).
-    vdp.vsram[0] = 0xAA;
-    vdp.vsram[1] = 0xAA;
-    // Strip 18 (cells 36-37, byte offset 36*2 = 72): plane A vscroll = 0xF0F0
-    vdp.vsram[72] = 0xF0;
-    vdp.vsram[73] = 0xF0;
-    // Strip 19 (cells 38-39, byte offset 38*2 = 76): plane A vscroll = 0x0FFF
-    vdp.vsram[76] = 0x0F;
-    vdp.vsram[77] = 0xFF;
-    // Expected column-0 VS = 0xF0F0 AND 0x0FFF = 0x00F0.
-
-    // Walk the existing scroll latching path so the get_v_scroll reads from
-    // latched_vsram on the rendered line.
-    vdp.latch_scroll_state_for_line(0);
-
-    let plane_a = true;
-    // Direct call: emulate render_tile's column-0 branch via the public API
-    // it relies on.
-    let vs_strip19 = vdp.get_v_scroll(plane_a, 38, 0);
-    let vs_strip18 = vdp.get_v_scroll(plane_a, 36, 0);
-    assert_eq!(vs_strip19, 0x0FFF);
-    assert_eq!(vs_strip18, 0xF0F0);
-    assert_eq!(vs_strip19 & vs_strip18, 0x00F0);
 }
 
 /// Status bit 6 (SOVR) is set when sprite overflow occurs on a line.

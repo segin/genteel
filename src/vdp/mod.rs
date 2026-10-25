@@ -171,8 +171,8 @@ fn default_rendered_scanlines() -> [bool; 240] {
     [false; 240]
 }
 
-fn default_latched_vsram() -> [u8; 80] {
-    [0; 80]
+fn default_layer() -> [u8; 320] {
+    [0; 320]
 }
 
 /// VDP Command State Machine
@@ -230,7 +230,6 @@ pub struct Vdp {
     pub(crate) fifo_history: [u16; 4],
     #[serde(default)]
     pub(crate) fifo_history_idx: usize,
-    pub v30_offset: u16,
     pub is_pal: bool,
 
     // FIFO
@@ -247,18 +246,22 @@ pub struct Vdp {
     #[serde(skip, default = "default_rendered_scanlines")]
     rendered_scanlines: [bool; 240],
 
-    #[serde(skip, default = "default_latched_vsram")]
-    pub(crate) latched_vsram: [u8; 80],
+    /// Layer buffers (plane B, plane A/window, sprites) of the line most
+    /// recently rendered, kept so colour-only changes in the middle of a line
+    /// can be recomposited without re-rendering the layers.
+    #[serde(skip, default = "default_layer")]
+    pub(crate) layer_b: [u8; 320],
+    #[serde(skip, default = "default_layer")]
+    pub(crate) layer_a: [u8; 320],
+    #[serde(skip, default = "default_layer")]
+    pub(crate) layer_s: [u8; 320],
+    /// The line `layer_*` belong to.
     #[serde(skip, default)]
-    pub(crate) latched_mode3: u8,
+    pub(crate) layer_line: Option<u16>,
+    /// `prev_line_sprite_overflow` as it was when `layer_line` was first
+    /// rendered, so re-rendering that line evaluates sprites identically.
     #[serde(skip, default)]
-    pub(crate) latched_hscroll_a: u16,
-    #[serde(skip, default)]
-    pub(crate) latched_hscroll_b: u16,
-    #[serde(skip, default)]
-    pub(crate) latched_scroll_line: u16,
-    #[serde(skip, default)]
-    pub(crate) latched_scroll_valid: bool,
+    pub(crate) layer_prev_overflow: bool,
 
     #[serde(skip)]
     pub debug_plane: Option<char>,
@@ -270,21 +273,11 @@ pub struct Vdp {
     /// Bus through `take_dma_stall_cycles`.
     #[serde(skip, default)]
     pub dma_stall_cycles: u32,
-    /// Whether the SAT cache is initialized. `tick` latches it at each
-    /// line boundary and clears this flag only on reset. Rendering paths
-    /// lazily sync if not yet valid (so a freshly constructed VDP doesn't
-    /// render with an empty SAT cache).
+    /// Whether the internal SAT cache has been loaded. It is kept up to date
+    /// by VRAM writes into the sprite table; a fresh or restored VDP loads it
+    /// from VRAM once, on first use.
     #[serde(skip, default)]
     pub(crate) sat_cache_valid: bool,
-    /// Mid-line segmented-render watermark. Pixels at x < line_split_x for the
-    /// current scanline have already been committed to the framebuffer with the
-    /// state at the time they were drawn. A mid-line CRAM/VSRAM/register write
-    /// advances this watermark to the current MCLK's pixel position and
-    /// re-renders pixels [watermark..320] with the new state. Reset to 0 at
-    /// each fresh line render.
-    #[serde(skip, default)]
-    pub(crate) line_split_x: u16,
-
     /// HV counter latch (reg 0 bit 1). When latching is enabled, a TH line
     /// transition on a controller port freezes the HV counter; reads then
     /// return this captured value until re-latched. Used by light-gun titles.
@@ -315,7 +308,6 @@ impl Vdp {
             last_data_write: 0,
             fifo_history: [0; 4],
             fifo_history_idx: 0,
-            v30_offset: 0,
             is_pal: false,
             fifo: Vec::with_capacity(4),
             fifo_full: false,
@@ -323,12 +315,11 @@ impl Vdp {
             framebuffer: vec![0; 320 * 240],
             sat: [0; 0x400],
             rendered_scanlines: [false; 240],
-            latched_vsram: [0; 80],
-            latched_mode3: 0,
-            latched_hscroll_a: 0,
-            latched_hscroll_b: 0,
-            latched_scroll_line: 0,
-            latched_scroll_valid: false,
+            layer_b: [0; 320],
+            layer_a: [0; 320],
+            layer_s: [0; 320],
+            layer_line: None,
+            layer_prev_overflow: false,
             debug_plane: {
                 #[cfg(debug_assertions)]
                 {
@@ -344,7 +335,6 @@ impl Vdp {
             prev_line_sprite_overflow: false,
             dma_stall_cycles: 0,
             sat_cache_valid: false,
-            line_split_x: 0,
             hv_latched: None,
         };
         vdp.reset();
@@ -375,7 +365,7 @@ impl Vdp {
         self.line_counter = 0;
         self.hint_pending = false;
         self.rendered_scanlines.fill(false);
-        self.latched_scroll_valid = false;
+        self.layer_line = None;
         self.prev_line_sprite_overflow = false;
         self.dma_stall_cycles = 0;
         self.hv_latched = None;
@@ -416,16 +406,6 @@ impl Vdp {
             read_word(hs_addr, &self.vram),
             read_word(hs_addr.wrapping_add(2), &self.vram),
         )
-    }
-
-    pub(crate) fn latch_scroll_state_for_line(&mut self, line: u16) {
-        self.latched_mode3 = self.registers[REG_MODE3];
-        self.latched_vsram = self.vsram;
-        let (a, b) = self.compute_hscroll_words(line, self.latched_mode3);
-        self.latched_hscroll_a = a;
-        self.latched_hscroll_b = b;
-        self.latched_scroll_line = line;
-        self.latched_scroll_valid = true;
     }
 
     pub fn set_pal(&mut self, is_pal: bool) {
@@ -538,10 +518,16 @@ impl Vdp {
         let idx = ((addr & 0x7E) >> 1) as usize;
         let value = value & CRAM_COLOR_MASK;
         let [lo, hi] = value.to_le_bytes();
+        let rgb = Self::genesis_color_to_rgb565(value);
+        let unchanged =
+            self.cram[idx * 2] == lo && self.cram[idx * 2 + 1] == hi && self.cram_cache[idx] == rgb;
         self.cram[idx * 2] = lo;
         self.cram[idx * 2 + 1] = hi;
-        self.cram_cache[idx] = Self::genesis_color_to_rgb565(value);
-        self.redraw_current_scanline_if_visible();
+        self.cram_cache[idx] = rgb;
+        if !unchanged {
+            // A colour change only needs the line recomposited, not re-rendered.
+            self.recomposite_current_scanline_if_visible();
+        }
     }
 
     /// Store a VSRAM word. Address bit 0 is ignored, writes at or above 0x50
@@ -553,6 +539,9 @@ impl Vdp {
             return;
         }
         let [hi, lo] = (value & VSRAM_ENTRY_MASK).to_be_bytes();
+        if self.vsram[idx] == hi && self.vsram[idx + 1] == lo {
+            return;
+        }
         self.vsram[idx] = hi;
         self.vsram[idx + 1] = lo;
         self.redraw_current_scanline_if_visible();
@@ -668,19 +657,24 @@ impl Vdp {
     }
 
     fn write_register(&mut self, reg: usize, val: u8) {
+        let changed = self.registers[reg] != val;
         self.registers[reg] = val;
         // Disabling the HV latch (reg 0 bit 1 -> 0) re-arms it.
         if reg == REG_MODE1 && (val & 0x02) == 0 {
             self.hv_latched = None;
         }
-        if matches!(
+        if !changed {
+            return;
+        }
+        if matches!(reg, REG_MODE1 | REG_BG_COLOR) {
+            // Column-0 masking and the backdrop only affect compositing.
+            self.recomposite_current_scanline_if_visible();
+        } else if matches!(
             reg,
-            REG_MODE1
-                | REG_MODE2
+            REG_MODE2
                 | REG_PLANE_A
                 | REG_WINDOW
                 | REG_PLANE_B
-                | REG_BG_COLOR
                 | REG_MODE3
                 | REG_MODE4
                 | REG_HSCROLL
@@ -836,19 +830,18 @@ impl Vdp {
     #[inline]
     pub(crate) fn write_vram_byte(&mut self, addr: u16, value: u8) {
         self.vram[addr as usize] = value;
-    }
-
-    pub fn set_vblank(&mut self, active: bool) {
-        if active {
-            self.status |= STATUS_VBLANK;
-            self.status |= STATUS_VINT_PENDING;
+        /* Writes into the sprite attribute table also update the VDP's
+        internal SAT cache (GPGX `vdp_bus_w`: 1 KiB block in H40, 512 bytes
+        in H32, selected by register 5). */
+        let (base_mask, addr_mask) = if self.h40_mode() {
+            (0xFC00u16, 0x03FFu16)
         } else {
-            self.status &= !STATUS_VBLANK;
+            (0xFE00, 0x01FF)
+        };
+        let sat_base = ((self.registers[REG_SPRITE_TABLE] as u16) << 9) & base_mask;
+        if (addr & base_mask) == sat_base {
+            self.sat[(addr & addr_mask) as usize] = value;
         }
-    }
-
-    pub fn trigger_vint(&mut self) {
-        self.status |= STATUS_VINT_PENDING;
     }
 
     pub fn acknowledge_vint(&mut self) {
@@ -971,10 +964,9 @@ impl Vdp {
         self.sat_cache_valid = true;
     }
 
-    /// Used by render paths to ensure the SAT cache has at least been
-    /// initialized once. Production code latches at line boundary in
-    /// `tick`; this catches the cold-start case (and tests that build
-    /// VRAM directly without ticking).
+    /// Load the SAT cache from VRAM if it has never been loaded (fresh or
+    /// restored VDP, or tests that build VRAM directly). Afterwards it is
+    /// maintained by `write_vram_byte` only.
     pub(crate) fn ensure_sat_cache(&mut self) {
         if !self.sat_cache_valid {
             self.sync_sat_cache();
@@ -1038,6 +1030,15 @@ impl Vdp {
         }
     }
 
+    /// Like `redraw_current_scanline_if_visible`, for changes that only
+    /// affect colours (CRAM, backdrop, column masking): the line's layers are
+    /// reused and only recomposited from the beam position.
+    pub(crate) fn recomposite_current_scanline_if_visible(&mut self) {
+        if let Some((line, x)) = self.beam_target() {
+            self.recomposite_line_from(line, x);
+        }
+    }
+
     fn render_scanline_if_needed(&mut self, line: u16) {
         if line < self.screen_height() && !self.rendered_scanlines[line as usize] {
             self.render_line(line);
@@ -1079,10 +1080,6 @@ impl Vdp {
         }
     }
 
-    pub fn set_region(&mut self, is_pal: bool) {
-        self.is_pal = is_pal;
-    }
-
     pub fn mode1(&self) -> u8 {
         self.registers[REG_MODE1]
     }
@@ -1093,11 +1090,6 @@ impl Vdp {
 
     pub fn dma_enabled(&self) -> bool {
         (self.registers[REG_MODE2] & MODE2_DMA_ENABLE) != 0
-    }
-
-    pub fn update_v30_offset(&mut self) {
-        // Increment frame-based rolling offset for V30 mode
-        self.v30_offset = self.v30_offset.wrapping_add(1);
     }
 
     /// Clamp timing counters into range (they may come from a restored or
@@ -1377,3 +1369,9 @@ mod tests_timeline;
 
 #[cfg(test)]
 mod tests_dma_semantics;
+
+#[cfg(test)]
+mod tests_render_rules;
+
+#[cfg(test)]
+mod tests_interlace;
