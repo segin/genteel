@@ -12,8 +12,12 @@ fn test_set_state() {
         a: [10, 20, 30, 40, 50, 60, 70, 80],
         pc: 0x1234,
         sr: flags::SUPERVISOR | 0x0700, // Supervisor, Mask 7
+        usp: 0x1111,
+        ssp: 0x2222,
         halted: true,
+        stopped: true,
         pending_interrupt: 5,
+        interrupt_pending_mask: 0x20,
     };
 
     cpu.set_state(state.clone());
@@ -24,6 +28,10 @@ fn test_set_state() {
     assert_eq!(cpu.sr, state.sr);
     assert_eq!(cpu.halted, state.halted);
     assert_eq!(cpu.pending_interrupt, state.pending_interrupt);
+    assert_eq!(cpu.usp, state.usp);
+    assert_eq!(cpu.ssp, state.ssp);
+    assert_eq!(cpu.stopped, state.stopped);
+    assert_eq!(cpu.interrupt_pending_mask, state.interrupt_pending_mask);
 }
 
 #[test]

@@ -9,6 +9,7 @@ use crate::cpu::ops::data::{
     exec_pea, exec_swap,
 };
 use crate::cpu::test_utils::create_cpu;
+use crate::cpu::test_utils::run_op;
 use crate::memory::MemoryInterface;
 
 #[test]
@@ -18,13 +19,15 @@ fn test_move_data_register_byte() {
     cpu.d[1] = 0xAAAAAAAA;
 
     // MOVE.B D0, D1
-    exec_move(
-        &mut cpu,
-        Size::Byte,
-        AddressingMode::DataRegister(0),
-        AddressingMode::DataRegister(1),
-        &mut memory,
-    );
+    run_op(&mut cpu, &mut memory, |c, m| {
+        exec_move(
+            c,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            m,
+        )
+    });
 
     assert_eq!(cpu.d[1], 0xAAAAAA78); // Only low byte changed
     assert!(!cpu.get_flag(flags::NEGATIVE));
@@ -40,13 +43,15 @@ fn test_move_data_register_word() {
     cpu.d[1] = 0xAAAAAAAA;
 
     // MOVE.W D0, D1
-    exec_move(
-        &mut cpu,
-        Size::Word,
-        AddressingMode::DataRegister(0),
-        AddressingMode::DataRegister(1),
-        &mut memory,
-    );
+    run_op(&mut cpu, &mut memory, |c, m| {
+        exec_move(
+            c,
+            Size::Word,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            m,
+        )
+    });
 
     assert_eq!(cpu.d[1], 0xAAAA5678); // Low word changed
     assert!(!cpu.get_flag(flags::NEGATIVE));
@@ -60,13 +65,15 @@ fn test_move_data_register_long() {
     cpu.d[1] = 0xAAAAAAAA;
 
     // MOVE.L D0, D1
-    exec_move(
-        &mut cpu,
-        Size::Long,
-        AddressingMode::DataRegister(0),
-        AddressingMode::DataRegister(1),
-        &mut memory,
-    );
+    run_op(&mut cpu, &mut memory, |c, m| {
+        exec_move(
+            c,
+            Size::Long,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            m,
+        )
+    });
 
     assert_eq!(cpu.d[1], 0x12345678); // All bits changed
     assert!(!cpu.get_flag(flags::NEGATIVE));
@@ -78,13 +85,15 @@ fn test_move_sets_negative_flag() {
     let (mut cpu, mut memory) = create_cpu();
     cpu.d[0] = 0xFF; // -1 byte
 
-    exec_move(
-        &mut cpu,
-        Size::Byte,
-        AddressingMode::DataRegister(0),
-        AddressingMode::DataRegister(1),
-        &mut memory,
-    );
+    run_op(&mut cpu, &mut memory, |c, m| {
+        exec_move(
+            c,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            m,
+        )
+    });
 
     assert!(cpu.get_flag(flags::NEGATIVE));
     assert!(!cpu.get_flag(flags::ZERO));
@@ -95,13 +104,15 @@ fn test_move_sets_zero_flag() {
     let (mut cpu, mut memory) = create_cpu();
     cpu.d[0] = 0;
 
-    exec_move(
-        &mut cpu,
-        Size::Byte,
-        AddressingMode::DataRegister(0),
-        AddressingMode::DataRegister(1),
-        &mut memory,
-    );
+    run_op(&mut cpu, &mut memory, |c, m| {
+        exec_move(
+            c,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            m,
+        )
+    });
 
     assert!(!cpu.get_flag(flags::NEGATIVE));
     assert!(cpu.get_flag(flags::ZERO));
@@ -114,13 +125,15 @@ fn test_move_clears_vc_flags() {
     cpu.set_flag(flags::CARRY, true);
     cpu.d[0] = 0;
 
-    exec_move(
-        &mut cpu,
-        Size::Byte,
-        AddressingMode::DataRegister(0),
-        AddressingMode::DataRegister(1),
-        &mut memory,
-    );
+    run_op(&mut cpu, &mut memory, |c, m| {
+        exec_move(
+            c,
+            Size::Byte,
+            AddressingMode::DataRegister(0),
+            AddressingMode::DataRegister(1),
+            m,
+        )
+    });
 
     assert!(!cpu.get_flag(flags::OVERFLOW));
     assert!(!cpu.get_flag(flags::CARRY));
@@ -134,13 +147,15 @@ fn test_move_memory_to_register() {
     // MOVE.W (A0), D0
     cpu.a[0] = 0x2000;
 
-    exec_move(
-        &mut cpu,
-        Size::Word,
-        AddressingMode::AddressIndirect(0),
-        AddressingMode::DataRegister(0),
-        &mut memory,
-    );
+    run_op(&mut cpu, &mut memory, |c, m| {
+        exec_move(
+            c,
+            Size::Word,
+            AddressingMode::AddressIndirect(0),
+            AddressingMode::DataRegister(0),
+            m,
+        )
+    });
 
     assert_eq!(cpu.d[0] & 0xFFFF, 0x1234);
 }
@@ -152,13 +167,15 @@ fn test_move_register_to_memory() {
     cpu.a[0] = 0x3000;
 
     // MOVE.L D0, (A0)
-    exec_move(
-        &mut cpu,
-        Size::Long,
-        AddressingMode::DataRegister(0),
-        AddressingMode::AddressIndirect(0),
-        &mut memory,
-    );
+    run_op(&mut cpu, &mut memory, |c, m| {
+        exec_move(
+            c,
+            Size::Long,
+            AddressingMode::DataRegister(0),
+            AddressingMode::AddressIndirect(0),
+            m,
+        )
+    });
 
     assert_eq!(memory.read_long(0x3000), 0x12345678);
 }
@@ -170,13 +187,15 @@ fn test_move_post_increment() {
     cpu.a[0] = 0x4000;
 
     // MOVE.W D0, (A0)+
-    exec_move(
-        &mut cpu,
-        Size::Word,
-        AddressingMode::DataRegister(0),
-        AddressingMode::AddressPostIncrement(0),
-        &mut memory,
-    );
+    run_op(&mut cpu, &mut memory, |c, m| {
+        exec_move(
+            c,
+            Size::Word,
+            AddressingMode::DataRegister(0),
+            AddressingMode::AddressPostIncrement(0),
+            m,
+        )
+    });
 
     assert_eq!(memory.read_word(0x4000), 0x3344);
     assert_eq!(cpu.a[0], 0x4002);
@@ -189,13 +208,15 @@ fn test_move_pre_decrement() {
     cpu.a[0] = 0x5002;
 
     // MOVE.W D0, -(A0)
-    exec_move(
-        &mut cpu,
-        Size::Word,
-        AddressingMode::DataRegister(0),
-        AddressingMode::AddressPreDecrement(0),
-        &mut memory,
-    );
+    run_op(&mut cpu, &mut memory, |c, m| {
+        exec_move(
+            c,
+            Size::Word,
+            AddressingMode::DataRegister(0),
+            AddressingMode::AddressPreDecrement(0),
+            m,
+        )
+    });
 
     assert_eq!(memory.read_word(0x5000), 0x3344);
     assert_eq!(cpu.a[0], 0x5000);
@@ -208,13 +229,15 @@ fn test_move_immediate() {
     memory.write_word(cpu.pc, 0x1234);
 
     // MOVE.W #$1234, D0
-    exec_move(
-        &mut cpu,
-        Size::Word,
-        AddressingMode::Immediate,
-        AddressingMode::DataRegister(0),
-        &mut memory,
-    );
+    run_op(&mut cpu, &mut memory, |c, m| {
+        exec_move(
+            c,
+            Size::Word,
+            AddressingMode::Immediate,
+            AddressingMode::DataRegister(0),
+            m,
+        )
+    });
 
     assert_eq!(cpu.d[0] & 0xFFFF, 0x1234);
     // PC should advance by 2 (size of immediate data)
@@ -226,13 +249,9 @@ fn test_move_immediate() {
 fn test_exec_movea_word() {
     let (mut cpu, mut memory) = create_cpu();
     cpu.d[0] = 0xFFFF; // -1
-    exec_movea(
-        &mut cpu,
-        Size::Word,
-        AddressingMode::DataRegister(0),
-        1,
-        &mut memory,
-    );
+    run_op(&mut cpu, &mut memory, |c, m| {
+        exec_movea(c, Size::Word, AddressingMode::DataRegister(0), 1, m)
+    });
     assert_eq!(cpu.a[1], 0xFFFFFFFF); // Sign extended
 }
 
@@ -240,13 +259,9 @@ fn test_exec_movea_word() {
 fn test_exec_movea_long() {
     let (mut cpu, mut memory) = create_cpu();
     cpu.d[0] = 0x87654321;
-    exec_movea(
-        &mut cpu,
-        Size::Long,
-        AddressingMode::DataRegister(0),
-        2,
-        &mut memory,
-    );
+    run_op(&mut cpu, &mut memory, |c, m| {
+        exec_movea(c, Size::Long, AddressingMode::DataRegister(0), 2, m)
+    });
     assert_eq!(cpu.a[2], 0x87654321);
 }
 
@@ -254,19 +269,19 @@ fn test_exec_movea_long() {
 fn test_exec_moveq() {
     let (mut cpu, _memory) = create_cpu();
     // Test negative sign extension
-    exec_moveq(&mut cpu, 0, 0xFF);
+    exec_moveq(&mut cpu, 0, -1).unwrap();
     assert_eq!(cpu.d[0], 0xFFFFFFFF);
     assert!(cpu.get_flag(flags::NEGATIVE));
     assert!(!cpu.get_flag(flags::ZERO));
 
     // Test positive sign extension
-    exec_moveq(&mut cpu, 1, 0x7F);
+    exec_moveq(&mut cpu, 1, 0x7F).unwrap();
     assert_eq!(cpu.d[1], 0x0000007F);
     assert!(!cpu.get_flag(flags::NEGATIVE));
     assert!(!cpu.get_flag(flags::ZERO));
 
     // Test zero
-    exec_moveq(&mut cpu, 2, 0);
+    exec_moveq(&mut cpu, 2, 0).unwrap();
     assert_eq!(cpu.d[2], 0);
     assert!(!cpu.get_flag(flags::NEGATIVE));
     assert!(cpu.get_flag(flags::ZERO));
@@ -277,7 +292,9 @@ fn test_exec_lea() {
     let (mut cpu, mut memory) = create_cpu();
     cpu.a[0] = 0x1000;
     // Calculate EA for Indirect (A0) which should give 0x1000
-    exec_lea(&mut cpu, AddressingMode::AddressIndirect(0), 1, &mut memory);
+    run_op(&mut cpu, &mut memory, |c, m| {
+        exec_lea(c, AddressingMode::AddressIndirect(0), 1, m)
+    });
     assert_eq!(cpu.a[1], 0x1000);
 }
 
@@ -286,7 +303,9 @@ fn test_exec_pea() {
     let (mut cpu, mut memory) = create_cpu();
     cpu.a[0] = 0x2000;
     cpu.a[7] = 0x8000;
-    exec_pea(&mut cpu, AddressingMode::AddressIndirect(0), &mut memory);
+    run_op(&mut cpu, &mut memory, |c, m| {
+        exec_pea(c, AddressingMode::AddressIndirect(0), m)
+    });
     assert_eq!(cpu.a[7], 0x7FFC);
     assert_eq!(memory.read_long(0x7FFC), 0x2000);
 }
@@ -298,21 +317,21 @@ fn test_exec_exg() {
     // Data registers
     cpu.d[0] = 0x11111111;
     cpu.d[1] = 0x22222222;
-    exec_exg(&mut cpu, 0, 1, 0x08);
+    exec_exg(&mut cpu, 0, 1, 0x08).unwrap();
     assert_eq!(cpu.d[0], 0x22222222);
     assert_eq!(cpu.d[1], 0x11111111);
 
     // Address registers
     cpu.a[2] = 0x33333333;
     cpu.a[3] = 0x44444444;
-    exec_exg(&mut cpu, 2, 3, 0x09);
+    exec_exg(&mut cpu, 2, 3, 0x09).unwrap();
     assert_eq!(cpu.a[2], 0x44444444);
     assert_eq!(cpu.a[3], 0x33333333);
 
     // Data and Address
     cpu.d[4] = 0x55555555;
     cpu.a[5] = 0x66666666;
-    exec_exg(&mut cpu, 4, 5, 0x11);
+    exec_exg(&mut cpu, 4, 5, 0x11).unwrap();
     assert_eq!(cpu.d[4], 0x66666666);
     assert_eq!(cpu.a[5], 0x55555555);
 }
@@ -326,7 +345,9 @@ fn test_exec_movep_register_to_memory() {
     memory.write_word(0x2000, 0x0004); // displacement
 
     // Register to Memory, Size::Long
-    exec_movep(&mut cpu, Size::Long, 0, 0, true, &mut memory);
+    run_op(&mut cpu, &mut memory, |c, m| {
+        exec_movep(c, Size::Long, 0, 0, true, m)
+    });
 
     // 0x1004, 0x1006, 0x1008, 0x100A should contain 0x12, 0x34, 0x56, 0x78
     assert_eq!(memory.read_byte(0x1004), 0x12);
@@ -337,7 +358,9 @@ fn test_exec_movep_register_to_memory() {
     // Try Word
     cpu.pc = 0x2002;
     memory.write_word(0x2002, 0x0010); // displacement
-    exec_movep(&mut cpu, Size::Word, 0, 0, true, &mut memory);
+    run_op(&mut cpu, &mut memory, |c, m| {
+        exec_movep(c, Size::Word, 0, 0, true, m)
+    });
 
     assert_eq!(memory.read_byte(0x1010), 0x56);
     assert_eq!(memory.read_byte(0x1012), 0x78);
@@ -356,7 +379,9 @@ fn test_exec_movep_memory_to_register() {
     memory.write_byte(0x100A, 0x78);
 
     // Memory to Register, Size::Long
-    exec_movep(&mut cpu, Size::Long, 0, 0, false, &mut memory);
+    run_op(&mut cpu, &mut memory, |c, m| {
+        exec_movep(c, Size::Long, 0, 0, false, m)
+    });
     assert_eq!(cpu.d[0], 0x12345678);
 
     // Try Word
@@ -366,7 +391,9 @@ fn test_exec_movep_memory_to_register() {
     memory.write_byte(0x1010, 0x56);
     memory.write_byte(0x1012, 0x78);
 
-    exec_movep(&mut cpu, Size::Word, 1, 0, false, &mut memory);
+    run_op(&mut cpu, &mut memory, |c, m| {
+        exec_movep(c, Size::Word, 1, 0, false, m)
+    });
     assert_eq!(cpu.d[1], 0xAAAA5678);
 }
 
@@ -374,7 +401,7 @@ fn test_exec_movep_memory_to_register() {
 fn test_exec_swap() {
     let (mut cpu, _memory) = create_cpu();
     cpu.d[0] = 0x12345678;
-    exec_swap(&mut cpu, 0);
+    exec_swap(&mut cpu, 0).unwrap();
     assert_eq!(cpu.d[0], 0x56781234);
     assert!(!cpu.get_flag(flags::NEGATIVE));
     assert!(!cpu.get_flag(flags::ZERO));
@@ -382,12 +409,12 @@ fn test_exec_swap() {
     assert!(!cpu.get_flag(flags::CARRY));
 
     cpu.d[1] = 0x80000000;
-    exec_swap(&mut cpu, 1);
+    exec_swap(&mut cpu, 1).unwrap();
     assert_eq!(cpu.d[1], 0x00008000);
     assert!(!cpu.get_flag(flags::NEGATIVE));
 
     cpu.d[2] = 0x00008000;
-    exec_swap(&mut cpu, 2);
+    exec_swap(&mut cpu, 2).unwrap();
     assert_eq!(cpu.d[2], 0x80000000);
     assert!(cpu.get_flag(flags::NEGATIVE));
 }
@@ -398,23 +425,23 @@ fn test_exec_ext() {
 
     // Ext Word
     cpu.d[0] = 0xAAAAAA80; // Negative byte
-    exec_ext(&mut cpu, Size::Word, 0);
+    exec_ext(&mut cpu, Size::Word, 0).unwrap();
     assert_eq!(cpu.d[0], 0xAAAAFF80); // Sign extended byte to word
     assert!(cpu.get_flag(flags::NEGATIVE));
 
     cpu.d[1] = 0xAAAAAA7F; // Positive byte
-    exec_ext(&mut cpu, Size::Word, 1);
+    exec_ext(&mut cpu, Size::Word, 1).unwrap();
     assert_eq!(cpu.d[1], 0xAAAA007F); // Sign extended byte to word
     assert!(!cpu.get_flag(flags::NEGATIVE));
 
     // Ext Long
     cpu.d[2] = 0xAAAA8000; // Negative word
-    exec_ext(&mut cpu, Size::Long, 2);
+    exec_ext(&mut cpu, Size::Long, 2).unwrap();
     assert_eq!(cpu.d[2], 0xFFFF8000); // Sign extended word to long
     assert!(cpu.get_flag(flags::NEGATIVE));
 
     cpu.d[3] = 0xAAAA7FFF; // Positive word
-    exec_ext(&mut cpu, Size::Long, 3);
+    exec_ext(&mut cpu, Size::Long, 3).unwrap();
     assert_eq!(cpu.d[3], 0x00007FFF); // Sign extended word to long
     assert!(!cpu.get_flag(flags::NEGATIVE));
 }
@@ -430,13 +457,15 @@ fn test_exec_movem_to_memory_predec() {
     cpu.d[0] = 0x11111111;
     cpu.a[0] = 0x22222222;
 
-    exec_movem(
-        &mut cpu,
-        Size::Long,
-        true,
-        AddressingMode::AddressPreDecrement(7),
-        &mut memory,
-    );
+    run_op(&mut cpu, &mut memory, |c, m| {
+        exec_movem(
+            c,
+            Size::Long,
+            true,
+            AddressingMode::AddressPreDecrement(7),
+            m,
+        )
+    });
 
     assert_eq!(cpu.a[7], 0x7FF8);
     // Reversed order: A0 (high addr) then D0 (low addr)
@@ -455,13 +484,9 @@ fn test_exec_movem_to_memory_normal() {
     cpu.d[0] = 0x11111111;
     cpu.d[1] = 0x22222222;
 
-    exec_movem(
-        &mut cpu,
-        Size::Long,
-        true,
-        AddressingMode::AddressIndirect(0),
-        &mut memory,
-    );
+    run_op(&mut cpu, &mut memory, |c, m| {
+        exec_movem(c, Size::Long, true, AddressingMode::AddressIndirect(0), m)
+    });
 
     assert_eq!(memory.read_long(0x1000), 0x11111111);
     assert_eq!(memory.read_long(0x1004), 0x22222222);
@@ -480,13 +505,15 @@ fn test_exec_movem_from_memory_postinc() {
     memory.write_long(0x1004, 0x22222222);
     memory.write_long(0x1008, 0x33333333);
 
-    exec_movem(
-        &mut cpu,
-        Size::Long,
-        false,
-        AddressingMode::AddressPostIncrement(0),
-        &mut memory,
-    );
+    run_op(&mut cpu, &mut memory, |c, m| {
+        exec_movem(
+            c,
+            Size::Long,
+            false,
+            AddressingMode::AddressPostIncrement(0),
+            m,
+        )
+    });
 
     assert_eq!(cpu.d[0], 0x11111111);
     assert_eq!(cpu.d[1], 0x22222222);

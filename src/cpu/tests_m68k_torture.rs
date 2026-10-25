@@ -392,7 +392,7 @@ fn test_stop_instruction() {
 
     cpu.step_instruction(&mut memory);
 
-    assert!(cpu.halted, "CPU should be halted");
+    assert!(cpu.stopped, "CPU should be stopped");
     assert_eq!(cpu.sr, 0x2000, "SR should be updated");
 }
 

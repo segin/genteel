@@ -484,26 +484,21 @@ fn test_decode_memory_shifts_missing() {
 
 #[test]
 fn test_decode_memory_shifts_invalid_modes() {
-    // ASL D0 - Invalid memory shift (mode 000 is register direct, but size=11 means memory)
-    // However, the decoder might handle this.
-    // Opcode: 1110 000 1 11 000 000 (0xE1C0)
-    // If Size=11 and Mode=000 (Data Reg), this is invalid for memory shift?
-    // Let's check decoder logic.
-    // `AddressingMode::from_mode_reg(0, 0)` returns `DataRegister(0)`.
-    // The decoder checks `if let Some(dst) = AddressingMode::from_mode_reg(...)`.
-    // It doesn't explicitly forbid DataRegister for memory shifts in `decode_shifts`.
-    // BUT the M68k manual says memory shifts operate on alterable memory addressing modes.
-    // DataRegister IS alterable.
-    // However, typical assemblers might map this encoding differently or treat it as invalid.
-    // Wait, let's check `AddressingMode::is_memory_alterable` equivalent?
-    // The decoder doesn't check `is_alterable` inside `decode_shifts` for memory shifts.
-    // It just proceeds. So `ASL.W #1, D0` encoded as memory shift would decode to `AslM { D0 }`.
-    // But `ASL.W #1, D0` is normally encoded as register shift (size=01).
-    // Let's verify what the current decoder does.
+    /* Memory shifts need a memory-alterable operand: Dn, An, PC-relative
+    and immediate encodings are illegal, as is bit 11 set (68020 bit-field
+    space). */
+    for opcode in [
+        0xE1C0u16, 0xE1C8, 0xE0FA, 0xE0FB, 0xE0FC, 0xE8C0, 0xE8D0, 0xEFD0,
+    ] {
+        check_decode(
+            opcode,
+            Instruction::System(SystemInstruction::Unimplemented { opcode }),
+        );
+    }
     check_decode(
-        0xE1C0,
+        0xE1D0,
         Instruction::Bits(BitsInstruction::AslM {
-            dst: AddressingMode::DataRegister(0),
+            dst: AddressingMode::AddressIndirect(0),
         }),
     );
 }

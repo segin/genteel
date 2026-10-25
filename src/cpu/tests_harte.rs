@@ -1,10 +1,12 @@
 //! TomHarte / SingleStepTests 68000 harness.
 //!
 //! Ignored by default (needs external JSON data). Run e.g.:
-//!   HARTE_DIR=/path/to/68000/v1 cargo test --release --bin genteel \
+//!   HARTE_DIR=/path/to/68000/v1 cargo test --release --lib \
 //!       cpu::tests_harte::harte_run -- --ignored --nocapture
 //!
-//! Optional env: HARTE_ONLY=DIVU (substring filter), HARTE_SAMPLES=8.
+//! Optional env: HARTE_ONLY=DIVU (substring filter), HARTE_SAMPLES=8,
+//! HARTE_CYCLES=1 (count cycle-count mismatches as failures; otherwise they
+//! are only tallied separately), HARTE_EXC=1 (also sample exception cases).
 //!
 //! Compares D0-D7, A0-A6, PC, the full SR, USP, SSP and touched memory after
 //! one instruction. The prefetch queue itself is not modelled or compared; the
@@ -65,14 +67,11 @@ fn u32f(v: &serde_json::Value, k: &str) -> u32 {
     v.get(k).and_then(|x| x.as_u64()).unwrap_or(0) as u32
 }
 
-/// Disassemble a ROM range with the built-in disassembler.
-/// DISASM_ROM=<path> DISASM_START=<hex> DISASM_END=<hex>.
-#[test]
-#[ignore]
-fn disasm_range() {
-    let rom = std::fs::read(std::env::var("DISASM_ROM").expect("DISASM_ROM")).unwrap();
-    let start = usize::from_str_radix(&std::env::var("DISASM_START").unwrap(), 16).unwrap();
-    let end = usize::from_str_radix(&std::env::var("DISASM_END").unwrap(), 16).unwrap();
+/// Disassemble `rom[start..end]` with the built-in disassembler, one line
+/// per instruction (`ADDRESS  text`). A debugging aid for comparing the core
+/// against ROM code; e.g. call it from a scratch test with a ROM image.
+pub(crate) fn disasm_range(rom: &[u8], start: usize, end: usize) -> Vec<String> {
+    let mut out = Vec::new();
     let mut pc = start;
     while pc < end && pc + 1 < rom.len() {
         let opcode = ((rom[pc] as u16) << 8) | (rom[pc + 1] as u16);
@@ -84,13 +83,25 @@ fn disasm_range() {
                 *w = ((rom[pc + i * 2] as u16) << 8) | (rom[pc + i * 2 + 1] as u16);
             }
         }
-        println!(
+        out.push(format!(
             "{:06X}  {}",
             pc,
             instr.format_with_words(pc as u32, &words, false)
-        );
+        ));
         pc += len * 2;
     }
+    out
+}
+
+#[test]
+fn disasm_range_walks_instruction_lengths() {
+    /* NOP; MOVE.W #$1234,D0; RTS */
+    let rom = [0x4E, 0x71, 0x30, 0x3C, 0x12, 0x34, 0x4E, 0x75];
+    let lines = disasm_range(&rom, 0, rom.len());
+    assert_eq!(lines.len(), 3);
+    assert!(lines[0].starts_with("000000"));
+    assert!(lines[1].starts_with("000002"));
+    assert!(lines[2].starts_with("000006"));
 }
 
 #[test]
@@ -116,6 +127,9 @@ fn harte_run() {
 
     let mut grand_pass = 0usize;
     let mut grand_fail = 0usize;
+    let mut grand_cyc = 0usize;
+    let strict_cycles = std::env::var("HARTE_CYCLES").is_ok();
+    let show_exc = std::env::var("HARTE_EXC").is_ok();
 
     for path in &files {
         let name = path.file_name().unwrap().to_string_lossy().to_string();
@@ -139,6 +153,8 @@ fn harte_run() {
         let mut arith_fail = 0usize;
         let mut exc_fail = 0usize;
         let mut samples: Vec<String> = Vec::new();
+        let mut cyc_fail = 0usize;
+        let mut cyc_samples: Vec<String> = Vec::new();
 
         for case in &cases {
             let init = &case["initial"];
@@ -174,12 +190,23 @@ fn harte_run() {
             cpu.a[7] = if sr & 0x2000 != 0 { cpu.ssp } else { cpu.usp };
             cpu.pc = pc;
             cpu.halted = false;
-            cpu.pending_exception = false;
+            cpu.stopped = false;
             cpu.pending_interrupt = 0;
             cpu.interrupt_pending_mask = 0;
-            cpu.invalidate_cache_entry(pc);
 
-            cpu.step_instruction(&mut mem);
+            let cycles = cpu.step_instruction(&mut mem);
+            let cycles_ok = cycles as u64 == case["length"].as_u64().unwrap_or(0);
+            if !cycles_ok {
+                cyc_fail += 1;
+                if cyc_samples.len() < max_report {
+                    cyc_samples.push(format!(
+                        "{}: cycles {} != {}",
+                        case["name"].as_str().unwrap_or("?"),
+                        cycles,
+                        case["length"]
+                    ));
+                }
+            }
 
             // Was this test an exception case? (SP pushed / entered supervisor)
             let exc = u32f(fin, "ssp") != u32f(init, "ssp")
@@ -230,6 +257,9 @@ fn harte_run() {
                 }
             }
 
+            if strict_cycles && !cycles_ok {
+                diffs.push("cycles".to_string());
+            }
             if diffs.is_empty() {
                 pass += 1;
             } else {
@@ -238,25 +268,25 @@ fn harte_run() {
                     exc_fail += 1;
                 } else {
                     arith_fail += 1;
-                    // Only sample genuine (non-exception) arithmetic failures.
-                    if samples.len() < max_report {
-                        samples.push(format!(
-                            "{}: {}",
-                            case["name"].as_str().unwrap_or("?"),
-                            diffs.join(" ")
-                        ));
-                    }
+                }
+                if (!exc || show_exc) && samples.len() < max_report {
+                    samples.push(format!(
+                        "{}: {}",
+                        case["name"].as_str().unwrap_or("?"),
+                        diffs.join(" ")
+                    ));
                 }
             }
         }
         grand_pass += pass;
         grand_fail += fail;
+        grand_cyc += cyc_fail;
         println!(
-            "{name:14} {pass:5} pass {fail:5} fail  ({arith_fail} arith, {exc_fail} exc-only)"
+            "{name:14} {pass:5} pass {fail:5} fail  ({arith_fail} arith, {exc_fail} exc-only)  {cyc_fail} cycle mismatches"
         );
-        for s in &samples {
+        for s in samples.iter().chain(cyc_samples.iter()) {
             println!("      {s}");
         }
     }
-    println!("TOTAL: {grand_pass} pass, {grand_fail} fail");
+    println!("TOTAL: {grand_pass} pass, {grand_fail} fail, {grand_cyc} cycle mismatches");
 }

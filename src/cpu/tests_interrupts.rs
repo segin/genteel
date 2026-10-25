@@ -94,10 +94,10 @@ fn test_nmi_level_7() {
 }
 
 #[test]
-fn test_interrupt_clears_halted() {
+fn test_interrupt_resumes_stopped_cpu() {
     let (mut cpu, mut memory) = create_cpu();
 
-    cpu.halted = true;
+    cpu.stopped = true;
     cpu.sr &= !flags::INTERRUPT_MASK;
 
     cpu.request_interrupt(1);
@@ -108,7 +108,32 @@ fn test_interrupt_clears_halted() {
     let cycles = cpu.step_instruction(&mut memory);
 
     assert_eq!(cycles, 44);
-    assert!(!cpu.halted);
+    assert!(!cpu.stopped);
+    assert_eq!(cpu.pc, 0x4000);
+}
+
+#[test]
+fn test_double_fault_halt_ignores_interrupts() {
+    let (mut cpu, mut memory) = create_cpu();
+
+    cpu.halted = true;
+    cpu.sr &= !flags::INTERRUPT_MASK;
+    let pc = cpu.pc;
+    memory.write_long(0x78, 0x4000);
+    cpu.request_interrupt(6);
+
+    for _ in 0..3 {
+        let before = cpu.cycles;
+        assert_eq!(cpu.step_instruction(&mut memory), 4);
+        assert_eq!(
+            cpu.cycles,
+            before + 4,
+            "halted steps still advance the clock"
+        );
+    }
+    assert!(cpu.halted);
+    assert_eq!(cpu.pc, pc);
+    assert_eq!(cpu.pending_interrupt, 6);
 }
 
 #[test]

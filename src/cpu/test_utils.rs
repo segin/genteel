@@ -1,4 +1,4 @@
-use crate::cpu::{flags, Cpu};
+use crate::cpu::{flags, Cpu, Exec};
 use crate::memory::{Memory, MemoryInterface};
 
 pub fn create_test_cpu() -> (Cpu, Memory) {
@@ -16,6 +16,25 @@ pub fn create_cpu() -> (Cpu, Memory) {
     cpu.a[7] = 0x8000;
     cpu.sr = flags::SUPERVISOR; // Supervisor, Mask 0
     (cpu, memory)
+}
+
+/// Run one instruction body directly (as the dispatcher would, with the
+/// opcode already consumed) and return the clock cycles it took. A fault
+/// is processed as an address error, like `step_instruction` does.
+pub fn run_op<M: MemoryInterface>(
+    cpu: &mut Cpu,
+    memory: &mut M,
+    op: impl FnOnce(&mut Cpu, &mut M) -> Exec,
+) -> u32 {
+    cpu.icycles = 0;
+    cpu.fetches = 0;
+    cpu.exception_taken = false;
+    cpu.fault_pc = None;
+    cpu.pc0 = cpu.pc.wrapping_sub(2);
+    if let Err(fault) = op(cpu, memory) {
+        cpu.address_error(memory, fault);
+    }
+    cpu.icycles
 }
 
 pub fn write_op(memory: &mut Memory, opcodes: &[u16]) {

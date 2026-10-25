@@ -3,13 +3,16 @@
 use crate::cpu::flags;
 use crate::cpu::ops::system::*;
 use crate::cpu::test_utils::create_test_cpu;
+use crate::cpu::test_utils::run_op;
 use crate::memory::MemoryInterface;
 
 #[test]
 fn test_exec_bra_short_forward() {
     let (mut cpu, mut memory) = create_test_cpu();
     cpu.pc = 0x1002; // PC after instruction word
-    let cycles = exec_bra(&mut cpu, 0x06, &mut memory);
+    let cycles = run_op(&mut cpu, &mut memory, |c, m| {
+        exec_bcc(c, crate::cpu::decoder::Condition::True, 0x06, m)
+    });
     assert_eq!(cycles, 10);
     assert_eq!(cpu.pc, 0x1008);
 }
@@ -18,7 +21,9 @@ fn test_exec_bra_short_forward() {
 fn test_exec_bra_short_backward() {
     let (mut cpu, mut memory) = create_test_cpu();
     cpu.pc = 0x1002; // PC after instruction word
-    let cycles = exec_bra(&mut cpu, -2, &mut memory); // 0xFE
+    let cycles = run_op(&mut cpu, &mut memory, |c, m| {
+        exec_bcc(c, crate::cpu::decoder::Condition::True, -2, m)
+    }); // 0xFE
     assert_eq!(cycles, 10);
     assert_eq!(cpu.pc, 0x1000);
 }
@@ -28,7 +33,9 @@ fn test_exec_bra_word_forward() {
     let (mut cpu, mut memory) = create_test_cpu();
     cpu.pc = 0x1002;
     memory.write_word(0x1002, 0x0100);
-    let cycles = exec_bra(&mut cpu, 0, &mut memory);
+    let cycles = run_op(&mut cpu, &mut memory, |c, m| {
+        exec_bcc(c, crate::cpu::decoder::Condition::True, 0, m)
+    });
     assert_eq!(cycles, 10);
     assert_eq!(cpu.pc, 0x1102);
 }
@@ -38,7 +45,9 @@ fn test_exec_bra_word_backward() {
     let (mut cpu, mut memory) = create_test_cpu();
     cpu.pc = 0x1102;
     memory.write_word(0x1102, -0x100i16 as u16); // -256
-    let cycles = exec_bra(&mut cpu, 0, &mut memory);
+    let cycles = run_op(&mut cpu, &mut memory, |c, m| {
+        exec_bcc(c, crate::cpu::decoder::Condition::True, 0, m)
+    });
     assert_eq!(cycles, 10);
     assert_eq!(cpu.pc, 0x1002);
 }
@@ -59,7 +68,7 @@ fn test_exec_trap_user_to_supervisor() {
     memory.write_long(136, 0x3000); // Target PC
 
     // Call exec_trap
-    let cycles = exec_trap(&mut cpu, 2, &mut memory);
+    let cycles = run_op(&mut cpu, &mut memory, |c, m| exec_trap(c, 2, m));
 
     // Verify
     assert_eq!(cycles, 34); // process_exception returns 34
@@ -96,7 +105,7 @@ fn test_exec_trap_supervisor_to_supervisor() {
     memory.write_long(140, 0x5000); // Target PC
 
     // Call exec_trap
-    let cycles = exec_trap(&mut cpu, 3, &mut memory);
+    let cycles = run_op(&mut cpu, &mut memory, |c, m| exec_trap(c, 3, m));
 
     assert_eq!(cycles, 34);
     assert_eq!(cpu.pc, 0x5000);
@@ -132,7 +141,7 @@ fn test_exec_trap_vectors() {
         memory.write_long(vector_num * 4, handler_addr);
 
         // Execute TRAP
-        let cycles = exec_trap(&mut cpu, vector, &mut memory);
+        let cycles = run_op(&mut cpu, &mut memory, |c, m| exec_trap(c, vector, m));
 
         // Verify Cycles: Standard exception processing takes 34 cycles
         assert_eq!(cycles, 34, "TRAP #{} should take 34 cycles", vector);
@@ -177,7 +186,7 @@ fn test_exec_trap_trace_bit() {
     let handler = 0x5000;
     memory.write_long((32 + vector as u32) * 4, handler);
 
-    exec_trap(&mut cpu, vector, &mut memory);
+    run_op(&mut cpu, &mut memory, |c, m| exec_trap(c, vector, m));
 
     // Old SR on stack should have Trace bit set
     let pushed_sr = memory.read_word(cpu.a[7]);
@@ -208,16 +217,16 @@ fn test_exec_move_usp() {
     let initial_pc = cpu.pc;
 
     // Execute MOVE USP, A0 (to_usp = false)
-    let cycles = exec_move_usp(&mut cpu, 0, false, &mut memory);
+    let cycles = run_op(&mut cpu, &mut memory, |c, m| exec_move_usp(c, 0, false, m));
 
     // Should trigger exception (34 cycles)
     assert_eq!(cycles, 34);
     assert_eq!(cpu.pc, handler_addr);
     assert_eq!(cpu.sr & flags::SUPERVISOR, flags::SUPERVISOR); // Switched to supervisor
 
-    // Verify pushed PC matches instruction address
+    // The pushed PC is the address of the privileged opcode itself
     let pushed_pc = memory.read_long(cpu.a[7] + 2);
-    assert_eq!(pushed_pc, initial_pc);
+    assert_eq!(pushed_pc, initial_pc - 2);
 
     // 2. Test Move to USP (MOVE An, USP)
     // Reset CPU to Supervisor
@@ -229,7 +238,9 @@ fn test_exec_move_usp() {
     cpu.a[reg_idx] = val_to_write;
     cpu.usp = 0; // Clear USP
 
-    let cycles = exec_move_usp(&mut cpu, reg_idx as u8, true, &mut memory);
+    let cycles = run_op(&mut cpu, &mut memory, |c, m| {
+        exec_move_usp(c, reg_idx as u8, true, m)
+    });
 
     assert_eq!(cycles, 4);
     assert_eq!(cpu.usp, val_to_write);
@@ -240,7 +251,9 @@ fn test_exec_move_usp() {
     cpu.usp = val_in_usp;
     cpu.a[reg_idx] = 0;
 
-    let cycles = exec_move_usp(&mut cpu, reg_idx as u8, false, &mut memory);
+    let cycles = run_op(&mut cpu, &mut memory, |c, m| {
+        exec_move_usp(c, reg_idx as u8, false, m)
+    });
 
     assert_eq!(cycles, 4);
     assert_eq!(cpu.a[reg_idx], val_in_usp);
@@ -262,18 +275,18 @@ fn test_exec_rtr() {
     let target_ccr = 0x001F; // All flags set (X, N, Z, V, C)
 
     // Push PC (4 bytes)
-    cpu.push_long(target_pc, &mut memory);
+    cpu.push_long(&mut memory, target_pc).unwrap();
     // Push CCR (2 bytes)
     // exec_rtr pops word, but only uses low byte for CCR.
     // We push a word.
-    cpu.push_word(target_ccr, &mut memory);
+    cpu.push_word(&mut memory, target_ccr).unwrap();
 
     // Verify stack setup
     // SP should be 0x2000 - 4 - 2 = 0x1FFA
     assert_eq!(cpu.a[7], 0x1FFA);
 
     // Execute RTR
-    let cycles = exec_rtr(&mut cpu, &mut memory);
+    let cycles = run_op(&mut cpu, &mut memory, exec_rtr);
 
     // Verify Return Cycles
     assert_eq!(cycles, 20);
@@ -304,7 +317,7 @@ fn test_exec_stop_privilege_violation() {
     let initial_sp = cpu.a[7];
     cpu.pc = 0x1000;
 
-    let cycles = exec_stop(&mut cpu, &mut memory);
+    let cycles = run_op(&mut cpu, &mut memory, exec_stop);
 
     // Privilege violation takes 34 cycles
     assert_eq!(cycles, 34);
@@ -328,10 +341,10 @@ fn test_exec_stop_supervisor() {
     // Next word in memory is the new SR
     memory.write_word(0x1000, 0x2700); // Set supervisor and interrupt mask 7
 
-    let cycles = exec_stop(&mut cpu, &mut memory);
+    let cycles = run_op(&mut cpu, &mut memory, exec_stop);
 
     assert_eq!(cycles, 4);
-    assert!(cpu.halted);
+    assert!(cpu.stopped);
     assert_eq!(cpu.pc, 0x1002);
     assert_eq!(cpu.sr & flags::SUPERVISOR, flags::SUPERVISOR);
     assert_eq!(cpu.sr & flags::INTERRUPT_MASK, flags::INTERRUPT_MASK);
@@ -343,7 +356,7 @@ fn test_exec_bsr_short() {
     cpu.pc = 0x1002;
     cpu.a[7] = 0x2000;
 
-    let cycles = exec_bsr(&mut cpu, 0x06, &mut memory);
+    let cycles = run_op(&mut cpu, &mut memory, |c, m| exec_bsr(c, 0x06, m));
 
     assert_eq!(cycles, 18);
     assert_eq!(cpu.pc, 0x1008);
@@ -358,7 +371,7 @@ fn test_exec_bsr_word() {
     cpu.a[7] = 0x2000;
     memory.write_word(0x1002, 0x0100);
 
-    let cycles = exec_bsr(&mut cpu, 0, &mut memory);
+    let cycles = run_op(&mut cpu, &mut memory, |c, m| exec_bsr(c, 0, m));
 
     assert_eq!(cycles, 18);
     assert_eq!(cpu.pc, 0x1102);
@@ -374,14 +387,18 @@ fn test_exec_bcc() {
     // Test branch taken
     cpu.pc = 0x1002;
     cpu.sr = flags::ZERO; // Set Zero flag, so Equal (EQ) condition is true
-    let cycles = exec_bcc(&mut cpu, Condition::Equal, 0x06, &mut memory);
+    let cycles = run_op(&mut cpu, &mut memory, |c, m| {
+        exec_bcc(c, Condition::Equal, 0x06, m)
+    });
     assert_eq!(cycles, 10);
     assert_eq!(cpu.pc, 0x1008);
 
     // Test branch not taken
     cpu.pc = 0x1002;
     cpu.sr = 0; // Clear Zero flag, so Equal (EQ) condition is false
-    let cycles = exec_bcc(&mut cpu, Condition::Equal, 0x06, &mut memory);
+    let cycles = run_op(&mut cpu, &mut memory, |c, m| {
+        exec_bcc(c, Condition::Equal, 0x06, m)
+    });
     assert_eq!(cycles, 8); // Wait, exec_bcc returns 10 if taken, 8 if not taken (depending on implementation, let's check).
     assert_eq!(cpu.pc, 0x1002);
 }
@@ -396,15 +413,22 @@ fn test_exec_scc() {
     let dst = AddressingMode::DataRegister(0);
     cpu.d[0] = 0x12345678; // Initial value
 
-    let cycles = exec_scc(&mut cpu, Condition::Equal, dst, &mut memory);
-    assert_eq!(cycles, 4);
+    let cycles = run_op(&mut cpu, &mut memory, |c, m| {
+        exec_scc(c, Condition::Equal, dst, m)
+    });
+    assert_eq!(
+        cycles, 6,
+        "Scc Dn takes 6 clocks when the condition is true"
+    );
     assert_eq!(cpu.d[0], 0x123456FF);
 
     // Test false condition (should set to 0x00)
     cpu.sr = 0; // Clear Equal condition
     cpu.d[0] = 0x12345678; // Initial value
 
-    let cycles = exec_scc(&mut cpu, Condition::Equal, dst, &mut memory);
+    let cycles = run_op(&mut cpu, &mut memory, |c, m| {
+        exec_scc(c, Condition::Equal, dst, m)
+    });
     assert_eq!(cycles, 4);
     assert_eq!(cpu.d[0], 0x12345600);
 }
@@ -419,7 +443,9 @@ fn test_exec_dbcc() {
     cpu.sr = flags::ZERO; // Set Equal condition
     cpu.d[0] = 5;
 
-    let cycles = exec_dbcc(&mut cpu, Condition::Equal, 0, &mut memory);
+    let cycles = run_op(&mut cpu, &mut memory, |c, m| {
+        exec_dbcc(c, Condition::Equal, 0, m)
+    });
     assert_eq!(cycles, 12);
     assert_eq!(cpu.pc, 0x1004); // PC advances past word
     assert_eq!(cpu.d[0], 5); // Reg not decremented
@@ -430,7 +456,9 @@ fn test_exec_dbcc() {
     cpu.sr = 0; // Clear condition
     cpu.d[0] = 5;
 
-    let cycles = exec_dbcc(&mut cpu, Condition::Equal, 0, &mut memory);
+    let cycles = run_op(&mut cpu, &mut memory, |c, m| {
+        exec_dbcc(c, Condition::Equal, 0, m)
+    });
     assert_eq!(cycles, 10);
     assert_eq!(cpu.pc, 0x1008); // Branch taken (1002 + 6 = 1008)
     assert_eq!(cpu.d[0], 4); // Reg decremented
@@ -440,7 +468,9 @@ fn test_exec_dbcc() {
     cpu.sr = 0;
     cpu.d[0] = 0;
 
-    let cycles = exec_dbcc(&mut cpu, Condition::Equal, 0, &mut memory);
+    let cycles = run_op(&mut cpu, &mut memory, |c, m| {
+        exec_dbcc(c, Condition::Equal, 0, m)
+    });
     assert_eq!(cycles, 14);
     assert_eq!(cpu.pc, 0x1004); // PC advances past word
     assert_eq!(cpu.d[0] as i16, -1);
@@ -455,7 +485,7 @@ fn test_exec_jmp() {
     cpu.a[0] = 0x2000;
     let dst = AddressingMode::AddressIndirect(0);
 
-    let cycles = exec_jmp(&mut cpu, dst, &mut memory);
+    let cycles = run_op(&mut cpu, &mut memory, |c, m| exec_jmp(c, dst, m));
     assert_eq!(cycles, 8); // Depending on AddressingMode cycles, might need to adjust
     assert_eq!(cpu.pc, 0x2000);
 }
@@ -470,7 +500,7 @@ fn test_exec_jsr() {
     cpu.a[0] = 0x2000;
     let dst = AddressingMode::AddressIndirect(0);
 
-    let _cycles = exec_jsr(&mut cpu, dst, &mut memory);
+    let _cycles = run_op(&mut cpu, &mut memory, |c, m| exec_jsr(c, dst, m));
     // Return address is PC (0x1000) - jsr instruction might push different PC, let's test what it pushes
     assert_eq!(cpu.pc, 0x2000);
     assert_eq!(cpu.a[7], 0x2FFC);
@@ -484,7 +514,7 @@ fn test_exec_rts() {
     cpu.a[7] = 0x2FFC;
     memory.write_long(0x2FFC, 0x4000); // Return address
 
-    let cycles = exec_rts(&mut cpu, &mut memory);
+    let cycles = run_op(&mut cpu, &mut memory, exec_rts);
     assert_eq!(cycles, 16);
     assert_eq!(cpu.pc, 0x4000);
     assert_eq!(cpu.a[7], 0x3000);
@@ -496,10 +526,10 @@ fn test_exec_rte() {
 
     cpu.sr = flags::SUPERVISOR;
     cpu.a[7] = 0x3000;
-    cpu.push_long(0x5000, &mut memory); // PC
-    cpu.push_word(0x001F, &mut memory); // SR (User mode, all flags set)
+    cpu.push_long(&mut memory, 0x5000).unwrap(); // PC
+    cpu.push_word(&mut memory, 0x001F).unwrap(); // SR (User mode, all flags set)
 
-    let cycles = exec_rte(&mut cpu, &mut memory);
+    let cycles = run_op(&mut cpu, &mut memory, exec_rte);
     assert_eq!(cycles, 20); // standard cycles for RTE
     assert_eq!(cpu.pc, 0x5000);
     assert_eq!(cpu.sr, 0x001F); // Entire SR updated
@@ -515,9 +545,11 @@ fn test_exec_link_unlk() {
     cpu.a[7] = 0x3000;
     cpu.a[0] = 0x12345678; // Frame pointer reg
     let displacement: i16 = -16;
+    cpu.pc = 0x1002;
+    memory.write_word(0x1002, displacement as u16);
 
     // Test LINK
-    let cycles = exec_link(&mut cpu, 0, displacement, &mut memory);
+    let cycles = run_op(&mut cpu, &mut memory, |c, m| exec_link(c, 0, m));
     assert_eq!(cycles, 16);
 
     // SP should be decremented by 4 (push An), then set to An, then decremented by 16
@@ -529,7 +561,7 @@ fn test_exec_link_unlk() {
     assert_eq!(cpu.a[7], 0x2FEC); // SP allocated locals
 
     // Test UNLK
-    let cycles_unlk = exec_unlk(&mut cpu, 0, &mut memory);
+    let cycles_unlk = run_op(&mut cpu, &mut memory, |c, m| exec_unlk(c, 0, m));
     assert_eq!(cycles_unlk, 12);
 
     // SP should be loaded from A0 (0x2FFC)

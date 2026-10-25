@@ -3,6 +3,7 @@
 use crate::cpu::decoder::Size;
 use crate::cpu::ops::data::exec_movep;
 use crate::cpu::test_utils::create_cpu;
+use crate::cpu::test_utils::run_op;
 use crate::memory::MemoryInterface;
 
 #[test]
@@ -26,7 +27,9 @@ fn test_movep_word_mem_to_reg() {
     memory.write_byte(0x2006, 0xBB);
 
     // Execute: size=Word, reg=0 (D0), an=0 (A0), reg_to_mem=false
-    let cycles = exec_movep(&mut cpu, Size::Word, 0, 0, false, &mut memory);
+    let cycles = run_op(&mut cpu, &mut memory, |c, m| {
+        exec_movep(c, Size::Word, 0, 0, false, m)
+    });
 
     assert_eq!(cycles, 16);
     assert_eq!(cpu.pc, 0x1002); // PC should advance by 2 (displacement word)
@@ -56,7 +59,9 @@ fn test_movep_word_reg_to_mem() {
     memory.write_byte(0x3004, 0x00);
 
     // Execute: size=Word, reg=0 (D0), an=0 (A0), reg_to_mem=true
-    let cycles = exec_movep(&mut cpu, Size::Word, 0, 0, true, &mut memory);
+    let cycles = run_op(&mut cpu, &mut memory, |c, m| {
+        exec_movep(c, Size::Word, 0, 0, true, m)
+    });
 
     assert_eq!(cycles, 16);
     assert_eq!(cpu.pc, 0x1002);
@@ -91,7 +96,9 @@ fn test_movep_long_mem_to_reg() {
     memory.write_byte(0x4006, 0x44);
 
     // Execute: size=Long, reg=1 (D1), an=1 (A1), reg_to_mem=false
-    let cycles = exec_movep(&mut cpu, Size::Long, 1, 1, false, &mut memory);
+    let cycles = run_op(&mut cpu, &mut memory, |c, m| {
+        exec_movep(c, Size::Long, 1, 1, false, m)
+    });
 
     assert_eq!(cycles, 24);
     assert_eq!(cpu.pc, 0x1002);
@@ -116,7 +123,9 @@ fn test_movep_long_reg_to_mem() {
     memory.write_word(cpu.pc, 0x000A);
 
     // Execute: size=Long, reg=2 (D2), an=2 (A2), reg_to_mem=true
-    let cycles = exec_movep(&mut cpu, Size::Long, 2, 2, true, &mut memory);
+    let cycles = run_op(&mut cpu, &mut memory, |c, m| {
+        exec_movep(c, Size::Long, 2, 2, true, m)
+    });
 
     assert_eq!(cycles, 24);
     assert_eq!(cpu.pc, 0x1002);
@@ -152,7 +161,9 @@ fn test_movep_negative_displacement() {
     memory.write_byte(0x6000, 0x99);
 
     // Execute: size=Word, reg=0 (D0), an=0 (A0), reg_to_mem=false
-    let cycles = exec_movep(&mut cpu, Size::Word, 0, 0, false, &mut memory);
+    let cycles = run_op(&mut cpu, &mut memory, |c, m| {
+        exec_movep(c, Size::Word, 0, 0, false, m)
+    });
 
     assert_eq!(cycles, 16);
 
@@ -181,7 +192,9 @@ fn test_movep_word_odd_address_mem_to_reg() {
     memory.write_byte(0x2005, 0x34);
 
     // Execute
-    let cycles = exec_movep(&mut cpu, Size::Word, 0, 0, false, &mut memory);
+    let cycles = run_op(&mut cpu, &mut memory, |c, m| {
+        exec_movep(c, Size::Word, 0, 0, false, m)
+    });
 
     assert_eq!(cycles, 16);
     assert_eq!(cpu.pc, 0x1002);
@@ -209,7 +222,9 @@ fn test_movep_word_odd_address_reg_to_mem() {
     memory.write_byte(0x3005, 0x00);
 
     // Execute
-    let cycles = exec_movep(&mut cpu, Size::Word, 0, 0, true, &mut memory);
+    let cycles = run_op(&mut cpu, &mut memory, |c, m| {
+        exec_movep(c, Size::Word, 0, 0, true, m)
+    });
 
     assert_eq!(cycles, 16);
     assert_eq!(cpu.pc, 0x1002);
@@ -243,7 +258,9 @@ fn test_movep_long_odd_address_mem_to_reg() {
     memory.write_byte(0x400B, 0x66);
 
     // Execute
-    let cycles = exec_movep(&mut cpu, Size::Long, 1, 1, false, &mut memory);
+    let cycles = run_op(&mut cpu, &mut memory, |c, m| {
+        exec_movep(c, Size::Long, 1, 1, false, m)
+    });
 
     assert_eq!(cycles, 24);
     assert_eq!(cpu.pc, 0x1002);
@@ -267,7 +284,9 @@ fn test_movep_long_odd_address_reg_to_mem() {
     memory.write_word(cpu.pc, 0x0004);
 
     // Execute
-    let cycles = exec_movep(&mut cpu, Size::Long, 2, 2, true, &mut memory);
+    let cycles = run_op(&mut cpu, &mut memory, |c, m| {
+        exec_movep(c, Size::Long, 2, 2, true, m)
+    });
 
     assert_eq!(cycles, 24);
     assert_eq!(cpu.pc, 0x1002);

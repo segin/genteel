@@ -73,7 +73,9 @@ harness is ignored by default because the data is external:
 git clone --depth 1 https://github.com/SingleStepTests/680x0.git
 mkdir harte && for f in 680x0/68000/v1/*.json.gz; do gunzip -c "$f" > harte/$(basename "${f%.gz}"); done
 HARTE_DIR=$PWD/harte cargo test --release --lib cpu::tests_harte::harte_run -- --ignored --nocapture
-# HARTE_ONLY=ASR limits the run to matching files; HARTE_SAMPLES=N sets failures printed per file.
+# HARTE_ONLY=ASR limits the run to matching files; HARTE_SAMPLES=N sets failures printed per file;
+# HARTE_EXC=1 also prints exception-case failures; HARTE_CYCLES=1 counts cycle-count mismatches
+# as failures (otherwise they are reported as a separate tally).
 ```
 
 ## 📜 License
