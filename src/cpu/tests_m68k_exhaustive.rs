@@ -141,8 +141,8 @@ fn exhaustive_m68k_add() {
             cpu.d[1] = b;
             cpu.sr = 0;
             cpu.pc = 0x1000;
-            cpu.invalidate_cache();
-            cpu.write_word(0x1000, opcodes[s_idx], &mut memory);
+
+            memory.write_word(0x1000, opcodes[s_idx]);
 
             cpu.step_instruction(&mut memory);
 
@@ -184,8 +184,8 @@ fn exhaustive_m68k_sub() {
             cpu.d[1] = b;
             cpu.sr = 0;
             cpu.pc = 0x1000;
-            cpu.invalidate_cache();
-            cpu.write_word(0x1000, opcodes[s_idx], &mut memory);
+
+            memory.write_word(0x1000, opcodes[s_idx]);
 
             cpu.step_instruction(&mut memory);
 
@@ -233,8 +233,8 @@ fn exhaustive_m68k_logic() {
             cpu.d[1] = b;
             cpu.sr = if x_init { flags::EXTEND } else { 0 };
             cpu.pc = 0x1000;
-            cpu.invalidate_cache();
-            cpu.write_word(0x1000, opcode, &mut memory);
+
+            memory.write_word(0x1000, opcode);
 
             cpu.step_instruction(&mut memory);
 
@@ -275,7 +275,7 @@ fn torture_m68k_address_error() {
     memory.write_long(0x0C, 0x2000);
 
     // MOVE.W D0, (A0) - Unaligned write
-    cpu.write_word(0x1000, 0x3080, &mut memory);
+    memory.write_word(0x1000, 0x3080);
     cpu.a[0] = 0x1001;
     cpu.pc = 0x1000;
 
@@ -300,7 +300,7 @@ fn torture_m68k_privilege_violation() {
     memory.write_long(0x20, 0x3000);
 
     // MOVE.W D0, SR - Privileged
-    cpu.write_word(0x1000, 0x46C0, &mut memory);
+    memory.write_word(0x1000, 0x46C0);
 
     // Switch to User Mode (clear S flag)
     cpu.set_sr(cpu.sr & !flags::SUPERVISOR);
@@ -323,7 +323,7 @@ fn torture_m68k_div_by_zero() {
     memory.write_long(0x14, 0x4000);
 
     // DIVU.W D1, D0
-    cpu.write_word(0x1000, 0x80C1, &mut memory);
+    memory.write_word(0x1000, 0x80C1);
     cpu.d[0] = 100;
     cpu.d[1] = 0; // Divisor 0
     cpu.pc = 0x1000;

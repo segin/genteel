@@ -730,6 +730,12 @@ impl MemoryInterface for Bus {
         self.vdp_stall_cycles = 0;
         cycles
     }
+    /// The Mega Drive bus ignores the write cycle of TAS (games such as
+    /// Gargoyles and Ex-Mutants depend on the byte staying unchanged).
+    #[inline]
+    fn tas_write_back(&self) -> bool {
+        false
+    }
 }
 
 impl Debuggable for Bus {

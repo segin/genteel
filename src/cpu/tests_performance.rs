@@ -1,3 +1,4 @@
+use crate::cpu::test_utils::run_op;
 use crate::cpu::{flags, Cpu};
 use crate::memory::{Memory, MemoryInterface};
 use std::time::Instant;
@@ -93,13 +94,9 @@ fn benchmark_movem_sparse() {
 
     for _ in 0..iterations {
         cpu.pc = 0x100;
-        exec_movem(
-            &mut cpu,
-            Size::Long,
-            true,
-            AddressingMode::AddressIndirect(0),
-            &mut memory,
-        );
+        run_op(&mut cpu, &mut memory, |c, m| {
+            exec_movem(c, Size::Long, true, AddressingMode::AddressIndirect(0), m)
+        });
     }
 
     let duration = start.elapsed();
@@ -130,13 +127,9 @@ fn benchmark_movem_dense() {
 
     for _ in 0..iterations {
         cpu.pc = 0x100;
-        exec_movem(
-            &mut cpu,
-            Size::Long,
-            true,
-            AddressingMode::AddressIndirect(0),
-            &mut memory,
-        );
+        run_op(&mut cpu, &mut memory, |c, m| {
+            exec_movem(c, Size::Long, true, AddressingMode::AddressIndirect(0), m)
+        });
     }
 
     let duration = start.elapsed();
@@ -166,13 +159,15 @@ fn benchmark_movem_predec_sparse() {
     for _ in 0..iterations {
         cpu.pc = 0x100;
         cpu.a[0] = 0x4000; // Reset A0 as it is modified in PreDec
-        exec_movem(
-            &mut cpu,
-            Size::Long,
-            true,
-            AddressingMode::AddressPreDecrement(0),
-            &mut memory,
-        );
+        run_op(&mut cpu, &mut memory, |c, m| {
+            exec_movem(
+                c,
+                Size::Long,
+                true,
+                AddressingMode::AddressPreDecrement(0),
+                m,
+            )
+        });
     }
 
     let duration = start.elapsed();
@@ -200,13 +195,15 @@ fn benchmark_movem_mem2reg_sparse() {
 
     for _ in 0..iterations {
         cpu.pc = 0x100;
-        exec_movem(
-            &mut cpu,
-            Size::Long,
-            false, // Mem to Reg
-            AddressingMode::AddressIndirect(0),
-            &mut memory,
-        );
+        run_op(&mut cpu, &mut memory, |c, m| {
+            exec_movem(
+                c,
+                Size::Long,
+                false, // Mem to Reg
+                AddressingMode::AddressIndirect(0),
+                m,
+            )
+        });
     }
 
     let duration = start.elapsed();

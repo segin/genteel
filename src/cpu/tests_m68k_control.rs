@@ -13,8 +13,8 @@ use crate::cpu::test_utils::{create_cpu, write_op};
 use crate::memory::MemoryInterface;
 
 fn push_rtr_frame(cpu: &mut Cpu, memory: &mut Memory, target_pc: u32, stacked_ccr_word: u16) {
-    cpu.push_long(target_pc, memory);
-    cpu.push_word(stacked_ccr_word, memory);
+    cpu.push_long(memory, target_pc).unwrap();
+    cpu.push_word(memory, stacked_ccr_word).unwrap();
 }
 
 // ============================================================================
@@ -639,9 +639,9 @@ fn test_link_unlk() {
 
     // UNLK A6
     write_op(&mut memory, &[0x4E5E][..]);
-    cpu.invalidate_cache();
+
     cpu.pc = 0x1000;
-    cpu.invalidate_cache();
+
     cpu.step_instruction(&mut memory);
     assert_eq!(cpu.a[6], 0x11111111);
     assert_eq!(cpu.a[7], 0x8000);
@@ -778,7 +778,8 @@ fn test_stop_supervisor_behavior() {
     cpu.step_instruction(&mut memory);
 
     assert_eq!(cpu.sr, 0x2200);
-    assert!(cpu.halted);
+    assert!(cpu.stopped);
+    assert!(!cpu.halted, "STOP is not a double-fault halt");
 }
 
 // ============================================================================
@@ -880,10 +881,10 @@ fn test_rtr_user_mode() {
     let target_ccr = 0x001F;
 
     // Push PC
-    cpu.push_long(target_pc, &mut memory);
+    cpu.push_long(&mut memory, target_pc).unwrap();
 
     // Push CCR
-    cpu.push_word(target_ccr, &mut memory);
+    cpu.push_word(&mut memory, target_ccr).unwrap();
 
     cpu.step_instruction(&mut memory);
 

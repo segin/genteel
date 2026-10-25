@@ -1,1978 +1,362 @@
-use crate::cpu::addressing::{calculate_ea, read_ea};
+//! Logical, shift/rotate, bit-manipulation and TAS instructions.
+
+use super::arithmetic::rmw;
+use crate::cpu::addressing::EffectiveAddress;
 use crate::cpu::decoder::{AddressingMode, BitSource, ShiftCount, Size};
-use crate::cpu::flags;
-use crate::cpu::Cpu;
+use crate::cpu::{flags, Cpu, Exec};
 use crate::memory::MemoryInterface;
 
-pub fn exec_and<M: MemoryInterface>(
+/// Binary logic operation shared by AND/OR/EOR and their immediate and
+/// CCR/SR forms.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogicOp {
+    And,
+    Or,
+    Eor,
+}
+
+impl LogicOp {
+    #[inline]
+    pub fn apply(self, a: u32, b: u32) -> u32 {
+        match self {
+            LogicOp::And => a & b,
+            LogicOp::Or => a | b,
+            LogicOp::Eor => a ^ b,
+        }
+    }
+}
+
+/// AND/OR/EOR between a data register and `<ea>` in either direction.
+pub fn exec_logic<M: MemoryInterface>(
     cpu: &mut Cpu,
     size: Size,
     src: AddressingMode,
     dst: AddressingMode,
-    _direction: bool,
+    op: LogicOp,
     memory: &mut M,
-) -> u32 {
-    let mut cycles = 4u32;
-
-    let (src_ea, src_cycles) = calculate_ea(src, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
-    cycles += src_cycles;
-    let src_val = cpu.cpu_read_ea(src_ea, size, memory);
-
-    let (dst_ea, dst_cycles) = calculate_ea(dst, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
-    cycles += dst_cycles;
-    let dst_val = cpu.cpu_read_ea(dst_ea, size, memory);
-
-    let result = src_val & dst_val;
-
-    cpu.cpu_write_ea(dst_ea, size, result, memory);
-
-    cpu.update_nz_flags(result, size);
-    cpu.set_flag(flags::OVERFLOW, false);
-    cpu.set_flag(flags::CARRY, false);
-
-    cycles
+) -> Exec {
+    match (src, dst) {
+        (_, AddressingMode::DataRegister(dn)) if op != LogicOp::Eor => {
+            let ea = cpu.calc_ea(src, size, memory);
+            let s = cpu.read_operand(ea, size, memory)?;
+            cpu.prefetch();
+            if size == Size::Long {
+                cpu.idle(if matches!(ea, EffectiveAddress::Memory(_)) {
+                    2
+                } else {
+                    4
+                });
+            }
+            let d = cpu.d[dn as usize];
+            let res = op.apply(d, s) & size.mask();
+            cpu.d[dn as usize] = size.apply(d, res);
+            cpu.set_logic_flags(res, size);
+            Ok(())
+        }
+        (AddressingMode::DataRegister(sreg), _) => {
+            let s = cpu.d[sreg as usize];
+            rmw(cpu, size, dst, memory, 4, |cpu, d| {
+                let res = op.apply(d, s) & size.mask();
+                cpu.set_logic_flags(res, size);
+                res
+            })
+        }
+        _ => Ok(()),
+    }
 }
 
-pub fn exec_andi<M: MemoryInterface>(
+/// ANDI/ORI/EORI #imm,<ea>.
+pub fn exec_logic_imm<M: MemoryInterface>(
     cpu: &mut Cpu,
     size: Size,
     dst: AddressingMode,
+    op: LogicOp,
     memory: &mut M,
-) -> u32 {
-    let imm = match size {
-        Size::Byte => (cpu.read_word(cpu.pc, memory) & 0xFF) as u32,
-        Size::Word => cpu.read_word(cpu.pc, memory) as u32,
-        Size::Long => cpu.read_long(cpu.pc, memory),
-    };
-    cpu.pc = cpu.pc.wrapping_add(if size == Size::Long { 4 } else { 2 });
-
-    let (dst_ea, cycles) = calculate_ea(dst, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
-    let dst_val = cpu.cpu_read_ea(dst_ea, size, memory);
-
-    let result = dst_val & imm;
-    cpu.cpu_write_ea(dst_ea, size, result, memory);
-
-    cpu.update_nz_flags(result, size);
-    cpu.set_flag(flags::CARRY, false);
-    cpu.set_flag(flags::OVERFLOW, false);
-
-    8 + cycles
+) -> Exec {
+    let imm = cpu.fetch_immediate(size, memory);
+    rmw(cpu, size, dst, memory, 4, |cpu, d| {
+        let res = op.apply(d, imm) & size.mask();
+        cpu.set_logic_flags(res, size);
+        res
+    })
 }
 
-pub fn exec_or<M: MemoryInterface>(
-    cpu: &mut Cpu,
-    size: Size,
-    src: AddressingMode,
-    dst: AddressingMode,
-    _direction: bool,
-    memory: &mut M,
-) -> u32 {
-    let mut cycles = 4u32;
-
-    let (src_ea, src_cycles) = calculate_ea(src, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
-    cycles += src_cycles;
-    let src_val = cpu.cpu_read_ea(src_ea, size, memory);
-
-    let (dst_ea, dst_cycles) = calculate_ea(dst, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
-    cycles += dst_cycles;
-    let dst_val = cpu.cpu_read_ea(dst_ea, size, memory);
-
-    let result = src_val | dst_val;
-
-    cpu.cpu_write_ea(dst_ea, size, result, memory);
-
-    cpu.update_nz_flags(result, size);
-    cpu.set_flag(flags::OVERFLOW, false);
-    cpu.set_flag(flags::CARRY, false);
-
-    cycles
-}
-
-pub fn exec_ori<M: MemoryInterface>(
-    cpu: &mut Cpu,
-    size: Size,
-    dst: AddressingMode,
-    memory: &mut M,
-) -> u32 {
-    let imm = match size {
-        Size::Byte => (cpu.read_word(cpu.pc, memory) & 0xFF) as u32,
-        Size::Word => cpu.read_word(cpu.pc, memory) as u32,
-        Size::Long => cpu.read_long(cpu.pc, memory),
-    };
-    cpu.pc = cpu.pc.wrapping_add(if size == Size::Long { 4 } else { 2 });
-
-    let (dst_ea, cycles) = calculate_ea(dst, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
-    let dst_val = cpu.cpu_read_ea(dst_ea, size, memory);
-
-    let result = dst_val | imm;
-    cpu.cpu_write_ea(dst_ea, size, result, memory);
-
-    cpu.update_nz_flags(result, size);
-    cpu.set_flag(flags::CARRY, false);
-    cpu.set_flag(flags::OVERFLOW, false);
-
-    8 + cycles
-}
-
-pub fn exec_eor<M: MemoryInterface>(
-    cpu: &mut Cpu,
-    size: Size,
-    src_reg: u8,
-    dst: AddressingMode,
-    memory: &mut M,
-) -> u32 {
-    let src_val = match size {
-        Size::Byte => cpu.d[src_reg as usize] & 0xFF,
-        Size::Word => cpu.d[src_reg as usize] & 0xFFFF,
-        Size::Long => cpu.d[src_reg as usize],
-    };
-
-    let (dst_ea, cycles) = calculate_ea(dst, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
-    let dst_val = cpu.cpu_read_ea(dst_ea, size, memory);
-
-    let result = src_val ^ dst_val;
-
-    cpu.cpu_write_ea(dst_ea, size, result, memory);
-
-    cpu.update_nz_flags(result, size);
-    cpu.set_flag(flags::OVERFLOW, false);
-    cpu.set_flag(flags::CARRY, false);
-
-    4 + cycles
-}
-
-pub fn exec_eori<M: MemoryInterface>(
-    cpu: &mut Cpu,
-    size: Size,
-    dst: AddressingMode,
-    memory: &mut M,
-) -> u32 {
-    let imm = match size {
-        Size::Byte => (cpu.read_word(cpu.pc, memory) & 0xFF) as u32,
-        Size::Word => cpu.read_word(cpu.pc, memory) as u32,
-        Size::Long => cpu.read_long(cpu.pc, memory),
-    };
-    cpu.pc = cpu.pc.wrapping_add(if size == Size::Long { 4 } else { 2 });
-
-    let (dst_ea, cycles) = calculate_ea(dst, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
-    let dst_val = cpu.cpu_read_ea(dst_ea, size, memory);
-
-    let result = dst_val ^ imm;
-    cpu.cpu_write_ea(dst_ea, size, result, memory);
-
-    cpu.update_nz_flags(result, size);
-    cpu.set_flag(flags::CARRY, false);
-    cpu.set_flag(flags::OVERFLOW, false);
-
-    8 + cycles
-}
-
+/// NOT <ea>.
 pub fn exec_not<M: MemoryInterface>(
     cpu: &mut Cpu,
     size: Size,
     dst: AddressingMode,
     memory: &mut M,
-) -> u32 {
-    let (dst_ea, cycles) = calculate_ea(dst, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
-    let val = read_ea(dst_ea, size, &cpu.d, &cpu.a, memory);
-
-    let result = !val;
-
-    cpu.cpu_write_ea(dst_ea, size, result, memory);
-
-    cpu.update_nz_flags(result, size);
-    cpu.set_flag(flags::OVERFLOW, false);
-    cpu.set_flag(flags::CARRY, false);
-
-    4 + cycles
+) -> Exec {
+    rmw(cpu, size, dst, memory, 2, |cpu, v| {
+        let res = !v & size.mask();
+        cpu.set_logic_flags(res, size);
+        res
+    })
 }
 
-fn calculate_shift_left(
-    val: u32,
-    count_val: u32,
-    size_bits: u32,
-    mask: u32,
-    arithmetic: bool,
-) -> (u32, bool, bool) {
-    let result;
-    let carry;
-    let mut overflow = false;
+/// The eight shift/rotate operations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShiftOp {
+    Asl,
+    Asr,
+    Lsl,
+    Lsr,
+    Rol,
+    Ror,
+    Roxl,
+    Roxr,
+}
 
-    if count_val >= size_bits {
-        result = 0;
-        carry = if count_val == size_bits {
-            (val & 1) != 0
-        } else {
-            false
+/// Result of a shift or rotate: value, C, V and the new X (None leaves X
+/// unchanged).
+pub struct ShiftResult {
+    pub value: u32,
+    pub carry: bool,
+    pub overflow: bool,
+    pub extend: Option<bool>,
+}
+
+/// Compute a shift/rotate of `val` (masked to `size`) by `count` with the
+/// incoming X flag `x`.
+pub fn shift_value(op: ShiftOp, size: Size, val: u32, count: u32, x: bool) -> ShiftResult {
+    let bits = size.bits();
+    let mask = size.mask();
+    let msb = size.sign_bit();
+    let val = val & mask;
+    if count == 0 {
+        /* No shift: C is cleared (or copies X for ROXL/ROXR), X unchanged. */
+        let carry = matches!(op, ShiftOp::Roxl | ShiftOp::Roxr) && x;
+        return ShiftResult {
+            value: val,
+            carry,
+            overflow: false,
+            extend: None,
         };
-        if arithmetic {
-            // For ASL, overflow occurs if the result is not the same as the original value multiplied by 2^n
-            // which for large shifts means we lost non-zero bits.
-            overflow = val != 0;
-        }
-    } else {
-        carry = ((val >> (size_bits - count_val)) & 1) != 0;
-        result = (val << count_val) & mask;
-        if arithmetic {
-            // Check if the bits that passed through the MSB were all consistent
-            // This means bits [size-1 .. size-1-count] must be all 0s or all 1s.
-            // Mask for these bits:
-            let check_mask = mask & (!0u32 << (size_bits - count_val - 1));
-            let masked = val & check_mask;
-            overflow = (masked != 0) && (masked != check_mask);
-        }
     }
-
-    (result, carry, overflow)
-}
-
-fn calculate_shift_right(
-    val: u32,
-    count_val: u32,
-    size_bits: u32,
-    mask: u32,
-    sign_bit: u32,
-    arithmetic: bool,
-) -> (u32, bool, bool) {
-    let result;
-    let carry;
-
-    if count_val >= size_bits {
-        // Result: ASR sign-extends a negative operand to all-ones; LSR (and ASR
-        // of a non-negative operand) goes to zero.
-        result = if arithmetic && (val & sign_bit) != 0 {
-            mask
-        } else {
-            0
-        };
-        // Carry is the last meaningful bit shifted out: the MSB/sign bit when the
-        // count exactly equals the size, and 0 once the count exceeds it. This
-        // holds for both ASR and LSR on the 68000 — the previous code wrongly
-        // latched carry=1 for ASR of a negative value with count > size.
-        carry = if count_val == size_bits {
-            (val & sign_bit) != 0
-        } else {
-            false
-        };
-    } else {
-        carry = ((val >> (count_val - 1)) & 1) != 0;
-        if arithmetic {
-            let shifted = val >> count_val;
-            if (val & sign_bit) != 0 {
-                // Sign extend
-                let sign_mask = mask & (!0u32 << (size_bits - count_val));
-                result = shifted | sign_mask;
+    match op {
+        ShiftOp::Asl | ShiftOp::Lsl => {
+            let (value, carry) = if count > bits {
+                (0, false)
+            } else if count == bits {
+                (0, val & 1 != 0)
             } else {
-                result = shifted;
+                ((val << count) & mask, (val >> (bits - count)) & 1 != 0)
+            };
+            /* ASL sets V if the sign bit changed at any point. */
+            let overflow = op == ShiftOp::Asl && {
+                if count >= bits {
+                    val != 0
+                } else {
+                    let check = mask & (mask << (bits - count - 1));
+                    let top = val & check;
+                    top != 0 && top != check
+                }
+            };
+            ShiftResult {
+                value,
+                carry,
+                overflow,
+                extend: Some(carry),
             }
-        } else {
-            result = val >> count_val;
+        }
+        ShiftOp::Asr | ShiftOp::Lsr => {
+            let negative = op == ShiftOp::Asr && val & msb != 0;
+            let (value, carry) = if count >= bits {
+                /* The last bit shifted out is the sign bit when the count
+                equals the size; beyond that C (and X) end up clear. */
+                let value = if negative { mask } else { 0 };
+                (value, count == bits && val & msb != 0)
+            } else {
+                let mut v = val >> count;
+                if negative {
+                    v |= mask & !(mask >> count);
+                }
+                (v, (val >> (count - 1)) & 1 != 0)
+            };
+            ShiftResult {
+                value,
+                carry,
+                overflow: false,
+                extend: Some(carry),
+            }
+        }
+        ShiftOp::Rol | ShiftOp::Ror => {
+            let n = count % bits;
+            let value = if n == 0 {
+                val
+            } else if op == ShiftOp::Rol {
+                ((val << n) | (val >> (bits - n))) & mask
+            } else {
+                ((val >> n) | (val << (bits - n))) & mask
+            };
+            let carry = if op == ShiftOp::Rol {
+                value & 1 != 0
+            } else {
+                value & msb != 0
+            };
+            ShiftResult {
+                value,
+                carry,
+                overflow: false,
+                extend: None,
+            }
+        }
+        ShiftOp::Roxl | ShiftOp::Roxr => {
+            /* A (bits + 1)-bit rotate through X. */
+            let n = count % (bits + 1);
+            let mut v = val;
+            let mut xb = x;
+            for _ in 0..n {
+                if op == ShiftOp::Roxl {
+                    let out = v & msb != 0;
+                    v = ((v << 1) | xb as u32) & mask;
+                    xb = out;
+                } else {
+                    let out = v & 1 != 0;
+                    v = (v >> 1) | if xb { msb } else { 0 };
+                    xb = out;
+                }
+            }
+            ShiftResult {
+                value: v,
+                carry: xb,
+                overflow: false,
+                extend: Some(xb),
+            }
         }
     }
-
-    (result, carry, false) // Right shift never overflows
 }
 
+fn apply_shift_flags(cpu: &mut Cpu, r: &ShiftResult, size: Size) {
+    cpu.update_nz_flags(r.value, size);
+    cpu.set_flag(flags::CARRY, r.carry);
+    cpu.set_flag(flags::OVERFLOW, r.overflow);
+    if let Some(x) = r.extend {
+        cpu.set_flag(flags::EXTEND, x);
+    }
+}
+
+/// Register shifts/rotates (`count` from immediate or Dn mod 64) and the
+/// one-bit memory forms.
 pub fn exec_shift<M: MemoryInterface>(
     cpu: &mut Cpu,
     size: Size,
     dst: AddressingMode,
     count: ShiftCount,
-    left: bool,
-    arithmetic: bool,
+    op: ShiftOp,
     memory: &mut M,
-) -> u32 {
-    let count_val = match count {
-        ShiftCount::Immediate(n) => n as u32,
-        ShiftCount::Register(r) => cpu.d[r as usize] & 63,
-    };
-
-    let (dst_ea, cycles) = calculate_ea(dst, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
-    let val = read_ea(dst_ea, size, &cpu.d, &cpu.a, memory);
-
-    let (mask, size_bits, sign_bit) = match size {
-        Size::Byte => (0xFFu32, 8u32, 0x80u32),
-        Size::Word => (0xFFFF, 16, 0x8000),
-        Size::Long => (0xFFFFFFFF, 32, 0x80000000),
-    };
-
-    let val = val & mask;
-    let mut result = val;
-    let mut carry = false;
-    let mut overflow = false;
-
-    if count_val > 0 {
-        if left {
-            let res = calculate_shift_left(val, count_val, size_bits, mask, arithmetic);
-            result = res.0;
-            carry = res.1;
-            overflow = res.2;
-        } else {
-            let res = calculate_shift_right(val, count_val, size_bits, mask, sign_bit, arithmetic);
-            result = res.0;
-            carry = res.1;
-            overflow = res.2;
-        }
-    }
-
-    cpu.cpu_write_ea(dst_ea, size, result, memory);
-
-    cpu.update_nz_flags(result, size);
-    if count_val > 0 {
-        cpu.set_flag(flags::CARRY, carry);
-        cpu.set_flag(flags::EXTEND, carry);
+) -> Exec {
+    let x = cpu.get_flag(flags::EXTEND);
+    if let AddressingMode::DataRegister(r) = dst {
+        let n = match count {
+            ShiftCount::Immediate(n) => n as u32,
+            ShiftCount::Register(c) => cpu.d[c as usize] & 63,
+        };
+        let res = shift_value(op, size, cpu.d[r as usize], n, x);
+        cpu.prefetch();
+        cpu.idle(if size == Size::Long { 4 } else { 2 } + 2 * n);
+        cpu.d[r as usize] = size.apply(cpu.d[r as usize], res.value);
+        apply_shift_flags(cpu, &res, size);
+        Ok(())
     } else {
-        cpu.set_flag(flags::CARRY, false);
+        rmw(cpu, Size::Word, dst, memory, 0, |cpu, v| {
+            let res = shift_value(op, Size::Word, v, 1, x);
+            apply_shift_flags(cpu, &res, Size::Word);
+            res.value
+        })
     }
-    cpu.set_flag(flags::OVERFLOW, overflow);
-
-    6 + cycles + 2 * count_val
 }
 
-pub fn exec_shift_mem<M: MemoryInterface>(
-    cpu: &mut Cpu,
-    dst: AddressingMode,
-    left: bool,
-    arithmetic: bool,
-    memory: &mut M,
-) -> u32 {
-    // Memory shifts are always word size, count 1
-    let cycles = exec_shift(
-        cpu,
-        Size::Word,
-        dst,
-        ShiftCount::Immediate(1),
-        left,
-        arithmetic,
-        memory,
-    );
-    // V is cleared for LSL/LSR/ASR memory shifts, but ASL still sets it when the
-    // sign bit changes during the shift (already computed by exec_shift via the
-    // arithmetic-left path), so only clear it for the non-ASL cases.
-    if !(left && arithmetic) {
-        cpu.set_flag(flags::OVERFLOW, false);
-    }
-    cycles + 2 // Memory shifts take 8 cycles + EA (exec_shift returns 6 + cycles + 2*1 = 8 + cycles)
-}
-
-pub fn exec_rotate<M: MemoryInterface>(
-    cpu: &mut Cpu,
-    size: Size,
-    dst: AddressingMode,
-    count: ShiftCount,
-    left: bool,
-    _extend: bool,
-    memory: &mut M,
-) -> u32 {
-    let count_val = match count {
-        ShiftCount::Immediate(n) => n as u32,
-        ShiftCount::Register(r) => cpu.d[r as usize] & 63,
-    };
-
-    let (dst_ea, cycles) = calculate_ea(dst, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
-    let val = read_ea(dst_ea, size, &cpu.d, &cpu.a, memory);
-
-    let (mask, bits) = match size {
-        Size::Byte => (0xFFu32, 8u32),
-        Size::Word => (0xFFFF, 16),
-        Size::Long => (0xFFFFFFFF, 32),
-    };
-
-    let val = val & mask;
-    let effective_count = count_val % bits;
-    let msb = 1 << (bits - 1);
-    let result;
-    let mut carry = false;
-
-    if left {
-        if effective_count == 0 {
-            result = val;
-            if count_val > 0 {
-                carry = (val & 1) != 0;
-            }
-        } else {
-            result = ((val << effective_count) | (val >> (bits - effective_count))) & mask;
-            carry = ((val >> (bits - effective_count)) & 1) != 0;
-        }
-    } else if effective_count == 0 {
-        result = val;
-        if count_val > 0 {
-            carry = (val & msb) != 0;
-        }
-    } else {
-        result = ((val >> effective_count) | (val << (bits - effective_count))) & mask;
-        carry = ((val >> (effective_count - 1)) & 1) != 0;
-    }
-
-    cpu.cpu_write_ea(dst_ea, size, result, memory);
-
-    cpu.update_nz_flags(result, size);
-    cpu.set_flag(flags::CARRY, carry);
-    cpu.set_flag(flags::OVERFLOW, false);
-
-    6 + cycles + 2 * count_val
-}
-
-pub fn exec_roxl<M: MemoryInterface>(
-    cpu: &mut Cpu,
-    size: Size,
-    dst: AddressingMode,
-    count: ShiftCount,
-    memory: &mut M,
-) -> u32 {
-    let count_val = match count {
-        ShiftCount::Immediate(n) => n as u32,
-        ShiftCount::Register(r) => cpu.d[r as usize] & 63,
-    };
-
-    let (dst_ea, cycles) = calculate_ea(dst, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
-    let val = cpu.cpu_read_ea(dst_ea, size, memory);
-
-    let (mask, msb) = match size {
-        Size::Byte => (0xFFu32, 0x80u32),
-        Size::Word => (0xFFFF, 0x8000),
-        Size::Long => (0xFFFFFFFF, 0x80000000),
-    };
-
-    let mut res = val & mask;
-    let mut x = cpu.get_flag(flags::EXTEND);
-    let mut last_carry = x;
-
-    for _ in 0..count_val {
-        let next_x = (res & msb) != 0;
-        res = ((res << 1) | (if x { 1 } else { 0 })) & mask;
-        x = next_x;
-        last_carry = x;
-    }
-
-    cpu.cpu_write_ea(dst_ea, size, res, memory);
-    cpu.update_nz_flags(res, size);
-    cpu.set_flag(flags::OVERFLOW, false);
-    if count_val > 0 {
-        cpu.set_flag(flags::CARRY, last_carry);
-        cpu.set_flag(flags::EXTEND, last_carry);
-    } else {
-        cpu.set_flag(flags::CARRY, cpu.get_flag(flags::EXTEND));
-    }
-
-    cycles + 6 + 2 * count_val
-}
-
-pub fn exec_roxr<M: MemoryInterface>(
-    cpu: &mut Cpu,
-    size: Size,
-    dst: AddressingMode,
-    count: ShiftCount,
-    memory: &mut M,
-) -> u32 {
-    let count_val = match count {
-        ShiftCount::Immediate(n) => n as u32,
-        ShiftCount::Register(r) => cpu.d[r as usize] & 63,
-    };
-
-    let (dst_ea, cycles) = calculate_ea(dst, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
-    let val = cpu.cpu_read_ea(dst_ea, size, memory);
-
-    let (mask, msb) = match size {
-        Size::Byte => (0xFFu32, 0x80u32),
-        Size::Word => (0xFFFF, 0x8000),
-        Size::Long => (0xFFFFFFFF, 0x80000000),
-    };
-
-    let mut res = val & mask;
-    let mut x = cpu.get_flag(flags::EXTEND);
-    let mut last_carry = x;
-
-    for _ in 0..count_val {
-        let next_x = (res & 1) != 0;
-        res = (res >> 1) | (if x { msb } else { 0 });
-        x = next_x;
-        last_carry = x;
-    }
-
-    cpu.cpu_write_ea(dst_ea, size, res, memory);
-    cpu.update_nz_flags(res, size);
-    cpu.set_flag(flags::OVERFLOW, false);
-    if count_val > 0 {
-        cpu.set_flag(flags::CARRY, last_carry);
-        cpu.set_flag(flags::EXTEND, last_carry);
-    } else {
-        cpu.set_flag(flags::CARRY, cpu.get_flag(flags::EXTEND));
-    }
-
-    cycles + 6 + 2 * count_val
-}
-
-enum BitOp {
+/// The four bit operations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BitOp {
     Test,
     Set,
     Clear,
     Change,
 }
 
-fn exec_bit_instruction<M: MemoryInterface>(
+/// BTST/BSET/BCLR/BCHG with a static (#imm) or dynamic (Dn) bit number.
+/// Register operands use bit number mod 32, memory operands mod 8.
+pub fn exec_bit<M: MemoryInterface>(
     cpu: &mut Cpu,
     bit: BitSource,
     dst: AddressingMode,
-    memory: &mut M,
     op: BitOp,
-) -> u32 {
-    let bit_num = cpu.fetch_bit_num(bit, memory);
-    let is_memory = !matches!(dst, AddressingMode::DataRegister(_));
-    let size = if is_memory { Size::Byte } else { Size::Long };
-
-    let mut cycles = if matches!(op, BitOp::Test) {
-        4u32
-    } else {
-        8u32
+    memory: &mut M,
+) -> Exec {
+    let bit_num = match bit {
+        BitSource::Immediate => (cpu.ext_word(memory) & 0xFF) as u32,
+        BitSource::Register(r) => cpu.d[r as usize],
     };
-    let (dst_ea, dst_cycles) = calculate_ea(dst, size, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
-    cycles += dst_cycles;
-
-    let val = cpu.cpu_read_ea(dst_ea, size, memory);
-    let bit_idx = cpu.resolve_bit_index(bit_num, is_memory);
-    let bit_val = (val >> bit_idx) & 1;
-
-    cpu.set_flag(flags::ZERO, bit_val == 0);
-
-    match op {
-        BitOp::Test => {
-            if is_memory {
-                cycles += 4;
-            } else {
-                cycles += 6;
+    let modify = |v: u32, mask: u32| match op {
+        BitOp::Test => v,
+        BitOp::Set => v | mask,
+        BitOp::Clear => v & !mask,
+        BitOp::Change => v ^ mask,
+    };
+    if let AddressingMode::DataRegister(r) = dst {
+        let n = bit_num & 31;
+        let mask = 1u32 << n;
+        let v = cpu.d[r as usize];
+        cpu.set_flag(flags::ZERO, v & mask == 0);
+        cpu.prefetch();
+        cpu.idle(match op {
+            BitOp::Test => 2,
+            BitOp::Clear => {
+                if n < 16 {
+                    4
+                } else {
+                    6
+                }
             }
-        }
-        BitOp::Set => {
-            let new_val = val | (1 << bit_idx);
-            cpu.cpu_write_ea(dst_ea, size, new_val, memory);
-        }
-        BitOp::Clear => {
-            let new_val = val & !(1 << bit_idx);
-            cpu.cpu_write_ea(dst_ea, size, new_val, memory);
-        }
-        BitOp::Change => {
-            let new_val = val ^ (1 << bit_idx);
-            cpu.cpu_write_ea(dst_ea, size, new_val, memory);
-        }
-    }
-
-    cycles
-}
-
-pub fn exec_btst<M: MemoryInterface>(
-    cpu: &mut Cpu,
-    bit: BitSource,
-    dst: AddressingMode,
-    memory: &mut M,
-) -> u32 {
-    exec_bit_instruction(cpu, bit, dst, memory, BitOp::Test)
-}
-
-pub fn exec_bset<M: MemoryInterface>(
-    cpu: &mut Cpu,
-    bit: BitSource,
-    dst: AddressingMode,
-    memory: &mut M,
-) -> u32 {
-    exec_bit_instruction(cpu, bit, dst, memory, BitOp::Set)
-}
-
-pub fn exec_bclr<M: MemoryInterface>(
-    cpu: &mut Cpu,
-    bit: BitSource,
-    dst: AddressingMode,
-    memory: &mut M,
-) -> u32 {
-    exec_bit_instruction(cpu, bit, dst, memory, BitOp::Clear)
-}
-
-pub fn exec_bchg<M: MemoryInterface>(
-    cpu: &mut Cpu,
-    bit: BitSource,
-    dst: AddressingMode,
-    memory: &mut M,
-) -> u32 {
-    exec_bit_instruction(cpu, bit, dst, memory, BitOp::Change)
-}
-
-pub fn exec_tas<M: MemoryInterface>(cpu: &mut Cpu, dst: AddressingMode, memory: &mut M) -> u32 {
-    let mut cycles = 4u32;
-    let (dst_ea, dst_cycles) =
-        calculate_ea(dst, Size::Byte, &mut cpu.d, &mut cpu.a, &mut cpu.pc, memory);
-    cycles += dst_cycles;
-
-    let val = cpu.cpu_read_ea(dst_ea, Size::Byte, memory) as u8;
-
-    // Set flags based on original value
-    cpu.set_flag(flags::NEGATIVE, (val & 0x80) != 0);
-    cpu.set_flag(flags::ZERO, val == 0);
-    cpu.set_flag(flags::OVERFLOW, false);
-    cpu.set_flag(flags::CARRY, false);
-
-    // Set high bit (atomically on real hardware)
-    let new_val = val | 0x80;
-    cpu.cpu_write_ea(dst_ea, Size::Byte, new_val as u32, memory);
-
-    cycles + 4
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::cpu::decoder::{AddressingMode, ShiftCount, Size};
-    use crate::cpu::flags;
-    use crate::cpu::Cpu;
-    use crate::memory::Memory;
-
-    fn create_test_setup() -> (Cpu, Memory) {
-        let mut memory = Memory::new(0x10000);
-        // Initialize memory with basic vector table
-        memory.write_long(0x0, 0x8000); // Stack pointer
-        memory.write_long(0x4, 0x1000); // PC
-        let cpu = Cpu::new(&mut memory);
-        (cpu, memory)
-    }
-
-    #[test]
-    fn test_exec_or_byte() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x123456AA;
-        cpu.d[1] = 0x77665555;
-
-        let cycles = exec_or(
-            &mut cpu,
-            Size::Byte,
-            AddressingMode::DataRegister(0),
-            AddressingMode::DataRegister(1),
-            true,
-            &mut memory,
-        );
-
-        assert_eq!(cpu.d[1], 0x776655FF); // 0xAA | 0x55 = 0xFF
-        assert!(cpu.get_flag(flags::NEGATIVE));
-        assert!(!cpu.get_flag(flags::ZERO));
-        assert!(!cpu.get_flag(flags::CARRY));
-        assert!(!cpu.get_flag(flags::OVERFLOW));
-        assert_eq!(cycles, 4);
-    }
-
-    #[test]
-    fn test_exec_or_word() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x1234F0F0;
-        cpu.d[1] = 0x77660F0F;
-
-        let cycles = exec_or(
-            &mut cpu,
-            Size::Word,
-            AddressingMode::DataRegister(0),
-            AddressingMode::DataRegister(1),
-            true,
-            &mut memory,
-        );
-
-        assert_eq!(cpu.d[1], 0x7766FFFF); // 0xF0F0 | 0x0F0F = 0xFFFF
-        assert!(cpu.get_flag(flags::NEGATIVE));
-        assert!(!cpu.get_flag(flags::ZERO));
-        assert_eq!(cycles, 4);
-    }
-
-    #[test]
-    fn test_exec_or_long() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0xF0F0F0F0;
-        cpu.d[1] = 0x0F0F0F0F;
-
-        let cycles = exec_or(
-            &mut cpu,
-            Size::Long,
-            AddressingMode::DataRegister(0),
-            AddressingMode::DataRegister(1),
-            true,
-            &mut memory,
-        );
-
-        assert_eq!(cpu.d[1], 0xFFFFFFFF);
-        assert!(cpu.get_flag(flags::NEGATIVE));
-        assert!(!cpu.get_flag(flags::ZERO));
-        assert_eq!(cycles, 4);
-    }
-
-    #[test]
-    fn test_exec_or_zero() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0;
-        cpu.d[1] = 0;
-        cpu.set_flag(flags::CARRY, true);
-        cpu.set_flag(flags::OVERFLOW, true);
-        cpu.set_flag(flags::NEGATIVE, true);
-
-        let cycles = exec_or(
-            &mut cpu,
-            Size::Long,
-            AddressingMode::DataRegister(0),
-            AddressingMode::DataRegister(1),
-            true,
-            &mut memory,
-        );
-
-        assert_eq!(cpu.d[1], 0);
-        assert!(!cpu.get_flag(flags::NEGATIVE));
-        assert!(cpu.get_flag(flags::ZERO));
-        assert!(!cpu.get_flag(flags::CARRY));
-        assert!(!cpu.get_flag(flags::OVERFLOW));
-        assert_eq!(cycles, 4);
-    }
-
-    #[test]
-    fn test_exec_or_memory() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x000000FF;
-        cpu.a[0] = 0x2000;
-        memory.write_byte(0x2000, 0x00);
-
-        // OR.B D0, (A0)
-        let cycles = exec_or(
-            &mut cpu,
-            Size::Byte,
-            AddressingMode::DataRegister(0),
-            AddressingMode::AddressIndirect(0),
-            true,
-            &mut memory,
-        );
-
-        assert_eq!(memory.read_byte(0x2000), 0xFF);
-        assert!(cpu.get_flag(flags::NEGATIVE));
-        assert!(!cpu.get_flag(flags::ZERO));
-        assert_eq!(cycles, 8); // 4 (base) + 0 (DataReg) + 4 (AddrIndirect)
-    }
-
-    #[test]
-    fn test_exec_or_flags_positive() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0x00;
-        cpu.d[1] = 0x7F; // Positive signed byte
-
-        // Set flags to ensure they are cleared correctly
-        cpu.set_flag(flags::NEGATIVE, true);
-        cpu.set_flag(flags::ZERO, true);
-        cpu.set_flag(flags::CARRY, true);
-        cpu.set_flag(flags::OVERFLOW, true);
-
-        let cycles = exec_or(
-            &mut cpu,
-            Size::Byte,
-            AddressingMode::DataRegister(0),
-            AddressingMode::DataRegister(1),
-            true,
-            &mut memory,
-        );
-
-        assert_eq!(cpu.d[1] & 0xFF, 0x7F);
-        assert!(!cpu.get_flag(flags::NEGATIVE));
-        assert!(!cpu.get_flag(flags::ZERO));
-        assert!(!cpu.get_flag(flags::CARRY));
-        assert!(!cpu.get_flag(flags::OVERFLOW));
-        assert_eq!(cycles, 4);
-    }
-
-    #[test]
-    fn test_exec_or_post_increment() {
-        let (mut cpu, mut memory) = create_test_setup();
-        // Setup A0 to point to 0x2000
-        cpu.a[0] = 0x2000;
-        // Write value to memory at 0x2000
-        memory.write_byte(0x2000, 0x11);
-
-        // Setup D0 with 0x22
-        cpu.d[0] = 0x22;
-
-        // OR.B (A0)+, D0
-        let cycles = exec_or(
-            &mut cpu,
-            Size::Byte,
-            AddressingMode::AddressPostIncrement(0),
-            AddressingMode::DataRegister(0),
-            true,
-            &mut memory,
-        );
-
-        // Result: 0x11 | 0x22 = 0x33
-        assert_eq!(cpu.d[0] & 0xFF, 0x33);
-        // A0 should be incremented by 1 (Byte size)
-        assert_eq!(cpu.a[0], 0x2001);
-
-        assert_eq!(cycles, 8);
-    }
-
-    #[test]
-    fn test_exec_or_complex_patterns() {
-        let (mut cpu, mut memory) = create_test_setup();
-
-        // Pattern 1: Alternating bits
-        cpu.d[0] = 0xAAAAAAAA;
-        cpu.d[1] = 0x55555555;
-
-        exec_or(
-            &mut cpu,
-            Size::Long,
-            AddressingMode::DataRegister(0),
-            AddressingMode::DataRegister(1),
-            true,
-            &mut memory,
-        );
-
-        assert_eq!(cpu.d[1], 0xFFFFFFFF);
-        assert!(cpu.get_flag(flags::NEGATIVE));
-        assert!(!cpu.get_flag(flags::ZERO));
-
-        // Pattern 2: Sparse bits
-        cpu.d[2] = 0x00010001;
-        cpu.d[3] = 0x10001000;
-
-        exec_or(
-            &mut cpu,
-            Size::Long,
-            AddressingMode::DataRegister(2),
-            AddressingMode::DataRegister(3),
-            true,
-            &mut memory,
-        );
-
-        assert_eq!(cpu.d[3], 0x10011001);
-        assert!(!cpu.get_flag(flags::NEGATIVE));
-        assert!(!cpu.get_flag(flags::ZERO));
-    }
-
-    #[test]
-    fn test_exec_lsl() {
-        let (mut cpu, mut memory) = create_test_setup();
-
-        // Case 1: LSL.B #1, D0 (0x01 -> 0x02)
-        cpu.d[0] = 0x01;
-        exec_shift(
-            &mut cpu,
-            Size::Byte,
-            AddressingMode::DataRegister(0),
-            ShiftCount::Immediate(1),
-            true,  // left
-            false, // arithmetic (logical for LSL)
-            &mut memory,
-        );
-        assert_eq!(cpu.d[0] & 0xFF, 0x02);
-        assert!(!cpu.get_flag(flags::CARRY));
-        assert!(!cpu.get_flag(flags::EXTEND));
-        assert!(!cpu.get_flag(flags::ZERO));
-        assert!(!cpu.get_flag(flags::NEGATIVE));
-        assert!(!cpu.get_flag(flags::OVERFLOW));
-
-        // Case 2: LSL.B #1, D0 (0x80 -> 0x00)
-        cpu.d[0] = 0x80;
-        exec_shift(
-            &mut cpu,
-            Size::Byte,
-            AddressingMode::DataRegister(0),
-            ShiftCount::Immediate(1),
-            true,
-            false,
-            &mut memory,
-        );
-        assert_eq!(cpu.d[0] & 0xFF, 0x00);
-        assert!(cpu.get_flag(flags::CARRY)); // Bit 7 shifted out
-        assert!(cpu.get_flag(flags::EXTEND));
-        assert!(cpu.get_flag(flags::ZERO));
-        assert!(!cpu.get_flag(flags::NEGATIVE));
-        assert!(!cpu.get_flag(flags::OVERFLOW)); // LSL clears V
-
-        // Case 3: LSL.B by 0, D0 (No change)
-        cpu.d[1] = 0; // Count = 0
-        cpu.d[0] = 0xFF;
-        cpu.set_flag(flags::CARRY, true); // Should be cleared
-        exec_shift(
-            &mut cpu,
-            Size::Byte,
-            AddressingMode::DataRegister(0),
-            ShiftCount::Register(1),
-            true,
-            false,
-            &mut memory,
-        );
-        assert_eq!(cpu.d[0] & 0xFF, 0xFF);
-        assert!(!cpu.get_flag(flags::CARRY)); // Cleared when count is 0
-        assert!(cpu.get_flag(flags::NEGATIVE));
-    }
-
-    #[test]
-    fn test_exec_lsr() {
-        let (mut cpu, mut memory) = create_test_setup();
-
-        // Case 1: LSR.B #1, D0 (0x02 -> 0x01)
-        cpu.d[0] = 0x02;
-        exec_shift(
-            &mut cpu,
-            Size::Byte,
-            AddressingMode::DataRegister(0),
-            ShiftCount::Immediate(1),
-            false, // right
-            false, // logical
-            &mut memory,
-        );
-        assert_eq!(cpu.d[0] & 0xFF, 0x01);
-        assert!(!cpu.get_flag(flags::CARRY));
-        assert!(!cpu.get_flag(flags::EXTEND));
-        assert!(!cpu.get_flag(flags::ZERO));
-        assert!(!cpu.get_flag(flags::NEGATIVE));
-        assert!(!cpu.get_flag(flags::OVERFLOW));
-
-        // Case 2: LSR.B #1, D0 (0x01 -> 0x00)
-        cpu.d[0] = 0x01;
-        exec_shift(
-            &mut cpu,
-            Size::Byte,
-            AddressingMode::DataRegister(0),
-            ShiftCount::Immediate(1),
-            false,
-            false,
-            &mut memory,
-        );
-        assert_eq!(cpu.d[0] & 0xFF, 0x00);
-        assert!(cpu.get_flag(flags::CARRY)); // Bit 0 shifted out
-        assert!(cpu.get_flag(flags::EXTEND));
-        assert!(cpu.get_flag(flags::ZERO));
-        assert!(!cpu.get_flag(flags::NEGATIVE));
-        assert!(!cpu.get_flag(flags::OVERFLOW));
-    }
-
-    #[test]
-    fn test_exec_asl() {
-        let (mut cpu, mut memory) = create_test_setup();
-
-        // Case 1: ASL.B #1, D0 (0x01 -> 0x02). V=0.
-        cpu.d[0] = 0x01;
-        exec_shift(
-            &mut cpu,
-            Size::Byte,
-            AddressingMode::DataRegister(0),
-            ShiftCount::Immediate(1),
-            true, // left
-            true, // arithmetic
-            &mut memory,
-        );
-        assert_eq!(cpu.d[0] & 0xFF, 0x02);
-        assert!(!cpu.get_flag(flags::OVERFLOW));
-        assert!(!cpu.get_flag(flags::CARRY));
-
-        // Case 2: ASL.B #1, D0 (0x40 -> 0x80). Sign change 0->1. V=1.
-        cpu.d[0] = 0x40;
-        exec_shift(
-            &mut cpu,
-            Size::Byte,
-            AddressingMode::DataRegister(0),
-            ShiftCount::Immediate(1),
-            true,
-            true,
-            &mut memory,
-        );
-        assert_eq!(cpu.d[0] & 0xFF, 0x80);
-        assert!(cpu.get_flag(flags::OVERFLOW));
-        assert!(cpu.get_flag(flags::NEGATIVE));
-        assert!(!cpu.get_flag(flags::CARRY));
-
-        // Case 3: ASL.B #1, D0 (0x80 -> 0x00). Sign change 1->0. V=1.
-        cpu.d[0] = 0x80;
-        exec_shift(
-            &mut cpu,
-            Size::Byte,
-            AddressingMode::DataRegister(0),
-            ShiftCount::Immediate(1),
-            true,
-            true,
-            &mut memory,
-        );
-        assert_eq!(cpu.d[0] & 0xFF, 0x00);
-        assert!(cpu.get_flag(flags::OVERFLOW));
-        assert!(cpu.get_flag(flags::ZERO));
-        assert!(cpu.get_flag(flags::CARRY));
-
-        // Case 4: ASL.B #1, D0 (0xC0 -> 0x80). Sign change 1->1. V=0.
-        cpu.d[0] = 0xC0;
-        exec_shift(
-            &mut cpu,
-            Size::Byte,
-            AddressingMode::DataRegister(0),
-            ShiftCount::Immediate(1),
-            true,
-            true,
-            &mut memory,
-        );
-        assert_eq!(cpu.d[0] & 0xFF, 0x80);
-        assert!(!cpu.get_flag(flags::OVERFLOW));
-        assert!(cpu.get_flag(flags::NEGATIVE));
-        assert!(cpu.get_flag(flags::CARRY));
-    }
-
-    #[test]
-    fn test_exec_asr() {
-        let (mut cpu, mut memory) = create_test_setup();
-
-        // Case 1: ASR.B #1, D0 (0x80 -> 0xC0). Sign preserved (-128 -> -64).
-        cpu.d[0] = 0x80;
-        exec_shift(
-            &mut cpu,
-            Size::Byte,
-            AddressingMode::DataRegister(0),
-            ShiftCount::Immediate(1),
-            false, // right
-            true,  // arithmetic
-            &mut memory,
-        );
-        assert_eq!(cpu.d[0] & 0xFF, 0xC0);
-        assert!(!cpu.get_flag(flags::CARRY));
-        assert!(!cpu.get_flag(flags::EXTEND));
-        assert!(!cpu.get_flag(flags::ZERO));
-        assert!(cpu.get_flag(flags::NEGATIVE));
-        assert!(!cpu.get_flag(flags::OVERFLOW));
-
-        // Case 2: ASR.B #1, D0 (0x02 -> 0x01).
-        cpu.d[0] = 0x02;
-        exec_shift(
-            &mut cpu,
-            Size::Byte,
-            AddressingMode::DataRegister(0),
-            ShiftCount::Immediate(1),
-            false,
-            true,
-            &mut memory,
-        );
-        assert_eq!(cpu.d[0] & 0xFF, 0x01);
-        assert!(!cpu.get_flag(flags::CARRY));
-        assert!(!cpu.get_flag(flags::EXTEND));
-        assert!(!cpu.get_flag(flags::ZERO));
-        assert!(!cpu.get_flag(flags::NEGATIVE));
-        assert!(!cpu.get_flag(flags::OVERFLOW));
-
-        // Case 3: ASR.B #1, D0 (0x01 -> 0x00). C=1.
-        cpu.d[0] = 0x01;
-        exec_shift(
-            &mut cpu,
-            Size::Byte,
-            AddressingMode::DataRegister(0),
-            ShiftCount::Immediate(1),
-            false,
-            true,
-            &mut memory,
-        );
-        assert_eq!(cpu.d[0] & 0xFF, 0x00);
-        assert!(cpu.get_flag(flags::CARRY));
-        assert!(cpu.get_flag(flags::EXTEND));
-        assert!(cpu.get_flag(flags::ZERO));
-        assert!(!cpu.get_flag(flags::NEGATIVE));
-    }
-
-    #[test]
-    fn test_exec_shift_counts() {
-        let (mut cpu, mut memory) = create_test_setup();
-
-        // Case 1: LSL.B #8, D0. 8 is large for byte (clears it).
-        // 0xFF -> 0x00.
-        cpu.d[0] = 0xFF;
-        exec_shift(
-            &mut cpu,
-            Size::Byte,
-            AddressingMode::DataRegister(0),
-            ShiftCount::Immediate(8),
-            true, // left
-            false,
-            &mut memory,
-        );
-        assert_eq!(cpu.d[0] & 0xFF, 0x00);
-        assert!(cpu.get_flag(flags::CARRY)); // Last bit shifted out was 1.
-        assert!(cpu.get_flag(flags::ZERO));
-
-        // Case 2: Register Count Modulo 63.
-        // D1 = 64 (0x40). 64 & 63 = 0.
-        // LSL.B D1, D0. Shift by 0.
-        cpu.d[1] = 64;
-        cpu.d[0] = 0xFF;
-        cpu.set_flag(flags::CARRY, true);
-        exec_shift(
-            &mut cpu,
-            Size::Byte,
-            AddressingMode::DataRegister(0),
-            ShiftCount::Register(1),
-            true,
-            false,
-            &mut memory,
-        );
-        assert_eq!(cpu.d[0] & 0xFF, 0xFF);
-        assert!(!cpu.get_flag(flags::CARRY)); // Cleared for count 0.
-
-        // Case 3: Register Count Modulo 63.
-        // D1 = 33 (0x21). 33 & 63 = 33.
-        // LSL.L D1, D0. Shift by 33.
-        // 0xFFFFFFFF << 33 = 0.
-        cpu.d[1] = 33;
-        cpu.d[0] = 0xFFFFFFFF;
-        exec_shift(
-            &mut cpu,
-            Size::Long,
-            AddressingMode::DataRegister(0),
-            ShiftCount::Register(1),
-            true,
-            false,
-            &mut memory,
-        );
-        assert_eq!(cpu.d[0], 0);
-        // Last shifted bit depends on the sequence.
-        // 32nd shift: 1 shifted out (result 0). 33rd shift: 0 shifted out (result 0).
-        // C should be 0.
-        assert!(!cpu.get_flag(flags::CARRY));
-    }
-
-    #[test]
-    fn test_exec_eor_byte() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0xFF;
-        cpu.d[1] = 0xAA;
-
-        let cycles = exec_eor(
-            &mut cpu,
-            Size::Byte,
-            0,
-            AddressingMode::DataRegister(1),
-            &mut memory,
-        );
-
-        assert_eq!(cpu.d[1] & 0xFF, 0x55); // 0xFF ^ 0xAA = 0x55
-        assert!(!cpu.get_flag(flags::NEGATIVE));
-        assert!(!cpu.get_flag(flags::ZERO));
-        assert!(!cpu.get_flag(flags::CARRY));
-        assert!(!cpu.get_flag(flags::OVERFLOW));
-        assert_eq!(cycles, 4); // 4 + 0 cycles
-    }
-
-    #[test]
-    fn test_exec_eor_word() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0xFFFF;
-        cpu.d[1] = 0xAAAA;
-
-        let cycles = exec_eor(
-            &mut cpu,
-            Size::Word,
-            0,
-            AddressingMode::DataRegister(1),
-            &mut memory,
-        );
-
-        assert_eq!(cpu.d[1] & 0xFFFF, 0x5555);
-        assert!(!cpu.get_flag(flags::NEGATIVE));
-        assert!(!cpu.get_flag(flags::ZERO));
-        assert_eq!(cycles, 4);
-    }
-
-    #[test]
-    fn test_exec_eor_long() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0xFFFFFFFF;
-        cpu.d[1] = 0xAAAAAAAA;
-
-        let cycles = exec_eor(
-            &mut cpu,
-            Size::Long,
-            0,
-            AddressingMode::DataRegister(1),
-            &mut memory,
-        );
-
-        assert_eq!(cpu.d[1], 0x55555555);
-        assert!(!cpu.get_flag(flags::NEGATIVE));
-        assert!(!cpu.get_flag(flags::ZERO));
-        assert_eq!(cycles, 4);
-    }
-
-    #[test]
-    fn test_exec_eor_memory() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0xFF;
-        memory.write_byte(0x2000, 0xAA);
-        cpu.a[0] = 0x2000;
-
-        let cycles = exec_eor(
-            &mut cpu,
-            Size::Byte,
-            0,
-            AddressingMode::AddressIndirect(0),
-            &mut memory,
-        );
-
-        assert_eq!(memory.read_byte(0x2000), 0x55);
-        assert!(!cpu.get_flag(flags::NEGATIVE));
-        assert!(!cpu.get_flag(flags::ZERO));
-        assert!(!cpu.get_flag(flags::CARRY));
-        assert!(!cpu.get_flag(flags::OVERFLOW));
-        assert_eq!(cycles, 8); // 4 + 4 cycles
-    }
-
-    #[test]
-    fn test_exec_eor_flags() {
-        let (mut cpu, mut memory) = create_test_setup();
-        // Test Zero flag
-        cpu.d[0] = 0xAA;
-        cpu.d[1] = 0xAA;
-        cpu.set_flag(flags::CARRY, true);
-        cpu.set_flag(flags::OVERFLOW, true);
-
-        exec_eor(
-            &mut cpu,
-            Size::Byte,
-            0,
-            AddressingMode::DataRegister(1),
-            &mut memory,
-        );
-
-        assert_eq!(cpu.d[1] & 0xFF, 0x00);
-        assert!(cpu.get_flag(flags::ZERO));
-        assert!(!cpu.get_flag(flags::NEGATIVE));
-        assert!(!cpu.get_flag(flags::CARRY));
-        assert!(!cpu.get_flag(flags::OVERFLOW));
-
-        // Test Negative flag
-        cpu.d[0] = 0x00;
-        cpu.d[1] = 0x80;
-
-        exec_eor(
-            &mut cpu,
-            Size::Byte,
-            0,
-            AddressingMode::DataRegister(1),
-            &mut memory,
-        );
-
-        assert_eq!(cpu.d[1] & 0xFF, 0x80);
-        assert!(!cpu.get_flag(flags::ZERO));
-        assert!(cpu.get_flag(flags::NEGATIVE));
-        assert!(!cpu.get_flag(flags::CARRY));
-        assert!(!cpu.get_flag(flags::OVERFLOW));
-    }
-
-    #[test]
-    fn test_exec_and_byte() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.d[0] = 0xAA;
-        cpu.d[1] = 0x55;
-
-        let cycles = exec_and(
-            &mut cpu,
-            Size::Byte,
-            AddressingMode::DataRegister(0),
-            AddressingMode::DataRegister(1),
-            true,
-            &mut memory,
-        );
-
-        assert_eq!(cpu.d[1] & 0xFF, 0x00); // 0xAA & 0x55 = 0x00
-        assert!(cpu.get_flag(flags::ZERO));
-        assert!(!cpu.get_flag(flags::NEGATIVE));
-        assert!(!cpu.get_flag(flags::CARRY));
-        assert!(!cpu.get_flag(flags::OVERFLOW));
-        assert_eq!(cycles, 4);
-
-        cpu.d[0] = 0xFF;
-        cpu.d[1] = 0xAA;
-
-        exec_and(
-            &mut cpu,
-            Size::Byte,
-            AddressingMode::DataRegister(0),
-            AddressingMode::DataRegister(1),
-            true,
-            &mut memory,
-        );
-
-        assert_eq!(cpu.d[1] & 0xFF, 0xAA); // 0xFF & 0xAA = 0xAA
-        assert!(!cpu.get_flag(flags::ZERO));
-        assert!(cpu.get_flag(flags::NEGATIVE));
-    }
-
-    struct TestCase {
-        desc: &'static str,
-        size: Size,
-        // If use_reg_count is true, count is put in D1 and Register(1) is used.
-        // Otherwise Immediate(count as u8) is used.
-        count: u32,
-        use_reg_count: bool,
-        left: bool,
-        arithmetic: bool,
-        initial_val: u32,
-        initial_x: bool,
-
-        // Expected results
-        expected_val: u32,
-        expected_c: bool,
-        expected_v: bool,
-        expected_z: bool,
-        expected_n: bool,
-        // If None, expects X to be same as expected_c.
-        // If Some(val), expects X to be val.
-        expected_x: Option<bool>,
-    }
-
-    fn run_shift_test_cases(cases: Vec<TestCase>) {
-        for case in cases {
-            let (mut cpu, mut memory) = create_test_setup();
-
-            // Setup operands
-            cpu.d[0] = case.initial_val;
-
-            let count_arg = if case.use_reg_count {
-                cpu.d[1] = case.count;
-                ShiftCount::Register(1)
-            } else {
-                ShiftCount::Immediate(case.count as u8)
-            };
-
-            // Setup initial flags
-            cpu.set_flag(flags::EXTEND, case.initial_x);
-            // Set other flags to known bad state to ensure they are updated
-            cpu.set_flag(flags::CARRY, !case.expected_c);
-            cpu.set_flag(flags::OVERFLOW, !case.expected_v);
-            cpu.set_flag(flags::ZERO, !case.expected_z);
-            cpu.set_flag(flags::NEGATIVE, !case.expected_n);
-
-            exec_shift(
-                &mut cpu,
-                case.size,
-                AddressingMode::DataRegister(0),
-                count_arg,
-                case.left,
-                case.arithmetic,
-                &mut memory,
-            );
-
-            // Mask result to size
-            let res_masked = match case.size {
-                Size::Byte => cpu.d[0] & 0xFF,
-                Size::Word => cpu.d[0] & 0xFFFF,
-                Size::Long => cpu.d[0],
-            };
-
-            assert_eq!(
-                res_masked, case.expected_val,
-                "{}: Value mismatch",
-                case.desc
-            );
-            assert_eq!(
-                cpu.get_flag(flags::CARRY),
-                case.expected_c,
-                "{}: C flag mismatch",
-                case.desc
-            );
-            assert_eq!(
-                cpu.get_flag(flags::OVERFLOW),
-                case.expected_v,
-                "{}: V flag mismatch",
-                case.desc
-            );
-            assert_eq!(
-                cpu.get_flag(flags::ZERO),
-                case.expected_z,
-                "{}: Z flag mismatch",
-                case.desc
-            );
-            assert_eq!(
-                cpu.get_flag(flags::NEGATIVE),
-                case.expected_n,
-                "{}: N flag mismatch",
-                case.desc
-            );
-
-            if let Some(expected_x) = case.expected_x {
-                assert_eq!(
-                    cpu.get_flag(flags::EXTEND),
-                    expected_x,
-                    "{}: X flag mismatch (Explicit)",
-                    case.desc
-                );
-            } else {
-                assert_eq!(
-                    cpu.get_flag(flags::EXTEND),
-                    case.expected_c,
-                    "{}: X flag mismatch (Implicit=C)",
-                    case.desc
-                );
+            _ => {
+                if n < 16 {
+                    2
+                } else {
+                    4
+                }
             }
+        });
+        cpu.d[r as usize] = modify(v, mask);
+        return Ok(());
+    }
+    let ea = cpu.calc_ea(dst, Size::Byte, memory);
+    let v = cpu.read_operand(ea, Size::Byte, memory)?;
+    let mask = 1u32 << (bit_num & 7);
+    cpu.set_flag(flags::ZERO, v & mask == 0);
+    cpu.prefetch();
+    if let EffectiveAddress::Immediate(_) = ea {
+        cpu.idle(2);
+    }
+    if op != BitOp::Test {
+        cpu.write_operand(ea, Size::Byte, modify(v, mask), memory)?;
+    }
+    Ok(())
+}
+
+/// TAS <ea>: test a byte and set its bit 7 using an indivisible
+/// read-modify-write cycle. When the bus drops TAS write-back (Mega Drive), the
+/// write half of the memory cycle has no effect.
+pub fn exec_tas<M: MemoryInterface>(cpu: &mut Cpu, dst: AddressingMode, memory: &mut M) -> Exec {
+    let ea = cpu.calc_ea(dst, Size::Byte, memory);
+    let v = cpu.read_operand(ea, Size::Byte, memory)?;
+    cpu.set_logic_flags(v, Size::Byte);
+    match ea {
+        EffectiveAddress::Memory(addr) => {
+            cpu.idle(2);
+            if memory.tas_write_back() {
+                cpu.write(memory, addr, Size::Byte, v | 0x80)?;
+            } else {
+                cpu.idle(4);
+            }
+            cpu.prefetch();
+            Ok(())
         }
-    }
-
-    #[test]
-    fn test_exec_shift_lsl() {
-        let cases = vec![
-            TestCase {
-                desc: "LSL.B #1, 0x01",
-                size: Size::Byte,
-                count: 1,
-                use_reg_count: false,
-                left: true,
-                arithmetic: false,
-                initial_val: 0x01,
-                initial_x: false,
-                expected_val: 0x02,
-                expected_c: false,
-                expected_v: false,
-                expected_z: false,
-                expected_n: false,
-                expected_x: None,
-            },
-            TestCase {
-                desc: "LSL.B #1, 0x80",
-                size: Size::Byte,
-                count: 1,
-                use_reg_count: false,
-                left: true,
-                arithmetic: false,
-                initial_val: 0x80,
-                initial_x: false,
-                expected_val: 0x00,
-                expected_c: true,
-                expected_v: false,
-                expected_z: true,
-                expected_n: false,
-                expected_x: None,
-            },
-            TestCase {
-                desc: "LSL.W #1, 0x0001",
-                size: Size::Word,
-                count: 1,
-                use_reg_count: false,
-                left: true,
-                arithmetic: false,
-                initial_val: 0x0001,
-                initial_x: false,
-                expected_val: 0x0002,
-                expected_c: false,
-                expected_v: false,
-                expected_z: false,
-                expected_n: false,
-                expected_x: None,
-            },
-            TestCase {
-                desc: "LSL.L #1, 0x00010000",
-                size: Size::Long,
-                count: 1,
-                use_reg_count: false,
-                left: true,
-                arithmetic: false,
-                initial_val: 0x00010000,
-                initial_x: false,
-                expected_val: 0x00020000,
-                expected_c: false,
-                expected_v: false,
-                expected_z: false,
-                expected_n: false,
-                expected_x: None,
-            },
-        ];
-        run_shift_test_cases(cases);
-    }
-
-    #[test]
-    fn test_exec_shift_lsr() {
-        let cases = vec![
-            TestCase {
-                desc: "LSR.B #1, 0x02",
-                size: Size::Byte,
-                count: 1,
-                use_reg_count: false,
-                left: false,
-                arithmetic: false,
-                initial_val: 0x02,
-                initial_x: false,
-                expected_val: 0x01,
-                expected_c: false,
-                expected_v: false,
-                expected_z: false,
-                expected_n: false,
-                expected_x: None,
-            },
-            TestCase {
-                desc: "LSR.B #1, 0x01",
-                size: Size::Byte,
-                count: 1,
-                use_reg_count: false,
-                left: false,
-                arithmetic: false,
-                initial_val: 0x01,
-                initial_x: false,
-                expected_val: 0x00,
-                expected_c: true,
-                expected_v: false,
-                expected_z: true,
-                expected_n: false,
-                expected_x: None,
-            },
-        ];
-        run_shift_test_cases(cases);
-    }
-
-    #[test]
-    fn test_exec_shift_asl() {
-        let cases = vec![
-            TestCase {
-                desc: "ASL.B #1, 0x40 (Overflow)",
-                size: Size::Byte,
-                count: 1,
-                use_reg_count: false,
-                left: true,
-                arithmetic: true,
-                initial_val: 0x40,
-                initial_x: false,
-                expected_val: 0x80,
-                expected_c: false,
-                expected_v: true,
-                expected_z: false,
-                expected_n: true,
-                expected_x: None,
-            },
-            TestCase {
-                desc: "ASL.B #1, 0x01",
-                size: Size::Byte,
-                count: 1,
-                use_reg_count: false,
-                left: true,
-                arithmetic: true,
-                initial_val: 0x01,
-                initial_x: false,
-                expected_val: 0x02,
-                expected_c: false,
-                expected_v: false,
-                expected_z: false,
-                expected_n: false,
-                expected_x: None,
-            },
-        ];
-        run_shift_test_cases(cases);
-    }
-
-    #[test]
-    fn test_exec_shift_asr() {
-        let cases = vec![
-            TestCase {
-                desc: "ASR.B #1, 0x80",
-                size: Size::Byte,
-                count: 1,
-                use_reg_count: false,
-                left: false,
-                arithmetic: true,
-                initial_val: 0x80,
-                initial_x: false,
-                expected_val: 0xC0,
-                expected_c: false,
-                expected_v: false,
-                expected_z: false,
-                expected_n: true,
-                expected_x: None,
-            },
-            TestCase {
-                desc: "ASR.B #1, 0x01",
-                size: Size::Byte,
-                count: 1,
-                use_reg_count: false,
-                left: false,
-                arithmetic: true,
-                initial_val: 0x01,
-                initial_x: false,
-                expected_val: 0x00,
-                expected_c: true,
-                expected_v: false,
-                expected_z: true,
-                expected_n: false,
-                expected_x: None,
-            },
-        ];
-        run_shift_test_cases(cases);
-    }
-
-    #[test]
-    fn test_exec_shift_edge_cases() {
-        let cases = vec![
-            TestCase {
-                desc: "LSL.B #0, 0xFF",
-                size: Size::Byte,
-                count: 0,
-                use_reg_count: false,
-                left: true,
-                arithmetic: false,
-                initial_val: 0xFF,
-                initial_x: true,
-                expected_val: 0xFF,
-                expected_c: false,
-                expected_v: false,
-                expected_z: false,
-                expected_n: true,
-                expected_x: Some(true),
-            },
-            TestCase {
-                desc: "LSL.B #8, 0xFF",
-                size: Size::Byte,
-                count: 8,
-                use_reg_count: false,
-                left: true,
-                arithmetic: false,
-                initial_val: 0xFF,
-                initial_x: false,
-                expected_val: 0x00,
-                expected_c: true,
-                expected_v: false,
-                expected_z: true,
-                expected_n: false,
-                expected_x: None,
-            },
-            TestCase {
-                desc: "LSL.B #9, 0xFF",
-                size: Size::Byte,
-                count: 9,
-                use_reg_count: false,
-                left: true,
-                arithmetic: false,
-                initial_val: 0xFF,
-                initial_x: false,
-                expected_val: 0x00,
-                expected_c: false,
-                expected_v: false,
-                expected_z: true,
-                expected_n: false,
-                expected_x: None,
-            },
-            TestCase {
-                desc: "LSL.B D1(0), 0xFF",
-                size: Size::Byte,
-                count: 0,
-                use_reg_count: true,
-                left: true,
-                arithmetic: false,
-                initial_val: 0xFF,
-                initial_x: true,
-                expected_val: 0xFF,
-                expected_c: false,
-                expected_v: false,
-                expected_z: false,
-                expected_n: true,
-                expected_x: Some(true),
-            },
-            TestCase {
-                desc: "LSL.B D1(64), 0xFF",
-                size: Size::Byte,
-                count: 64,
-                use_reg_count: true,
-                left: true,
-                arithmetic: false,
-                initial_val: 0xFF,
-                initial_x: true,
-                expected_val: 0xFF,
-                expected_c: false,
-                expected_v: false,
-                expected_z: false,
-                expected_n: true,
-                expected_x: Some(true),
-            },
-        ];
-        run_shift_test_cases(cases);
-    }
-
-    #[test]
-    fn test_exec_bit_ops_memory_modulo() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.a[0] = 0x2000;
-
-        // BSET bit 8 (mod 8 = 0)
-        memory.write_byte(0x2000, 0x00);
-        cpu.d[0] = 8;
-        exec_bset(
-            &mut cpu,
-            BitSource::Register(0),
-            AddressingMode::AddressIndirect(0),
-            &mut memory,
-        );
-        assert_eq!(memory.read_byte(0x2000), 0x01);
-        assert!(cpu.get_flag(flags::ZERO)); // bit 0 was clear
-
-        // BCLR bit 9 (mod 8 = 1)
-        memory.write_byte(0x2000, 0x02);
-        cpu.d[0] = 9;
-        exec_bclr(
-            &mut cpu,
-            BitSource::Register(0),
-            AddressingMode::AddressIndirect(0),
-            &mut memory,
-        );
-        assert_eq!(memory.read_byte(0x2000), 0x00);
-        assert!(!cpu.get_flag(flags::ZERO)); // bit 1 was set
-
-        // BCHG bit 10 (mod 8 = 2)
-        memory.write_byte(0x2000, 0x00);
-        cpu.d[0] = 10;
-        exec_bchg(
-            &mut cpu,
-            BitSource::Register(0),
-            AddressingMode::AddressIndirect(0),
-            &mut memory,
-        );
-        assert_eq!(memory.read_byte(0x2000), 0x04);
-        assert!(cpu.get_flag(flags::ZERO)); // bit 2 was clear
-
-        // BTST bit 11 (mod 8 = 3)
-        memory.write_byte(0x2000, 0x08);
-        cpu.d[0] = 11;
-        exec_btst(
-            &mut cpu,
-            BitSource::Register(0),
-            AddressingMode::AddressIndirect(0),
-            &mut memory,
-        );
-        assert!(!cpu.get_flag(flags::ZERO)); // bit 3 is set
-    }
-
-    #[test]
-    fn test_exec_bit_ops_register_modulo() {
-        let (mut cpu, mut memory) = create_test_setup();
-
-        // BSET bit 32 (mod 32 = 0)
-        cpu.d[0] = 0x00000000;
-        cpu.d[1] = 32;
-        exec_bset(
-            &mut cpu,
-            BitSource::Register(1),
-            AddressingMode::DataRegister(0),
-            &mut memory,
-        );
-        assert_eq!(cpu.d[0], 0x00000001);
-        assert!(cpu.get_flag(flags::ZERO));
-
-        // BCLR bit 33 (mod 32 = 1)
-        cpu.d[0] = 0x00000002;
-        cpu.d[1] = 33;
-        exec_bclr(
-            &mut cpu,
-            BitSource::Register(1),
-            AddressingMode::DataRegister(0),
-            &mut memory,
-        );
-        assert_eq!(cpu.d[0], 0x00000000);
-        assert!(!cpu.get_flag(flags::ZERO));
-    }
-
-    #[test]
-    fn test_exec_bset_memory_modulo_comprehensive() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.a[0] = 0x3000;
-
-        // BSET on memory: bit number modulo 8
-        // Test bits 0, 8, 16, 24 -> should all affect bit 0
-        let offsets: [u32; 5] = [0, 8, 16, 24, 32];
-        for &bit in &offsets {
-            memory.write_byte(0x3000, 0x00);
-            cpu.d[0] = bit;
-
-            // BSET D0, (A0)
-            exec_bset(
-                &mut cpu,
-                BitSource::Register(0),
-                AddressingMode::AddressIndirect(0),
-                &mut memory,
-            );
-
-            assert_eq!(
-                memory.read_byte(0x3000),
-                0x01,
-                "Bit {} (mod 8 = 0) did not set bit 0",
-                bit
-            );
-            assert!(
-                cpu.get_flag(flags::ZERO),
-                "Z flag should be set (bit was 0)"
-            );
-        }
-
-        // Test bits 1, 9, 17 -> should all affect bit 1
-        let offsets: [u32; 3] = [1, 9, 17];
-        for &bit in &offsets {
-            memory.write_byte(0x3000, 0x00);
-            cpu.d[0] = bit;
-
-            exec_bset(
-                &mut cpu,
-                BitSource::Register(0),
-                AddressingMode::AddressIndirect(0),
-                &mut memory,
-            );
-
-            assert_eq!(
-                memory.read_byte(0x3000),
-                0x02,
-                "Bit {} (mod 8 = 1) did not set bit 1",
-                bit
-            );
-            assert!(
-                cpu.get_flag(flags::ZERO),
-                "Z flag should be set (bit was 0)"
-            );
-        }
-
-        // Test edge case: bit 7, 15 -> bit 7
-        let offsets: [u32; 3] = [7, 15, 255];
-        for &bit in &offsets {
-            memory.write_byte(0x3000, 0x00);
-            cpu.d[0] = bit;
-
-            exec_bset(
-                &mut cpu,
-                BitSource::Register(0),
-                AddressingMode::AddressIndirect(0),
-                &mut memory,
-            );
-
-            assert_eq!(
-                memory.read_byte(0x3000),
-                0x80,
-                "Bit {} (mod 8 = 7) did not set bit 7",
-                bit
-            );
-            assert!(
-                cpu.get_flag(flags::ZERO),
-                "Z flag should be set (bit was 0)"
-            );
-        }
-    }
-
-    #[test]
-    fn test_exec_bclr_memory_modulo_comprehensive() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.a[0] = 0x3000;
-
-        // BCLR on memory: bit number modulo 8
-        // Test bits 0, 8, 16 -> should clear bit 0
-        let offsets: [u32; 3] = [0, 8, 16];
-        for &bit in &offsets {
-            memory.write_byte(0x3000, 0xFF); // Start with all set
-            cpu.d[0] = bit;
-
-            exec_bclr(
-                &mut cpu,
-                BitSource::Register(0),
-                AddressingMode::AddressIndirect(0),
-                &mut memory,
-            );
-
-            assert_eq!(
-                memory.read_byte(0x3000),
-                0xFE,
-                "Bit {} (mod 8 = 0) did not clear bit 0",
-                bit
-            );
-            assert!(
-                !cpu.get_flag(flags::ZERO),
-                "Z flag should be clear (bit was 1)"
-            );
-        }
-    }
-
-    #[test]
-    fn test_exec_bchg_memory_modulo_comprehensive() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.a[0] = 0x3000;
-
-        // BCHG on memory: bit number modulo 8
-        // Test bits 2, 10, 18 -> should toggle bit 2
-        let offsets: [u32; 3] = [2, 10, 18];
-        for &bit in &offsets {
-            // Case 1: Bit 2 is 0 -> 1
-            memory.write_byte(0x3000, 0x00);
-            cpu.d[0] = bit;
-
-            exec_bchg(
-                &mut cpu,
-                BitSource::Register(0),
-                AddressingMode::AddressIndirect(0),
-                &mut memory,
-            );
-
-            assert_eq!(
-                memory.read_byte(0x3000),
-                0x04,
-                "Bit {} (mod 8 = 2) did not toggle bit 2 (0->1)",
-                bit
-            );
-            assert!(
-                cpu.get_flag(flags::ZERO),
-                "Z flag should be set (bit was 0)"
-            );
-
-            // Case 2: Bit 2 is 1 -> 0
-            memory.write_byte(0x3000, 0xFF);
-            cpu.d[0] = bit;
-
-            exec_bchg(
-                &mut cpu,
-                BitSource::Register(0),
-                AddressingMode::AddressIndirect(0),
-                &mut memory,
-            );
-
-            assert_eq!(
-                memory.read_byte(0x3000),
-                0xFB,
-                "Bit {} (mod 8 = 2) did not toggle bit 2 (1->0)",
-                bit
-            );
-            assert!(
-                !cpu.get_flag(flags::ZERO),
-                "Z flag should be clear (bit was 1)"
-            );
-        }
-    }
-
-    #[test]
-    fn test_exec_btst_memory_modulo_comprehensive() {
-        let (mut cpu, mut memory) = create_test_setup();
-        cpu.a[0] = 0x3000;
-
-        // Bit 3 set, others clear
-        memory.write_byte(0x3000, 0x08);
-
-        // Test bits 3, 11, 19 -> should test bit 3 (which is 1)
-        let offsets: [u32; 3] = [3, 11, 19];
-        for &bit in &offsets {
-            cpu.d[0] = bit;
-            exec_btst(
-                &mut cpu,
-                BitSource::Register(0),
-                AddressingMode::AddressIndirect(0),
-                &mut memory,
-            );
-            assert!(
-                !cpu.get_flag(flags::ZERO),
-                "Bit {} (mod 8 = 3) should report not zero (bit set)",
-                bit
-            );
-        }
-
-        // Test bits 4, 12 -> should test bit 4 (which is 0)
-        let offsets: [u32; 2] = [4, 12];
-        for &bit in &offsets {
-            cpu.d[0] = bit;
-            exec_btst(
-                &mut cpu,
-                BitSource::Register(0),
-                AddressingMode::AddressIndirect(0),
-                &mut memory,
-            );
-            assert!(
-                cpu.get_flag(flags::ZERO),
-                "Bit {} (mod 8 = 4) should report zero (bit clear)",
-                bit
-            );
+        _ => {
+            cpu.prefetch();
+            cpu.write_operand(ea, Size::Byte, v | 0x80, memory)
         }
     }
 }

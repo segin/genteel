@@ -58,6 +58,13 @@ pub trait MemoryInterface: std::fmt::Debug {
     fn take_pending_stall_cycles(&mut self) -> u32 {
         0
     }
+
+    /// Whether the write half of a 68000 TAS read-modify-write cycle reaches
+    /// memory. A plain 68000 bus completes it (the default); the Mega Drive
+    /// bus arbiter does not, so TAS only tests the byte there.
+    fn tas_write_back(&self) -> bool {
+        true
+    }
 }
 
 pub trait IoInterface: std::fmt::Debug {
@@ -94,6 +101,9 @@ impl MemoryInterface for Box<dyn MemoryInterface> {
     fn take_pending_stall_cycles(&mut self) -> u32 {
         (**self).take_pending_stall_cycles()
     }
+    fn tas_write_back(&self) -> bool {
+        (**self).tas_write_back()
+    }
 }
 
 // Blanket impl for Box<T> where T: MemoryInterface
@@ -118,6 +128,9 @@ impl<T: MemoryInterface> MemoryInterface for Box<T> {
     }
     fn take_pending_stall_cycles(&mut self) -> u32 {
         (**self).take_pending_stall_cycles()
+    }
+    fn tas_write_back(&self) -> bool {
+        (**self).tas_write_back()
     }
 }
 
@@ -204,6 +217,10 @@ impl MemoryInterface for SharedBus {
 
     fn write_long(&mut self, address: u32, value: u32) {
         self.bus.borrow_mut().write_long(address, value);
+    }
+
+    fn tas_write_back(&self) -> bool {
+        self.bus.borrow().tas_write_back()
     }
 }
 
