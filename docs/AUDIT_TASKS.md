@@ -1,0 +1,863 @@
+# Code Audit Requirements (INCOSE / EARS)
+
+Source: comprehensive read-only audit, 2026-10-25 (8 parallel area auditors; top items re-verified by hand).
+Baseline: `cargo build` ✅, `cargo test` ✅ (1261 lib + 1291 bin, 0 failed, 2 ignored each), `cargo clippy --all-targets` ❌ (62 errors), `cargo fmt --check` ❌.
+Line numbers refer to commit `16b0b4f` plus the uncommitted working-tree changes of that date.
+
+## Conventions
+
+Each finding is restated as a single, verifiable requirement following the INCOSE *Guide to Writing Requirements* rules (one `shall` per statement, active voice, named subject, no "and/or", measurable criteria) using the EARS patterns:
+
+| Pattern | Template |
+|---|---|
+| **Ubiquitous** | The `<system>` shall `<response>`. |
+| **Event** | When `<trigger>`, the `<system>` shall `<response>`. |
+| **State** | While `<state>`, the `<system>` shall `<response>`. |
+| **Unwanted** | If `<unwanted condition>`, then the `<system>` shall `<response>`. |
+| **Optional** | Where `<feature is present>`, the `<system>` shall `<response>`. |
+| **Complex** | Combination of the above. |
+
+Fields: **ID** · **Severity** (C Critical, H High, M Medium, L Low, I Info) · **Pattern** — statement.
+*Evidence* = current defect and location. *Verify* = verification method (**T** Test, **I** Inspection, **A** Analysis, **D** Demonstration) and acceptance criterion.
+`(verified)` = re-checked by hand during the audit. `(plausible)` = auditor not fully certain; confirm against references before implementing.
+Status: `[ ]` open, `[x]` satisfied.
+
+---
+
+## 0. Uncommitted working-tree changes (UNC)
+
+- [ ] **UNC-01** · H · Event — When the M68k core executes ASR on a negative operand with a shift count greater than the operand size, the M68k core shall set the C and X flags to 1.
+  - *Evidence:* `src/cpu/ops/bits.rs:241-256` uncommitted hunk sets C/X=0; previous code was correct (Musashi agrees). (verified)
+  - *Verify:* T — `ASR.B D1,D0` with D0=$80, D1=9 yields D0.B=$FF, C=X=1. Revert hunk; add regression test.
+- [ ] **UNC-02** · I · Event — When the M68k core executes ASL on a memory operand and the sign bit changes during the shift, the M68k core shall set the V flag to 1.
+  - *Evidence:* `bits.rs:349-354` uncommitted hunk satisfies this. Keep.
+  - *Verify:* T — ASL.W (A0) on $4000 sets V=1.
+- [ ] **UNC-03** · H · Event — When the 68k reads the HV counter, the VDP shall return a V value equal to the line the renderer is producing at that master-clock position.
+  - *Evidence:* `src/vdp/mod.rs:879-894` advances V at tick 165 (H40)/133 (H32) ≈ pixel 227/180, while active display spans MCLK 860–3420; a CRAM write after polling V==N lands in line N−1 and `redraw_current_scanline_if_visible` repaints its right ~30%.
+  - *Verify:* T — HV-poll-then-CRAM-write test lands on line N; D — Road Rash II road bands align. Fix: move H-counter origin so MCLK 0 ≈ H 0xA5 (H40)/0x85 (H32).
+- [ ] **UNC-04** · L · State — While the VDP is at the first pixel of active display, the VDP shall report the hardware H-counter value for that position.
+  - *Evidence:* H reads 0x35 at start of active display.
+  - *Verify:* T — compare H at active-start against BlastEm/GPGX table.
+- [ ] **UNC-05** · L · State — While the H counter is outside the hardware HBlank range, the VDP shall clear the HBLANK status flag.
+  - *Evidence:* `vdp/mod.rs:1189` sets HBLANK while H reads 0x00–0x35.
+  - *Verify:* T — status HBLANK bit vs H-counter sweep.
+- [ ] **UNC-06** · L · Event — When the HV counter first reports the first VBlank line, the VDP shall have the VBLANK status flag set.
+  - *Evidence:* Around line 0xDF HV reads 0xE0 before VBLANK is set (flag/VINT switch at wrap).
+  - *Verify:* T — read status at V=0xE0 shows VBLANK=1.
+- [ ] **UNC-07** · L · Ubiquitous — The Harte test harness shall compare PC, the full SR, A7, USP and SSP against each test case's expected final state.
+  - *Evidence:* `src/cpu/tests_harte.rs:186-201` omits them, so exception/stack bugs cannot fail.
+  - *Verify:* I — comparison code covers all listed fields.
+- [ ] **UNC-08** · L · Event — When the Harte harness begins a test case, the harness shall reset `interrupt_pending_mask`.
+  - *Evidence:* `tests_harte.rs` does not reset it.
+  - *Verify:* I.
+- [ ] **UNC-09** · L · Ubiquitous — The Harte harness shall expose `disasm_range` as a helper function rather than a `#[test]`.
+  - *Evidence:* `tests_harte.rs` treats a utility as a test.
+  - *Verify:* I.
+- [ ] **UNC-10** · L · Ubiquitous — The repository documentation shall state the data location (`HARTE_DIR`, `DISASM_ROM`) required by `tests_harte.rs`.
+  - *Verify:* I.
+- [ ] **UNC-11** · L · Ubiquitous — The M68k core shall restrict `Cpu::invalidate_cache_entry` to crate or test visibility.
+  - *Evidence:* `src/cpu/mod.rs` makes it `pub` only for the harness (implementation itself correct).
+  - *Verify:* I — `pub(crate)` or `#[cfg(test)]`.
+- [ ] **UNC-12** · L · Ubiquitous — The source tree shall pass `cargo fmt --check`.
+  - *Evidence:* `cpu/mod.rs:796` `mod tests_harte` ordering. (See also BLD-11.)
+  - *Verify:* T — `cargo fmt --check` exits 0.
+
+## 1. M68000 core — decode, EA, exceptions (CPU)
+
+- [ ] **CPU-01** · H · Unwanted — If an M68k instruction accesses a word or long operand at an odd address, then the M68k core shall abort that instruction before any further register, memory or flag update and take exactly one address-error exception.
+  - *Evidence:* `cpu/mod.rs:101-157, 246-276, 401-424` call `process_exception(3)` then return 0 and continue. `MOVE (A0),SR` odd → handler runs in user mode IPL 0; `JSR`/`BSR` odd A7 → `cpu.pc = addr` overwrites handler PC; `ADD.W D0,(A0)` odd → second fault → "Double fault" halt; `MOVE.W (A0)+,D0` writes 0 to D0; MOVEM faults per register. Only ADDX/SUBX check `pending_exception`. Shift/NOT raw `read_ea` at `ops/bits.rs:179, 286, 372`.
+  - *Verify:* T — odd-address cases above take vector 3 once, with registers/memory unchanged except the exception frame.
+- [ ] **CPU-02** · H · Event — When the M68k core takes an illegal-instruction, Line-A, Line-F, unimplemented-opcode or privilege-violation exception, the M68k core shall stack the address of the faulting opcode as the return PC.
+  - *Evidence:* `cpu/mod.rs:757-762`; `ops/system.rs:167-169, 182-183, 197-198, 211-212, 238-239, 290-291, 307-308, 324-325` stack PC already advanced (user-mode `MOVE #$2700,SR` stacks PC at `$2700`).
+  - *Verify:* T — `0xA123` at `$1000` stacks `$1000`.
+- [ ] **CPU-03** · H · Event — When the bus changes the contents mapped at 0x000000–0x3FFFFF (mapper bank switch, ROM-window write or SRAM toggle at 0xA130F1), the M68k core shall discard cached decodes for the affected range before the next instruction fetch.
+  - *Evidence:* `cpu/mod.rs:477-498` caches PC < $400000 indefinitely; only `reset()` invalidates; writers at `memory/bus.rs:262-264, 272-273`. (verified)
+  - *Verify:* T — SSF ROM executes new code at $080000 after bank switch.
+- [ ] **CPU-04** · M · Event — When the M68k core takes an address-error exception, the M68k core shall push the 7-word group 0 frame (FC/R-W/I-N word, access address, IR, SR, PC).
+  - *Evidence:* `cpu/mod.rs:401-424` pushes the 3-word group 1/2 frame.
+  - *Verify:* T — frame contents and SP delta of 14 bytes.
+- [ ] **CPU-05** · M · Ubiquitous — The M68k core shall charge exception-processing time per exception type (50 cycles for address error, 38+ea for zero divide, 34 for interrupt/trap group).
+  - *Evidence:* every exception costs 34.
+  - *Verify:* T — cycle count per vector.
+- [ ] **CPU-06** · M · Unwanted — If an opcode specifies an effective-address mode not permitted for that instruction by the M68000 PRM, then the M68k core shall take the illegal-instruction exception.
+  - *Evidence:* `instructions.rs:121` `from_mode_reg` accepts all modes; only MOVE/NBCD validate. Affected in `decoder.rs`: LEA/PEA/JMP/JSR 297/305/312/319; CHK 327; CLR/NEG/NEGX/NOT/TST 384-413; TAS 378; MOVE to/from SR/CCR 416-433; immediate ALU dest 161; bit ops 96/118; ADD/SUB/OR/AND/EOR to `<ea>` 815/621/554/748/677; Scc/ADDQ/SUBQ 456/462; MOVEM 351; EXG 737. Examples: `JMP #imm` 0x4EFC; `LEA (A0)+,A1` 0x43D8; `0x49C0` silent NOP; `ADD.W D0,#imm`; `BSET D0,#imm` 0x01FC; `ADD.W D0,d16(PC)`; `CLR.W A0`; `ORI.W #x,A0`; EXG 0xC180 silent NOP; `TST.W A0`; `TST d(PC)`.
+  - *Verify:* T — exhaustive 64K-opcode validity table matches Musashi.
+- [ ] **CPU-07** · M · Unwanted — If an opcode in 0xE0C0–0xEFFF has bit 11 set, then the M68k core shall take the illegal-instruction exception.
+  - *Evidence:* `decoder.rs:904-909` `(opcode>>9)&3` drops bit 11, so 020 bit-field ops decode as shifts (`0xE8C0` → ASR).
+  - *Verify:* T.
+- [ ] **CPU-08** · M · Unwanted — If a memory-shift opcode specifies an effective address that is not memory-alterable, then the M68k core shall take the illegal-instruction exception.
+  - *Evidence:* `decoder.rs:854` accepts Dn/An/d(PC)/d(PC,Xn)/#imm (`0xE0C0` shifts D0).
+  - *Verify:* T.
+- [ ] **CPU-09** · M · Ubiquitous — The M68k core shall add 4 cycles to the effective-address calculation time of every memory addressing mode for long-size operands.
+  - *Evidence:* `addressing.rs:92-191` size-independent (`ADD.L (A0),D0` 12 vs 14).
+  - *Verify:* T — PRM EA timing table.
+- [ ] **CPU-10** · M · Event — When SR is written, the M68k core shall store only the implemented bits (mask $A71F).
+  - *Evidence:* `cpu/mod.rs:426-439` `set_sr` stores raw value.
+  - *Verify:* T — `MOVE #$FFFF,SR; MOVE SR,D0` → $A71F.
+- [ ] **CPU-11** · M · Event — When CCR is written (MOVE to CCR, ANDI/ORI/EORI to CCR, RTR), the M68k core shall store only bits 0–4.
+  - *Evidence:* `ops/system.rs:227, 278, 285, 302, 319`.
+  - *Verify:* T — `ORI #$FF,CCR` leaves bits 5–7 clear.
+- [ ] **CPU-12** · M · Event — When an instruction completes that began with the T bit set and raised no other exception, the M68k core shall take the trace exception (vector 9).
+  - *Evidence:* `cpu/mod.rs:441-469` trace unimplemented.
+  - *Verify:* T.
+- [ ] **CPU-13** · L · State — While halted by a double fault, the M68k core shall ignore interrupts until reset.
+  - *Evidence:* `cpu/mod.rs:159-173, 168, 451` STOP and double-fault share `halted`; interrupts clear it.
+  - *Verify:* T — double-fault then VINT stays halted.
+- [ ] **CPU-14** · L · Unwanted — If a bus or address error occurs while the M68k core is stacking an exception frame, then the M68k core shall enter the double-fault halt state.
+  - *Evidence:* `cpu/mod.rs:402-406` treats any second exception in one instruction as double fault.
+  - *Verify:* T — RMW odd-address case takes vector 3, not halt.
+- [ ] **CPU-15** · L · Unwanted — If a stack push or pop (including exception stacking, RTS, RTR, RTE, UNLK) uses an odd stack pointer, then the M68k core shall take the address-error exception.
+  - *Evidence:* `cpu/mod.rs:379-399, 417-421`; `ops/system.rs:136` raw `memory.read_long`.
+  - *Verify:* T.
+- [ ] **CPU-16** · L · Unwanted — If BRA, Bcc, BSR, JMP or JSR targets an odd address, then the M68k core shall take the address-error exception.
+  - *Verify:* T.
+- [ ] **CPU-17** · L · Event — When a save state is loaded, the M68k core shall restore a populated decode cache.
+  - *Evidence:* `cpu/mod.rs:36-37` `#[serde(skip)]` yields empty slice → caching permanently off.
+  - *Verify:* T — cache hit rate > 0 after state load.
+- [ ] **CPU-18** · L · Ubiquitous — The M68k core shall size its decode cache to the loaded ROM image.
+  - *Evidence:* `cpu/mod.rs:19-20, 66-67` fixed 32 MiB per `Cpu` (2M × 16 B); `reset()` rewrites it; each test allocates it.
+  - *Verify:* A — allocation ≤ ROM size × entry size.
+- [ ] **CPU-19** · L · Ubiquitous — `CpuState` shall include `usp`, `ssp` and `interrupt_pending_mask`.
+  - *Evidence:* `cpu/mod.rs:203-221`.
+  - *Verify:* T — state round-trip preserves fields.
+- [ ] **CPU-20** · L · State — While the M68k core is halted or stopped, the M68k core shall add each elapsed step's cycles to its cycle counter.
+  - *Evidence:* `cpu/mod.rs:451-452` returns 4 without adding.
+  - *Verify:* T.
+- [ ] **CPU-21** · L · Unwanted — If a byte-size instruction specifies an address register as source, then the M68k core shall take the illegal-instruction exception.
+  - *Evidence:* `decoder.rs:190, 582, 690, 776` (`MOVE.B A0,D0` 0x1008; `ADD.B/SUB.B/CMP.B An`).
+  - *Verify:* T.
+
+## 2. M68000 instruction semantics and timing (OPS)
+
+- [ ] **OPS-01** · H · Event — When TAS targets a memory operand, the M68k core shall not write the result back to memory.
+  - *Evidence:* `ops/bits.rs:613-615` always writes `val|0x80` (Gargoyles, Ex-Mutants). (verified)
+  - *Verify:* T — memory byte unchanged; flags from original value.
+- [ ] **OPS-02** · L · Ubiquitous — The M68k core shall charge TAS 4 cycles for Dn and 10+ea cycles for memory operands.
+  - *Evidence:* returns 8 (Dn) / 12 ((An)).
+  - *Verify:* T.
+- [ ] **OPS-03** · M · Event — When DIVU or DIVS overflows, the M68k core shall set N=1, Z=0, V=1 and C=0.
+  - *Evidence:* `ops/arithmetic.rs:550-552, 581-583` leave N/Z stale. Check DIVS late-overflow vs SingleStepTests.
+  - *Verify:* T — `DIVU #1,D0` with D0=$00010000.
+- [ ] **OPS-04** · M · Event — When a byte-size `-(A7)` or `(A7)+` operand is used by ABCD, SBCD, ADDX, SUBX or CMPM, the M68k core shall change A7 by 2.
+  - *Evidence:* `ops/arithmetic.rs:784-806` use `size.bytes()`, bypassing `calculate_ea`'s A7 rule.
+  - *Verify:* T — `ABCD -(A7),-(A7)` leaves SP even.
+- [ ] **OPS-05** · M · Ubiquitous — The M68k core shall perform all address, displacement and PC arithmetic with wrapping 32-bit semantics.
+  - *Evidence:* `ops/system.rs:10, 13, 20, 31, 34, 48, 51, 106`; `ops/data.rs:134` plain `+` panics in debug (BSR at PC $FFFFFFFE; MOVEP with A0=$7FFFFFF0, disp $7FFF).
+  - *Verify:* T — those cases under debug build do not panic.
+- [ ] **OPS-06** · M · Ubiquitous — The M68k core shall charge long-size register shifts and rotates 8+2n cycles.
+  - *Evidence:* `ops/bits.rs:329, 413, 458, 503` return 6+2n.
+  - *Verify:* T.
+- [ ] **OPS-07** · M · Ubiquitous — The M68k core shall charge memory ASL/ASR 8+ea cycles.
+  - *Evidence:* `bits.rs:355` `exec_shift_mem` adds 2 to an 8+ea result. Remove `exec_shift_mem` (V-clear redundant post-diff).
+  - *Verify:* T.
+- [ ] **OPS-08** · M · Ubiquitous — The M68k core shall include the operand write time in the cycle count of read-modify-write instructions with a memory destination.
+  - *Evidence:* `ADD Dn,(An).W` 8 vs 12; same for SUB/AND/OR/EOR/ADDQ/SUBQ.
+  - *Verify:* T — PRM timing tables.
+- [ ] **OPS-09** · M · Ubiquitous — The M68k core shall charge ADDI/SUBI the PRM cycle counts (12+ea memory; 16 for `.L #,Dn`).
+  - *Evidence:* returns 8+ea / 8.
+  - *Verify:* T.
+- [ ] **OPS-10** · M · Ubiquitous — The M68k core shall charge NEG, NEGX, NOT and CLR the PRM cycle counts (6 for `.L Dn`; 8+ea for memory).
+  - *Evidence:* returns 4 / 4+ea.
+  - *Verify:* T.
+- [ ] **OPS-11** · M · Ubiquitous — The M68k core shall charge MOVE according to its destination mode per the PRM.
+  - *Evidence:* +4 for any non-Dn dest (`MOVE.W D0,(A0)` 12 vs 8; `-(An)` 14 vs 8).
+  - *Verify:* T.
+- [ ] **OPS-12** · M · Ubiquitous — The M68k core shall charge BTST, BSET, BCLR and BCHG the PRM cycle counts.
+  - *Evidence:* `bits.rs:524-545`: `BTST Dn,Dn` 10 vs 6; `BTST Dn,(An)` 12 vs 8; `BSET #n,Dn` 8 vs 12; immediate-to-memory 4 short; BCLR Dn lacks +2.
+  - *Verify:* T.
+- [ ] **OPS-13** · M · Ubiquitous — The M68k core shall charge MULU 38+2·popcount(src) cycles and MULS 38+2·(bit transitions in src<<1) cycles, plus ea.
+  - *Evidence:* `arithmetic.rs:503, 525` fixed 70.
+  - *Verify:* T — `MULU #0,D0` = 38+ea.
+- [ ] **OPS-14** · M · Ubiquitous — The M68k core shall charge DIVU and DIVS data-dependent cycle counts per the hardware algorithm.
+  - *Evidence:* `arithmetic.rs:559, 593` fixed 140/158.
+  - *Verify:* T — vs Jorge Cwik algorithm / SingleStepTests.
+- [ ] **OPS-15** · L · Event — When DIVU or DIVS divides by zero, the M68k core shall charge 38+ea cycles.
+  - *Evidence:* `arithmetic.rs:540, 574` return 0; `process_exception` result discarded.
+  - *Verify:* T.
+- [ ] **OPS-16** · L · Event — When DIVU or DIVS divides by zero, the M68k core shall clear C.
+  - *Verify:* T — match SingleStepTests for N/Z/V.
+- [ ] **OPS-17** · L · Ubiquitous — The M68k core shall set V and N for ABCD, SBCD and NBCD per hardware (V = ~uncorrected & corrected & 0x80; N = bit 7).
+  - *Evidence:* `arithmetic.rs:628-760` leave V/N stale.
+  - *Verify:* T.
+- [ ] **OPS-18** · L · Unwanted — If ABCD or SBCD receives non-BCD operands, then the M68k core shall produce the hardware result.
+  - *Evidence:* low-digit carry loses 0x10 when low sum ≥ 0x1A.
+  - *Verify:* T — exhaustive 256×256×X vs Musashi.
+- [ ] **OPS-19** · L · Ubiquitous — The M68k core shall charge NBCD to memory 8+ea cycles.
+  - *Evidence:* returns 6+ea.
+  - *Verify:* T.
+- [ ] **OPS-20** · L · Event — When LINK is executed with A7 as the register operand, the M68k core shall push the decremented A7 value.
+  - *Evidence:* `ops/system.rs:147-149` (A7=$1000 stores $1000, should be $0FFC).
+  - *Verify:* T.
+- [ ] **OPS-21** · L · Event — When CHK executes, the M68k core shall clear V and C.
+  - *Evidence:* `arithmetic.rs:752-772` leave stale.
+  - *Verify:* T.
+- [ ] **OPS-22** · L · Event — When CHK traps, the M68k core shall charge 40+ea cycles.
+  - *Evidence:* returns 10+ea.
+  - *Verify:* T.
+- [ ] **OPS-23** · L · Ubiquitous — The M68k core shall charge Bcc, Scc, JMP, JSR and PEA the PRM cycle counts.
+  - *Evidence:* `ops/system.rs`: `Bcc.W` not taken 8 vs 12; `Scc Dn` true 4 vs 6; JMP/JSR `d(An)`/`abs.L` 2–4 off; PEA ea+4 vs ea+8.
+  - *Verify:* T.
+- [ ] **OPS-24** · L · Ubiquitous — The M68k core shall charge MOVEM the PRM cycle counts.
+  - *Evidence:* `ops/data.rs:167-290`: reg→mem `(An)` 12+4n vs 8+4n; mem→reg `(An)+` 8+4n vs 12+4n.
+  - *Verify:* T.
+- [ ] **OPS-25** · L · Event — When MOVEM transfers memory to registers, the M68k core shall perform the hardware's extra trailing word read.
+  - *Verify:* T — bus access trace.
+- [ ] **OPS-26** · L · Unwanted — If MOVEM specifies `(An)+` for register-to-memory or `-(An)` for memory-to-register, then the M68k core shall take the illegal-instruction exception.
+  - *Evidence:* runs silently as plain addressing. (Subset of CPU-06.)
+  - *Verify:* T.
+- [ ] **OPS-27** · L · Ubiquitous — The M68k ops code shall implement immediate-operand fetch, shift-count decode, supervisor-privilege check and binary logic operations each in a single shared function.
+  - *Evidence:* immediate fetch copied across ANDI/ORI/EORI/ADDI/SUBI/CMPI; shift count ×3; ROXL/ROXR near-identical; AND/OR identical but operator; privilege check ×8.
+  - *Verify:* I.
+- [ ] **OPS-28** · L · Ubiquitous — The M68k ops functions shall contain no unused parameters.
+  - *Evidence:* `_direction` (AND/OR), `_extend` (rotate).
+  - *Verify:* I.
+
+## 3. Z80 core (Z80)
+
+- [ ] **Z80-01** · C · Ubiquitous — The Z80 core shall compute (IX+d) and (IY+d) addresses modulo 2^16 without panicking.
+  - *Evidence:* `z80/op_index.rs:91` `(idx as i16 + offset as i16)` overflows in debug (IX=0x7FFF, `LD A,(IX+1)`). (verified)
+  - *Verify:* T — debug build, IX=0x7FFF/d=+1 and IX=0x8000/d=−1.
+- [ ] **Z80-02** · H · Event — When a DD or FD prefix precedes an opcode that does not reference HL, H or L, the Z80 core shall execute that opcode with its unprefixed semantics and operands, adding 4 T-states.
+  - *Evidence:* `op_index.rs:416` fallback `_ => 8` consumes opcode only (`DD 3E nn` executes `nn`; also `DD 01/06/C3/CD/18/10`).
+  - *Verify:* T — `DD 3E 42` loads A=0x42, 11 T-states.
+- [ ] **Z80-03** · H · Event — When consecutive DD/FD prefixes precede an opcode, the Z80 core shall apply only the last prefix.
+  - *Evidence:* `DD FD 21 nn nn` executes `LD HL,nn`.
+  - *Verify:* T — loads IY.
+- [ ] **Z80-04** · H · Event — When a DD or FD prefix precedes an ED prefix, the Z80 core shall execute the ED instruction.
+  - *Evidence:* `DD ED B0` executes `OR B`.
+  - *Verify:* T — runs LDIR.
+- [ ] **Z80-05** · H · Ubiquitous — The Z80 core shall increment R once per M1 opcode fetch (including each prefix byte) and shall not increment R on operand or displacement fetches.
+  - *Evidence:* `z80/mod.rs:352-361` `fetch_byte` bumps R for every byte (`LD A,n` +2, `JP nn` +3, DDCB +4).
+  - *Verify:* T — R delta per instruction class (NOP 1, `LD A,n` 1, DD xx 2, DDCB 2).
+- [ ] **Z80-06** · H · State — While halted, the Z80 core shall increment R once per HALT M1 cycle.
+  - *Evidence:* `mod.rs:807`.
+  - *Verify:* T.
+- [ ] **Z80-07** · H · Event — When the Z80 core accepts an interrupt, the Z80 core shall increment R once.
+  - *Verify:* T.
+- [ ] **Z80-08** · H · Event — When the Z80 core executes JP nn, JP cc,nn, CALL nn, CALL cc,nn, RET, RET cc, RETN, RETI or RST, the Z80 core shall set MEMPTR to the hardware-defined value (target or popped PC).
+  - *Evidence:* `op_general.rs:342, 361, 391, 405, 460, 485, 518`; `op_ed.rs:85, 89`. Breaks `BIT n,(HL)` X/Y (`op_cb.rs:38`).
+  - *Verify:* T — zexall `bit n,(hl)`; per-instruction MEMPTR tests.
+- [ ] **Z80-09** · H · Event — When JR or DJNZ is taken, the Z80 core shall set MEMPTR to the branch target.
+  - *Evidence:* `op_general.rs:96, 105, 112`.
+  - *Verify:* T.
+- [ ] **Z80-10** · H · Event — When the Z80 core executes IN A,(n), OUT (n),A, IN r,(C) or OUT (C),r, the Z80 core shall set MEMPTR to the hardware-defined value (BC+1 for the (C) forms).
+  - *Evidence:* `op_general.rs:411-421`; `op_ed.rs:43, 60`.
+  - *Verify:* T.
+- [ ] **Z80-11** · H · Event — When the Z80 core executes ADC HL,rr, SBC HL,rr, RLD or RRD, the Z80 core shall set MEMPTR to HL+1 (pre-operation HL).
+  - *Evidence:* `op_ed.rs:131-180, 235, 248`.
+  - *Verify:* T.
+- [ ] **Z80-12** · H · Event — When the Z80 core executes LD (nn),IX/IY or LD IX/IY,(nn), the Z80 core shall set MEMPTR to nn+1.
+  - *Evidence:* `op_index.rs:155, 161`.
+  - *Verify:* T.
+- [ ] **Z80-13** · H · Event — When the Z80 core executes INI, IND, OUTI or OUTD (and repeats), the Z80 core shall set MEMPTR to the hardware-defined value.
+  - *Verify:* T.
+- [ ] **Z80-14** · H · Event — When BIT n,r / BIT n,(HL) / BIT n,(IX+d) executes, the Z80 core shall set P/V equal to Z.
+  - *Evidence:* `op_cb.rs:183-188` writes only Z/H/N. (verified)
+  - *Verify:* T.
+- [ ] **Z80-15** · H · Event — When BIT 7 tests a set bit, the Z80 core shall set S; otherwise the Z80 core shall clear S.
+  - *Evidence:* same location. (verified)
+  - *Verify:* T — `BIT 7,A` with A=0x80 → S=1.
+- [ ] **Z80-16** · H · Event — When DAA executes after a subtraction, the Z80 core shall apply the correction implied by A>0x99, (A&0xF)>9, H and C.
+  - *Evidence:* `op_general.rs:274-306` ignores the A-range terms (A=0x9A,N=1,H=0,C=0 → should give 0x34, C=1).
+  - *Verify:* T — exhaustive 256×N×H×C table vs reference.
+- [ ] **Z80-17** · H · Event — When DAA executes, the Z80 core shall set H to `N ? (H && lo<6) : (lo>9)`.
+  - *Evidence:* sets H = `correction&6 != 0`; `tests_daa.rs` never checks H.
+  - *Verify:* T — same exhaustive table.
+- [ ] **Z80-18** · M · Event — When CP executes, the Z80 core shall copy flag bits 3 and 5 from the operand.
+  - *Evidence:* `mod.rs:474-475` via `sub_a(store=false)` (`op_general.rs:57, 509`; `op_index.rs:109`) uses result.
+  - *Verify:* T — A=0, `CP 0x28` → X=Y=1.
+- [ ] **Z80-19** · M · Event — When ADD IX,rr or ADD IY,rr executes, the Z80 core shall copy flag bits 3 and 5 from the high byte of the result.
+  - *Evidence:* `op_index.rs:68-83` (unlike `add_hl`, `mod.rs:595`).
+  - *Verify:* T.
+- [ ] **Z80-20** · M · Event — When INI, IND, OUTI or OUTD executes, the Z80 core shall set S, Z, X, Y from new B; N from bit 7 of the transferred byte; H and C from the carry of `val + k`; and P/V from parity(((val+k)&7) ^ B).
+  - *Evidence:* `op_ed.rs:372-373, 406-407` set only Z and force N=1.
+  - *Verify:* T — vs reference table.
+- [ ] **Z80-21** · M · Event — When INIR, INDR, OTIR or OTDR repeats, the Z80 core shall apply the hardware repeat-cycle flag adjustments.
+  - *Verify:* T.
+- [ ] **Z80-22** · M · Event — When SCF or CCF executes, the Z80 core shall set flag bits 3 and 5 to `(A | (F ^ Q)) & 0x28`, where Q is the flag value written by the previous instruction (0 if it did not write flags).
+  - *Evidence:* `op_general.rs:316-334` uses A only. Required by CLAUDE.md.
+  - *Verify:* T.
+- [ ] **Z80-23** · M · Event — When the Z80 core acknowledges an IM 2 interrupt, the Z80 core shall consume 19 T-states.
+  - *Evidence:* `mod.rs:789` returns 8.
+  - *Verify:* T.
+- [ ] **Z80-24** · M · Event — When the Z80 core acknowledges an IM 2 interrupt, the Z80 core shall set MEMPTR to the handler address.
+  - *Evidence:* `mod.rs:786` sets the vector-table address.
+  - *Verify:* T.
+- [ ] **Z80-25** · M · State — While the Z80 INT line is asserted, the Z80 core shall sample it at each instruction boundary.
+  - *Evidence:* `src/main.rs:786-788` delivers a one-shot pulse; lost if IFF1=0 or EI shadow active. Hardware holds ~1 scanline (~171 Z80 cycles).
+  - *Verify:* T — interrupt taken when EI executes within the assertion window.
+- [ ] **Z80-26** · M · Event — When the Z80 core acknowledges an interrupt, the emulator shall deduct the acknowledge T-states from the Z80 cycle budget.
+  - *Evidence:* returned T-states discarded (`z80_cycle_debt`).
+  - *Verify:* T.
+- [ ] **Z80-27** · M · State — While the 68k holds the Z80 bus (BUSREQ asserted), the emulator shall not deliver interrupts to the Z80 core.
+  - *Evidence:* gated only on `!z80_is_reset`; pushes PC into Z80 RAM during uploads.
+  - *Verify:* T.
+- [ ] **Z80-28** · M · Ubiquitous — The test suite shall compile and run every Z80 test module.
+  - *Evidence:* `z80/mod.rs:953-1011` comments out `tests_alu`, `tests_cb`, `tests_control`, `tests_load`, `tests_undoc`, `tests_halfcarry`, `tests_interrupt`, `tests_rrd_rld`, `tests_timing`, `tests_torture`, `tests_gaps`, `tests_memptr`, `tests_ddcb`, `tests_ex_sp_hl_expanded`; `proptest_tests.rs`, `proptest_expanded.rs` undeclared. (verified)
+  - *Verify:* I — all declared; T — all pass.
+- [ ] **Z80-29** · L · Event — When CPD or CPDR executes, the Z80 core shall decrement MEMPTR.
+  - *Evidence:* `op_ed.rs:335` increments.
+  - *Verify:* T.
+- [ ] **Z80-30** · L · Event — When OUTI or OUTD executes, the Z80 core shall decrement B before placing it on the port address high byte.
+  - *Evidence:* `op_ed.rs:393-397` (no Genesis effect; I/O unmapped `z80_bus.rs:164-172`).
+  - *Verify:* T.
+- [ ] **Z80-31** · L · State — While halted, the Z80 core shall add each step's T-states to its cycle counter.
+  - *Evidence:* `mod.rs:807-809`.
+  - *Verify:* T.
+- [ ] **Z80-32** · L · Event — When RETI executes, the Z80 core shall copy IFF2 to IFF1.
+  - *Evidence:* `op_ed.rs:87-90`.
+  - *Verify:* T.
+- [ ] **Z80-33** · L · Unwanted — If a restored save state or debugger write sets the interrupt mode outside 0–2, then the Z80 core shall reject or clamp the value.
+  - *Evidence:* `mod.rs:219, 938, 791` — IM ≥3 clears IFF1/IFF2/halted and returns 0 without vectoring.
+  - *Verify:* T.
+- [ ] **Z80-34** · L · Event — When LDIR, LDDR, CPIR or CPDR repeats, the Z80 core shall set flag bits 3 and 5 from the high byte of PC+1. (plausible)
+  - *Evidence:* `op_ed.rs:292-296, 338-342`.
+  - *Verify:* T — vs 2018 HC research test vectors.
+- [ ] **Z80-35** · L · Ubiquitous — The Z80 core shall implement opcode-field decoding (`OpParams`) and ALU dispatch each in a single function.
+  - *Evidence:* `OpParams` ×3 (`mod.rs:823`, `op_ed.rs:11`, `op_index.rs:367`); ALU dispatch ×3 (`op_general.rs:49-58, 501-511`, `op_index.rs:101-111`); `get_index_val/h/l` overlap `get_index_byte`; EX (SP),HL/IX assigns MEMPTR 3× (`op_general.rs:426-430`, `op_index.rs:315-319`); RLCA/RRCA/RLA/RRA duplicate flag block.
+  - *Verify:* I.
+
+## 4. VDP (VDP)
+
+- [ ] **VDP-01** · H · Event — When the control port receives a command with CD5 set, the VDP shall not perform a read prefetch.
+  - *Evidence:* `vdp/mod.rs:567-607, 625` prefetches code 0x30 (bit 0 clear), advancing address by reg 15 → VRAM copy lands at dest+inc. Tests `tests_dma.rs:89, 184` use code 0x21. (verified)
+  - *Verify:* T — copy started with `$0000/$00C0` writes to dest.
+- [ ] **VDP-02** · H · Event — When the 68k reads the VDP status register, the VDP shall keep a pending VINT asserted until interrupt acknowledge.
+  - *Evidence:* `vdp/mod.rs:687` clears `STATUS_VINT_PENDING` (F flag and IRQ latch combined); `main.rs:843-846` then cancels IRQ 6.
+  - *Verify:* T — status poll with SR=$2700, then unmask → VINT taken.
+- [ ] **VDP-03** · H · Ubiquitous — The GUI and debugger shall read VDP status through a side-effect-free accessor.
+  - *Evidence:* `gui.rs:2227` `collect_debug_info` calls `read_status()` each redraw (clears VINT pending, command pending, SOVR, collision; `vdp/mod.rs:670, 687`).
+  - *Verify:* T — status unchanged across GUI redraws.
+- [ ] **VDP-04** · M · Event — When a 68k→VDP DMA source address increments past a 128 KiB boundary, the VDP shall wrap within the 128 KiB block and leave register 23 unchanged.
+  - *Evidence:* `vdp/dma.rs:245-249` writes `next_source>>17` into reg 23.
+  - *Verify:* T — RAM source crossing $FFFFFE reads $FE0000.
+- [ ] **VDP-05** · M · State — While a HINT is pending and unacknowledged, the VDP shall keep the HINT request asserted across line boundaries.
+  - *Evidence:* `vdp/mod.rs:1130`; `main.rs:984` clear at line wrap.
+  - *Verify:* T — HINT raised during masked VINT handler is taken after RTE.
+- [ ] **VDP-06** · M · Event — When the data port is read while the write FIFO is non-empty, the VDP shall commit the FIFO before performing the read.
+  - *Evidence:* `vdp/mod.rs:547-562, 625-627` return stale `read_buffer`.
+  - *Verify:* T — write, set read address, read returns written data.
+- [ ] **VDP-07** · M · State — While the window plane occupies the right side of a line, the renderer shall not draw plane A pixels at or beyond the window boundary.
+  - *Evidence:* `vdp/render.rs:639-669, 737-739` `pixels_to_process` unclamped (hscroll=3, window from x=160 → plane A to 162).
+  - *Verify:* T.
+- [ ] **VDP-08** · M · Ubiquitous — The renderer shall not query process environment variables during line rendering.
+  - *Evidence:* `render.rs:550-555` calls `std::env::var("GENTEEL_DEBUG_PLANE")` twice per `render_line_from`, in release too. Use `self.debug_plane`.
+  - *Verify:* I.
+- [ ] **VDP-09** · M · Event — When multiple CRAM, VSRAM or register writes occur during one line's active display, the VDP shall recomposite that line at most once per write position rather than re-rendering the full line per write.
+  - *Evidence:* `vdp/mod.rs:533, 541, 654`; `dma.rs:230, 238` (64-word CRAM DMA → 64 full renders).
+  - *Verify:* A — benchmark; T — output identical.
+- [ ] **VDP-10** · M · Optional — Where interlace mode 1 or 2 is selected in register 12, the VDP shall render per hardware (mode 2: 8×16 tiles, ×64 pattern addressing, 11-bit V counter, sprite rules).
+  - *Evidence:* reg 12 bits 1–2 never read (Sonic 2 2P, Combat Cars).
+  - *Verify:* D — Sonic 2 2P renders correctly.
+- [ ] **VDP-11** · M · Optional — Where interlace is enabled, the VDP shall toggle the odd-frame status bit each frame.
+  - *Evidence:* `STATUS_ODD_FRAME` (`constants.rs:50`) never set.
+  - *Verify:* T.
+- [ ] **VDP-12** · M · State — While in H40 mode with horizontal scroll not a multiple of 16, the renderer shall apply to the partial left column the AND of VSRAM entry 19 for plane A and plane B; and while in H32 mode it shall use 0. (plausible)
+  - *Evidence:* `render.rs:705-727` ANDs strips 18/19 of one plane for all x<16 plus a game-specific heuristic.
+  - *Verify:* T — vs GPGX column model.
+- [ ] **VDP-13** · M · State — While 2-cell vertical scroll is enabled, the renderer shall align VSRAM columns to the scrolled plane rather than the screen.
+  - *Evidence:* uses `current_x>>3`.
+  - *Verify:* T.
+- [ ] **VDP-14** · L · State — While not in interlace mode 2, the renderer shall use 9 bits of sprite Y position.
+  - *Evidence:* `render.rs:46` masks 10 bits (Y=0x280 invisible; no wrap near 0x1FF).
+  - *Verify:* T.
+- [ ] **VDP-15** · L · Unwanted — If a VSRAM write targets an address at or above 0x50, then the VDP shall discard the write.
+  - *Evidence:* `vdp/mod.rs:536-540`; `dma.rs:233-237` `% 80` wraps onto entries 0–23.
+  - *Verify:* T.
+- [ ] **VDP-16** · L · Ubiquitous — The VDP shall ignore address bit 0 for VSRAM accesses and store only the implemented bits of each VSRAM entry.
+  - *Evidence:* `vdp/mod.rs:587-592` writes misaligned pair; top 6 bits stored.
+  - *Verify:* T.
+- [ ] **VDP-17** · L · Ubiquitous — The VDP shall ignore address bit 0 for VRAM and CRAM reads.
+  - *Evidence:* `vdp/mod.rs:570, 575-580` (swapped bytes / straddled entries).
+  - *Verify:* T.
+- [ ] **VDP-18** · L · Ubiquitous — The VDP shall store CRAM entries masked to the 9 implemented colour bits.
+  - *Verify:* T — read-back of $FFFF → $0EEE.
+- [ ] **VDP-19** · L · Ubiquitous — `get_cram_raw` shall return CRAM words in the VDP's native byte order.
+  - *Evidence:* `render.rs:1061` byte-swapped (debugger/GUI palette wrong).
+  - *Verify:* T.
+- [ ] **VDP-20** · L · Event — When a line's sprite dot budget (320 H40 / 256 H32) is exhausted mid-sprite, the renderer shall truncate that sprite at the limit.
+  - *Evidence:* `render.rs:801` draws the crossing sprite in full.
+  - *Verify:* T.
+- [ ] **VDP-21** · L · Event — When a sprite link value is ≥ the mode's sprite count (64 H32 / 80 H40), the renderer shall terminate the sprite list.
+  - *Evidence:* `render.rs:81`.
+  - *Verify:* T.
+- [ ] **VDP-22** · L · Event — When a VRAM write hits the sprite attribute table range, the VDP shall update the SAT cache; and when register 5 changes, the VDP shall not reload the SAT cache.
+  - *Evidence:* `vdp/mod.rs:523-526, 1125`; `render.rs:456` (Castlevania Bloodlines tricks). Cache should hold only Y/size/link.
+  - *Verify:* T.
+- [ ] **VDP-23** · L · Ubiquitous — The VDP shall not copy the full SAT cache more than once per line.
+  - *Evidence:* full 1 KB copy at wrap and again in `render_line`.
+  - *Verify:* I / A.
+- [ ] **VDP-24** · L · Event — When a DMA fill starts, the VDP shall commit pending FIFO entries before filling. (plausible)
+  - *Evidence:* `vdp/mod.rs:467-475`; `dma.rs:66-109` fill runs ahead, queued entries overwrite fill.
+  - *Verify:* T.
+- [ ] **VDP-25** · L · Event — When a DMA fill or copy completes, the VDP shall leave DMA length registers at zero.
+  - *Evidence:* `dma.rs:111-170`.
+  - *Verify:* T.
+- [ ] **VDP-26** · L · Event — When a DMA fill targets CRAM or VSRAM, the VDP shall perform the fill per hardware.
+  - *Evidence:* ignored.
+  - *Verify:* T.
+- [ ] **VDP-27** · L · Event — When a DMA fill writes a VRAM byte, the VDP shall place the fill byte at the hardware-defined address (GPGX: word write then MSB at addr^1). (plausible)
+  - *Verify:* T — vs hardware test ROM.
+- [ ] **VDP-28** · L · Unwanted — If `execute_dma` is invoked for a 68k→VDP transfer without a bus reader, then the VDP shall return an error instead of writing 0xFFFF.
+  - *Evidence:* `dma.rs:161-165` `step_dma(&mut |_| 0xFFFF)`.
+  - *Verify:* T.
+- [ ] **VDP-29** · L · Event — When a register write is received on the control port, the VDP shall also load address bits 13–0 and code bits CD1–CD0.
+  - *Evidence:* `vdp/mod.rs:630-658` early return.
+  - *Verify:* T.
+- [ ] **VDP-30** · L · Unwanted — If a restored state contains out-of-range VDP counters, then the VDP shall clamp them without panicking.
+  - *Evidence:* `vdp/mod.rs:888, 1069, 1120, 1258` (`v_counter=65535` overflows; huge `mclk_line_clocks`).
+  - *Verify:* T — fuzzed `write_state`.
+- [ ] **VDP-31** · L · Event — When a single `tick` spans more than one line, the VDP shall process every line wrap in the span.
+  - *Evidence:* `vdp/mod.rs:1117, 1164-1184` wraps once; `next_line_curr_slot` not capped.
+  - *Verify:* T.
+- [ ] **VDP-32** · L · Ubiquitous — The VDP shall select H40 mode from register 12 bit 0 (RS1).
+  - *Evidence:* `constants.rs:38` `MODE4_H40_MODE = 0x81` equality.
+  - *Verify:* T.
+- [ ] **VDP-33** · L · Ubiquitous — The VDP module shall contain no dead or duplicate code.
+  - *Evidence:* `h_counter`, `set_h_counter`, `v30_offset` dead; `line_split_x` unread; `set_pal`/`set_region` duplicate; `get_h_scroll` `_is_plane_a` used despite underscore; `render_line` double check (446, 473); HV uses 211-tick line vs 210 slots in `tick`. S/H colour-14 rule and high-priority transparent pixel handling unverified (plausible).
+  - *Verify:* I — clippy dead-code clean.
+- [ ] **VDP-34** · I · Ubiquitous — The VDP shall not index out of bounds on ROM-controlled data.
+  - *Evidence:* currently satisfied (VRAM `u16`/`&0xFFFF`, CRAM `&0x3F`, VSRAM `%80`, SAT iterator bounded, framebuffer ≤240 lines).
+  - *Verify:* T — fuzz `vdp_render` once BLD-05 is fixed.
+
+## 5. Audio — PSG, YM2612, mixing, output (APU)
+
+- [ ] **APU-01** · C · Ubiquitous — The PSG shall produce tone frequency equal to PSG_clock / (32 × N).
+  - *Evidence:* `apu/psg.rs:197-257` decrements counters every 15 MCLK with no ÷16 prescaler → 16× too fast (N=254 → ~7 kHz). `tests_psg_expansion.rs:4` locks it in. (verified)
+  - *Verify:* T — N=254 at NTSC → 440 Hz ±0.5%.
+- [ ] **APU-02** · H · State — While no amplitude deltas are generated, the band-limited buffer shall preserve elapsed time so that later deltas are placed at their true sample position.
+  - *Evidence:* `apu/blip_buf.rs:111-117, 153, 170` early return on delta 0; `.max(0.0)` discards time (up to ~100 ms skew, FM/PSG desync).
+  - *Verify:* T — delta after N silent frames lands at the correct sample.
+- [ ] **APU-03** · H · Ubiquitous — The PSG shall implement the Sega 16-bit noise LFSR (seed 0x8000, taps 0x0009, feedback into bit 15).
+  - *Evidence:* `psg.rs:76, 185, 233-238` TI 15-bit, seed 0x4000, taps bits 0/1.
+  - *Verify:* T — periodic noise period 16; white sequence matches reference.
+- [ ] **APU-04** · H · Ubiquitous — The frontend shall pace emulated frames at the emulated frame rate (NTSC ≈ 59.92 Hz, PAL ≈ 49.70 Hz).
+  - *Evidence:* `gui.rs:108, 2557` paces at exactly 60/50 Hz.
+  - *Verify:* A — sample production rate equals device rate ±0.01%.
+- [ ] **APU-05** · H · Ubiquitous — The audio output path shall bound playback latency to a configured maximum (≤ 100 ms) without discarding samples in normal operation.
+  - *Evidence:* `audio.rs:157` 32768-frame ring grows to ~680 ms then clicks (PAL ~2 min, NTSC ~9 min).
+  - *Verify:* D — 30-minute PAL run, latency stable.
+- [ ] **APU-06** · M · Ubiquitous — The WAV writer shall record the sample rate actually written in the WAV header.
+  - *Evidence:* `main.rs:1480` uses 53267; `gui.rs:2374` switches to device rate.
+  - *Verify:* T — header rate == `bus.sample_rate`.
+- [ ] **APU-07** · M · Event — When a save state is loaded during a WAV dump, the emulator shall continue the dump.
+  - *Evidence:* `main.rs:318-338` drops `serde(skip)` `wav_writer`.
+  - *Verify:* T.
+- [ ] **APU-08** · M · Ubiquitous — The band-limited buffer shall apply the sub-sample phase so that a later step is placed later within the output sample.
+  - *Evidence:* `blip_buf.rs:138-147` uses sinc(i−8+f) instead of sinc(i−8−f).
+  - *Verify:* T — step at f=0.25 vs 0.75 ordering.
+- [ ] **APU-09** · M · Event — When a PSG tone period of 0 is programmed, the PSG shall behave as period 1.
+  - *Evidence:* `psg.rs:210-214` uses 0x400 (TI).
+  - *Verify:* T — constant high output.
+- [ ] **APU-10** · M · Event — When the PSG noise counter reloads, the PSG shall toggle a noise flip-flop and shift the LFSR only on its rising edge.
+  - *Evidence:* `psg.rs:226-240` shifts every reload (octave high; rate 3 not locked to tone 2).
+  - *Verify:* T.
+- [ ] **APU-11** · M · Unwanted — If a restored APU state contains out-of-range fields, then the APU shall reject or clamp them without panicking.
+  - *Evidence:* `ym2612.rs:1621-1623` `sample_subcycle ≥ 24`; `:787` `ams_shift ≥ 16`; `:2009` `pms > 7`; `:493, 1979` `block > 7`; `blip_buf.rs:131, 146, 158` short buffer / huge `clock_ptr`. Reached via `Apu::write_state` (`apu/mod.rs:249`) from debugger and save states.
+  - *Verify:* T — fuzzed `write_state`.
+- [ ] **APU-12** · L · Ubiquitous — The mixed audio output shall contain no DC offset from the PSG.
+  - *Evidence:* `psg.rs:144-162`; `apu/mod.rs:206` unipolar (~20% FS DC, pops).
+  - *Verify:* A — mean of silent-volume-change output ≈ 0.
+- [ ] **APU-13** · L · Event — When `set_timing` clears the band-limited buffers, the APU shall reset each source's delta baseline.
+  - *Evidence:* `blip_buf.rs:89-108` vs `ym2612.rs:1546-1555`, `psg.rs:149`.
+  - *Verify:* T — no DC step after region change.
+- [ ] **APU-14** · L · Ubiquitous — The YM2612 shall route OP1's previous-sample output as its modulation input to other operators. (plausible)
+  - *Evidence:* `ym2612.rs:822-834` uses current `out1`.
+  - *Verify:* T — vs GPGX/Nuked output.
+- [ ] **APU-15** · L · Ubiquitous — The YM2612 shall use one shared F-number high latch for $A4–$A6 and one for $AC–$AE.
+  - *Evidence:* `ym2612.rs:1691-1706` per register.
+  - *Verify:* T — write $A4,$A5,$A0,$A1 sequence.
+- [ ] **APU-16** · L · Ubiquitous — The YM2612 shall apply LFO phase modulation to the combined block/F-number and recompute the key code used for detune.
+  - *Evidence:* `ym2612.rs:478-487, 926` masks `& 0xfff`, keeps original block/KC.
+  - *Verify:* T — vs GPGX `update_phase_lfo_slot`.
+- [ ] **APU-17** · L · Event — When an undefined YM2612 port is read, the YM2612 shall return the last status value until the decay period expires and 0 afterwards.
+  - *Evidence:* `ym2612.rs:1211-1220` interpolates linearly.
+  - *Verify:* T.
+- [ ] **APU-18** · L · Unwanted — If a WAV dump approaches the 4 GiB RIFF limit, then the WAV writer shall finalize the file without overflow.
+  - *Evidence:* `wav_writer.rs:113, 123` u32 overflow (panic in `Drop`).
+  - *Verify:* T.
+- [ ] **APU-19** · L · Unwanted — If a WAV write fails, then the WAV writer shall report the error, stop recording and keep the header consistent with bytes written.
+  - *Evidence:* `main.rs:968` `let _ =`; `wav_writer.rs:104-113`.
+  - *Verify:* T — injected I/O error.
+- [ ] **APU-20** · L · Unwanted — If the WAV output path resolves outside the permitted directory or to an existing file, then the WAV writer shall refuse to open it.
+  - *Evidence:* `wav_writer.rs:15-39` no canonicalization; `File::create` truncates.
+  - *Verify:* T — symlink and existing-file cases.
+- [ ] **APU-21** · L · Ubiquitous — The PSG and band-limited buffer shall perform no transcendental functions or integer division per amplitude change.
+  - *Evidence:* `psg.rs:63-68` `powf` per toggle; `blip_buf.rs:119, 139-151` f64 divide + 16 i64 divides + 32 modulos.
+  - *Verify:* I / A — benchmark.
+- [ ] **APU-22** · L · Ubiquitous — The audio callback shall consume samples without blocking on, or skipping due to, producer locks.
+  - *Evidence:* `audio.rs:234, 273, 312` `try_lock` failure outputs held sample.
+  - *Verify:* I — lock-free SPSC ring.
+- [ ] **APU-23** · L · Ubiquitous — The band-limited synthesis kernel shall place its cutoff at 0.85–0.9 × output Nyquist.
+  - *Evidence:* `blip_buf.rs:23` at Nyquist.
+  - *Verify:* A — frequency response.
+- [ ] **APU-24** · L · Event — When a PSG data byte arrives while the noise register is latched, the PSG shall update noise control and reset the LFSR.
+  - *Evidence:* `psg.rs:190-195` ignored.
+  - *Verify:* T.
+- [ ] **APU-25** · L · Ubiquitous — The APU public API shall not expose an FM data-write function whose bank semantics differ from the hardware data port.
+  - *Evidence:* `apu/mod.rs:191-193` / `ym2612.rs:1669` `write_data_selected_bank`; `ym2612.rs:1540-1543` comment states ±32.4k (actual ~±32.86k).
+  - *Verify:* I.
+- [ ] **APU-26** · I · Ubiquitous — The YM2612 shall match GPGX/MAME envelope, phase, LFO, algorithm, timer, CSM, DAC, panning and ladder behaviour.
+  - *Evidence:* currently satisfied; 2026-08-31 audit items verified fixed.
+  - *Verify:* T — existing suite.
+
+## 6. Memory map, buses, I/O, input (MEM)
+
+- [ ] **MEM-01** · H · Ubiquitous — The bus shall map cartridge SRAM to odd, even or both byte lanes according to the ROM header SRAM type byte (0x1B2).
+  - *Evidence:* `memory/bus.rs:155-161, 295-316` masks start `& 0xFFFFFE` and accepts even addresses only; Sonic 3 (`RA F8 20`, 0x200001–0x203FFF) never saves; buffer 2× size; `.srm` layout ≠ GPGX. (verified)
+  - *Verify:* T — odd-lane write/read round-trip.
+- [ ] **MEM-02** · H · State — While SRAM is enabled, the bus shall serve word and long reads within the SRAM range from SRAM.
+  - *Evidence:* `bus.rs:488-501, 570-579` ROM fast path ignores SRAM.
+  - *Verify:* T — byte and word reads agree.
+- [ ] **MEM-03** · H · Event — When the console is reset, the bus shall preserve SRAM contents.
+  - *Evidence:* `bus.rs:211` `sram.fill(0)`; close-ROM then writes zeros to `.srm`. (verified)
+  - *Verify:* T.
+- [ ] **MEM-04** · H · Event — When the console is reset, the bus shall re-derive the SRAM enable state from the ROM header.
+  - *Evidence:* `bus.rs:212` `sram_enabled = false`.
+  - *Verify:* T.
+- [ ] **MEM-05** · H · Event — When a save state is loaded, the emulator shall retain the SRAM contents deserialized from that state.
+  - *Evidence:* `main.rs:322-327` → `bus.load_rom` (`bus.rs:175`) reallocates SRAM.
+  - *Verify:* T.
+- [ ] **MEM-06** · H · Event — When a save state is loaded, the emulator shall obtain ROM bytes through the same validated loader used for initial ROM load (zip extraction, `MAX_ROM_SIZE`).
+  - *Evidence:* `main.rs:323-324` raw `std::fs::read` — zipped ROM loads archive bytes; unbounded; failed read leaves ROM empty silently.
+  - *Verify:* T — zipped ROM state round-trip.
+- [ ] **MEM-07** · H · Ubiquitous — The I/O subsystem shall implement the 6-button pad TH protocol per hardware (3rd TH-low: SA0000; 4th TH-high: CBMXYZ; active-low).
+  - *Evidence:* `io/mod.rs:232-307` active-high, wrong counter phase.
+  - *Verify:* T — vs GPGX sequence.
+- [ ] **MEM-08** · H · Event — When ~1.5 ms elapse without a TH transition, the I/O subsystem shall reset the 6-button counter.
+  - *Evidence:* `io/mod.rs:394` `Io::update` never called outside tests; threshold 1500 unitless.
+  - *Verify:* T — tick in 68k cycles (~11k).
+- [ ] **MEM-09** · M · Unwanted — If a restored state contains `work_ram` not 0x10000 bytes or `z80_ram` not 0x2000 bytes, then the emulator shall reject the state.
+  - *Evidence:* `bus.rs:56, 59, 790-799`; index panics at `bus.rs:323, 396, 522`, `z80_bus.rs:45`. Reachable via debugger `write_state`.
+  - *Verify:* T.
+- [ ] **MEM-10** · M · Ubiquitous — The bus shall compute header SRAM size without integer overflow.
+  - *Evidence:* `bus.rs:170` (start 0, end 0xFFFFFFFF) panics in debug.
+  - *Verify:* T.
+- [ ] **MEM-11** · M · Ubiquitous — The I/O subsystem shall report region and video standard in the version register according to the configured or header-derived region.
+  - *Evidence:* `io/mod.rs:337` hardcoded 0xA0; header 0x1F0 unused.
+  - *Verify:* T — JP/US/EU ROMs.
+- [ ] **MEM-12** · M · Event — When the region is PAL, the emulator shall run the VDP in PAL timing.
+  - *Evidence:* `vdp/mod.rs:440` `set_pal` has no non-test callers.
+  - *Verify:* T — 313 lines/frame.
+- [ ] **MEM-13** · M · Event — When the 68k performs a word read in the Z80 address window, the bus shall return the even-address byte in both halves.
+  - *Evidence:* `bus.rs:318-332, 399-424`.
+  - *Verify:* T.
+- [ ] **MEM-14** · M · Event — When the 68k performs a word write in the Z80 address window, the bus shall write only the high byte to the even address.
+  - *Evidence:* `bus.rs:526-527` writes both (clobbers 0xA00001).
+  - *Verify:* T.
+- [ ] **MEM-15** · M · Ubiquitous — The bus shall mirror Z80 RAM at 0xA02000–0xA03FFF.
+  - *Evidence:* reads 0xFF, writes ignored.
+  - *Verify:* T.
+- [ ] **MEM-16** · M · Ubiquitous — The bus shall decode VDP ports identically for reads and writes of every size across all VDP mirror addresses (`(addr & 0xE700E0) == 0xC00000`).
+  - *Evidence:* `bus.rs:251, 280, 362-393, 456-476, 532-562` (writes mask, reads don't; 0xC10000–0xDFFFFF unmapped; `write_word(0xC00100)` splits into two byte writes → 0x1212, 0x3434).
+  - *Verify:* T.
+- [ ] **MEM-17** · M · Ubiquitous — The VDP DMA source reader shall apply the active mapper bank mapping and SRAM mapping.
+  - *Evidence:* `bus.rs:669-693` reads raw `rom`.
+  - *Verify:* T — DMA after SSF bank switch.
+- [ ] **MEM-18** · M · Optional — Where the ROM exceeds 4 MiB, the bus shall enable the standard Sega mapper (0xA130F3–FF; slot 0 fixed).
+  - *Evidence:* `bus.rs:270-278` requires "SEGA SSF" header (Super Street Fighter II).
+  - *Verify:* D.
+- [ ] **MEM-19** · M · Event — When a ROM file with an SMD header (size % 16384 == 512, bytes 8–9 = 0xAA 0xBB) is loaded, the emulator shall de-interleave it.
+  - *Evidence:* `main.rs:379-387, 438` accepts `.smd` raw.
+  - *Verify:* T.
+- [ ] **MEM-20** · M · Event — When a ROM larger than 2 MiB is loaded, the bus shall keep ROM mapped at 0x200000 until SRAM is enabled via 0xA130F1.
+  - *Evidence:* `bus.rs:176` enables at load.
+  - *Verify:* T.
+- [ ] **MEM-21** · M · State — While 0xA130F1 bit 1 (write-protect) is set, the bus shall discard SRAM writes.
+  - *Evidence:* ignored.
+  - *Verify:* T.
+- [ ] **MEM-22** · M · Event — When headless input recording is active, the emulator shall record the effective input for every frame under a distinct frame index.
+  - *Evidence:* `main.rs:480-486, 1022-1037`; `input.rs:287-290` (`record()` only in `Some` branch; `current_frame` not advanced).
+  - *Verify:* T — N-frame recording has N entries.
+- [ ] **MEM-23** · L · Ubiquitous — The bus shall report BUSACK granted (0xA11100 bit 0 = 0) only while bus request is asserted and Z80 reset is released.
+  - *Evidence:* `bus.rs:337-343`.
+  - *Verify:* T.
+- [ ] **MEM-24** · L · Event — When Z80 reset is asserted, the bus shall reset the YM2612. (plausible)
+  - *Evidence:* `bus.rs:438-443` only clears bank register.
+  - *Verify:* T.
+- [ ] **MEM-25** · L · Ubiquitous — The Z80 bus shall forward accesses at 0x7F00–0x7F1F to the VDP port decode.
+  - *Evidence:* `z80_bus.rs:54, 97-101` (V counter at 0x7F08 unreadable).
+  - *Verify:* T.
+- [ ] **MEM-26** · L · Ubiquitous — The Z80 bus shall accept PSG writes at every PSG mirror (0x7F11, 0x7F13, 0x7F15, 0x7F17).
+  - *Verify:* T.
+- [ ] **MEM-27** · L · Ubiquitous — The I/O subsystem shall return `(latch & ctrl) | (pad & !ctrl)` on data-port reads and derive TH from the latch only when TH is configured as output.
+  - *Evidence:* `io/mod.rs:283-296, 349-360`.
+  - *Verify:* T.
+- [ ] **MEM-28** · L · Ubiquitous — The I/O subsystem shall decode I/O registers on both byte lanes (`(addr >> 1) & 0xF`).
+  - *Evidence:* even addresses read 0xFF, drop writes.
+  - *Verify:* T.
+- [ ] **MEM-29** · L · Ubiquitous — The I/O subsystem shall return hardware reset values for the serial registers.
+  - *Verify:* T.
+- [ ] **MEM-30** · L · Event — When TH falls on a light-gun port with VDP M3 set, the bus shall latch the HV counter; otherwise the bus shall not latch it.
+  - *Evidence:* `bus.rs:433-435` latches on every data-port write.
+  - *Verify:* T.
+- [ ] **MEM-31** · L · Event — When the 68k writes a long to the VDP data port, the bus shall charge the FIFO stall per word.
+  - *Evidence:* `bus.rs:632-638`.
+  - *Verify:* T.
+- [ ] **MEM-32** · L · Ubiquitous — The EverDrive mapper shall treat 0xA130F1 according to the krikzz extended-SSF specification. (plausible)
+  - *Evidence:* `everdrive.rs:204` makes slot 0 bank-selectable via 0xA130F1.
+  - *Verify:* I — spec check.
+- [ ] **MEM-33** · L · Ubiquitous — The EverDrive mapper shall hold a single copy of the ROM image.
+  - *Evidence:* `everdrive.rs:125-136` keeps `rom` Vec plus up-to-16 MiB copy.
+  - *Verify:* A.
+- [ ] **MEM-34** · L · Ubiquitous — The Z80 bus shall acquire the shared-bus borrow at most once per Z80 instruction.
+  - *Evidence:* `z80_bus.rs:114-144` borrow per byte. (No BorrowMutError possible.)
+  - *Verify:* A — benchmark.
+- [ ] **MEM-35** · L · Event — When the Z80 bank register points at the Z80 window (0xA00000) and the Z80 accesses 0x8000–0xFFFF, the bus shall emulate the hardware lock-up behaviour.
+  - *Evidence:* returns 0xFF unless 68k holds bus.
+  - *Verify:* T.
+- [ ] **MEM-36** · L · Ubiquitous — The input script parser shall round-trip commands containing commas and newlines.
+  - *Evidence:* `input.rs:98, 115-124, 176-178` (truncate at 4th field; unescaped save).
+  - *Verify:* T — `splitn(4, ',')` + escaping.
+- [ ] **MEM-37** · L · Unwanted — If the test `Memory` helper is accessed out of range, then it shall return 0xFF (reads) or ignore the write rather than panic.
+  - *Evidence:* `memory/mod.rs:224-261`.
+  - *Verify:* T.
+- [ ] **MEM-38** · I · Ubiquitous — `byte_utils.rs` shall convert big-endian values correctly.
+  - *Evidence:* currently satisfied; no `unsafe` in scope; everdrive accessors bounds-checked.
+  - *Verify:* T — existing suite.
+
+## 7. Frontend, GUI, debugger (FE)
+
+- [ ] **FE-01** · H · Unwanted — If a GDB packet contains a non-ASCII byte, then the GDB stub shall reject the packet without panicking.
+  - *Evidence:* `debugger/gdb.rs:314` byte→char; `decode_hex_command` (`:774-786`) slices by byte index; `qRcmd,` allowed pre-auth (`:362-366`) → unauthenticated crash (`$qRcmd,a\xC3b#..`; plausibly via cross-protocol browser POST to 127.0.0.1:1234). Same in `write_registers` (540-562), `write_memory` (663).
+  - *Verify:* T — fuzz packets with bytes ≥0x80.
+- [ ] **FE-02** · H · Event — When a GDB client disconnects or a new client is accepted, the GDB stub shall reset the authenticated, no-ack and stop-reason state.
+  - *Evidence:* `gdb.rs:196, 214-237, 267, 286, 395, 400` — `authenticated` reset only in `new()`. (verified)
+  - *Verify:* T — second connection requires token.
+- [ ] **FE-03** · H · Unwanted — If a GDB `m` request length exceeds the advertised PacketSize capacity, then the GDB stub shall reply with an error.
+  - *Evidence:* `gdb.rs:621-631` `String::with_capacity(len*2)` overflow (`m0,ffffffffffffffff`); `m0,7fffffff` 4 GB alloc.
+  - *Verify:* T.
+- [ ] **FE-04** · H · Ubiquitous — The GDB stub shall transmit each reply packet completely and contiguously.
+  - *Evidence:* `write_all` on non-blocking socket fails mid-packet on WouldBlock.
+  - *Verify:* T — slow-reader client.
+- [ ] **FE-05** · H · Ubiquitous — The GDB stub shall retain received bytes beyond the current packet for subsequent parsing.
+  - *Evidence:* `gdb.rs:258, 321` new `BufReader` on `try_clone()` per call drops pipelined packets / `0x03`.
+  - *Verify:* T — two packets in one TCP segment both processed.
+- [ ] **FE-06** · H · Event — When a GDB packet arrives split across TCP segments, the GDB stub shall reassemble it.
+  - *Evidence:* `gdb.rs:321, 327` mid-packet WouldBlock returns None; `read_exact` checksum fails.
+  - *Verify:* T.
+- [ ] **FE-07** · L · Ubiquitous — The GDB stub shall poll the socket without a per-poll file-descriptor duplication.
+  - *Evidence:* `try_clone()` → `dup()` per 68k instruction in `run_with_gdb`.
+  - *Verify:* I.
+- [ ] **FE-08** · H · State — While running under the headless GDB server, the emulator shall advance the VDP, Z80, APU and interrupt logic with the 68k.
+  - *Evidence:* `main.rs:1185-1189` steps CPU only (games waiting for VBlank hang).
+  - *Verify:* D — game boots under headless GDB.
+- [ ] **FE-09** · H · Event — When the GDB client sends an interrupt (0x03), the emulator shall stop execution.
+  - *Evidence:* `main.rs:1169-1181` sends `S02` but leaves `running = true`.
+  - *Verify:* T.
+- [ ] **FE-10** · H · State — While a GDB client is attached in GUI mode, the emulator shall stop at breakpoints.
+  - *Evidence:* `main.rs:1089-1128` `is_breakpoint` never called outside `run_with_gdb`.
+  - *Verify:* T.
+- [ ] **FE-11** · H · Event — When the GDB client requests a single step in GUI mode, the emulator shall execute exactly one 68k instruction.
+  - *Evidence:* `gui.rs:2508, 2565` `single_step` runs a frame.
+  - *Verify:* T.
+- [ ] **FE-12** · H · Event — When execution halts after continue or step, the GDB stub shall send a stop reply.
+  - *Evidence:* no `S05` sent; client hangs.
+  - *Verify:* T.
+- [ ] **FE-13** · H · Event — When a GDB client attaches, the emulator shall halt the target.
+  - *Verify:* T.
+- [ ] **FE-14** · H · Ubiquitous — The main scheduler shall advance scanlines by accumulated master clocks (3420 per line), carrying overshoot into the next line.
+  - *Evidence:* `main.rs:837, 932-960` `CYCLES_PER_LINE = 488` (true 488.57), overshoot dropped while VDP advances by actual cycles → drift (tearing, Z80 VINT out of phase, ~0.5–1% fast audio).
+  - *Verify:* A — loop line == VDP v-counter over 10,000 frames.
+- [ ] **FE-15** · H · Event — When the emulator exits by any path (window close, Escape, `handle_exit`, headless completion, Drop), the emulator shall write SRAM to disk.
+  - *Evidence:* `main.rs:178` is the only `save_sram` call (Close ROM); `gui.rs:2112`. (verified)
+  - *Verify:* T.
+- [ ] **FE-16** · M · Unwanted — If a zip entry name contains multi-byte UTF-8 characters, then the ROM loader shall evaluate its extension without panicking.
+  - *Evidence:* `main.rs:448` byte slicing.
+  - *Verify:* T.
+- [ ] **FE-17** · M · Ubiquitous — The GDB memory accessors shall read and write emulated memory without triggering hardware side effects.
+  - *Evidence:* `main.rs:1325-1344` go through bus (VDP ports, I/O, Z80 bus).
+  - *Verify:* T — GDB read of 0xC00004 leaves VDP state unchanged.
+- [ ] **FE-18** · M · Ubiquitous — The GDB memory write path shall not emit debug prints.
+  - *Evidence:* leftover `eprintln!` for `addr < 0x2000` ("a guess").
+  - *Verify:* I.
+- [ ] **FE-19** · M · Event — When a save state is loaded, the emulator shall preserve session-only state (input script/recording, debug flags, pause, input mapping).
+  - *Evidence:* `main.rs:315-338` overwrites them.
+  - *Verify:* T — load during `--record` keeps recording.
+- [ ] **FE-20** · M · Ubiquitous — The emulator shall be able to load every save state it writes. (plausible)
+  - *Evidence:* pretty JSON with large SRAM may exceed 25 MB load limit.
+  - *Verify:* T — max-SRAM state round-trip.
+- [ ] **FE-21** · M · Ubiquitous — The ROM path allow-list shall deny paths outside configured roots, or the allow-list shall be removed.
+  - *Evidence:* `main.rs:1490-1496`; `gui.rs:2445-2448` add ROM's parent before checking.
+  - *Verify:* T.
+- [ ] **FE-22** · M · Ubiquitous — The ROM loader shall open the same canonicalized path it validated.
+  - *Evidence:* `main.rs:379-386` TOCTOU.
+  - *Verify:* I.
+- [ ] **FE-23** · M · Ubiquitous — The GUI shall persist `gui_config.json` through a single writer using write-to-temp and atomic rename.
+  - *Evidence:* `gui.rs:308-322` thread per toggle → interleaving/truncation.
+  - *Verify:* T.
+- [ ] **FE-24** · M · Unwanted — If `gui_config.json` fails to parse, then the GUI shall notify the user and preserve the original file.
+  - *Evidence:* `load_or_default` silently resets settings/recent ROMs.
+  - *Verify:* T.
+- [ ] **FE-25** · M · Ubiquitous — The GUI shall give a CLI `--input-mapping` precedence over the stored configuration.
+  - *Evidence:* `gui.rs:269-271`.
+  - *Verify:* T.
+- [ ] **FE-26** · M · State — While paused or idle, the GUI event loop shall sleep until the next frame deadline or event.
+  - *Evidence:* `gui.rs:2591` `ControlFlow::Poll` busy-spins.
+  - *Verify:* A — CPU usage while paused < 5%.
+- [ ] **FE-27** · M · Ubiquitous — The GUI shall perform ROM, zip, save-state and SRAM file I/O off the UI thread.
+  - *Evidence:* `gui.rs:2450, 2465, 2487-2491` synchronous in `RedrawRequested`.
+  - *Verify:* I.
+- [ ] **FE-28** · L · Ubiquitous — The debugger disassembly view shall compute addresses with wrapping arithmetic through a side-effect-free reader.
+  - *Evidence:* `gui.rs:2155-2166` overflow (Z80 PC ≥ 0xFFF7; 68k PC via `P11=ffffffff`).
+  - *Verify:* T.
+- [ ] **FE-29** · L · Unwanted — If a GDB packet checksum is not two valid hex digits, then the GDB stub shall reject the packet.
+  - *Evidence:* `gdb.rs:332-333` parses as 0.
+  - *Verify:* T.
+- [ ] **FE-30** · L · Event — When the GDB client sends `D` or `k`, the GDB stub shall send the reply before closing the connection.
+  - *Evidence:* `gdb.rs:395, 1123` clears client first.
+  - *Verify:* T.
+- [ ] **FE-31** · L · Ubiquitous — The emulator shall not print a user-supplied GDB password.
+  - *Evidence:* `main.rs:1136-1141`.
+  - *Verify:* I.
+- [ ] **FE-32** · L · Optional — Where GDB authentication is enabled, the emulator shall accept the password from a file.
+  - *Evidence:* `--gdb-password` visible in `ps`/`/proc`.
+  - *Verify:* T.
+- [ ] **FE-33** · L · Ubiquitous — The emulator shall derive SRAM and save-state paths that cannot equal the ROM path.
+  - *Evidence:* `main.rs:195, 237, 250` `with_extension` (ROM `foo.srm` overwritten).
+  - *Verify:* T.
+- [ ] **FE-34** · L · Optional — Where the ROM declares no battery RAM, the emulator shall not create an `.srm` file.
+  - *Evidence:* `bus.rs:116` 64 KB default.
+  - *Verify:* T.
+- [ ] **FE-35** · L · Unwanted — If a save-slot index ≥ 10 is requested, then the emulator shall return an error.
+  - *Evidence:* `SLOT_EXTS[slot as usize]` panics (public API).
+  - *Verify:* T.
+- [ ] **FE-36** · L · Unwanted — If more than one positional argument is given, then the CLI shall report a usage error.
+  - *Evidence:* `main.rs:1446-1452` joins with spaces.
+  - *Verify:* T.
+- [ ] **FE-37** · L · Ubiquitous — The emulator shall write save states and SRAM atomically.
+  - *Evidence:* non-atomic `fs::write`.
+  - *Verify:* I.
+- [ ] **FE-38** · L · Unwanted — If `--headless` is given without a frame count or script, then the CLI shall report a usage error.
+  - *Evidence:* `main.rs:1032` loops forever.
+  - *Verify:* T.
+- [ ] **FE-39** · L · Ubiquitous — The screenshot function shall capture the current display resolution.
+  - *Evidence:* `main.rs:1085` hardcodes 320×240.
+  - *Verify:* T — H32 screenshot is 256 wide.
+- [ ] **FE-40** · L · Ubiquitous — The screenshot function shall create its output file without a check-then-create race.
+  - *Evidence:* `main.rs:563-571`.
+  - *Verify:* I — `create_new`.
+- [ ] **FE-41** · L · Ubiquitous — Each benchmark binary shall exercise the `genteel` crate code it names.
+  - *Evidence:* `bin/gdb_bench.rs` (own `StopReason`), `gui_format_bench.rs`, `gui_string_bench.rs`, `zip_bench.rs`.
+  - *Verify:* I.
+- [ ] **FE-42** · L · Ubiquitous — The application layer shall implement the GDB command loop, IRQ request/cancel and script READ/WRITE/ASSERT handling each once.
+  - *Evidence:* `poll_gdb` vs `run_with_gdb`; `main.rs:841-852` vs `889-900`; script handlers. Also `main.rs` 2007 lines / `gui.rs` 2685 lines; `run_cpu_loop` redundant writes (955-959); `vdp_scanline_setup` no-op; `Debuggable` possibly unused.
+  - *Verify:* I.
+- [ ] **FE-43** · I · Ubiquitous — The GDB stub shall bind to the loopback interface only.
+  - *Evidence:* currently satisfied (`gdb.rs:163`; constant-time compare via `subtle`; random 128-bit token default).
+  - *Verify:* T.
+
+## 8. Build, tests, tooling, repository (BLD)
+
+- [ ] **BLD-01** · C · Ubiquitous — The repository shall not track build output directories.
+  - *Evidence:* `fuzz/target/` 317 files (~72 MB) tracked; `.gitignore` covers only `/target`. (verified)
+  - *Verify:* I — `git ls-files fuzz/target` empty; `**/target/` ignored.
+- [ ] **BLD-02** · H · Ubiquitous — The codebase shall pass `cargo clippy --all-targets` with warnings denied.
+  - *Evidence:* 62 errors: `bool_assert_comparison` ×33 (`z80/tests_ed.rs:26-261`, `z80/tests_reset.rs:51-56`, `vdp/tests_sprite_iterator.rs:36-39`); `needless_range_loop` ×5 (`ym2612.rs:166, 170`; `psg.rs:318, 344, 360`); `manual_range_patterns` ×4 (`ym2612.rs:869, 870, 875, 917`); `manual_is_multiple_of` ×2 (`ym2612.rs:669, 848`); `too_many_arguments` (`ym2612.rs:1621`); `let_and_return` (`ym2612.rs:1903`); `chunks_exact_mut` (`frontend.rs:137`); `single_match` (`vdp/tests_render.rs:1188`); `unusual_byte_groupings` (`apu/tests_blip_buf.rs:112`); `should_implement_trait` (`test_utils.rs:10`); `reversed_empty_ranges` (BLD-04).
+  - *Verify:* T — clippy exits 0.
+- [ ] **BLD-03** · M · Ubiquitous — The build shall enforce deny-warnings through CI flags rather than crate-level `#![deny(warnings)]`.
+  - *Evidence:* `lib.rs:1`, `main.rs:1` (new toolchain lints break local builds).
+  - *Verify:* I.
+- [ ] **BLD-04** · H · Ubiquitous — Every test assertion shall be capable of failing.
+  - *Evidence:* `vdp/tests_properties.rs:293` `!(0xEB..=0xE4).contains(&v)` empty range. (verified)
+  - *Verify:* T — mutation check.
+- [ ] **BLD-05** · H · Ubiquitous — Every fuzz target shall compile against the current crate API.
+  - *Evidence:* `m68k_arithmetic.rs:33, 34, 42`; `m68k_control.rs:40, 41, 51`; `m68k_random.rs:46, 47` (`Cpu::new(&mut M)`, arity); `vdp_render.rs:31, 35` (`render_line`/`render_frame` gone).
+  - *Verify:* T — `cargo check` in `fuzz/`.
+- [ ] **BLD-06** · H · Ubiquitous — `fuzz/Cargo.toml` shall register every fuzz target source file.
+  - *Evidence:* `z80_flags`, `z80_fuzz`, `z80_memory`, `z80_prefix`, `z80_random_program`, `z80_smart` unregistered; use old `Z80::new(memory)`.
+  - *Verify:* I.
+- [ ] **BLD-07** · M · Ubiquitous — `fuzz/Cargo.lock` shall be consistent with `fuzz/Cargo.toml`.
+  - *Evidence:* `--locked` refuses.
+  - *Verify:* T.
+- [ ] **BLD-08** · M · Ubiquitous — CI shall run clippy, `fmt --check`, fuzz-target build, `--no-default-features` build and `--all-targets` build.
+  - *Evidence:* `.github/workflows/ci.yml` lacks them.
+  - *Verify:* I.
+- [ ] **BLD-09** · M · Ubiquitous — CI shall run once per change (push to main/tags or pull request).
+  - *Evidence:* triggers on every push plus PRs.
+  - *Verify:* I.
+- [ ] **BLD-10** · M · Event — When a `v*` tag is pushed, the release workflow shall publish a GitHub Release with least-privilege `permissions:` and build caching.
+  - *Evidence:* `release.yml` runs on every PR/main push, no cache, no Release, no `permissions:`.
+  - *Verify:* I.
+- [ ] **BLD-11** · M · Ubiquitous — The source tree shall pass `cargo fmt --check`.
+  - *Evidence:* `apu/tests_ym2612_unit.rs:1021, 1090` (committed); `cpu/mod.rs:796` (UNC-12).
+  - *Verify:* T.
+- [ ] **BLD-12** · M · Ubiquitous — The binary crate shall consume emulator modules from the library crate.
+  - *Evidence:* `main.rs:10-25` redeclares all modules → double compile, tests run twice (~245 s).
+  - *Verify:* I — only `gui`/`tests_gui` local.
+- [ ] **BLD-13** · M · Ubiquitous — `Cargo.toml` shall declare no unused dependencies.
+  - *Evidence:* `chrono`, `image`, `rodio`.
+  - *Verify:* T — `cargo machete`/`udeps`.
+- [ ] **BLD-14** · M · Ubiquitous — Dependencies shall be on maintained releases without future-incompatibility warnings.
+  - *Evidence:* `winit 0.29`, `egui*/0.26`, `pixels 0.15`, `cpal 0.15`, `rodio 0.17`, `gilrs 0.10`, `rfd 0.14`, `zip 2.x`; `ashpd 0.8.1` future-incompat.
+  - *Verify:* T — `cargo report future-incompatibilities` clean.
+- [ ] **BLD-15** · M · Ubiquitous — The dependency graph shall minimize duplicate crate versions.
+  - *Evidence:* bitflags 1/2, getrandom 0.2/0.3/0.4, rand 0.8/0.10, rand_core 0.6/0.10, hashbrown, libloading, rustix, linux-raw-sys, raw-window-handle 0.5/0.6, thiserror 1/2, zune-core/zune-jpeg.
+  - *Verify:* T — `cargo tree -d`.
+- [ ] **BLD-16** · M · Ubiquitous — `Cargo.toml` shall define a release profile with LTO and `codegen-units = 1`.
+  - *Evidence:* no `[profile.release]`. (Debug overflow checks are what make many arithmetic findings panic.)
+  - *Verify:* I.
+- [ ] **BLD-17** · M · Ubiquitous — `Cargo.toml` shall declare `rust-version` and `license`.
+  - *Verify:* I.
+- [ ] **BLD-18** · M · Ubiquitous — Benchmarks depending on GUI crates shall declare `required-features = ["gui"]`.
+  - *Evidence:* `benches/gui_bench.rs`, `benches/gui_texture_clone.rs` break `--no-default-features --all-targets`.
+  - *Verify:* T.
+- [ ] **BLD-19** · M · Ubiquitous — The default `cargo test` run shall exclude timing-only benchmarks.
+  - *Evidence:* 16 assert-free `#[test]`s: `cpu/bench_decoder.rs:4`; `cpu/tests_performance.rs:76, 114, 150, 186`; `memory/tests_performance.rs:10, 48, 85`; `vdp/bench_dma.rs:4, 38`; `vdp/bench_render.rs:4, 85`; `tests/bench_execution.rs:5`.
+  - *Verify:* I — criterion or `#[ignore]`.
+- [ ] **BLD-20** · L · Ubiquitous — Every unit test shall contain at least one assertion on observable behaviour.
+  - *Evidence:* `z80/tests_memptr.rs:4` (no assertion, unresolved comment); possibly `vdp/tests_draw_row_refactor.rs:33`, `vdp/tests_render.rs:1065`.
+  - *Verify:* I.
+- [ ] **BLD-21** · L · Ubiquitous — The repository shall not track stray or one-off files.
+  - *Evidence:* `fix_params.py`, `gleylancer.png` (commercial game screenshot), `src/main.rs_perf_test.rs`, `src/debugger/dummy.txt`, empty `.codex`, `conductor/` (~20 planning files).
+  - *Verify:* I.
+- [ ] **BLD-22** · L · Ubiquitous — Test-only modules shall be gated by `#[cfg(test)]`.
+  - *Evidence:* `memory/mod.rs:11` `pub mod tests_performance;`.
+  - *Verify:* I.
+- [ ] **BLD-23** · L · Ubiquitous — `ARCHITECTURE.md` shall describe the current module layout, CI status and a single-date "Date of Last Update".
+  - *Evidence:* §1 omits `src/z80/`, `gui.rs`, `frontend.rs`, `audio.rs`, `input.rs`, `wav_writer.rs`, `src/bin/`, `fuzz/`, `benches/`, `tests/`, places Z80 under `apu/`; §6 "CI to be configured"; line 155 changelog dated 2026-07-04; no GDB auth design.
+  - *Verify:* I.
+- [ ] **BLD-24** · L · Ubiquitous — `README.md` build instructions shall not include redundant feature flags.
+  - *Evidence:* `--features gui` (default).
+  - *Verify:* I.
+- [ ] **BLD-25** · L · Ubiquitous — `scripts/audit_tool.py` shall detect `unsafe` blocks, functions, impls and traits.
+  - *Evidence:* `UNSAFE_PATTERN` matches only `unsafe {`.
+  - *Verify:* T — `tests/test_audit_regex.py`.
+- [ ] **BLD-26** · L · Optional — Where invoked with a dry-run option, `audit_tool.py` shall write results to stdout only.
+  - *Evidence:* always writes `audit_reports/`.
+  - *Verify:* T.
+- [ ] **BLD-27** · L · Ubiquitous — Both crate roots shall declare `#![forbid(unsafe_code)]`.
+  - *Evidence:* zero `unsafe` today (`tests_security.rs:8` name, `render.rs:384` comment only).
+  - *Verify:* I.
+- [ ] **BLD-28** · L · Ubiquitous — Each proptest suite shall declare an explicit case count.
+  - *Evidence:* only `memory/tests_everdrive.rs:281`.
+  - *Verify:* I.
+- [ ] **BLD-29** · I · Ubiquitous — The repository shall contain no secrets.
+  - *Evidence:* currently satisfied (test fixtures only, `gdb.rs:1411, 1645`). CLAUDE.md/GEMINI.md are symlinks to AGENTS.md; `proptest-regressions/` tracked correctly; `generate_builds.py` fine; `output.wav`, `__pycache__`, `gui_config.json` ignored.
+  - *Verify:* T — `audit_tool.py`.
+
+---
+
+## Suggested implementation order
+
+1. UNC-01, UNC-03 (uncommitted diff).
+2. APU-01, APU-03; MEM-01–MEM-05, FE-15 (player-visible audio and save loss).
+3. FE-01–FE-03 (GDB stub hardening).
+4. CPU-01, CPU-02, OPS-05, Z80-01 (fault handling and overflow panics).
+5. Z80-28 then Z80-02–Z80-17 (re-enable tests, fix fallout).
+6. BLD-01, BLD-02, BLD-04–BLD-08 (repo and CI health).
+
+## Summary
+
+| Section | C | H | M | L | I | Total |
+|---|---|---|---|---|---|---|
+| UNC | 0 | 2 | 0 | 9 | 1 | 12 |
+| CPU | 0 | 3 | 9 | 9 | 0 | 21 |
+| OPS | 0 | 1 | 12 | 15 | 0 | 28 |
+| Z80 | 1 | 16 | 11 | 7 | 0 | 35 |
+| VDP | 0 | 3 | 10 | 20 | 1 | 34 |
+| APU | 1 | 4 | 6 | 14 | 1 | 26 |
+| MEM | 0 | 8 | 14 | 15 | 1 | 38 |
+| FE | 0 | 14 | 12 | 16 | 1 | 43 |
+| BLD | 1 | 4 | 14 | 9 | 1 | 29 |
+| **Total** | **3** | **55** | **88** | **114** | **6** | **266** |
