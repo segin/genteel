@@ -1165,8 +1165,11 @@ impl Ym2612 {
         }
         self.master_clock = master_clock;
         self.sample_rate = sample_rate;
-        self.blip_l.set_timing(master_clock, sample_rate);
-        self.blip_r.set_timing(master_clock, sample_rate);
+        /* The buffers keep their settled level, so last_left/last_right stay
+         * valid delta baselines across the timing change. */
+        let now = self.current_mclk();
+        self.blip_l.set_timing(master_clock, sample_rate, now);
+        self.blip_r.set_timing(master_clock, sample_rate, now);
     }
 
     pub fn read_status(&self) -> u8 {

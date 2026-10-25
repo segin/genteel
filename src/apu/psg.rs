@@ -108,7 +108,10 @@ impl Psg {
         }
         self.master_clock = master_clock;
         self.sample_rate = sample_rate;
-        self.blip.set_timing(master_clock, sample_rate);
+        /* The buffer keeps its settled level, so each channel's last_amp
+         * stays a valid delta baseline across the timing change. */
+        let now = self.total_mclocks.wrapping_add(self.mclk_debt as u64);
+        self.blip.set_timing(master_clock, sample_rate, now);
     }
 
     pub fn write(&mut self, value: u8) {
