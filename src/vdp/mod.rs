@@ -876,8 +876,22 @@ impl Vdp {
         let tick = (self.mclk_line_clocks * total_ticks) / 3420;
         let h = Self::h_counter_value_for_tick(tick, is_h40);
 
+        // The V counter increments partway through the scanline (right border /
+        // HBlank), NOT at the line wrap: BlastEm advances it at hslot 165 (H40) /
+        // 133 (H32). So a read during the late part of the line already reports
+        // the next line. Beam-chasing raster routines (e.g. Road Rash II's road)
+        // read the HV counter here to time per-line writes, so getting this wrong
+        // lands every raster band one line off.
+        let line_change: u32 = if is_h40 { 165 } else { 133 };
+        let frame_lines = if self.is_pal { 313 } else { 262 };
+        let line = if tick >= line_change {
+            (self.v_counter + 1) % frame_lines
+        } else {
+            self.v_counter
+        };
+
         let v30 = (self.registers[REG_MODE2] & MODE2_V30_MODE) != 0;
-        let v = Self::v_counter_value_for_line(self.v_counter, self.is_pal, v30);
+        let v = Self::v_counter_value_for_line(line, self.is_pal, v30);
         ((v as u16) << 8) | (h as u16)
     }
 
