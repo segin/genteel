@@ -1590,7 +1590,9 @@ impl Ym2612 {
         /* Scale to output range. BlastEm scales each channel by 79/120
          * (ym_enable_zero_offset); the previous `>> 3` (x0.125) left the FM
          * ~5x quieter than hardware relative to the PSG and the i16 range.
-         * Worst case: 6 channels x +-8192 x 79/120 = +-32.4k, still in i16. */
+         * Worst case including the discrete-chip ladder offset:
+         * 6 x (8191 + 128) x 79/120 = +32.86k and 6 x (-8192 - 96) x 79/120
+         * = -32.74k, still within i16. */
         left = left * 79 / 120;
         right = right * 79 / 120;
         let dl = left - self.last_left;
@@ -1714,11 +1716,6 @@ impl Ym2612 {
         // write in real games (BlastEm likewise never drops data writes —
         // busy only affects the status read).
         self.write_data_bank(self.selected_data_bank, v);
-    }
-
-    pub fn write_data_selected_bank(&mut self, b: Bank, v: u8) {
-        self.selected_data_bank = b;
-        self.write_data(b as u8, v);
     }
 
     pub fn write_data_bank(&mut self, b: Bank, v: u8) {

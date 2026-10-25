@@ -218,8 +218,11 @@ impl Apu {
         self.fm.write_addr(bank, data);
     }
 
-    pub fn write_fm_data(&mut self, bank: Bank, data: u8) {
-        self.fm.write_data_selected_bank(bank, data);
+    /// Write the FM data port. As on hardware there is a single data port:
+    /// the write targets the register group selected by the most recent
+    /// address-port write.
+    pub fn write_fm_data(&mut self, data: u8) {
+        self.fm.write_data(0, data);
     }
 
     pub fn tick_cycles(&mut self, m68k_cycles: u32) {
@@ -320,7 +323,7 @@ mod tests {
     fn test_fm_passthrough() {
         let mut apu = Apu::new();
         apu.write_fm_addr(Bank::Bank0, 0x28);
-        apu.write_fm_data(Bank::Bank0, 0xF0);
+        apu.write_fm_data(0xF0);
         assert_eq!(apu.fm.registers[0][0x28], 0xF0);
     }
 
@@ -393,34 +396,41 @@ mod tests {
 
         // Write address to Bank0, and check if data written goes to this address
         apu.write_fm_addr(Bank::Bank0, 0x22);
-        apu.write_fm_data(Bank::Bank0, 0x11);
+        apu.write_fm_data(0x11);
         assert_eq!(apu.fm.registers[0][0x22], 0x11);
         apu.tick_cycles(32);
 
         // Change address in Bank0, write data, check new address is used
         apu.write_fm_addr(Bank::Bank0, 0x27);
         apu.tick_cycles(32);
-        apu.write_fm_data(Bank::Bank0, 0x33);
+        apu.write_fm_data(0x33);
         assert_eq!(apu.fm.registers[0][0x27], 0x33);
         apu.tick_cycles(32);
 
         // Verify that Bank1 operates independently
         apu.write_fm_addr(Bank::Bank1, 0x28);
         apu.tick_cycles(32);
-        apu.write_fm_data(Bank::Bank1, 0x44);
+        apu.write_fm_data(0x44);
         assert_eq!(apu.fm.registers[1][0x28], 0x44);
         apu.tick_cycles(32);
 
         // Change address in Bank1
         apu.write_fm_addr(Bank::Bank1, 0x2B);
         apu.tick_cycles(32);
-        apu.write_fm_data(Bank::Bank1, 0x55);
+        apu.write_fm_data(0x55);
         assert_eq!(apu.fm.registers[1][0x2B], 0x55);
         apu.tick_cycles(32);
 
-        // Ensure Bank0 address wasn't affected by Bank1 address writes
-        apu.write_fm_data(Bank::Bank0, 0x66);
-        assert_eq!(apu.fm.registers[0][0x27], 0x66); // The last address set for Bank0 was 0x27
+        // The single data port follows the last address write (Bank1 $2B),
+        // leaving Bank0's registers untouched.
+        apu.write_fm_data(0x66);
+        assert_eq!(apu.fm.registers[1][0x2B], 0x66);
+        assert_eq!(apu.fm.registers[0][0x27], 0x33);
+
+        // Re-selecting Bank0 routes data there again.
+        apu.write_fm_addr(Bank::Bank0, 0x27);
+        apu.write_fm_data(0x77);
+        assert_eq!(apu.fm.registers[0][0x27], 0x77);
     }
 
     #[test]
@@ -429,7 +439,7 @@ mod tests {
 
         // Write to Bank0, Register 0x24 (Timer A High)
         apu.write_fm_addr(Bank::Bank0, 0x24);
-        apu.write_fm_data(Bank::Bank0, 0xAA);
+        apu.write_fm_data(0xAA);
         assert_eq!(apu.fm.registers[0][0x24], 0xAA);
         assert!((apu.read_fm_status() & 0x80) != 0); // Busy flag should be set
 
@@ -438,7 +448,7 @@ mod tests {
         // Write to Bank1, Register 0x24
         apu.write_fm_addr(Bank::Bank1, 0x24);
         apu.tick_cycles(32);
-        apu.write_fm_data(Bank::Bank1, 0xBB);
+        apu.write_fm_data(0xBB);
         assert_eq!(apu.fm.registers[1][0x24], 0xBB);
         assert!((apu.read_fm_status() & 0x80) != 0); // Busy flag should be set
     }
@@ -453,11 +463,11 @@ mod tests {
         let mut apu = Apu::new();
 
         apu.write_fm_addr(Bank::Bank0, 0x24);
-        apu.write_fm_data(Bank::Bank0, 0xAA);
+        apu.write_fm_data(0xAA);
         assert_eq!(apu.fm.registers[0][0x24], 0xAA);
 
         apu.write_fm_addr(Bank::Bank0, 0x25);
-        apu.write_fm_data(Bank::Bank0, 0x03);
+        apu.write_fm_data(0x03);
         assert_eq!(apu.fm.registers[0][0x25], 0x03);
     }
 
@@ -467,21 +477,21 @@ mod tests {
 
         // 1. Test DAC Enable (Bank0, Register 0x2B)
         apu.write_fm_addr(Bank::Bank0, 0x2B);
-        apu.write_fm_data(Bank::Bank0, 0x80); // Enable DAC
+        apu.write_fm_data(0x80); // Enable DAC
         assert_eq!(apu.fm.registers[0][0x2B], 0x80);
         assert!((apu.read_fm_status() & 0x80) != 0); // Busy flag set
         apu.tick_cycles(32); // clear busy
 
         // 2. Test DAC Value (Bank0, Register 0x2A)
         apu.write_fm_addr(Bank::Bank0, 0x2A);
-        apu.write_fm_data(Bank::Bank0, 0xFF); // Set DAC value to maximum
+        apu.write_fm_data(0xFF); // Set DAC value to maximum
         assert_eq!(apu.fm.registers[0][0x2A], 0xFF);
         assert!((apu.read_fm_status() & 0x80) != 0); // Busy flag set
         apu.tick_cycles(32); // clear busy
 
         // 3. Test Panning Update (Bank1, Register 0xB6)
         apu.write_fm_addr(Bank::Bank1, 0xB6);
-        apu.write_fm_data(Bank::Bank1, 0xC0); // Left and Right panning
+        apu.write_fm_data(0xC0); // Left and Right panning
         assert_eq!(apu.fm.registers[1][0xB6], 0xC0);
         assert!((apu.read_fm_status() & 0x80) != 0); // Busy flag set
     }
@@ -495,7 +505,7 @@ mod tests {
         // Writing FM data should set the busy bit (bit 7)
         apu.write_fm_addr(Bank::Bank0, 0x22);
         apu.tick_cycles(32);
-        apu.write_fm_data(Bank::Bank0, 0);
+        apu.write_fm_data(0);
         assert!((apu.read_fm_status() & 0x80) != 0);
 
         // Tick cycles to clear busy bit: busy is 32 internal YM cycles =
@@ -507,15 +517,15 @@ mod tests {
         // Timer A is set via 0x24 (bits 9-2) and 0x25 (bits 1-0)
         // Set it to a very small value to trigger quickly
         apu.write_fm_addr(Bank::Bank0, 0x24);
-        apu.write_fm_data(Bank::Bank0, 0xFF);
+        apu.write_fm_data(0xFF);
         apu.write_fm_addr(Bank::Bank0, 0x25);
         apu.tick_cycles(32);
-        apu.write_fm_data(Bank::Bank0, 0x03); // Max value is 1023 (0x3FF)
+        apu.write_fm_data(0x03); // Max value is 1023 (0x3FF)
 
         // Enable and trigger timer A (bit 0 = enable, bit 2 = load bit)
         apu.write_fm_addr(Bank::Bank0, 0x27);
         apu.tick_cycles(32);
-        apu.write_fm_data(Bank::Bank0, 0x05);
+        apu.write_fm_data(0x05);
 
         // After some cycles, bit 0 should be set
         // Timer A advances on native YM2612 sample periods.
@@ -528,18 +538,18 @@ mod tests {
         // Reset status (YM2612 reset status bits via register 0x27 bits 4 and 5)
         apu.write_fm_addr(Bank::Bank0, 0x27);
         apu.tick_cycles(32);
-        apu.write_fm_data(Bank::Bank0, 0x30);
+        apu.write_fm_data(0x30);
         assert_eq!(apu.read_fm_status() & 0x03, 0);
 
         // Set Timer B to max value (255)
         apu.write_fm_addr(Bank::Bank0, 0x26);
         apu.tick_cycles(32);
-        apu.write_fm_data(Bank::Bank0, 0xFF);
+        apu.write_fm_data(0xFF);
 
         // Enable and trigger Timer B (bit 1 = enable, bit 3 = load bit)
         apu.write_fm_addr(Bank::Bank0, 0x27);
         apu.tick_cycles(32);
-        apu.write_fm_data(Bank::Bank0, 0x0A);
+        apu.write_fm_data(0x0A);
 
         // Timer B ticks once every 16 YM sample periods.
         // With the max timer value, overflow needs 16 sample periods of divider advance.
@@ -553,15 +563,15 @@ mod tests {
 
         // Enable DAC
         apu.write_fm_addr(Bank::Bank0, 0x2B);
-        apu.write_fm_data(Bank::Bank0, 0x80);
+        apu.write_fm_data(0x80);
 
         // Set DAC value to a non-zero amplitude
         apu.write_fm_addr(Bank::Bank0, 0x2A);
-        apu.write_fm_data(Bank::Bank0, 0xFF);
+        apu.write_fm_data(0xFF);
 
         // Pan Left Only to test specific output
         apu.write_fm_addr(Bank::Bank1, 0xB6);
-        apu.write_fm_data(Bank::Bank1, 0x80);
+        apu.write_fm_data(0x80);
 
         // Tick one native YM2612 sample period.
         apu.tick_cycles(144);
@@ -696,6 +706,15 @@ mod tests {
             fm_last = apu.fm.generate_sample();
         }
         assert_eq!(fm_last.0, fm_settled, "FM baseline offset");
+    }
+
+    #[test]
+    fn test_write_fm_data_follows_last_address_bank() {
+        let mut apu = Apu::new();
+        apu.write_fm_addr(Bank::Bank1, 0x30);
+        apu.write_fm_data(0x5A);
+        assert_eq!(apu.fm.registers[1][0x30], 0x5A);
+        assert_eq!(apu.fm.registers[0][0x30], 0x00);
     }
 
     /// Paths of every numeric leaf in a JSON value.
