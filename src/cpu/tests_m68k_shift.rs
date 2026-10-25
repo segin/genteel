@@ -105,6 +105,33 @@ fn test_asr_sign_preserve() {
     assert!(cpu.get_flag(flags::NEGATIVE));
 }
 
+#[test]
+fn test_asr_b_negative_count_equals_size_sets_carry() {
+    let (mut cpu, mut memory) = create_cpu();
+    write_op(&mut memory, &[0xE220]); // ASR.B D1, D0
+    cpu.d[0] = 0x80;
+    cpu.d[1] = 8;
+    cpu.step_instruction(&mut memory);
+    assert_eq!(cpu.d[0] & 0xFF, 0xFF);
+    assert!(cpu.get_flag(flags::CARRY));
+    assert!(cpu.get_flag(flags::EXTEND));
+}
+
+/* SingleStepTests 68000 data (ASR.b) shows that once the count exceeds the
+operand size, a negative operand still yields all-ones but C and X are clear. */
+#[test]
+fn test_asr_b_negative_count_exceeds_size_clears_carry() {
+    let (mut cpu, mut memory) = create_cpu();
+    write_op(&mut memory, &[0xE220]); // ASR.B D1, D0
+    cpu.d[0] = 0x80;
+    cpu.d[1] = 9;
+    cpu.step_instruction(&mut memory);
+    assert_eq!(cpu.d[0] & 0xFF, 0xFF);
+    assert!(cpu.get_flag(flags::NEGATIVE));
+    assert!(!cpu.get_flag(flags::CARRY));
+    assert!(!cpu.get_flag(flags::EXTEND));
+}
+
 // ============================================================================
 // LSL (Logical Shift Left) Tests
 // ============================================================================

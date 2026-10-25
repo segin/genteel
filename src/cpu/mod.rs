@@ -176,6 +176,17 @@ impl Cpu {
         self.decode_cache.fill(DecodeCacheEntry::default());
     }
 
+    /// Invalidate only the decode-cache slot for `pc` (O(1)). Used by the
+    /// SingleStepTests harness, where consecutive cases reuse the same PC with
+    /// different opcodes.
+    #[cfg(test)]
+    pub(crate) fn invalidate_cache_entry(&mut self, pc: u32) {
+        let idx = ((pc >> 1) & CACHE_MASK) as usize;
+        if let Some(e) = self.decode_cache.get_mut(idx) {
+            *e = DecodeCacheEntry::default();
+        }
+    }
+
     pub fn request_interrupt(&mut self, level: u8) {
         if level > 0 && level <= 7 {
             self.interrupt_pending_mask |= 1 << level;
@@ -791,6 +802,8 @@ mod tests_bug_fixes;
 mod tests_cache;
 #[cfg(test)]
 mod tests_decoder_shift;
+#[cfg(test)]
+mod tests_harte;
 #[cfg(test)]
 mod tests_interrupts;
 #[cfg(test)]

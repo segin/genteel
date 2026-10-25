@@ -238,22 +238,22 @@ fn calculate_shift_right(
     let carry;
 
     if count_val >= size_bits {
-        if arithmetic && (val & sign_bit) != 0 {
-            result = mask; // Sign extended -1
-            carry = true; // Last bit shifted out was sign bit (1)
+        // Result: ASR sign-extends a negative operand to all-ones; LSR (and ASR
+        // of a non-negative operand) goes to zero.
+        result = if arithmetic && (val & sign_bit) != 0 {
+            mask
         } else {
-            result = 0;
-            carry = if arithmetic {
-                false // Sign bit was 0
-            } else {
-                // Logical: Last bit out depends on count
-                if count_val == size_bits {
-                    (val & sign_bit) != 0
-                } else {
-                    false
-                }
-            };
-        }
+            0
+        };
+        // Carry is the last meaningful bit shifted out: the MSB/sign bit when the
+        // count exactly equals the size, and 0 once the count exceeds it. This
+        // holds for both ASR and LSR on the 68000 — the previous code wrongly
+        // latched carry=1 for ASR of a negative value with count > size.
+        carry = if count_val == size_bits {
+            (val & sign_bit) != 0
+        } else {
+            false
+        };
     } else {
         carry = ((val >> (count_val - 1)) & 1) != 0;
         if arithmetic {
@@ -346,8 +346,12 @@ pub fn exec_shift_mem<M: MemoryInterface>(
         arithmetic,
         memory,
     );
-    // V is always cleared for memory shifts
-    cpu.set_flag(flags::OVERFLOW, false);
+    // V is cleared for LSL/LSR/ASR memory shifts, but ASL still sets it when the
+    // sign bit changes during the shift (already computed by exec_shift via the
+    // arithmetic-left path), so only clear it for the non-ASL cases.
+    if !(left && arithmetic) {
+        cpu.set_flag(flags::OVERFLOW, false);
+    }
     cycles + 2 // Memory shifts take 8 cycles + EA (exec_shift returns 6 + cycles + 2*1 = 8 + cycles)
 }
 
