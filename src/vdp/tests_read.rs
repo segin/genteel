@@ -10,12 +10,13 @@ fn test_vram_read_prefetch_wraps_at_end_of_vram() {
 
     vdp.try_prefetch();
 
-    assert_eq!(vdp.command.read_buffer, 0x1234);
+    // Address bit 0 is ignored, so the aligned word at 0xFFFE is returned.
+    assert_eq!(vdp.command.read_buffer, 0x3412);
     assert_eq!(vdp.command.address, 0xFFFF);
 }
 
 #[test]
-fn test_vram_read_prefetch_uses_vram_word_layout_for_odd_addresses() {
+fn test_vram_read_prefetch_ignores_address_bit_0() {
     let mut vdp = Vdp::new();
     vdp.command.code = VRAM_READ;
     vdp.command.address = 0x0001;
@@ -25,6 +26,6 @@ fn test_vram_read_prefetch_uses_vram_word_layout_for_odd_addresses() {
 
     vdp.try_prefetch();
 
-    assert_eq!(vdp.command.read_buffer, 0xABCD);
+    assert_eq!(vdp.command.read_buffer, 0xCDAB);
     assert_eq!(vdp.command.address, 0x0003);
 }

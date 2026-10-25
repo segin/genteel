@@ -214,31 +214,11 @@ impl DmaOps for Vdp {
 
                 let addr = self.command.address;
                 let code = self.command.code;
-                match code & 0x0F {
-                    VRAM_WRITE => {
-                        let idx = addr as usize;
-                        if idx < self.vram.len() {
-                            self.vram[idx] = (val >> 8) as u8;
-                            self.vram[idx ^ 1] = (val & 0xFF) as u8;
-                        }
-                    }
-                    CRAM_WRITE => {
-                        let idx = (addr as usize / 2) & 0x3F;
-                        self.cram[idx * 2] = (val & 0xFF) as u8;
-                        self.cram[idx * 2 + 1] = (val >> 8) as u8;
-                        self.cram_cache[idx] = Self::genesis_color_to_rgb565(val);
-                        self.redraw_current_scanline_if_visible();
-                    }
-                    VSRAM_WRITE => {
-                        let idx = (addr as usize) % 80;
-                        self.vsram[idx] = (val >> 8) as u8;
-                        if idx + 1 < 80 {
-                            self.vsram[idx + 1] = (val & 0xFF) as u8;
-                        }
-                        self.redraw_current_scanline_if_visible();
-                    }
-                    _ => {}
-                }
+                self.process_fifo_entry(super::FifoEntry {
+                    address: addr,
+                    code,
+                    value: val,
+                });
 
                 self.command.address = addr.wrapping_add(inc);
 

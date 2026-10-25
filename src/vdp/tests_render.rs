@@ -456,11 +456,12 @@ fn test_tick_latches_scanline_after_hblank() {
     vdp.vram[0xC000] = 0x00;
     vdp.vram[0xC001] = 0x01;
 
-    vdp.tick(859, |_| 0);
+    let active_start = vdp.line_timing().active_start;
+    vdp.tick(active_start - 1, |_| 0);
 
     assert_eq!(
         vdp.framebuffer[0], 0,
-        "line should not render before HBlank ends"
+        "line should not render before active display starts"
     );
 
     vdp.tick(1, |_| 0);
@@ -490,7 +491,7 @@ fn test_cram_write_rerenders_current_scanline() {
     vdp.render_line(0);
     assert_eq!(vdp.framebuffer[0], 0xF800);
 
-    vdp.mclk_line_clocks = 860;
+    vdp.mclk_line_clocks = vdp.line_timing().active_start;
     vdp.bypass_fifo = true;
     vdp.write_control(0xC002);
     vdp.write_control(0x0000);
@@ -525,7 +526,7 @@ fn test_register_write_rerenders_current_scanline() {
     vdp.render_line(0);
     assert_eq!(vdp.framebuffer[0], 0xF800);
 
-    vdp.mclk_line_clocks = 860;
+    vdp.mclk_line_clocks = vdp.line_timing().active_start;
     vdp.write_control(0x8220);
 
     assert_eq!(
@@ -538,7 +539,7 @@ fn test_register_write_rerenders_current_scanline() {
 /// previous one. The previous line's pixels are already on screen and must
 /// not be retroactively repainted. The write updates state immediately
 /// (via the synchronous cram_cache write in process_fifo_entry); the
-/// upcoming line will use the new palette when it renders at MCLK 860.
+/// upcoming line will use the new palette when its active display starts.
 #[test]
 fn test_hblank_cram_write_does_not_repaint_previous_scanline() {
     let mut vdp = Vdp::new();
@@ -552,7 +553,8 @@ fn test_hblank_cram_write_does_not_repaint_previous_scanline() {
     vdp.render_line(0);
     assert_eq!(vdp.framebuffer[0], 0xF800);
 
-    vdp.mclk_line_clocks = 0; // HBlank of line 1
+    // HBlank of line 1, after the last pixels of line 0 were emitted.
+    vdp.mclk_line_clocks = vdp.line_timing().tail_mclk;
     vdp.bypass_fifo = true;
     vdp.write_control(0xC002);
     vdp.write_control(0x0000);
@@ -1011,7 +1013,8 @@ fn test_render_picks_up_hblank_hscroll_updates() {
     vdp.vram[0x0000] = 0xFF;
     vdp.vram[0x0001] = 0xF8;
 
-    vdp.tick(860, |_| 0);
+    let active_start = vdp.line_timing().active_start;
+    vdp.tick(active_start, |_| 0);
 
     // hscroll = -8 → tile cell 1 (tile index 2 = green) is at screen x = 0.
     let offset = 320;
@@ -1512,8 +1515,9 @@ fn test_mid_line_cram_write_segments_the_scanline() {
         vdp.vram[nt + 1] = 0x01;
     }
 
-    // Render line 0 at MCLK 860 (the active-display start).
-    vdp.mclk_line_clocks = 860;
+    // Render line 0 at the active-display start.
+    let active_start = vdp.line_timing().active_start;
+    vdp.mclk_line_clocks = active_start;
     vdp.render_line(0);
     // All 320 pixels should be red.
     for x in 0..320 {
@@ -1522,7 +1526,7 @@ fn test_mid_line_cram_write_segments_the_scanline() {
 
     // Advance MCLK to roughly the middle of active display, then perform a
     // mid-line CRAM update: change palette entry 1 to green.
-    vdp.mclk_line_clocks = 860 + 1280; // half-way through active span
+    vdp.mclk_line_clocks = active_start + 1216; // half-way through active span
     let split_x = vdp.mid_line_pixel_x();
     assert!(split_x > 0 && split_x < 320);
 

@@ -117,8 +117,8 @@ fn hint_fires_on_first_blanking_line() {
     vdp.line_counter = 0;
     vdp.mclk_line_clocks = 3419;
 
-    // Cross into line 224 (first blanking line) and past the HINT MCLK offset.
-    vdp.tick(1 + 200, |_| 0);
+    // Cross into line 224 (first blanking line).
+    vdp.tick(1, |_| 0);
 
     assert_eq!(vdp.v_counter, 224);
     assert!(

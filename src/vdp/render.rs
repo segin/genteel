@@ -1058,7 +1058,8 @@ impl RenderOps for Vdp {
     fn get_cram_raw(&self) -> [u16; 64] {
         let mut raw = [0u16; 64];
         for (i, value) in raw.iter_mut().enumerate() {
-            *value = ((self.cram[i * 2] as u16) << 8) | (self.cram[i * 2 + 1] as u16);
+            // CRAM is stored low byte first; return the word as the VDP sees it.
+            *value = u16::from_le_bytes([self.cram[i * 2], self.cram[i * 2 + 1]]);
         }
         raw
     }
