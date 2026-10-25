@@ -52,7 +52,7 @@ Status: `[ ]` open, `[x]` satisfied.
 - [x] **UNC-08** · L · Event — When the Harte harness begins a test case, the harness shall reset `interrupt_pending_mask`.
   - *Evidence:* `tests_harte.rs` does not reset it.
   - *Verify:* I.
-- [ ] **UNC-09** · L · Ubiquitous — The Harte harness shall expose `disasm_range` as a helper function rather than a `#[test]`.
+- [x] **UNC-09** · L · Ubiquitous — The Harte harness shall expose `disasm_range` as a helper function rather than a `#[test]`.
   - *Evidence:* `tests_harte.rs` treats a utility as a test.
   - *Verify:* I.
 - [x] **UNC-10** · L · Ubiquitous — The repository documentation shall state the data location (`HARTE_DIR`, `DISASM_ROM`) required by `tests_harte.rs`.
@@ -66,151 +66,164 @@ Status: `[ ]` open, `[x]` satisfied.
 
 ## 1. M68000 core — decode, EA, exceptions (CPU)
 
-- [ ] **CPU-01** · H · Unwanted — If an M68k instruction accesses a word or long operand at an odd address, then the M68k core shall abort that instruction before any further register, memory or flag update and take exactly one address-error exception.
+- [x] **CPU-01** · H · Unwanted — If an M68k instruction accesses a word or long operand at an odd address, then the M68k core shall abort that instruction before any further register, memory or flag update and take exactly one address-error exception.
   - *Evidence:* `cpu/mod.rs:101-157, 246-276, 401-424` call `process_exception(3)` then return 0 and continue. `MOVE (A0),SR` odd → handler runs in user mode IPL 0; `JSR`/`BSR` odd A7 → `cpu.pc = addr` overwrites handler PC; `ADD.W D0,(A0)` odd → second fault → "Double fault" halt; `MOVE.W (A0)+,D0` writes 0 to D0; MOVEM faults per register. Only ADDX/SUBX check `pending_exception`. Shift/NOT raw `read_ea` at `ops/bits.rs:179, 286, 372`.
   - *Verify:* T — odd-address cases above take vector 3 once, with registers/memory unchanged except the exception frame.
-- [ ] **CPU-02** · H · Event — When the M68k core takes an illegal-instruction, Line-A, Line-F, unimplemented-opcode or privilege-violation exception, the M68k core shall stack the address of the faulting opcode as the return PC.
+- [x] **CPU-02** · H · Event — When the M68k core takes an illegal-instruction, Line-A, Line-F, unimplemented-opcode or privilege-violation exception, the M68k core shall stack the address of the faulting opcode as the return PC.
   - *Evidence:* `cpu/mod.rs:757-762`; `ops/system.rs:167-169, 182-183, 197-198, 211-212, 238-239, 290-291, 307-308, 324-325` stack PC already advanced (user-mode `MOVE #$2700,SR` stacks PC at `$2700`).
   - *Verify:* T — `0xA123` at `$1000` stacks `$1000`.
-- [ ] **CPU-03** · H · Event — When the bus changes the contents mapped at 0x000000–0x3FFFFF (mapper bank switch, ROM-window write or SRAM toggle at 0xA130F1), the M68k core shall discard cached decodes for the affected range before the next instruction fetch.
+- [x] **CPU-03** · H · Event — When the bus changes the contents mapped at 0x000000–0x3FFFFF (mapper bank switch, ROM-window write or SRAM toggle at 0xA130F1), the M68k core shall discard cached decodes for the affected range before the next instruction fetch.
   - *Evidence:* `cpu/mod.rs:477-498` caches PC < $400000 indefinitely; only `reset()` invalidates; writers at `memory/bus.rs:262-264, 272-273`. (verified)
   - *Verify:* T — SSF ROM executes new code at $080000 after bank switch.
-- [ ] **CPU-04** · M · Event — When the M68k core takes an address-error exception, the M68k core shall push the 7-word group 0 frame (FC/R-W/I-N word, access address, IR, SR, PC).
+  - *Resolution:* the per-PC decode cache was removed. Every opcode is fetched from the bus and decoded through one shared 64K-entry opcode table, so mapper switches, SRAM toggles and self-modifying code need no invalidation.
+- [x] **CPU-04** · M · Event — When the M68k core takes an address-error exception, the M68k core shall push the 7-word group 0 frame (FC/R-W/I-N word, access address, IR, SR, PC).
   - *Evidence:* `cpu/mod.rs:401-424` pushes the 3-word group 1/2 frame.
   - *Verify:* T — frame contents and SP delta of 14 bytes.
-- [ ] **CPU-05** · M · Ubiquitous — The M68k core shall charge exception-processing time per exception type (50 cycles for address error, 38+ea for zero divide, 34 for interrupt/trap group).
+- [x] **CPU-05** · M · Ubiquitous — The M68k core shall charge exception-processing time per exception type (50 cycles for address error, 38+ea for zero divide, 34 for interrupt/trap group).
   - *Evidence:* every exception costs 34.
   - *Verify:* T — cycle count per vector.
-- [ ] **CPU-06** · M · Unwanted — If an opcode specifies an effective-address mode not permitted for that instruction by the M68000 PRM, then the M68k core shall take the illegal-instruction exception.
+  - *Resolution:* timing now comes from the bus-cycle sequence; SingleStepTests confirm address error = 50 clocks after the cycles already spent, zero divide 38+ea, TRAP/illegal/privilege/Line A/F 34, CHK trap 38+ea (above bound) or 40+ea (negative).
+- [x] **CPU-06** · M · Unwanted — If an opcode specifies an effective-address mode not permitted for that instruction by the M68000 PRM, then the M68k core shall take the illegal-instruction exception.
   - *Evidence:* `instructions.rs:121` `from_mode_reg` accepts all modes; only MOVE/NBCD validate. Affected in `decoder.rs`: LEA/PEA/JMP/JSR 297/305/312/319; CHK 327; CLR/NEG/NEGX/NOT/TST 384-413; TAS 378; MOVE to/from SR/CCR 416-433; immediate ALU dest 161; bit ops 96/118; ADD/SUB/OR/AND/EOR to `<ea>` 815/621/554/748/677; Scc/ADDQ/SUBQ 456/462; MOVEM 351; EXG 737. Examples: `JMP #imm` 0x4EFC; `LEA (A0)+,A1` 0x43D8; `0x49C0` silent NOP; `ADD.W D0,#imm`; `BSET D0,#imm` 0x01FC; `ADD.W D0,d16(PC)`; `CLR.W A0`; `ORI.W #x,A0`; EXG 0xC180 silent NOP; `TST.W A0`; `TST d(PC)`.
   - *Verify:* T — exhaustive 64K-opcode validity table matches Musashi.
-- [ ] **CPU-07** · M · Unwanted — If an opcode in 0xE0C0–0xEFFF has bit 11 set, then the M68k core shall take the illegal-instruction exception.
+- [x] **CPU-07** · M · Unwanted — If an opcode in 0xE0C0–0xEFFF has bit 11 set, then the M68k core shall take the illegal-instruction exception.
   - *Evidence:* `decoder.rs:904-909` `(opcode>>9)&3` drops bit 11, so 020 bit-field ops decode as shifts (`0xE8C0` → ASR).
   - *Verify:* T.
-- [ ] **CPU-08** · M · Unwanted — If a memory-shift opcode specifies an effective address that is not memory-alterable, then the M68k core shall take the illegal-instruction exception.
+- [x] **CPU-08** · M · Unwanted — If a memory-shift opcode specifies an effective address that is not memory-alterable, then the M68k core shall take the illegal-instruction exception.
   - *Evidence:* `decoder.rs:854` accepts Dn/An/d(PC)/d(PC,Xn)/#imm (`0xE0C0` shifts D0).
   - *Verify:* T.
-- [ ] **CPU-09** · M · Ubiquitous — The M68k core shall add 4 cycles to the effective-address calculation time of every memory addressing mode for long-size operands.
+- [x] **CPU-09** · M · Ubiquitous — The M68k core shall add 4 cycles to the effective-address calculation time of every memory addressing mode for long-size operands.
   - *Evidence:* `addressing.rs:92-191` size-independent (`ADD.L (A0),D0` 12 vs 14).
   - *Verify:* T — PRM EA timing table.
-- [ ] **CPU-10** · M · Event — When SR is written, the M68k core shall store only the implemented bits (mask $A71F).
+- [x] **CPU-10** · M · Event — When SR is written, the M68k core shall store only the implemented bits (mask $A71F).
   - *Evidence:* `cpu/mod.rs:426-439` `set_sr` stores raw value.
   - *Verify:* T — `MOVE #$FFFF,SR; MOVE SR,D0` → $A71F.
-- [ ] **CPU-11** · M · Event — When CCR is written (MOVE to CCR, ANDI/ORI/EORI to CCR, RTR), the M68k core shall store only bits 0–4.
+- [x] **CPU-11** · M · Event — When CCR is written (MOVE to CCR, ANDI/ORI/EORI to CCR, RTR), the M68k core shall store only bits 0–4.
   - *Evidence:* `ops/system.rs:227, 278, 285, 302, 319`.
   - *Verify:* T — `ORI #$FF,CCR` leaves bits 5–7 clear.
-- [ ] **CPU-12** · M · Event — When an instruction completes that began with the T bit set and raised no other exception, the M68k core shall take the trace exception (vector 9).
+- [x] **CPU-12** · M · Event — When an instruction completes that began with the T bit set and raised no other exception, the M68k core shall take the trace exception (vector 9).
   - *Evidence:* `cpu/mod.rs:441-469` trace unimplemented.
   - *Verify:* T.
-- [ ] **CPU-13** · L · State — While halted by a double fault, the M68k core shall ignore interrupts until reset.
+- [x] **CPU-13** · L · State — While halted by a double fault, the M68k core shall ignore interrupts until reset.
   - *Evidence:* `cpu/mod.rs:159-173, 168, 451` STOP and double-fault share `halted`; interrupts clear it.
   - *Verify:* T — double-fault then VINT stays halted.
-- [ ] **CPU-14** · L · Unwanted — If a bus or address error occurs while the M68k core is stacking an exception frame, then the M68k core shall enter the double-fault halt state.
+- [x] **CPU-14** · L · Unwanted — If a bus or address error occurs while the M68k core is stacking an exception frame, then the M68k core shall enter the double-fault halt state.
   - *Evidence:* `cpu/mod.rs:402-406` treats any second exception in one instruction as double fault.
   - *Verify:* T — RMW odd-address case takes vector 3, not halt.
-- [ ] **CPU-15** · L · Unwanted — If a stack push or pop (including exception stacking, RTS, RTR, RTE, UNLK) uses an odd stack pointer, then the M68k core shall take the address-error exception.
+  - *Resolution:* per SingleStepTests an odd RMW destination faults once on the read and takes vector 3. A fault while stacking a group 0 frame halts; a fault while stacking a group 1/2 frame becomes an address error (which then halts if the stack itself is odd).
+- [x] **CPU-15** · L · Unwanted — If a stack push or pop (including exception stacking, RTS, RTR, RTE, UNLK) uses an odd stack pointer, then the M68k core shall take the address-error exception.
   - *Evidence:* `cpu/mod.rs:379-399, 417-421`; `ops/system.rs:136` raw `memory.read_long`.
   - *Verify:* T.
-- [ ] **CPU-16** · L · Unwanted — If BRA, Bcc, BSR, JMP or JSR targets an odd address, then the M68k core shall take the address-error exception.
+- [x] **CPU-16** · L · Unwanted — If BRA, Bcc, BSR, JMP or JSR targets an odd address, then the M68k core shall take the address-error exception.
   - *Verify:* T.
-- [ ] **CPU-17** · L · Event — When a save state is loaded, the M68k core shall restore a populated decode cache.
+  - *Resolution:* per SingleStepTests a failed fetch from a branch target stacks PC = target - 4, and the status word has bit 3 set for program fetches (clear for data accesses).
+- [x] **CPU-17** · L · Event — When a save state is loaded, the M68k core shall restore a populated decode cache.
   - *Evidence:* `cpu/mod.rs:36-37` `#[serde(skip)]` yields empty slice → caching permanently off.
   - *Verify:* T — cache hit rate > 0 after state load.
-- [ ] **CPU-18** · L · Ubiquitous — The M68k core shall size its decode cache to the loaded ROM image.
+  - *Resolution:* there is no decode cache to restore any more; the shared opcode table is built once per process and is always populated.
+- [x] **CPU-18** · L · Ubiquitous — The M68k core shall size its decode cache to the loaded ROM image.
   - *Evidence:* `cpu/mod.rs:19-20, 66-67` fixed 32 MiB per `Cpu` (2M × 16 B); `reset()` rewrites it; each test allocates it.
   - *Verify:* A — allocation ≤ ROM size × entry size.
-- [ ] **CPU-19** · L · Ubiquitous — `CpuState` shall include `usp`, `ssp` and `interrupt_pending_mask`.
+  - *Resolution:* replaced by one process-wide 64K-entry decode table (about 0.5 MiB) shared by all `Cpu` instances instead of 32 MiB per CPU.
+- [x] **CPU-19** · L · Ubiquitous — `CpuState` shall include `usp`, `ssp` and `interrupt_pending_mask`.
   - *Evidence:* `cpu/mod.rs:203-221`.
   - *Verify:* T — state round-trip preserves fields.
-- [ ] **CPU-20** · L · State — While the M68k core is halted or stopped, the M68k core shall add each elapsed step's cycles to its cycle counter.
+- [x] **CPU-20** · L · State — While the M68k core is halted or stopped, the M68k core shall add each elapsed step's cycles to its cycle counter.
   - *Evidence:* `cpu/mod.rs:451-452` returns 4 without adding.
   - *Verify:* T.
-- [ ] **CPU-21** · L · Unwanted — If a byte-size instruction specifies an address register as source, then the M68k core shall take the illegal-instruction exception.
+- [x] **CPU-21** · L · Unwanted — If a byte-size instruction specifies an address register as source, then the M68k core shall take the illegal-instruction exception.
   - *Evidence:* `decoder.rs:190, 582, 690, 776` (`MOVE.B A0,D0` 0x1008; `ADD.B/SUB.B/CMP.B An`).
   - *Verify:* T.
 
 ## 2. M68000 instruction semantics and timing (OPS)
 
-- [ ] **OPS-01** · H · Event — When TAS targets a memory operand, the M68k core shall not write the result back to memory.
+- [x] **OPS-01** · H · Event — When TAS targets a memory operand, the M68k core shall not write the result back to memory.
   - *Evidence:* `ops/bits.rs:613-615` always writes `val|0x80` (Gargoyles, Ex-Mutants). (verified)
   - *Verify:* T — memory byte unchanged; flags from original value.
-- [ ] **OPS-02** · L · Ubiquitous — The M68k core shall charge TAS 4 cycles for Dn and 10+ea cycles for memory operands.
+  - *Resolution:* implemented as a bus property (`MemoryInterface::tas_write_back`, default true, so SingleStepTests, which model a generic bus that completes the write, pass); the Mega Drive `Bus` returns false.
+- [x] **OPS-02** · L · Ubiquitous — The M68k core shall charge TAS 4 cycles for Dn and 10+ea cycles for memory operands.
   - *Evidence:* returns 8 (Dn) / 12 ((An)).
   - *Verify:* T.
-- [ ] **OPS-03** · M · Event — When DIVU or DIVS overflows, the M68k core shall set N=1, Z=0, V=1 and C=0.
+  - *Resolution:* SingleStepTests confirm 4 (Dn) and 10+ea: TAS (An) = 14.
+- [x] **OPS-03** · M · Event — When DIVU or DIVS overflows, the M68k core shall set N=1, Z=0, V=1 and C=0.
   - *Evidence:* `ops/arithmetic.rs:550-552, 581-583` leave N/Z stale. Check DIVS late-overflow vs SingleStepTests.
   - *Verify:* T — `DIVU #1,D0` with D0=$00010000.
-- [ ] **OPS-04** · M · Event — When a byte-size `-(A7)` or `(A7)+` operand is used by ABCD, SBCD, ADDX, SUBX or CMPM, the M68k core shall change A7 by 2.
+  - *Resolution:* SingleStepTests contradict the audit: on DIVU/DIVS overflow V=1 and C=0 but N and Z are left unchanged (not N=1, Z=0). The DIVS early-overflow exit tests |dividend| >> 15 against |divisor|.
+- [x] **OPS-04** · M · Event — When a byte-size `-(A7)` or `(A7)+` operand is used by ABCD, SBCD, ADDX, SUBX or CMPM, the M68k core shall change A7 by 2.
   - *Evidence:* `ops/arithmetic.rs:784-806` use `size.bytes()`, bypassing `calculate_ea`'s A7 rule.
   - *Verify:* T — `ABCD -(A7),-(A7)` leaves SP even.
-- [ ] **OPS-05** · M · Ubiquitous — The M68k core shall perform all address, displacement and PC arithmetic with wrapping 32-bit semantics.
+- [x] **OPS-05** · M · Ubiquitous — The M68k core shall perform all address, displacement and PC arithmetic with wrapping 32-bit semantics.
   - *Evidence:* `ops/system.rs:10, 13, 20, 31, 34, 48, 51, 106`; `ops/data.rs:134` plain `+` panics in debug (BSR at PC $FFFFFFFE; MOVEP with A0=$7FFFFFF0, disp $7FFF).
   - *Verify:* T — those cases under debug build do not panic.
-- [ ] **OPS-06** · M · Ubiquitous — The M68k core shall charge long-size register shifts and rotates 8+2n cycles.
+- [x] **OPS-06** · M · Ubiquitous — The M68k core shall charge long-size register shifts and rotates 8+2n cycles.
   - *Evidence:* `ops/bits.rs:329, 413, 458, 503` return 6+2n.
   - *Verify:* T.
-- [ ] **OPS-07** · M · Ubiquitous — The M68k core shall charge memory ASL/ASR 8+ea cycles.
+- [x] **OPS-07** · M · Ubiquitous — The M68k core shall charge memory ASL/ASR 8+ea cycles.
   - *Evidence:* `bits.rs:355` `exec_shift_mem` adds 2 to an 8+ea result. Remove `exec_shift_mem` (V-clear redundant post-diff).
   - *Verify:* T.
-- [ ] **OPS-08** · M · Ubiquitous — The M68k core shall include the operand write time in the cycle count of read-modify-write instructions with a memory destination.
+- [x] **OPS-08** · M · Ubiquitous — The M68k core shall include the operand write time in the cycle count of read-modify-write instructions with a memory destination.
   - *Evidence:* `ADD Dn,(An).W` 8 vs 12; same for SUB/AND/OR/EOR/ADDQ/SUBQ.
   - *Verify:* T — PRM timing tables.
-- [ ] **OPS-09** · M · Ubiquitous — The M68k core shall charge ADDI/SUBI the PRM cycle counts (12+ea memory; 16 for `.L #,Dn`).
+- [x] **OPS-09** · M · Ubiquitous — The M68k core shall charge ADDI/SUBI the PRM cycle counts (12+ea memory; 16 for `.L #,Dn`).
   - *Evidence:* returns 8+ea / 8.
   - *Verify:* T.
-- [ ] **OPS-10** · M · Ubiquitous — The M68k core shall charge NEG, NEGX, NOT and CLR the PRM cycle counts (6 for `.L Dn`; 8+ea for memory).
+- [x] **OPS-10** · M · Ubiquitous — The M68k core shall charge NEG, NEGX, NOT and CLR the PRM cycle counts (6 for `.L Dn`; 8+ea for memory).
   - *Evidence:* returns 4 / 4+ea.
   - *Verify:* T.
-- [ ] **OPS-11** · M · Ubiquitous — The M68k core shall charge MOVE according to its destination mode per the PRM.
+- [x] **OPS-11** · M · Ubiquitous — The M68k core shall charge MOVE according to its destination mode per the PRM.
   - *Evidence:* +4 for any non-Dn dest (`MOVE.W D0,(A0)` 12 vs 8; `-(An)` 14 vs 8).
   - *Verify:* T.
-- [ ] **OPS-12** · M · Ubiquitous — The M68k core shall charge BTST, BSET, BCLR and BCHG the PRM cycle counts.
+- [x] **OPS-12** · M · Ubiquitous — The M68k core shall charge BTST, BSET, BCLR and BCHG the PRM cycle counts.
   - *Evidence:* `bits.rs:524-545`: `BTST Dn,Dn` 10 vs 6; `BTST Dn,(An)` 12 vs 8; `BSET #n,Dn` 8 vs 12; immediate-to-memory 4 short; BCLR Dn lacks +2.
   - *Verify:* T.
-- [ ] **OPS-13** · M · Ubiquitous — The M68k core shall charge MULU 38+2·popcount(src) cycles and MULS 38+2·(bit transitions in src<<1) cycles, plus ea.
+- [x] **OPS-13** · M · Ubiquitous — The M68k core shall charge MULU 38+2·popcount(src) cycles and MULS 38+2·(bit transitions in src<<1) cycles, plus ea.
   - *Evidence:* `arithmetic.rs:503, 525` fixed 70.
   - *Verify:* T — `MULU #0,D0` = 38+ea.
-- [ ] **OPS-14** · M · Ubiquitous — The M68k core shall charge DIVU and DIVS data-dependent cycle counts per the hardware algorithm.
+- [x] **OPS-14** · M · Ubiquitous — The M68k core shall charge DIVU and DIVS data-dependent cycle counts per the hardware algorithm.
   - *Evidence:* `arithmetic.rs:559, 593` fixed 140/158.
   - *Verify:* T — vs Jorge Cwik algorithm / SingleStepTests.
-- [ ] **OPS-15** · L · Event — When DIVU or DIVS divides by zero, the M68k core shall charge 38+ea cycles.
+- [x] **OPS-15** · L · Event — When DIVU or DIVS divides by zero, the M68k core shall charge 38+ea cycles.
   - *Evidence:* `arithmetic.rs:540, 574` return 0; `process_exception` result discarded.
   - *Verify:* T.
-- [ ] **OPS-16** · L · Event — When DIVU or DIVS divides by zero, the M68k core shall clear C.
+- [x] **OPS-16** · L · Event — When DIVU or DIVS divides by zero, the M68k core shall clear C.
   - *Verify:* T — match SingleStepTests for N/Z/V.
-- [ ] **OPS-17** · L · Ubiquitous — The M68k core shall set V and N for ABCD, SBCD and NBCD per hardware (V = ~uncorrected & corrected & 0x80; N = bit 7).
+  - *Resolution:* SingleStepTests show C cleared and N, Z, V left unchanged on divide by zero.
+- [x] **OPS-17** · L · Ubiquitous — The M68k core shall set V and N for ABCD, SBCD and NBCD per hardware (V = ~uncorrected & corrected & 0x80; N = bit 7).
   - *Evidence:* `arithmetic.rs:628-760` leave V/N stale.
   - *Verify:* T.
-- [ ] **OPS-18** · L · Unwanted — If ABCD or SBCD receives non-BCD operands, then the M68k core shall produce the hardware result.
+- [x] **OPS-18** · L · Unwanted — If ABCD or SBCD receives non-BCD operands, then the M68k core shall produce the hardware result.
   - *Evidence:* low-digit carry loses 0x10 when low sum ≥ 0x1A.
   - *Verify:* T — exhaustive 256×256×X vs Musashi.
-- [ ] **OPS-19** · L · Ubiquitous — The M68k core shall charge NBCD to memory 8+ea cycles.
+- [x] **OPS-19** · L · Ubiquitous — The M68k core shall charge NBCD to memory 8+ea cycles.
   - *Evidence:* returns 6+ea.
   - *Verify:* T.
-- [ ] **OPS-20** · L · Event — When LINK is executed with A7 as the register operand, the M68k core shall push the decremented A7 value.
+- [x] **OPS-20** · L · Event — When LINK is executed with A7 as the register operand, the M68k core shall push the decremented A7 value.
   - *Evidence:* `ops/system.rs:147-149` (A7=$1000 stores $1000, should be $0FFC).
   - *Verify:* T.
-- [ ] **OPS-21** · L · Event — When CHK executes, the M68k core shall clear V and C.
+- [x] **OPS-21** · L · Event — When CHK executes, the M68k core shall clear V and C.
   - *Evidence:* `arithmetic.rs:752-772` leave stale.
   - *Verify:* T.
-- [ ] **OPS-22** · L · Event — When CHK traps, the M68k core shall charge 40+ea cycles.
+  - *Resolution:* per SingleStepTests CHK clears V and C, sets Z from Dn == 0, and changes N only when it traps (N = sign of Dn for the upper-bound trap, N = 1 for the negative trap).
+- [x] **OPS-22** · L · Event — When CHK traps, the M68k core shall charge 40+ea cycles.
   - *Evidence:* returns 10+ea.
   - *Verify:* T.
-- [ ] **OPS-23** · L · Ubiquitous — The M68k core shall charge Bcc, Scc, JMP, JSR and PEA the PRM cycle counts.
+  - *Resolution:* SingleStepTests show 38+ea when Dn exceeds the bound (tested first) and 40+ea when Dn is negative, not a flat 40+ea.
+- [x] **OPS-23** · L · Ubiquitous — The M68k core shall charge Bcc, Scc, JMP, JSR and PEA the PRM cycle counts.
   - *Evidence:* `ops/system.rs`: `Bcc.W` not taken 8 vs 12; `Scc Dn` true 4 vs 6; JMP/JSR `d(An)`/`abs.L` 2–4 off; PEA ea+4 vs ea+8.
   - *Verify:* T.
-- [ ] **OPS-24** · L · Ubiquitous — The M68k core shall charge MOVEM the PRM cycle counts.
+- [x] **OPS-24** · L · Ubiquitous — The M68k core shall charge MOVEM the PRM cycle counts.
   - *Evidence:* `ops/data.rs:167-290`: reg→mem `(An)` 12+4n vs 8+4n; mem→reg `(An)+` 8+4n vs 12+4n.
   - *Verify:* T.
-- [ ] **OPS-25** · L · Event — When MOVEM transfers memory to registers, the M68k core shall perform the hardware's extra trailing word read.
+  - *Resolution:* SingleStepTests confirm register-to-memory 8+4n (+8n long) and memory-to-register 12+4n (+8n long), plus ea.
+- [x] **OPS-25** · L · Event — When MOVEM transfers memory to registers, the M68k core shall perform the hardware's extra trailing word read.
   - *Verify:* T — bus access trace.
-- [ ] **OPS-26** · L · Unwanted — If MOVEM specifies `(An)+` for register-to-memory or `-(An)` for memory-to-register, then the M68k core shall take the illegal-instruction exception.
+- [x] **OPS-26** · L · Unwanted — If MOVEM specifies `(An)+` for register-to-memory or `-(An)` for memory-to-register, then the M68k core shall take the illegal-instruction exception.
   - *Evidence:* runs silently as plain addressing. (Subset of CPU-06.)
   - *Verify:* T.
-- [ ] **OPS-27** · L · Ubiquitous — The M68k ops code shall implement immediate-operand fetch, shift-count decode, supervisor-privilege check and binary logic operations each in a single shared function.
+- [x] **OPS-27** · L · Ubiquitous — The M68k ops code shall implement immediate-operand fetch, shift-count decode, supervisor-privilege check and binary logic operations each in a single shared function.
   - *Evidence:* immediate fetch copied across ANDI/ORI/EORI/ADDI/SUBI/CMPI; shift count ×3; ROXL/ROXR near-identical; AND/OR identical but operator; privilege check ×8.
   - *Verify:* I.
-- [ ] **OPS-28** · L · Ubiquitous — The M68k ops functions shall contain no unused parameters.
+- [x] **OPS-28** · L · Ubiquitous — The M68k ops functions shall contain no unused parameters.
   - *Evidence:* `_direction` (AND/OR), `_extend` (rotate).
   - *Verify:* I.
 
