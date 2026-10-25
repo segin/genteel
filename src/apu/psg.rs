@@ -25,6 +25,7 @@
 //! coupling capacitor.
 
 use crate::apu::blip_buf::BlipBuf;
+use crate::apu::state_clamp;
 use crate::audio;
 use serde::{Deserialize, Serialize};
 
@@ -62,14 +63,18 @@ pub(crate) const VOLUME_TABLE: [i32; 16] = [
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ToneChannel {
     /// 10-bit frequency divider
+    #[serde(deserialize_with = "state_clamp::u16_max::<_, 0x3FF>")]
     pub frequency: u16,
     /// 4-bit volume (0 = max, 15 = off)
+    #[serde(deserialize_with = "state_clamp::u8_max::<_, 0x0F>")]
     pub volume: u8,
     /// Internal counter
+    #[serde(deserialize_with = "state_clamp::u16_max::<_, 0x3FF>")]
     pub counter: u16,
     /// Current output state
     pub output: bool,
     /// Last output amplitude added to blip_buf
+    #[serde(deserialize_with = "state_clamp::i32_range::<_, 0, 4095>")]
     pub last_amp: i32,
 }
 
@@ -92,16 +97,29 @@ impl ToneChannel {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NoiseChannel {
     pub white_noise: bool,
+    #[serde(deserialize_with = "state_clamp::u8_max::<_, 3>")]
     pub shift_rate: u8,
+    #[serde(deserialize_with = "state_clamp::u8_max::<_, 0x0F>")]
     pub volume: u8,
-    #[serde(default = "default_lfsr")]
+    #[serde(default = "default_lfsr", deserialize_with = "deserialize_lfsr")]
     pub lfsr: u16,
+    #[serde(deserialize_with = "state_clamp::u16_max::<_, 0x3FF>")]
     pub counter: u16,
     /// Divider flip-flop toggled on each counter reload; the LFSR shifts on
     /// its rising edge.
     #[serde(default)]
     pub flip_flop: bool,
+    #[serde(deserialize_with = "state_clamp::i32_range::<_, 0, 4095>")]
     pub last_amp: i32,
+}
+
+/// A zero LFSR would lock the noise channel silent forever; restore the seed.
+fn deserialize_lfsr<'de, D>(d: D) -> Result<u16, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let v = u16::deserialize(d)?;
+    Ok(if v == 0 { LFSR_SEED } else { v })
 }
 
 impl Default for NoiseChannel {
@@ -158,6 +176,7 @@ impl NoiseChannel {
 pub struct Psg {
     pub tones: [ToneChannel; 3],
     pub noise: NoiseChannel,
+    #[serde(deserialize_with = "state_clamp::u8_max::<_, 3>")]
     pub latch_channel: u8,
     pub latch_volume: bool,
     #[serde(default = "default_master_clock")]
@@ -167,6 +186,7 @@ pub struct Psg {
     /// Master clock of the most recent counter tick
     pub total_mclocks: u64,
     /// Master clocks accumulated towards the next counter tick
+    #[serde(deserialize_with = "state_clamp::u32_max::<_, { MCLK_PER_TICK - 1 }>")]
     pub mclk_debt: u32,
     /// Band-limited synthesis buffer
     pub blip: BlipBuf,

@@ -3,6 +3,7 @@
 //! Refactored to use band-limited synthesis via BlipBuf for high quality.
 
 use crate::apu::blip_buf::BlipBuf;
+use crate::apu::state_clamp;
 use crate::audio;
 use serde::{Deserialize, Serialize};
 use std::sync::LazyLock;
@@ -300,8 +301,10 @@ struct EnvelopeParams {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct FmOperator {
+    #[serde(deserialize_with = "state_clamp::u32_max::<_, 0xFFFFF>")]
     phase_counter: u32,
     env_phase: AdsrPhase,
+    #[serde(deserialize_with = "state_clamp::u16_max::<_, 0x3FF>")]
     env_level: u16,
     #[serde(default)]
     ssg_invert: bool,
@@ -634,18 +637,25 @@ impl FmOperator {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct FmChannel {
     operators: [FmOperator; 4],
+    #[serde(deserialize_with = "state_clamp::u8_max::<_, 7>")]
     algorithm: u8,
+    #[serde(deserialize_with = "state_clamp::u8_max::<_, 7>")]
     feedback: u8,
     panning_l: bool,
     panning_r: bool,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "state_clamp::u8_max::<_, 8>")]
     ams_shift: u8,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "state_clamp::u8_max::<_, 7>")]
     pms: u8,
+    #[serde(deserialize_with = "state_clamp::u16_max::<_, 0x7FF>")]
     fnum: u16,
+    #[serde(deserialize_with = "state_clamp::u8_max::<_, 7>")]
     block: u8,
     fnum_latch: u8,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "state_clamp::i32_range::<_, -65536, 65535>"
+    )]
     mem_value: i32,
     last_sample: i16,
 }
@@ -966,13 +976,19 @@ fn default_selected_data_bank() -> Bank {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 struct LatchedChannelState {
+    #[serde(deserialize_with = "state_clamp::u8_max::<_, 7>")]
     algorithm: u8,
+    #[serde(deserialize_with = "state_clamp::u8_max::<_, 7>")]
     feedback: u8,
     panning_l: bool,
     panning_r: bool,
+    #[serde(deserialize_with = "state_clamp::u8_max::<_, 8>")]
     ams_shift: u8,
+    #[serde(deserialize_with = "state_clamp::u8_max::<_, 7>")]
     pms: u8,
+    #[serde(deserialize_with = "state_clamp::u16_max::<_, 0x7FF>")]
     fnum: u16,
+    #[serde(deserialize_with = "state_clamp::u8_max::<_, 7>")]
     block: u8,
 }
 
@@ -1014,7 +1030,9 @@ pub struct Ym2612 {
     pub registers: [[u8; 256]; 2],
     address: [u8; 2],
     pub status: u8,
+    #[serde(deserialize_with = "state_clamp::i32_range::<_, 0, 1024>")]
     timer_a: i32,
+    #[serde(deserialize_with = "state_clamp::i32_range::<_, 0, 256>")]
     timer_b: i32,
     #[serde(default)]
     timer_b_divider: u8,
@@ -1022,9 +1040,12 @@ pub struct Ym2612 {
     channels: [FmChannel; 6],
     #[serde(default)]
     mode: u8,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "state_clamp::u16_array_max::<_, 3, 0x7FF>"
+    )]
     ch3_fnum: [u16; 3],
-    #[serde(default)]
+    #[serde(default, deserialize_with = "state_clamp::u8_array_max::<_, 3, 7>")]
     ch3_block: [u8; 3],
     #[serde(default)]
     ch3_fnum_latch: [u8; 3],
@@ -1032,22 +1053,26 @@ pub struct Ym2612 {
     csm_key_state: u8,
     dac_val: u8,
     dac_en: bool,
+    #[serde(deserialize_with = "state_clamp::u16_max::<_, 0xFFF>")]
     env_counter: u16,
     #[serde(default)]
     eg_timer: u8,
     #[serde(default)]
     lfo_counter: u8,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "state_clamp::u32_max::<_, 108>")]
     lfo_timer: u32,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "state_clamp::u32_max::<_, 108>")]
     lfo_timer_overflow: u32,
     #[serde(default)]
     lfo_am: u8,
     #[serde(default)]
     lfo_pm: u8,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "state_clamp::u8_max::<_, 23>")]
     sample_subcycle: u8,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "state_clamp::i32_array_range::<_, 6, -8192, 8191>"
+    )]
     channel_outputs: [i32; 6],
     #[serde(with = "register_array", default = "default_latched_registers")]
     sample_registers: [[u8; 256]; 2],
@@ -1055,9 +1080,12 @@ pub struct Ym2612 {
     sample_channels: [LatchedChannelState; 6],
     #[serde(default)]
     sample_mode: u8,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "state_clamp::u16_array_max::<_, 3, 0x7FF>"
+    )]
     sample_ch3_fnum: [u16; 3],
-    #[serde(default)]
+    #[serde(default, deserialize_with = "state_clamp::u8_array_max::<_, 3, 7>")]
     sample_ch3_block: [u8; 3],
     #[serde(default)]
     sample_dac_val: u8,
@@ -1070,9 +1098,12 @@ pub struct Ym2612 {
     pub total_clocks: u64,
     pub blip_l: BlipBuf,
     pub blip_r: BlipBuf,
+    #[serde(deserialize_with = "state_clamp::i32_range::<_, -65536, 65535>")]
     pub last_left: i32,
+    #[serde(deserialize_with = "state_clamp::i32_range::<_, -65536, 65535>")]
     pub last_right: i32,
     pub total_mclocks: u64,
+    #[serde(deserialize_with = "state_clamp::u32_max::<_, 41>")]
     pub mclk_debt: u32,
     #[serde(default = "default_hardware_profile")]
     hardware_profile: Ym2612HardwareProfile,
@@ -1242,18 +1273,22 @@ impl Ym2612 {
     /// Step the YM2612 by a number of M68K cycles.
     /// Convert internally to MCLK (1 M68K cycle = 7 MCLK).
     pub fn step(&mut self, cycles: u32) {
-        let mclocks = cycles * 7;
+        let mclocks = cycles.saturating_mul(7);
         if self.busy > 0 {
-            self.busy = self.busy.saturating_sub(mclocks as i32);
+            self.busy = self
+                .busy
+                .saturating_sub(mclocks.min(i32::MAX as u32) as i32);
         }
 
         // YM2612 generates one native output sample every 144 chip clocks.
         // On Genesis hardware the chip clock is MCLK/7, so one sample occurs
         // every 1008 master clocks.
-        self.mclk_debt += mclocks;
+        self.mclk_debt = self.mclk_debt.saturating_add(mclocks);
 
         while self.mclk_debt >= YM2612_INTERNAL_CYCLE_MCLK_DIVIDER {
-            self.total_mclocks += YM2612_INTERNAL_CYCLE_MCLK_DIVIDER as u64;
+            self.total_mclocks = self
+                .total_mclocks
+                .wrapping_add(YM2612_INTERNAL_CYCLE_MCLK_DIVIDER as u64);
             self.internal_step();
             self.mclk_debt -= YM2612_INTERNAL_CYCLE_MCLK_DIVIDER;
         }
@@ -1611,7 +1646,7 @@ impl Ym2612 {
             self.csm_key_state = 0;
         }
 
-        self.total_clocks += 1;
+        self.total_clocks = self.total_clocks.wrapping_add(1);
     }
 
     /// Advance internal FM synthesis by one internal YM2612 cycle.

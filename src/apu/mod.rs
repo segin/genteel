@@ -4,6 +4,7 @@
 
 pub mod blip_buf;
 pub mod psg;
+pub(crate) mod state_clamp;
 pub mod ym2612;
 
 #[cfg(test)]
@@ -695,5 +696,81 @@ mod tests {
             fm_last = apu.fm.generate_sample();
         }
         assert_eq!(fm_last.0, fm_settled, "FM baseline offset");
+    }
+
+    /// Paths of every numeric leaf in a JSON value.
+    fn numeric_leaves(v: &Value, path: String, out: &mut Vec<String>) {
+        match v {
+            Value::Number(_) => out.push(path),
+            Value::Array(a) => {
+                for (i, e) in a.iter().enumerate() {
+                    numeric_leaves(e, format!("{path}/{i}"), out);
+                }
+            }
+            Value::Object(o) => {
+                for (k, e) in o {
+                    numeric_leaves(e, format!("{path}/{k}"), out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    const NASTY: [i64; 22] = [
+        0,
+        1,
+        3,
+        7,
+        8,
+        15,
+        16,
+        23,
+        24,
+        31,
+        32,
+        127,
+        255,
+        256,
+        1023,
+        4095,
+        65535,
+        -1,
+        i32::MAX as i64,
+        i32::MIN as i64,
+        u32::MAX as i64,
+        i64::MAX,
+    ];
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(64))]
+        /// Restoring APU state with arbitrary out-of-range numeric fields
+        /// either rejects the state or clamps it; running afterwards never
+        /// panics.
+        #[test]
+        fn prop_corrupted_state_never_panics(
+            edits in proptest::collection::vec((proptest::prelude::any::<usize>(), 0usize..22), 1..24)
+        ) {
+            let mut apu = Apu::new();
+            apu.write_psg(0x8F);
+            apu.write_psg(0x90);
+            let mut state = apu.read_state();
+            let mut leaves = Vec::new();
+            numeric_leaves(&state, String::new(), &mut leaves);
+            for (pick, value) in &edits {
+                let path = &leaves[pick % leaves.len()];
+                if let Some(slot) = state.pointer_mut(path) {
+                    *slot = serde_json::json!(NASTY[*value]);
+                }
+            }
+            apu.write_state(&state);
+            apu.set_timing(Region::Ntsc, crate::audio::SAMPLE_RATE);
+            for _ in 0..200 {
+                apu.tick_cycles(488);
+                apu.generate_sample();
+            }
+            apu.update_visualization();
+            apu.fm.read(0);
+            apu.fm.read(1);
+        }
     }
 }
