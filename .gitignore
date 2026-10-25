@@ -6,3 +6,9 @@ output.wav
 reproduce_inc_dec
 benchmark_results.txt
 gui_config.json
+
+# Build output in nested crates (e.g. fuzz/)
+**/target/
+
+# Local agent worktrees
+.claude/worktrees/
