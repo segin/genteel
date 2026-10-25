@@ -475,9 +475,11 @@ fn ref_bit(bit: u8, val: u8, flags_in: u8) -> u8 {
     let x = (val & 0x08) != 0;
     let y = (val & 0x20) != 0;
 
-    let mut f = flags_in & (flags::SIGN | flags::PARITY | flags::CARRY); // Preserve S, P/V, C
+    let mut f = flags_in & flags::CARRY; // Preserve C only
     if zero {
-        f |= flags::ZERO;
+        f |= flags::ZERO | flags::PARITY; // P/V mirrors Z
+    } else if bit == 7 {
+        f |= flags::SIGN; // S set only when bit 7 is tested and set
     }
     f |= flags::HALF_CARRY;
     if x {

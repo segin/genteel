@@ -46,17 +46,7 @@ impl<M: MemoryInterface, I: IoInterface> GeneralOps for Z80<M, I> {
     fn execute_x2(&mut self, params: OpParams) -> u8 {
         // ALU operations
         let val = self.get_reg(params.z);
-        match params.y {
-            0 => self.add_a(val, false),        // ADD A, r
-            1 => self.add_a(val, true),         // ADC A, r
-            2 => self.sub_a(val, false, true),  // SUB r
-            3 => self.sub_a(val, true, true),   // SBC A, r
-            4 => self.and_a(val),               // AND r
-            5 => self.xor_a(val),               // XOR r
-            6 => self.or_a(val),                // OR r
-            7 => self.sub_a(val, false, false), // CP r
-            _ => {}
-        }
+        self.alu_op(params.y, val);
         if params.z == 6 {
             7
         } else {
@@ -93,7 +83,8 @@ fn execute_x0_control_misc<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, 
             let d = cpu.fetch_byte() as i8;
             cpu.b = cpu.b.wrapping_sub(1);
             if cpu.b != 0 {
-                cpu.pc = (cpu.pc as i32 + d as i32) as u16;
+                cpu.pc = cpu.pc.wrapping_add(d as i16 as u16);
+                cpu.memptr = cpu.pc;
                 13
             } else {
                 8
@@ -102,14 +93,16 @@ fn execute_x0_control_misc<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, 
         3 => {
             // JR d
             let d = cpu.fetch_byte() as i8;
-            cpu.pc = (cpu.pc as i32 + d as i32) as u16;
+            cpu.pc = cpu.pc.wrapping_add(d as i16 as u16);
+            cpu.memptr = cpu.pc;
             12
         }
         4..=7 => {
             // JR cc, d
             let d = cpu.fetch_byte() as i8;
             if cpu.check_condition(y - 4) {
-                cpu.pc = (cpu.pc as i32 + d as i32) as u16;
+                cpu.pc = cpu.pc.wrapping_add(d as i16 as u16);
+                cpu.memptr = cpu.pc;
                 12
             } else {
                 7
@@ -273,35 +266,7 @@ fn execute_x0_rotate_accum_flags<M: MemoryInterface, I: IoInterface>(
         }
         4 => {
             // DAA - Decimal Adjust Accumulator
-            // DAA adjusts A to valid BCD based on N, H, C flags
-            let mut correction: u8 = 0;
-            let mut carry = cpu.get_flag(flags::CARRY);
-
-            if cpu.get_flag(flags::ADD_SUB) {
-                // After subtraction
-                if cpu.get_flag(flags::HALF_CARRY) {
-                    correction |= 0x06;
-                }
-                if carry {
-                    correction |= 0x60;
-                }
-                cpu.a = cpu.a.wrapping_sub(correction);
-            } else {
-                // After addition
-                if cpu.get_flag(flags::HALF_CARRY) || (cpu.a & 0x0F) > 9 {
-                    correction |= 0x06;
-                }
-                if carry || cpu.a > 0x99 {
-                    correction |= 0x60;
-                    carry = true;
-                }
-                cpu.a = cpu.a.wrapping_add(correction);
-            }
-
-            cpu.set_flag(flags::CARRY, carry);
-            cpu.set_flag(flags::HALF_CARRY, (correction & 0x06) != 0);
-            cpu.set_sz_flags(cpu.a);
-            cpu.set_parity_flag(cpu.a);
+            cpu.daa();
             4
         }
         5 => {
@@ -315,21 +280,22 @@ fn execute_x0_rotate_accum_flags<M: MemoryInterface, I: IoInterface>(
         }
         6 => {
             // SCF
-            cpu.set_flag(flags::CARRY, true);
-            cpu.set_flag(flags::HALF_CARRY, false);
-            cpu.set_flag(flags::ADD_SUB, false);
-            cpu.set_flag(flags::X_FLAG, (cpu.a & 0x08) != 0);
-            cpu.set_flag(flags::Y_FLAG, (cpu.a & 0x20) != 0);
+            let xy = cpu.scf_ccf_xy();
+            let f = (cpu.f & (flags::SIGN | flags::ZERO | flags::PARITY)) | xy | flags::CARRY;
+            cpu.set_f(f);
             4
         }
         7 => {
             // CCF
-            let c = cpu.get_flag(flags::CARRY);
-            cpu.set_flag(flags::HALF_CARRY, c);
-            cpu.set_flag(flags::CARRY, !c);
-            cpu.set_flag(flags::ADD_SUB, false);
-            cpu.set_flag(flags::X_FLAG, (cpu.a & 0x08) != 0);
-            cpu.set_flag(flags::Y_FLAG, (cpu.a & 0x20) != 0);
+            let xy = cpu.scf_ccf_xy();
+            let c = cpu.f & flags::CARRY;
+            let mut f = (cpu.f & (flags::SIGN | flags::ZERO | flags::PARITY)) | xy;
+            if c != 0 {
+                f |= flags::HALF_CARRY;
+            } else {
+                f |= flags::CARRY;
+            }
+            cpu.set_f(f);
             4
         }
         _ => 4,
@@ -340,6 +306,7 @@ fn execute_x3_ret_cc<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y:
     // RET cc
     if cpu.check_condition(y) {
         cpu.pc = cpu.pop();
+        cpu.memptr = cpu.pc;
         11
     } else {
         5
@@ -359,6 +326,7 @@ fn execute_x3_pop_ret_exx<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I
             0 => {
                 // RET
                 cpu.pc = cpu.pop();
+                cpu.memptr = cpu.pc;
                 10
             }
             1 => {
@@ -389,6 +357,7 @@ fn execute_x3_pop_ret_exx<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I
 fn execute_x3_jp_cc<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y: u8) -> u8 {
     // JP cc, nn
     let nn = cpu.fetch_word();
+    cpu.memptr = nn;
     if cpu.check_condition(y) {
         cpu.pc = nn;
     }
@@ -403,6 +372,7 @@ fn execute_x3_jp_out_ex_di_ei<M: MemoryInterface, I: IoInterface>(
         0 => {
             // JP nn
             cpu.pc = cpu.fetch_word();
+            cpu.memptr = cpu.pc;
             10
         }
         1 => cpu.execute_cb_prefix(),
@@ -411,6 +381,7 @@ fn execute_x3_jp_out_ex_di_ei<M: MemoryInterface, I: IoInterface>(
             let n = cpu.fetch_byte();
             let port = (n as u16) | ((cpu.a as u16) << 8);
             cpu.write_port(port, cpu.a);
+            cpu.memptr = ((cpu.a as u16) << 8) | (n.wrapping_add(1) as u16);
             11
         }
         3 => {
@@ -418,14 +389,13 @@ fn execute_x3_jp_out_ex_di_ei<M: MemoryInterface, I: IoInterface>(
             let n = cpu.fetch_byte();
             let port = (n as u16) | ((cpu.a as u16) << 8);
             cpu.a = cpu.read_port(port);
+            cpu.memptr = port.wrapping_add(1);
             11
         }
         4 => {
             // EX (SP), HL
             let val = cpu.read_word(cpu.sp);
-            cpu.memptr = val;
             cpu.write_word(cpu.sp, cpu.hl());
-            cpu.memptr = val;
             cpu.set_hl(val);
             cpu.memptr = val;
             19
@@ -458,6 +428,7 @@ fn execute_x3_jp_out_ex_di_ei<M: MemoryInterface, I: IoInterface>(
 fn execute_x3_call_cc<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y: u8) -> u8 {
     // CALL cc, nn
     let nn = cpu.fetch_word();
+    cpu.memptr = nn;
     if cpu.check_condition(y) {
         cpu.push(cpu.pc);
         cpu.pc = nn;
@@ -485,6 +456,7 @@ fn execute_x3_push_call_prefixes<M: MemoryInterface, I: IoInterface>(
                 let nn = cpu.fetch_word();
                 cpu.push(cpu.pc);
                 cpu.pc = nn;
+                cpu.memptr = nn;
                 17
             }
             1 => cpu.execute_dd_prefix(),
@@ -498,17 +470,7 @@ fn execute_x3_push_call_prefixes<M: MemoryInterface, I: IoInterface>(
 fn execute_x3_alu_n<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y: u8) -> u8 {
     // ALU A, n
     let n = cpu.fetch_byte();
-    match y {
-        0 => cpu.add_a(n, false),
-        1 => cpu.add_a(n, true),
-        2 => cpu.sub_a(n, false, true),
-        3 => cpu.sub_a(n, true, true),
-        4 => cpu.and_a(n),
-        5 => cpu.xor_a(n),
-        6 => cpu.or_a(n),
-        7 => cpu.sub_a(n, false, false),
-        _ => {}
-    }
+    cpu.alu_op(y, n);
     7
 }
 
@@ -516,5 +478,6 @@ fn execute_x3_rst<M: MemoryInterface, I: IoInterface>(cpu: &mut Z80<M, I>, y: u8
     // RST y*8
     cpu.push(cpu.pc);
     cpu.pc = (y as u16) * 8;
+    cpu.memptr = cpu.pc;
     11
 }

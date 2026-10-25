@@ -216,106 +216,113 @@ Status: `[ ]` open, `[x]` satisfied.
 
 ## 3. Z80 core (Z80)
 
-- [ ] **Z80-01** · C · Ubiquitous — The Z80 core shall compute (IX+d) and (IY+d) addresses modulo 2^16 without panicking.
+- [x] **Z80-01** · C · Ubiquitous — The Z80 core shall compute (IX+d) and (IY+d) addresses modulo 2^16 without panicking.
   - *Evidence:* `z80/op_index.rs:91` `(idx as i16 + offset as i16)` overflows in debug (IX=0x7FFF, `LD A,(IX+1)`). (verified)
   - *Verify:* T — debug build, IX=0x7FFF/d=+1 and IX=0x8000/d=−1.
-- [ ] **Z80-02** · H · Event — When a DD or FD prefix precedes an opcode that does not reference HL, H or L, the Z80 core shall execute that opcode with its unprefixed semantics and operands, adding 4 T-states.
+- [x] **Z80-02** · H · Event — When a DD or FD prefix precedes an opcode that does not reference HL, H or L, the Z80 core shall execute that opcode with its unprefixed semantics and operands, adding 4 T-states.
   - *Evidence:* `op_index.rs:416` fallback `_ => 8` consumes opcode only (`DD 3E nn` executes `nn`; also `DD 01/06/C3/CD/18/10`).
   - *Verify:* T — `DD 3E 42` loads A=0x42, 11 T-states.
-- [ ] **Z80-03** · H · Event — When consecutive DD/FD prefixes precede an opcode, the Z80 core shall apply only the last prefix.
+- [x] **Z80-03** · H · Event — When consecutive DD/FD prefixes precede an opcode, the Z80 core shall apply only the last prefix.
   - *Evidence:* `DD FD 21 nn nn` executes `LD HL,nn`.
   - *Verify:* T — loads IY.
-- [ ] **Z80-04** · H · Event — When a DD or FD prefix precedes an ED prefix, the Z80 core shall execute the ED instruction.
+- [x] **Z80-04** · H · Event — When a DD or FD prefix precedes an ED prefix, the Z80 core shall execute the ED instruction.
   - *Evidence:* `DD ED B0` executes `OR B`.
   - *Verify:* T — runs LDIR.
-- [ ] **Z80-05** · H · Ubiquitous — The Z80 core shall increment R once per M1 opcode fetch (including each prefix byte) and shall not increment R on operand or displacement fetches.
+- [x] **Z80-05** · H · Ubiquitous — The Z80 core shall increment R once per M1 opcode fetch (including each prefix byte) and shall not increment R on operand or displacement fetches.
   - *Evidence:* `z80/mod.rs:352-361` `fetch_byte` bumps R for every byte (`LD A,n` +2, `JP nn` +3, DDCB +4).
   - *Verify:* T — R delta per instruction class (NOP 1, `LD A,n` 1, DD xx 2, DDCB 2).
-- [ ] **Z80-06** · H · State — While halted, the Z80 core shall increment R once per HALT M1 cycle.
+- [x] **Z80-06** · H · State — While halted, the Z80 core shall increment R once per HALT M1 cycle.
   - *Evidence:* `mod.rs:807`.
   - *Verify:* T.
-- [ ] **Z80-07** · H · Event — When the Z80 core accepts an interrupt, the Z80 core shall increment R once.
+- [x] **Z80-07** · H · Event — When the Z80 core accepts an interrupt, the Z80 core shall increment R once.
   - *Verify:* T.
-- [ ] **Z80-08** · H · Event — When the Z80 core executes JP nn, JP cc,nn, CALL nn, CALL cc,nn, RET, RET cc, RETN, RETI or RST, the Z80 core shall set MEMPTR to the hardware-defined value (target or popped PC).
+- [x] **Z80-08** · H · Event — When the Z80 core executes JP nn, JP cc,nn, CALL nn, CALL cc,nn, RET, RET cc, RETN, RETI or RST, the Z80 core shall set MEMPTR to the hardware-defined value (target or popped PC).
   - *Evidence:* `op_general.rs:342, 361, 391, 405, 460, 485, 518`; `op_ed.rs:85, 89`. Breaks `BIT n,(HL)` X/Y (`op_cb.rs:38`).
   - *Verify:* T — zexall `bit n,(hl)`; per-instruction MEMPTR tests.
-- [ ] **Z80-09** · H · Event — When JR or DJNZ is taken, the Z80 core shall set MEMPTR to the branch target.
+- [x] **Z80-09** · H · Event — When JR or DJNZ is taken, the Z80 core shall set MEMPTR to the branch target.
   - *Evidence:* `op_general.rs:96, 105, 112`.
   - *Verify:* T.
-- [ ] **Z80-10** · H · Event — When the Z80 core executes IN A,(n), OUT (n),A, IN r,(C) or OUT (C),r, the Z80 core shall set MEMPTR to the hardware-defined value (BC+1 for the (C) forms).
+- [x] **Z80-10** · H · Event — When the Z80 core executes IN A,(n), OUT (n),A, IN r,(C) or OUT (C),r, the Z80 core shall set MEMPTR to the hardware-defined value (BC+1 for the (C) forms).
   - *Evidence:* `op_general.rs:411-421`; `op_ed.rs:43, 60`.
   - *Verify:* T.
-- [ ] **Z80-11** · H · Event — When the Z80 core executes ADC HL,rr, SBC HL,rr, RLD or RRD, the Z80 core shall set MEMPTR to HL+1 (pre-operation HL).
+- [x] **Z80-11** · H · Event — When the Z80 core executes ADC HL,rr, SBC HL,rr, RLD or RRD, the Z80 core shall set MEMPTR to HL+1 (pre-operation HL).
   - *Evidence:* `op_ed.rs:131-180, 235, 248`.
   - *Verify:* T.
-- [ ] **Z80-12** · H · Event — When the Z80 core executes LD (nn),IX/IY or LD IX/IY,(nn), the Z80 core shall set MEMPTR to nn+1.
+- [x] **Z80-12** · H · Event — When the Z80 core executes LD (nn),IX/IY or LD IX/IY,(nn), the Z80 core shall set MEMPTR to nn+1.
   - *Evidence:* `op_index.rs:155, 161`.
   - *Verify:* T.
-- [ ] **Z80-13** · H · Event — When the Z80 core executes INI, IND, OUTI or OUTD (and repeats), the Z80 core shall set MEMPTR to the hardware-defined value.
+- [x] **Z80-13** · H · Event — When the Z80 core executes INI, IND, OUTI or OUTD (and repeats), the Z80 core shall set MEMPTR to the hardware-defined value.
   - *Verify:* T.
-- [ ] **Z80-14** · H · Event — When BIT n,r / BIT n,(HL) / BIT n,(IX+d) executes, the Z80 core shall set P/V equal to Z.
+- [x] **Z80-14** · H · Event — When BIT n,r / BIT n,(HL) / BIT n,(IX+d) executes, the Z80 core shall set P/V equal to Z.
   - *Evidence:* `op_cb.rs:183-188` writes only Z/H/N. (verified)
   - *Verify:* T.
-- [ ] **Z80-15** · H · Event — When BIT 7 tests a set bit, the Z80 core shall set S; otherwise the Z80 core shall clear S.
+- [x] **Z80-15** · H · Event — When BIT 7 tests a set bit, the Z80 core shall set S; otherwise the Z80 core shall clear S.
   - *Evidence:* same location. (verified)
   - *Verify:* T — `BIT 7,A` with A=0x80 → S=1.
-- [ ] **Z80-16** · H · Event — When DAA executes after a subtraction, the Z80 core shall apply the correction implied by A>0x99, (A&0xF)>9, H and C.
+- [x] **Z80-16** · H · Event — When DAA executes after a subtraction, the Z80 core shall apply the correction implied by A>0x99, (A&0xF)>9, H and C.
   - *Evidence:* `op_general.rs:274-306` ignores the A-range terms (A=0x9A,N=1,H=0,C=0 → should give 0x34, C=1).
   - *Verify:* T — exhaustive 256×N×H×C table vs reference.
-- [ ] **Z80-17** · H · Event — When DAA executes, the Z80 core shall set H to `N ? (H && lo<6) : (lo>9)`.
+- [x] **Z80-17** · H · Event — When DAA executes, the Z80 core shall set H to `N ? (H && lo<6) : (lo>9)`.
   - *Evidence:* sets H = `correction&6 != 0`; `tests_daa.rs` never checks H.
   - *Verify:* T — same exhaustive table.
-- [ ] **Z80-18** · M · Event — When CP executes, the Z80 core shall copy flag bits 3 and 5 from the operand.
+- [x] **Z80-18** · M · Event — When CP executes, the Z80 core shall copy flag bits 3 and 5 from the operand.
   - *Evidence:* `mod.rs:474-475` via `sub_a(store=false)` (`op_general.rs:57, 509`; `op_index.rs:109`) uses result.
   - *Verify:* T — A=0, `CP 0x28` → X=Y=1.
-- [ ] **Z80-19** · M · Event — When ADD IX,rr or ADD IY,rr executes, the Z80 core shall copy flag bits 3 and 5 from the high byte of the result.
+- [x] **Z80-19** · M · Event — When ADD IX,rr or ADD IY,rr executes, the Z80 core shall copy flag bits 3 and 5 from the high byte of the result.
   - *Evidence:* `op_index.rs:68-83` (unlike `add_hl`, `mod.rs:595`).
   - *Verify:* T.
-- [ ] **Z80-20** · M · Event — When INI, IND, OUTI or OUTD executes, the Z80 core shall set S, Z, X, Y from new B; N from bit 7 of the transferred byte; H and C from the carry of `val + k`; and P/V from parity(((val+k)&7) ^ B).
+- [x] **Z80-20** · M · Event — When INI, IND, OUTI or OUTD executes, the Z80 core shall set S, Z, X, Y from new B; N from bit 7 of the transferred byte; H and C from the carry of `val + k`; and P/V from parity(((val+k)&7) ^ B).
   - *Evidence:* `op_ed.rs:372-373, 406-407` set only Z and force N=1.
   - *Verify:* T — vs reference table.
-- [ ] **Z80-21** · M · Event — When INIR, INDR, OTIR or OTDR repeats, the Z80 core shall apply the hardware repeat-cycle flag adjustments.
+- [x] **Z80-21** · M · Event — When INIR, INDR, OTIR or OTDR repeats, the Z80 core shall apply the hardware repeat-cycle flag adjustments.
   - *Verify:* T.
-- [ ] **Z80-22** · M · Event — When SCF or CCF executes, the Z80 core shall set flag bits 3 and 5 to `(A | (F ^ Q)) & 0x28`, where Q is the flag value written by the previous instruction (0 if it did not write flags).
+  - *Resolution:* Implemented the repeat-cycle P/V, H and X/Y adjustments; all INIR/INDR/OTIR/OTDR SingleStepTests cases pass. Repeating block I/O also sets MEMPTR to PC+1 (found via the data).
+- [x] **Z80-22** · M · Event — When SCF or CCF executes, the Z80 core shall set flag bits 3 and 5 to `(A | (F ^ Q)) & 0x28`, where Q is the flag value written by the previous instruction (0 if it did not write flags).
   - *Evidence:* `op_general.rs:316-334` uses A only. Required by CLAUDE.md.
   - *Verify:* T.
-- [ ] **Z80-23** · M · Event — When the Z80 core acknowledges an IM 2 interrupt, the Z80 core shall consume 19 T-states.
+  - *Resolution:* Implemented; SingleStepTests also showed that an ignored DD/FD prefix resets Q to 0 before the following opcode (`DD 37`, `FD 3F`).
+- [x] **Z80-23** · M · Event — When the Z80 core acknowledges an IM 2 interrupt, the Z80 core shall consume 19 T-states.
   - *Evidence:* `mod.rs:789` returns 8.
   - *Verify:* T.
-- [ ] **Z80-24** · M · Event — When the Z80 core acknowledges an IM 2 interrupt, the Z80 core shall set MEMPTR to the handler address.
+- [x] **Z80-24** · M · Event — When the Z80 core acknowledges an IM 2 interrupt, the Z80 core shall set MEMPTR to the handler address.
   - *Evidence:* `mod.rs:786` sets the vector-table address.
   - *Verify:* T.
-- [ ] **Z80-25** · M · State — While the Z80 INT line is asserted, the Z80 core shall sample it at each instruction boundary.
+- [x] **Z80-25** · M · State — While the Z80 INT line is asserted, the Z80 core shall sample it at each instruction boundary.
   - *Evidence:* `src/main.rs:786-788` delivers a one-shot pulse; lost if IFF1=0 or EI shadow active. Hardware holds ~1 scanline (~171 Z80 cycles).
   - *Verify:* T — interrupt taken when EI executes within the assertion window.
-- [ ] **Z80-26** · M · Event — When the Z80 core acknowledges an interrupt, the emulator shall deduct the acknowledge T-states from the Z80 cycle budget.
+  - *Resolution:* INT is now a level held for 228 Z80 clocks (one scanline) via `Z80::assert_int_for`, sampled at each instruction boundary in `step()`.
+- [x] **Z80-26** · M · Event — When the Z80 core acknowledges an interrupt, the emulator shall deduct the acknowledge T-states from the Z80 cycle budget.
   - *Evidence:* returned T-states discarded (`z80_cycle_debt`).
   - *Verify:* T.
-- [ ] **Z80-27** · M · State — While the 68k holds the Z80 bus (BUSREQ asserted), the emulator shall not deliver interrupts to the Z80 core.
+- [x] **Z80-27** · M · State — While the 68k holds the Z80 bus (BUSREQ asserted), the emulator shall not deliver interrupts to the Z80 core.
   - *Evidence:* gated only on `!z80_is_reset`; pushes PC into Z80 RAM during uploads.
   - *Verify:* T.
-- [ ] **Z80-28** · M · Ubiquitous — The test suite shall compile and run every Z80 test module.
+  - *Resolution:* Interrupts are only accepted inside `step()`, which does not run while BUSREQ/reset is held; the line only times out (`advance_int_line`) during that period.
+- [x] **Z80-28** · M · Ubiquitous — The test suite shall compile and run every Z80 test module.
   - *Evidence:* `z80/mod.rs:953-1011` comments out `tests_alu`, `tests_cb`, `tests_control`, `tests_load`, `tests_undoc`, `tests_halfcarry`, `tests_interrupt`, `tests_rrd_rld`, `tests_timing`, `tests_torture`, `tests_gaps`, `tests_memptr`, `tests_ddcb`, `tests_ex_sp_hl_expanded`; `proptest_tests.rs`, `proptest_expanded.rs` undeclared. (verified)
   - *Verify:* I — all declared; T — all pass.
-- [ ] **Z80-29** · L · Event — When CPD or CPDR executes, the Z80 core shall decrement MEMPTR.
+  - *Resolution:* All modules declared (also `tests_ed_ix`, plus new `tests_conformance` and the ignored `tests_sst` harness) and migrated to the current API. Tests contradicted by SingleStepTests were corrected: DAA after subtraction, BIT S/P/V, CPDR MEMPTR, OTIR N flag, RETI IFF2 to IFF1.
+- [x] **Z80-29** · L · Event — When CPD or CPDR executes, the Z80 core shall decrement MEMPTR.
   - *Evidence:* `op_ed.rs:335` increments.
   - *Verify:* T.
-- [ ] **Z80-30** · L · Event — When OUTI or OUTD executes, the Z80 core shall decrement B before placing it on the port address high byte.
+- [x] **Z80-30** · L · Event — When OUTI or OUTD executes, the Z80 core shall decrement B before placing it on the port address high byte.
   - *Evidence:* `op_ed.rs:393-397` (no Genesis effect; I/O unmapped `z80_bus.rs:164-172`).
   - *Verify:* T.
-- [ ] **Z80-31** · L · State — While halted, the Z80 core shall add each step's T-states to its cycle counter.
+- [x] **Z80-31** · L · State — While halted, the Z80 core shall add each step's T-states to its cycle counter.
   - *Evidence:* `mod.rs:807-809`.
   - *Verify:* T.
-- [ ] **Z80-32** · L · Event — When RETI executes, the Z80 core shall copy IFF2 to IFF1.
+- [x] **Z80-32** · L · Event — When RETI executes, the Z80 core shall copy IFF2 to IFF1.
   - *Evidence:* `op_ed.rs:87-90`.
   - *Verify:* T.
-- [ ] **Z80-33** · L · Unwanted — If a restored save state or debugger write sets the interrupt mode outside 0–2, then the Z80 core shall reject or clamp the value.
+- [x] **Z80-33** · L · Unwanted — If a restored save state or debugger write sets the interrupt mode outside 0–2, then the Z80 core shall reject or clamp the value.
   - *Evidence:* `mod.rs:219, 938, 791` — IM ≥3 clears IFF1/IFF2/halted and returns 0 without vectoring.
   - *Verify:* T.
-- [ ] **Z80-34** · L · Event — When LDIR, LDDR, CPIR or CPDR repeats, the Z80 core shall set flag bits 3 and 5 from the high byte of PC+1. (plausible)
+  - *Resolution:* Debugger `write_state` ignores IM > 2; save-state deserialization returns an error.
+- [x] **Z80-34** · L · Event — When LDIR, LDDR, CPIR or CPDR repeats, the Z80 core shall set flag bits 3 and 5 from the high byte of PC+1. (plausible)
   - *Evidence:* `op_ed.rs:292-296, 338-342`.
   - *Verify:* T — vs 2018 HC research test vectors.
-- [ ] **Z80-35** · L · Ubiquitous — The Z80 core shall implement opcode-field decoding (`OpParams`) and ALU dispatch each in a single function.
+  - *Resolution:* SingleStepTests data shows X/Y come from the high byte of the rewound PC (the instruction address), not PC+1; implemented that way and verified (LDIR/LDDR/CPIR/CPDR all pass).
+- [x] **Z80-35** · L · Ubiquitous — The Z80 core shall implement opcode-field decoding (`OpParams`) and ALU dispatch each in a single function.
   - *Evidence:* `OpParams` ×3 (`mod.rs:823`, `op_ed.rs:11`, `op_index.rs:367`); ALU dispatch ×3 (`op_general.rs:49-58, 501-511`, `op_index.rs:101-111`); `get_index_val/h/l` overlap `get_index_byte`; EX (SP),HL/IX assigns MEMPTR 3× (`op_general.rs:426-430`, `op_index.rs:315-319`); RLCA/RRCA/RLA/RRA duplicate flag block.
   - *Verify:* I.
 

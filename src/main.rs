@@ -783,18 +783,27 @@ impl Emulator {
             ctx.z80.debug = false;
         }
 
+        /* The VDP holds the Z80 INT line low for about one scanline; the Z80
+        samples it at instruction boundaries inside step(), which also returns
+        the acknowledge T-states so they are charged to the cycle budget. */
+        const Z80_INT_HOLD_CYCLES: u32 = 228;
         if trigger_vint && !z80_is_reset {
-            ctx.z80.trigger_interrupt(0xFF);
+            ctx.z80.assert_int_for(Z80_INT_HOLD_CYCLES, 0xFF);
         }
 
+        const Z80_CYCLES_PER_M68K_CYCLE: f32 = 3579545.0 / 7670453.0;
         if z80_can_run {
-            const Z80_CYCLES_PER_M68K_CYCLE: f32 = 3579545.0 / 7670453.0;
             *ctx.z80_cycle_debt += m68k_cycles as f32 * Z80_CYCLES_PER_M68K_CYCLE;
 
             while *ctx.z80_cycle_debt >= 1.0 {
                 let cycles = ctx.z80.step();
                 *ctx.z80_cycle_debt -= cycles as f32;
             }
+        } else {
+            /* While the 68000 holds BUSREQ or reset, the Z80 cannot respond,
+            but the INT line still times out. */
+            ctx.z80
+                .advance_int_line((m68k_cycles as f32 * Z80_CYCLES_PER_M68K_CYCLE) as u32);
         }
 
         let mut bus = ctx.bus_rc.borrow_mut();

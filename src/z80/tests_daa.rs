@@ -294,8 +294,9 @@ fn daa_ff_sub_h() {
     c.set_flag(flags::ADD_SUB, true);
     c.set_flag(flags::HALF_CARRY, true);
     c.step();
-    assert_eq!(c.a, 0xF9);
-    assert!(!c.get_flag(flags::CARRY));
+    // A > 0x99 and low nibble > 9: correct by 0x66 and set carry
+    assert_eq!(c.a, 0x99);
+    assert!(c.get_flag(flags::CARRY));
 }
 
 // ============ DAA after SUB with Carry ============
@@ -583,11 +584,11 @@ fn daa_full_state_space() {
                     expected_c = true;
                 }
             } else {
-                // SUB
-                if h_flag {
+                // SUB: same correction conditions, applied by subtraction
+                if h_flag || (a_in & 0x0F) > 9 {
                     diff |= 0x06;
                 }
-                if c_flag {
+                if c_flag || a_in > 0x99 {
                     diff |= 0x60;
                     expected_c = true;
                 }
