@@ -126,6 +126,14 @@ pub enum ControllerType {
     SixButton,
 }
 
+/// 68k cycles without a TH rising edge after which a 6-button pad returns
+/// to 3-button mode (about 1.5 ms of the NTSC 7.67 MHz 68k clock).
+pub const SIX_BUTTON_TIMEOUT_CYCLES: u32 = 7_670_453 * 3 / 2000;
+
+/// Highest value of the 6-button TH pulse counter; past it the pad keeps
+/// returning 3-button data until the timeout.
+const SIX_BUTTON_COUNTER_MAX: u8 = 8;
+
 /// A controller port
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ControllerPort {
@@ -133,13 +141,16 @@ pub struct ControllerPort {
     pub controller_type: ControllerType,
     /// Current button state
     pub state: ControllerState,
-    /// Control register (direction: 0=input, 1=output)
+    /// Control register (pin direction: 0=input, 1=output; bit 7 = TH interrupt)
     pub control: u8,
-    /// TH (bit 6) state from control writes
+    /// Data register: the value last written, driven onto output pins.
+    #[serde(default)]
+    pub data: u8,
+    /// TH level seen by the device (pulled high while TH is an input).
     pub th_state: bool,
-    /// Counter for 6-button protocol
+    /// 6-button TH pulse counter (advances by 2 on each TH rising edge).
     pub(crate) th_counter: u8,
-    /// Timer for 6-button reset (cycles since last TH transition)
+    /// 68k cycles since the last counted TH rising edge.
     pub(crate) th_timer: u32,
 }
 
@@ -150,6 +161,7 @@ impl ControllerPort {
             controller_type,
             state: ControllerState::new(),
             control: 0x00,
+            data: 0x00,
             th_state: true,
             th_counter: 0,
             th_timer: 0,
@@ -159,149 +171,110 @@ impl ControllerPort {
     /// Reset the port
     pub fn reset(&mut self) {
         self.control = 0x00;
+        self.data = 0x00;
         self.th_state = true;
         self.th_counter = 0;
         self.th_timer = 0;
     }
 
-    /// Read from the data port
+    /// Level on the device's data pins (D6 = TH, D7 not connected).
     ///
-    /// The returned value depends on:
-    /// - TH state (directly or via control register)
-    /// - 6-button counter
+    /// Pad protocol per gen-hw.txt and Genesis Plus GX `gamepad.c`, buttons
+    /// active low:
+    ///
+    /// ```text
+    /// TH=1: ?1CBRLDU    TH=0: ?0SA00DU    (3-button pad, and a 6-button
+    ///                                      pad outside the steps below)
+    /// 3rd TH low : ?0SA0000   (6-button identification)
+    /// 4th TH high: ?1CBMXYZ   (extra buttons)
+    /// 4th TH low : ?0SA1111
+    /// ```
     pub fn read_data(&self) -> u8 {
+        let th = if self.th_state { 0x40 } else { 0x00 };
         match self.controller_type {
-            ControllerType::None => 0x7F, // No controller = all inputs high
-
-            ControllerType::ThreeButton => self.read_3button(),
-
-            ControllerType::SixButton => self.read_6button(),
+            ControllerType::None => 0x3F | th,
+            ControllerType::ThreeButton => Self::pad_pins(self.pad_bits(), th, th >> 6),
+            ControllerType::SixButton => {
+                Self::pad_pins(self.pad_bits(), th, self.th_counter | (th >> 6))
+            }
         }
     }
 
-    /// Read 3-button controller data
-    fn read_3button(&self) -> u8 {
-        // Genesis controllers are active-low: pressed = 0, released = 1
-        if self.th_state {
-            // TH=1: Return Up, Down, Left, Right, B, C (and TH=1)
-            let mut data = 0x7F; // All released + TH high
-
-            if self.state.up {
-                data &= !0x01;
-            }
-            if self.state.down {
-                data &= !0x02;
-            }
-            if self.state.left {
-                data &= !0x04;
-            }
-            if self.state.right {
-                data &= !0x08;
-            }
-            if self.state.b {
-                data &= !0x10;
-            }
-            if self.state.c {
-                data &= !0x20;
-            }
-
-            data
-        } else {
-            // TH=0: Return Up, Down, 0, 0, A, Start (TH=0)
-            let mut data = 0x33; // Up, Down, A, Start released; bits 2-3 low
-
-            if self.state.up {
-                data &= !0x01;
-            }
-            if self.state.down {
-                data &= !0x02;
-            }
-            // Bits 2-3 are always 0 when TH=0 (used to detect controller type)
-            if self.state.a {
-                data &= !0x10;
-            }
-            if self.state.start {
-                data &= !0x20;
-            }
-
-            data
-        }
+    /// Pressed buttons as an active-high mask in Genesis Plus GX `input.pad`
+    /// order: U D L R B C A S Z Y X M (bits 0-11).
+    fn pad_bits(&self) -> u32 {
+        let s = &self.state;
+        [
+            s.up, s.down, s.left, s.right, s.b, s.c, s.a, s.start, s.z, s.y, s.x, s.mode,
+        ]
+        .iter()
+        .enumerate()
+        .fold(0, |acc, (i, &p)| acc | ((p as u32) << i))
     }
 
-    /// Read 6-button controller data
-    fn read_6button(&self) -> u8 {
-        // If TH=1, standard 3-button logic applies
-        if self.th_state {
-            return self.read_3button();
-        }
-
-        match self.th_counter {
-            3 => self.read_cycle3(),
-            5 => self.read_extra_buttons(),
-            // Cycles 0, 1, 2, 4 and others use standard 3-button logic
-            _ => self.read_3button(),
-        }
+    /// Pin levels for pad state `pad` at protocol `step` (TH counter | TH).
+    fn pad_pins(pad: u32, th: u8, step: u8) -> u8 {
+        let pulled_low = match step {
+            // Third low: D3-D0 forced to 0 (identifies a 6-button pad).
+            4 => ((pad >> 2) & 0x30) | 0x0F,
+            // Fourth high: C B M X Y Z.
+            7 => (pad & 0x30) | ((pad >> 8) & 0x0F),
+            // Fourth low: D3-D0 forced to 1.
+            6 => (pad >> 2) & 0x30,
+            // TH high: C B R L D U.
+            _ if step & 1 != 0 => pad & 0x3F,
+            // TH low: S A 0 0 D U.
+            _ => (pad & 0x03) | ((pad >> 2) & 0x30) | 0x0C,
+        };
+        (0x3F | th) & !(pulled_low as u8)
     }
 
-    /// Read data for cycle 3 (controller identification)
-    fn read_cycle3(&self) -> u8 {
-        // Fourth cycle: TH=0 returns controller ID in low nibble
-        // Note: Original implementation returns Active High (1=Pressed) for Up/Down
-        // and sets bits 2-3 to 1. This behavior is preserved here.
-        let mut data = 0x0C; // Bits 2 and 3 set
-        if self.state.up {
-            data |= 0x01;
+    /// Recompute the device's TH input from the data and control registers.
+    /// A 6-button pad counts TH rising edges (Genesis Plus GX `gamepad.c`;
+    /// its 172-cycle input-switch latency is not modelled).
+    fn update_th(&mut self) {
+        // TH is pulled high unless the I/O chip drives it as an output.
+        let new_th = self.control & 0x40 == 0 || self.data & 0x40 != 0;
+        let old_th = self.th_state;
+        if self.controller_type == ControllerType::SixButton
+            && new_th
+            && !old_th
+            && self.th_counter < SIX_BUTTON_COUNTER_MAX
+        {
+            self.th_counter += 2;
+            self.th_timer = 0;
         }
-        if self.state.down {
-            data |= 0x02;
-        }
-        data
-    }
-
-    /// Read data for cycle 5 (extra buttons X, Y, Z, Mode)
-    fn read_extra_buttons(&self) -> u8 {
-        // Sixth cycle: TH=0 returns X, Y, Z, Mode
-        // Note: Original implementation returns Active High (1=Pressed) for these buttons.
-        // This behavior is preserved here.
-        let mut data = 0x70; // High nibble bits 4-6 set
-        if self.state.z {
-            data |= 0x01;
-        }
-        if self.state.y {
-            data |= 0x02;
-        }
-        if self.state.x {
-            data |= 0x04;
-        }
-        if self.state.mode {
-            data |= 0x08;
-        }
-        data
-    }
-
-    /// Write to the data port (sets TH)
-    pub fn write_data(&mut self, value: u8) {
-        let new_th = (value & 0x40) != 0;
-
-        // Detect TH 1->0 transition (falling edge)
-        if self.th_state && !new_th {
-            // Increment counter for 6-button detection
-            if self.controller_type == ControllerType::SixButton {
-                self.th_counter = (self.th_counter + 1) % 8;
-                self.th_timer = 0;
-            }
-        }
-
         self.th_state = new_th;
     }
 
-    /// Update timing (call each CPU cycle or frame)
-    pub fn update(&mut self, cycles: u32) {
+    /// Write the data register.
+    pub fn write_data(&mut self, value: u8) {
+        self.data = value;
+        self.update_th();
+    }
+
+    /// Write the control register.
+    pub fn write_control(&mut self, value: u8) {
+        if value != self.control {
+            self.control = value;
+            self.update_th();
+        }
+    }
+
+    /// Data register read: output pins (and the unconnected D7) read back
+    /// the latch, input pins read the device: `(latch & ctrl) | (pins & !ctrl)`.
+    pub fn read_register(&self) -> u8 {
+        let out_mask = 0x80 | self.control;
+        (self.data & out_mask) | (self.read_data() & !out_mask)
+    }
+
+    /// Advance the 6-button timeout by `cycles` 68k cycles.
+    pub fn tick(&mut self, cycles: u32) {
         if self.controller_type == ControllerType::SixButton {
-            self.th_timer += cycles;
-            // Reset counter if TH hasn't been toggled recently
-            if self.th_timer > 1500 {
+            self.th_timer = self.th_timer.saturating_add(cycles);
+            if self.th_timer > SIX_BUTTON_TIMEOUT_CYCLES {
                 self.th_counter = 0;
+                self.th_timer = 0;
             }
         }
     }
@@ -311,6 +284,88 @@ impl Default for ControllerPort {
     fn default() -> Self {
         Self::new(ControllerType::ThreeButton)
     }
+}
+
+/// Console region, as reported by the version register.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ConsoleRegion {
+    /// Japan, NTSC
+    JapanNtsc,
+    /// Japan / Asia, PAL
+    JapanPal,
+    /// North America, NTSC
+    #[default]
+    Usa,
+    /// Europe, PAL
+    Europe,
+}
+
+impl ConsoleRegion {
+    /// Version register bits 7-6 (overseas, PAL).
+    pub fn version_bits(self) -> u8 {
+        match self {
+            ConsoleRegion::JapanNtsc => 0x00,
+            ConsoleRegion::JapanPal => 0x40,
+            ConsoleRegion::Usa => 0x80,
+            ConsoleRegion::Europe => 0xC0,
+        }
+    }
+
+    /// True for 50 Hz regions.
+    pub fn is_pal(self) -> bool {
+        matches!(self, ConsoleRegion::JapanPal | ConsoleRegion::Europe)
+    }
+
+    /// Derive the region from the ROM header region field (`0x1F0`).
+    ///
+    /// Accepts the letter codes (`J`, `U`, `E`, and `K` as Japan), the
+    /// newer hex-digit bit mask (bit 0 Japan, bit 1 Japan PAL, bit 2 USA,
+    /// bit 3 Europe) and the "EUR"/"JAP"/"USA" spellings. When several
+    /// regions are listed the preference is USA, then Japan, then Europe,
+    /// as in Genesis Plus GX.
+    pub fn from_header(rom: &[u8]) -> Self {
+        let field = rom.get(0x1F0..0x1F4).unwrap_or(&[]);
+        let prefix = |p: &[u8]| field.len() >= 3 && field[..3].eq_ignore_ascii_case(p);
+        let country: u8 = if prefix(b"eur") {
+            8
+        } else if prefix(b"jap") {
+            1
+        } else if prefix(b"usa") {
+            4
+        } else {
+            field.iter().fold(0, |acc, &c| {
+                acc | match c.to_ascii_uppercase() {
+                    b'U' => 4,
+                    b'J' | b'K' => 1,
+                    b'E' => 8,
+                    c @ 0..=15 => c,
+                    c @ b'0'..=b'9' => c - b'0',
+                    c @ b'A'..=b'F' => c - b'A' + 10,
+                    _ => 0,
+                }
+            })
+        };
+        if country & 4 != 0 {
+            ConsoleRegion::Usa
+        } else if country & 1 != 0 {
+            ConsoleRegion::JapanNtsc
+        } else if country & 8 != 0 {
+            ConsoleRegion::Europe
+        } else if country & 2 != 0 {
+            ConsoleRegion::JapanPal
+        } else {
+            ConsoleRegion::Usa
+        }
+    }
+}
+
+/// Version register bit 5: no Mega CD attached.
+const VERSION_NO_EXPANSION: u8 = 0x20;
+
+/// Serial register reset values (`$A1000F-$A1001F`): TxData, RxData and
+/// S-Ctrl for port 1, port 2 and the expansion port, as in Genesis Plus GX.
+fn default_serial() -> [u8; 9] {
+    [0xFF, 0x00, 0x00, 0xFF, 0x00, 0x00, 0xFB, 0x00, 0x00]
 }
 
 /// I/O subsystem managing all controller ports
@@ -324,6 +379,9 @@ pub struct Io {
     pub expansion: ControllerPort,
     /// Version register
     pub version: u8,
+    /// Serial registers (TxData, RxData, S-Ctrl for port 1, 2, expansion).
+    #[serde(default = "default_serial")]
+    pub serial: [u8; 9],
 }
 
 impl Io {
@@ -333,8 +391,8 @@ impl Io {
             port1: ControllerPort::new(ControllerType::ThreeButton),
             port2: ControllerPort::new(ControllerType::ThreeButton),
             expansion: ControllerPort::new(ControllerType::None),
-            // Version: 0xA0 = overseas, 0x00 = Japan
-            version: 0xA0,
+            version: ConsoleRegion::Usa.version_bits() | VERSION_NO_EXPANSION,
+            serial: default_serial(),
         }
     }
 
@@ -343,31 +401,52 @@ impl Io {
         self.port1.reset();
         self.port2.reset();
         self.expansion.reset();
+        self.serial = default_serial();
     }
 
-    /// Read from an I/O address
-    pub fn read(&self, address: u32) -> u8 {
-        match address & 0x1F {
-            0x01 => self.version,
-            0x03 => self.port1.read_data(),
-            0x05 => self.port2.read_data(),
-            0x07 => self.expansion.read_data(),
-            0x09 => self.port1.control,
-            0x0B => self.port2.control,
-            0x0D => self.expansion.control,
-            _ => 0xFF,
+    /// Set the region reported by the version register.
+    pub fn set_region(&mut self, region: ConsoleRegion) {
+        self.version = (self.version & 0x3F) | region.version_bits();
+    }
+
+    fn port(&self, index: u32) -> &ControllerPort {
+        match index {
+            0 => &self.port1,
+            1 => &self.port2,
+            _ => &self.expansion,
         }
     }
 
-    /// Write to an I/O address
+    fn port_mut(&mut self, index: u32) -> &mut ControllerPort {
+        match index {
+            0 => &mut self.port1,
+            1 => &mut self.port2,
+            _ => &mut self.expansion,
+        }
+    }
+
+    /// Read from an I/O address. Each register answers on both byte lanes:
+    /// the register index is `(address >> 1) & 0xF`.
+    pub fn read(&self, address: u32) -> u8 {
+        match (address >> 1) & 0x0F {
+            0x00 => self.version,
+            r @ 0x01..=0x03 => self.port(r - 1).read_register(),
+            r @ 0x04..=0x06 => self.port(r - 4).control,
+            r => self.serial[(r - 7) as usize],
+        }
+    }
+
+    /// Write to an I/O address (register index `(address >> 1) & 0xF`, as
+    /// in Genesis Plus GX `io_68k_write`).
     pub fn write(&mut self, address: u32, value: u8) {
-        match address & 0x1F {
-            0x03 => self.port1.write_data(value),
-            0x05 => self.port2.write_data(value),
-            0x07 => self.expansion.write_data(value),
-            0x09 => self.port1.control = value,
-            0x0B => self.port2.control = value,
-            0x0D => self.expansion.control = value,
+        match (address >> 1) & 0x0F {
+            r @ 0x01..=0x03 => self.port_mut(r - 1).write_data(value),
+            r @ 0x04..=0x06 => self.port_mut(r - 4).write_control(value),
+            // TxData
+            r @ (0x07 | 0x0A | 0x0D) => self.serial[(r - 7) as usize] = value,
+            // S-Ctrl: bits 2-0 are read-only status.
+            r @ (0x09 | 0x0C | 0x0F) => self.serial[(r - 7) as usize] = value & 0xF8,
+            // Version and RxData are read-only.
             _ => {}
         }
     }
@@ -390,10 +469,10 @@ impl Io {
         }
     }
 
-    /// Update timing for all ports
-    pub fn update(&mut self, cycles: u32) {
-        self.port1.update(cycles);
-        self.port2.update(cycles);
+    /// Advance port timers (the 6-button timeout) by `cycles` 68k cycles.
+    pub fn tick(&mut self, cycles: u32) {
+        self.port1.tick(cycles);
+        self.port2.tick(cycles);
     }
 
     pub fn serialize(&self) -> serde_json::Value {
@@ -536,121 +615,6 @@ mod tests {
     }
 
     #[test]
-    fn test_6button_cycles() {
-        let mut port = ControllerPort::new(ControllerType::SixButton);
-
-        // Set state: Up=Pressed, Down=Released, Z=Pressed, Y=Released
-        port.state.up = true;
-        port.state.down = false;
-        port.state.z = true;
-        port.state.y = false;
-        port.state.x = false;
-        port.state.mode = false;
-
-        // Cycle 0 Start: TH=1, Cnt=0
-        // Verify TH=1 read
-        // read_3button: 0x7F & !0x01 = 0x7E
-        assert_eq!(port.read_data(), 0x7E, "Start (TH=1)");
-
-        // Pulse 1 (Fall -> Cnt=1)
-        port.write_data(0x00);
-        // read_3button(TH=0): 0x33. Up=Pressed -> 0x33 & !0x01 = 0x32.
-        assert_eq!(port.read_data(), 0x32, "Pulse 1 Fall (TH=0)");
-
-        // Pulse 1 (Rise)
-        port.write_data(0x40);
-        assert_eq!(port.read_data(), 0x7E, "Pulse 1 Rise (TH=1)");
-
-        // Pulse 2 (Fall -> Cnt=2)
-        port.write_data(0x00);
-        assert_eq!(port.read_data(), 0x32, "Pulse 2 Fall (TH=0)");
-
-        // Pulse 2 (Rise)
-        port.write_data(0x40);
-        assert_eq!(port.read_data(), 0x7E, "Pulse 2 Rise (TH=1)");
-
-        // Pulse 3 (Fall -> Cnt=3) ** ID Check **
-        port.write_data(0x00);
-        // Logic: Bits 2-3 set (0x0C).
-        // Up=Pressed (Active High) -> Bit 0 set.
-        // Down=Released (Active High) -> Bit 1 clear.
-        // Expected: 0x0C | 0x01 = 0x0D.
-        assert_eq!(port.read_data(), 0x0D, "Pulse 3 Fall (ID Check)");
-
-        // Pulse 3 (Rise)
-        port.write_data(0x40);
-        assert_eq!(port.read_data(), 0x7E, "Pulse 3 Rise (TH=1)");
-
-        // Pulse 4 (Fall -> Cnt=4)
-        port.write_data(0x00);
-        assert_eq!(port.read_data(), 0x32, "Pulse 4 Fall (TH=0)");
-
-        // Pulse 4 (Rise)
-        port.write_data(0x40);
-        assert_eq!(port.read_data(), 0x7E, "Pulse 4 Rise (TH=1)");
-
-        // Pulse 5 (Fall -> Cnt=5) ** Extra Buttons **
-        port.write_data(0x00);
-        // Logic: Bits 4-6 set (0x70).
-        // Z=Pressed (Active High) -> Bit 0 set.
-        // Y=Released -> Bit 1 clear.
-        // X, Mode Released -> Bits 2, 3 clear.
-        // Expected: 0x70 | 0x01 = 0x71.
-        assert_eq!(port.read_data(), 0x71, "Pulse 5 Fall (Extra Buttons)");
-    }
-
-    #[test]
-    fn test_6button_timeout() {
-        let mut port = ControllerPort::new(ControllerType::SixButton);
-
-        // Initial state
-        assert_eq!(port.th_counter, 0);
-        assert_eq!(port.th_timer, 0);
-
-        // Increment counter by toggling TH (1 -> 0)
-        port.write_data(0x00);
-        assert_eq!(port.th_counter, 1);
-        assert_eq!(port.th_timer, 0);
-
-        // Update with cycles <= 1500
-        port.update(1000);
-        assert_eq!(port.th_counter, 1);
-        assert_eq!(port.th_timer, 1000);
-
-        // Multiple small updates summing to 1500
-        port.update(250);
-        port.update(250);
-        assert_eq!(port.th_counter, 1);
-        assert_eq!(port.th_timer, 1500);
-
-        // Timeout: th_timer > 1500
-        port.update(1);
-        assert_eq!(port.th_counter, 0);
-        assert_eq!(port.th_timer, 1501);
-
-        // Verify write_data resets th_timer on falling edge
-        port.write_data(0x40); // TH high
-        port.write_data(0x00); // TH low (Cnt=1)
-        assert_eq!(port.th_counter, 1);
-        assert_eq!(port.th_timer, 0);
-
-        port.update(1000);
-        port.write_data(0x00); // Falling edge again (TH was already 0, but this shouldn't reset timer)
-                               // Wait, write_data check: if self.th_state && !new_th
-                               // Current th_state is false. new_th is false. So no reset.
-        assert_eq!(port.th_timer, 1000);
-
-        port.write_data(0x40); // TH high
-        port.write_data(0x00); // Falling edge - SHOULD reset
-        assert_eq!(port.th_counter, 2);
-        assert_eq!(port.th_timer, 0);
-
-        // Verify timeout even if TH is high
-        port.update(1501);
-        assert_eq!(port.th_counter, 0);
-    }
-
-    #[test]
     fn test_io_controller_invalid_port() {
         let mut io = Io::new();
         assert!(io.controller(0).is_none());
@@ -683,70 +647,6 @@ mod tests {
         // Verify no changes from invalid ports
         assert_eq!(io.port1.controller_type, ControllerType::SixButton);
         assert_eq!(io.port2.controller_type, ControllerType::None);
-    }
-
-    #[test]
-    fn test_6button_timeout_boundary() {
-        let mut port = ControllerPort::new(ControllerType::SixButton);
-
-        // Initial state
-        port.write_data(0x00); // TH low, increments counter to 1
-        assert_eq!(port.th_counter, 1);
-        assert_eq!(port.th_timer, 0);
-
-        // Case 1: Exact boundary (1500 cycles)
-        // Add 1500 cycles (exactly the threshold)
-        port.update(1500);
-        assert_eq!(port.th_timer, 1500);
-        assert_eq!(
-            port.th_counter, 1,
-            "Counter should NOT reset at exactly 1500 cycles"
-        );
-
-        // Case 2: Cross boundary (1501 cycles)
-        // Add 1 more cycle to exceed threshold
-        port.update(1);
-        assert_eq!(port.th_timer, 1501);
-        assert_eq!(port.th_counter, 0, "Counter SHOULD reset at 1501 cycles");
-
-        // Reset
-        port.write_data(0x40); // TH high
-        port.write_data(0x00); // TH low
-        assert_eq!(port.th_counter, 1);
-        assert_eq!(port.th_timer, 0);
-
-        // Case 3: Large update (2000 cycles at once)
-        port.update(2000);
-        assert_eq!(port.th_timer, 2000);
-        assert_eq!(
-            port.th_counter, 0,
-            "Counter SHOULD reset with single large update"
-        );
-    }
-
-    #[test]
-    fn test_non_6button_no_timeout() {
-        let mut port = ControllerPort::new(ControllerType::ThreeButton);
-
-        // Ensure initial state
-        assert_eq!(port.th_timer, 0);
-
-        // Attempt update with large cycle count
-        port.update(2000);
-
-        // Timer should not have incremented because it's not a 6-button controller
-        assert_eq!(
-            port.th_timer, 0,
-            "Timer should not increment for non-6-button controller"
-        );
-
-        // Verify same for None type
-        let mut port_none = ControllerPort::new(ControllerType::None);
-        port_none.update(2000);
-        assert_eq!(
-            port_none.th_timer, 0,
-            "Timer should not increment for None controller"
-        );
     }
 
     #[test]
@@ -790,28 +690,6 @@ mod tests {
             state.is_object(),
             "Serialized state should be a valid JSON object"
         );
-    }
-
-    #[test]
-    fn test_io_update() {
-        let mut io = Io::new();
-        io.set_controller_type(1, ControllerType::SixButton);
-
-        // Initially 0
-        assert_eq!(io.port1.th_counter, 0);
-
-        // Toggle TH (write to control port).
-        // For port 1, data is at 0xA10003.
-        // th_state starts true (high).
-        // Writing 0x00 sets TH low -> falling edge -> increments counter.
-        io.write(0xA10003, 0x00);
-        assert_eq!(io.port1.th_counter, 1);
-
-        // Update IO with cycles > 1500
-        io.update(1501);
-
-        // Should be reset
-        assert_eq!(io.port1.th_counter, 0);
     }
 
     #[test]
@@ -927,5 +805,267 @@ mod tests {
         state.up = true; // Restore 'up'
 
         assert_eq!(state.to_button_string(), "U...........");
+    }
+
+    /// Drive TH as an output on port 1 and return the data register value
+    /// read after each TH level in `levels`.
+    fn th_sequence(io: &mut Io, levels: &[bool]) -> Vec<u8> {
+        io.write(0xA10009, 0x40); // TH = output
+        levels
+            .iter()
+            .map(|&high| {
+                io.write(0xA10003, if high { 0x40 } else { 0x00 });
+                io.read(0xA10003) & 0x7F
+            })
+            .collect()
+    }
+
+    /// Reference 6-button sequence from gen-hw.txt / Genesis Plus GX:
+    /// the 3rd TH low returns ?0SA0000, the 4th TH high ?1CBMXYZ and the
+    /// 4th TH low ?0SA1111, all active low.
+    #[test]
+    fn six_button_th_sequence_matches_reference() {
+        let mut io = Io::new();
+        io.set_controller_type(1, ControllerType::SixButton);
+        io.write(0xA10003, 0x40); // latch TH high before making it an output
+        io.write(0xA10009, 0x40);
+        {
+            let s = io.controller(1).unwrap();
+            s.up = true;
+            s.a = true;
+            s.c = true;
+            s.x = true;
+            s.mode = true;
+        }
+        let seq = th_sequence(
+            &mut io,
+            &[false, true, false, true, false, true, false, true],
+        );
+        assert_eq!(
+            seq,
+            vec![
+                0x22, // 1st low : 0 S A 0 0 D U  (A, U pressed)
+                0x5E, // 2nd high: 1 C B R L D U  (C, U pressed)
+                0x22, // 2nd low
+                0x5E, // 3rd high
+                0x20, // 3rd low : 0 S A 0 0 0 0
+                0x53, // 4th high: 1 C B M X Y Z  (C, M, X pressed)
+                0x2F, // 4th low : 0 S A 1 1 1 1
+                0x5E, // past the sequence: 3-button data again
+            ]
+        );
+    }
+
+    #[test]
+    fn three_button_pad_never_reports_extra_buttons() {
+        let mut io = Io::new();
+        io.write(0xA10003, 0x40);
+        io.controller(1).unwrap().x = true;
+        let seq = th_sequence(
+            &mut io,
+            &[false, true, false, true, false, true, false, true],
+        );
+        for (i, v) in seq.iter().enumerate() {
+            let expected = if i % 2 == 0 { 0x33 } else { 0x7F };
+            assert_eq!(*v, expected, "step {}", i);
+        }
+    }
+
+    /// The counter resets after ~1.5 ms (11.5k 68k cycles) with no TH rise.
+    #[test]
+    fn six_button_counter_times_out_after_one_and_a_half_ms() {
+        let mut io = Io::new();
+        io.set_controller_type(1, ControllerType::SixButton);
+        io.write(0xA10003, 0x40);
+        io.write(0xA10009, 0x40);
+        th_sequence(&mut io, &[false, true, false, true]);
+        assert_eq!(io.port1.th_counter, 4);
+
+        io.tick(SIX_BUTTON_TIMEOUT_CYCLES);
+        assert_eq!(io.port1.th_counter, 4, "not yet timed out");
+        io.tick(1);
+        assert_eq!(io.port1.th_counter, 0, "timed out");
+
+        // A fresh rising edge restarts the timer.
+        th_sequence(&mut io, &[false, true]);
+        io.tick(SIX_BUTTON_TIMEOUT_CYCLES - 10);
+        th_sequence(&mut io, &[false, true]);
+        io.tick(SIX_BUTTON_TIMEOUT_CYCLES - 10);
+        assert_eq!(io.port1.th_counter, 4);
+    }
+
+    #[test]
+    fn timeout_is_measured_in_68k_cycles() {
+        assert!((11_000..12_000).contains(&SIX_BUTTON_TIMEOUT_CYCLES));
+    }
+
+    #[test]
+    fn non_six_button_ports_have_no_timer() {
+        let mut port = ControllerPort::new(ControllerType::ThreeButton);
+        port.tick(100_000);
+        assert_eq!(port.th_timer, 0);
+        let mut none = ControllerPort::new(ControllerType::None);
+        none.tick(100_000);
+        assert_eq!(none.th_timer, 0);
+    }
+
+    /// TH configured as an input is pulled high, so data writes don't clock
+    /// the 6-button counter.
+    #[test]
+    fn th_follows_latch_only_when_configured_as_output() {
+        let mut io = Io::new();
+        io.set_controller_type(1, ControllerType::SixButton);
+        io.write(0xA10009, 0x00); // all inputs
+        io.write(0xA10003, 0x00);
+        assert!(io.port1.th_state);
+        io.write(0xA10003, 0x40);
+        io.write(0xA10003, 0x00);
+        assert_eq!(io.port1.th_counter, 0);
+
+        // Switching TH to output with a low latch drives it low.
+        io.write(0xA10009, 0x40);
+        assert!(!io.port1.th_state);
+        // Back to input: pulled high again, which is a rising edge.
+        io.write(0xA10009, 0x00);
+        assert!(io.port1.th_state);
+        assert_eq!(io.port1.th_counter, 2);
+    }
+
+    /// Output pins and D7 read back the latch; input pins read the pad.
+    #[test]
+    fn data_read_mixes_latch_and_pad_by_direction() {
+        let mut io = Io::new();
+        io.controller(1).unwrap().up = true; // D0 low while TH high
+        io.write(0xA10009, 0x41); // TH and D0 outputs
+        io.write(0xA10003, 0xC1); // D7=1, TH=1, D0=1
+                                  // D7 and D0 from the latch, TH from the latch, rest from the pad.
+        assert_eq!(io.read(0xA10003), 0xFF);
+        io.write(0xA10003, 0x40);
+        assert_eq!(io.read(0xA10003), 0x7E);
+    }
+
+    #[test]
+    fn registers_answer_on_both_byte_lanes() {
+        let mut io = Io::new();
+        assert_eq!(io.read(0xA10000), io.read(0xA10001));
+        io.write(0xA10008, 0x40); // even byte of port 1 control
+        assert_eq!(io.read(0xA10009), 0x40);
+        assert_eq!(io.read(0xA10008), 0x40);
+        assert_eq!(io.read(0xA10002), io.read(0xA10003));
+    }
+
+    #[test]
+    fn serial_registers_have_hardware_reset_values() {
+        let io = Io::new();
+        let expect = [
+            (0xA1000F, 0xFF),
+            (0xA10011, 0x00),
+            (0xA10013, 0x00),
+            (0xA10015, 0xFF),
+            (0xA10017, 0x00),
+            (0xA10019, 0x00),
+            (0xA1001B, 0xFB),
+            (0xA1001D, 0x00),
+            (0xA1001F, 0x00),
+        ];
+        for (addr, v) in expect {
+            assert_eq!(io.read(addr), v, "{:06X}", addr);
+        }
+    }
+
+    #[test]
+    fn serial_control_status_bits_are_read_only() {
+        let mut io = Io::new();
+        io.write(0xA10013, 0xFF);
+        assert_eq!(io.read(0xA10013), 0xF8);
+        io.write(0xA10011, 0x12); // RxData is read-only
+        assert_eq!(io.read(0xA10011), 0x00);
+        io.reset();
+        assert_eq!(io.read(0xA10013), 0x00);
+    }
+
+    #[test]
+    fn version_register_reflects_region() {
+        let mut io = Io::new();
+        io.set_region(ConsoleRegion::JapanNtsc);
+        assert_eq!(io.read(0xA10001), 0x20);
+        io.set_region(ConsoleRegion::Europe);
+        assert_eq!(io.read(0xA10001), 0xE0);
+        io.set_region(ConsoleRegion::Usa);
+        assert_eq!(io.read(0xA10001), 0xA0);
+        io.set_region(ConsoleRegion::JapanPal);
+        assert_eq!(io.read(0xA10001), 0x60);
+    }
+
+    fn rom_with_region(code: &[u8]) -> Vec<u8> {
+        let mut rom = vec![b' '; 0x200];
+        rom[0x1F0..0x1F0 + code.len()].copy_from_slice(code);
+        rom
+    }
+
+    #[test]
+    fn region_from_header_codes() {
+        assert_eq!(
+            ConsoleRegion::from_header(&rom_with_region(b"J")),
+            ConsoleRegion::JapanNtsc
+        );
+        assert_eq!(
+            ConsoleRegion::from_header(&rom_with_region(b"U")),
+            ConsoleRegion::Usa
+        );
+        assert_eq!(
+            ConsoleRegion::from_header(&rom_with_region(b"E")),
+            ConsoleRegion::Europe
+        );
+        assert_eq!(
+            ConsoleRegion::from_header(&rom_with_region(b"JUE")),
+            ConsoleRegion::Usa
+        );
+        assert_eq!(
+            ConsoleRegion::from_header(&rom_with_region(b"JE")),
+            ConsoleRegion::JapanNtsc
+        );
+        assert_eq!(
+            ConsoleRegion::from_header(&rom_with_region(b"8")),
+            ConsoleRegion::Europe
+        );
+        assert_eq!(
+            ConsoleRegion::from_header(&rom_with_region(b"2")),
+            ConsoleRegion::JapanPal
+        );
+        assert_eq!(
+            ConsoleRegion::from_header(&rom_with_region(b"EUR")),
+            ConsoleRegion::Europe
+        );
+        assert_eq!(
+            ConsoleRegion::from_header(&rom_with_region(b"    ")),
+            ConsoleRegion::Usa
+        );
+        assert_eq!(ConsoleRegion::from_header(&[]), ConsoleRegion::Usa);
+        assert!(ConsoleRegion::Europe.is_pal());
+        assert!(!ConsoleRegion::Usa.is_pal());
+    }
+
+    proptest::proptest! {
+        /// A data read is always `(latch & mask) | (pins & !mask)` with
+        /// mask = ctrl | 0x80, whatever the pad state.
+        #[test]
+        fn prop_data_read_formula(ctrl in 0u8..=255, data in 0u8..=255, buttons in 0u16..0x1000) {
+            let mut io = Io::new();
+            io.set_controller_type(1, ControllerType::SixButton);
+            {
+                let s = io.controller(1).unwrap();
+                let b = |i: u16| buttons & (1 << i) != 0;
+                s.up = b(0); s.down = b(1); s.left = b(2); s.right = b(3);
+                s.a = b(4); s.b = b(5); s.c = b(6); s.start = b(7);
+                s.x = b(8); s.y = b(9); s.z = b(10); s.mode = b(11);
+            }
+            io.write(0xA10009, ctrl);
+            io.write(0xA10003, data);
+            let mask = ctrl | 0x80;
+            let pins = io.port1.read_data();
+            proptest::prop_assert_eq!(io.read(0xA10003), (data & mask) | (pins & !mask));
+            proptest::prop_assert_eq!(pins & 0x80, 0);
+        }
     }
 }
