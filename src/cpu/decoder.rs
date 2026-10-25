@@ -8,9 +8,211 @@ pub use crate::cpu::instructions::{
     DecodeCacheEntry, Instruction, ShiftCount, Size, SystemInstruction,
 };
 
-/// Decode a single M68k instruction from an opcode
+/// Decode a single M68k instruction from an opcode. Encodings that are not
+/// valid 68000 instructions (including disallowed effective-address modes)
+/// decode as `Unimplemented` and take the illegal-instruction exception.
 pub fn decode(opcode: u16) -> Instruction {
+    match opcode >> 12 {
+        0xA => return decode_line_a(opcode),
+        0xF => return decode_line_f(opcode),
+        _ => {}
+    }
+    if !is_valid_68000(opcode) {
+        return Instruction::System(SystemInstruction::Unimplemented { opcode });
+    }
     decode_uncached(opcode)
+}
+
+/* Effective-address classes, as bit masks over the 12 mode/register slots:
+Dn, An, (An), (An)+, -(An), d16(An), d8(An,Xn), abs.W, abs.L, d16(PC),
+d8(PC,Xn), #imm. */
+const EA_DN: u16 = 1 << 0;
+const EA_AN: u16 = 1 << 1;
+const EA_IND: u16 = 1 << 2;
+const EA_POSTINC: u16 = 1 << 3;
+const EA_PREDEC: u16 = 1 << 4;
+const EA_D16: u16 = 1 << 5;
+const EA_D8: u16 = 1 << 6;
+const EA_ABSW: u16 = 1 << 7;
+const EA_ABSL: u16 = 1 << 8;
+const EA_PCD16: u16 = 1 << 9;
+const EA_PCD8: u16 = 1 << 10;
+const EA_IMM: u16 = 1 << 11;
+const EA_ALL: u16 = 0x0FFF;
+const EA_DATA: u16 = EA_ALL & !EA_AN;
+const EA_ALT: u16 = EA_ALL & !(EA_PCD16 | EA_PCD8 | EA_IMM);
+const EA_DALT: u16 = EA_ALT & !EA_AN;
+const EA_MALT: u16 = EA_DALT & !EA_DN;
+const EA_CTRL: u16 = EA_IND | EA_D16 | EA_D8 | EA_ABSW | EA_ABSL | EA_PCD16 | EA_PCD8;
+const EA_CALT: u16 = EA_CTRL & !(EA_PCD16 | EA_PCD8);
+
+/// Bit for the effective address in the low 6 bits of `opcode`.
+fn ea_bit(opcode: u16) -> u16 {
+    let mode = (opcode >> 3) & 7;
+    let reg = opcode & 7;
+    match mode {
+        7 if reg <= 4 => 1 << (7 + reg),
+        7 => 0,
+        m => 1 << m,
+    }
+}
+
+fn ea_in(opcode: u16, class: u16) -> bool {
+    ea_bit(opcode) & class != 0
+}
+
+/// True if `opcode` is a valid MC68000 instruction (Line A/F excluded).
+pub fn is_valid_68000(opcode: u16) -> bool {
+    let size = (opcode >> 6) & 3;
+    let mode = (opcode >> 3) & 7;
+    let opmode = (opcode >> 6) & 7;
+    /* Byte-sized operations may not use An as a source. */
+    let src_ok = |byte: bool| -> bool { ea_in(opcode, if byte { EA_DATA } else { EA_ALL }) };
+    match opcode >> 12 {
+        0x0 => {
+            if opcode & 0x0100 != 0 {
+                if mode == 1 {
+                    return true; // MOVEP
+                }
+                return match size {
+                    0 => ea_in(opcode, EA_DATA), // BTST Dn,<ea>
+                    _ => ea_in(opcode, EA_DALT),
+                };
+            }
+            let op = (opcode >> 9) & 7;
+            match op {
+                4 => match size {
+                    0 => ea_in(opcode, EA_DATA & !EA_IMM), // BTST #,<ea>
+                    _ => ea_in(opcode, EA_DALT),
+                },
+                0 | 1 | 5 => {
+                    if opcode & 0x3F == 0x3C {
+                        size <= 1 // to CCR / to SR
+                    } else {
+                        size != 3 && ea_in(opcode, EA_DALT)
+                    }
+                }
+                2 | 3 | 6 => size != 3 && ea_in(opcode, EA_DALT),
+                _ => false,
+            }
+        }
+        0x1..=0x3 => {
+            let dst_mode = (opcode >> 6) & 7;
+            let dst_reg = (opcode >> 9) & 7;
+            let byte = opcode >> 12 == 1;
+            if !src_ok(byte) {
+                return false;
+            }
+            if dst_mode == 1 {
+                return !byte; // MOVEA
+            }
+            let dst_bit = match dst_mode {
+                7 if dst_reg <= 4 => 1 << (7 + dst_reg),
+                7 => 0,
+                m => 1 << m,
+            };
+            dst_bit & EA_DALT != 0
+        }
+        0x4 => is_valid_group_4(opcode),
+        0x5 => {
+            if size == 3 {
+                mode == 1 || ea_in(opcode, EA_DALT) // DBcc / Scc
+            } else {
+                ea_in(opcode, if size == 0 { EA_DALT } else { EA_ALT })
+            }
+        }
+        0x6 => true,
+        0x7 => opcode & 0x0100 == 0,
+        0x8 | 0xC => {
+            let logic_src = EA_DATA;
+            match opmode {
+                0..=2 => ea_in(opcode, logic_src),
+                3 | 7 => ea_in(opcode, EA_DATA), // DIVU/DIVS, MULU/MULS
+                4 => mode <= 1 || ea_in(opcode, EA_MALT), // SBCD/ABCD or OR/AND Dn,<ea>
+                5 => {
+                    if opcode >> 12 == 0xC && mode <= 1 {
+                        true // EXG Dn,Dn / An,An
+                    } else {
+                        mode > 1 && ea_in(opcode, EA_MALT)
+                    }
+                }
+                _ => {
+                    if opcode >> 12 == 0xC && mode == 1 {
+                        true // EXG Dn,An
+                    } else {
+                        mode > 1 && ea_in(opcode, EA_MALT)
+                    }
+                }
+            }
+        }
+        0x9 | 0xD => match opmode {
+            0..=2 => src_ok(opmode == 0),
+            3 | 7 => ea_in(opcode, EA_ALL),
+            _ => mode <= 1 || ea_in(opcode, EA_MALT), // ADDX/SUBX or Dn,<ea>
+        },
+        0xB => match opmode {
+            0..=2 => src_ok(opmode == 0),
+            3 | 7 => ea_in(opcode, EA_ALL),
+            _ => mode == 1 || ea_in(opcode, EA_DALT), // CMPM or EOR
+        },
+        0xE => {
+            if size == 3 {
+                opcode & 0x0800 == 0 && ea_in(opcode, EA_MALT)
+            } else {
+                true
+            }
+        }
+        _ => false,
+    }
+}
+
+fn is_valid_group_4(opcode: u16) -> bool {
+    let size = (opcode >> 6) & 3;
+    let mode = (opcode >> 3) & 7;
+    if opcode & 0x0100 != 0 {
+        return match size {
+            2 => ea_in(opcode, EA_DATA), // CHK.W
+            3 => ea_in(opcode, EA_CTRL), // LEA
+            _ => false,
+        };
+    }
+    match (opcode >> 8) & 0xF {
+        0x0 => ea_in(opcode, EA_DALT),              // NEGX / MOVE from SR
+        0x2 => size != 3 && ea_in(opcode, EA_DALT), // CLR
+        0x4 => {
+            if size == 3 {
+                ea_in(opcode, EA_DATA) // MOVE to CCR
+            } else {
+                ea_in(opcode, EA_DALT) // NEG
+            }
+        }
+        0x6 => {
+            if size == 3 {
+                ea_in(opcode, EA_DATA) // MOVE to SR
+            } else {
+                ea_in(opcode, EA_DALT) // NOT
+            }
+        }
+        0x8 => match size {
+            0 => ea_in(opcode, EA_DALT),                          // NBCD
+            1 => mode == 0 || ea_in(opcode, EA_CTRL),             // SWAP / PEA
+            _ => mode == 0 || ea_in(opcode, EA_CALT | EA_PREDEC), // EXT / MOVEM to memory
+        },
+        0xA => {
+            if opcode == 0x4AFC {
+                true // ILLEGAL
+            } else {
+                ea_in(opcode, EA_DALT) // TST / TAS
+            }
+        }
+        0xC => size >= 2 && ea_in(opcode, EA_CTRL | EA_POSTINC), // MOVEM to registers
+        0xE => match size {
+            1 => matches!(opcode & 0x3F, 0x00..=0x33 | 0x35..=0x37),
+            2 | 3 => ea_in(opcode, EA_CTRL), // JSR / JMP
+            _ => false,
+        },
+        _ => false,
+    }
 }
 
 fn decode_uncached(opcode: u16) -> Instruction {
