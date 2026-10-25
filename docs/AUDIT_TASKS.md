@@ -34,18 +34,22 @@ Status: `[ ]` open, `[x]` satisfied.
 - [x] **UNC-02** · I · Event — When the M68k core executes ASL on a memory operand and the sign bit changes during the shift, the M68k core shall set the V flag to 1.
   - *Evidence:* `bits.rs:349-354` uncommitted hunk satisfies this. Keep.
   - *Verify:* T — ASL.W (A0) on $4000 sets V=1.
-- [ ] **UNC-03** · H · Event — When the 68k reads the HV counter, the VDP shall return a V value equal to the line the renderer is producing at that master-clock position.
+- [x] **UNC-03** · H · Event — When the 68k reads the HV counter, the VDP shall return a V value equal to the line the renderer is producing at that master-clock position.
   - *Evidence:* `src/vdp/mod.rs:879-894` advances V at tick 165 (H40)/133 (H32) ≈ pixel 227/180, while active display spans MCLK 860–3420; a CRAM write after polling V==N lands in line N−1 and `redraw_current_scanline_if_visible` repaints its right ~30%.
   - *Verify:* T — HV-poll-then-CRAM-write test lands on line N; D — Road Rash II road bands align. Fix: move H-counter origin so MCLK 0 ≈ H 0xA5 (H40)/0x85 (H32).
-- [ ] **UNC-04** · L · State — While the VDP is at the first pixel of active display, the VDP shall report the hardware H-counter value for that position.
+  - *Resolution:* Confirmed against GPGX `hvc.h` (line starts at H 0xA5/0x85 with the V increment and HINT) and BlastEm `LINE_CHANGE_H40/H32`. The V counter still changes at H 0xA5 (H40) / 0x85 (H32), so HV reads are unchanged from the earlier hslot-165/133 change; instead the line origin was moved there, so the renderer, flags and interrupts agree with it. Pixel 0 is at MCLK 988/1000, the last 16/14 pixels in MCLK 0-127/0-139 of the next line. Tests: `poll_v_then_cram_write_lands_on_polled_line_*`. Demonstration with Road Rash II not possible here (no ROM available).
+- [x] **UNC-04** · L · State — While the VDP is at the first pixel of active display, the VDP shall report the hardware H-counter value for that position.
   - *Evidence:* H reads 0x35 at start of active display.
   - *Verify:* T — compare H at active-start against BlastEm/GPGX table.
-- [ ] **UNC-05** · L · State — While the H counter is outside the hardware HBlank range, the VDP shall clear the HBLANK status flag.
+  - *Resolution:* H counter now comes from the GPGX per-MCLK sequence; pixel 0 reads H 0x0D (H40) / 0x0C (H32). Test `h_counter_at_first_active_pixel`.
+- [x] **UNC-05** · L · State — While the H counter is outside the hardware HBlank range, the VDP shall clear the HBLANK status flag.
   - *Evidence:* `vdp/mod.rs:1189` sets HBLANK while H reads 0x00–0x35.
   - *Verify:* T — status HBLANK bit vs H-counter sweep.
-- [ ] **UNC-06** · L · Event — When the HV counter first reports the first VBlank line, the VDP shall have the VBLANK status flag set.
+  - *Resolution:* HBLANK computed from the beam: MCLK 228-871 (H40) / 280-859 (H32), GPGX `HBLANK_*_MCYCLE`, i.e. H 0xB3/0x93 to 0x05. Test `hblank_flag_matches_h_counter_*`.
+- [x] **UNC-06** · L · Event — When the HV counter first reports the first VBlank line, the VDP shall have the VBLANK status flag set.
   - *Evidence:* Around line 0xDF HV reads 0xE0 before VBLANK is set (flag/VINT switch at wrap).
   - *Verify:* T — read status at V=0xE0 shows VBLANK=1.
+  - *Resolution:* VBLANK sets at the line change into line 0xE0 and clears at V 0xFF (GPGX `system_frame_gen`). Test `vblank_set_when_v_counter_first_reads_e0`.
 - [x] **UNC-07** · L · Ubiquitous — The Harte test harness shall compare PC, the full SR, A7, USP and SSP against each test case's expected final state.
   - *Evidence:* `src/cpu/tests_harte.rs:186-201` omits them, so exception/stack bugs cannot fail.
   - *Verify:* I — comparison code covers all listed fields.
@@ -341,106 +345,117 @@ Status: `[ ]` open, `[x]` satisfied.
 
 ## 4. VDP (VDP)
 
-- [ ] **VDP-01** · H · Event — When the control port receives a command with CD5 set, the VDP shall not perform a read prefetch.
+- [x] **VDP-01** · H · Event — When the control port receives a command with CD5 set, the VDP shall not perform a read prefetch.
   - *Evidence:* `vdp/mod.rs:567-607, 625` prefetches code 0x30 (bit 0 clear), advancing address by reg 15 → VRAM copy lands at dest+inc. Tests `tests_dma.rs:89, 184` use code 0x21. (verified)
   - *Verify:* T — copy started with `$0000/$00C0` writes to dest.
-- [ ] **VDP-02** · H · Event — When the 68k reads the VDP status register, the VDP shall keep a pending VINT asserted until interrupt acknowledge.
+  - *Resolution:* Also per GPGX `vdp_dma_copy`: a copy needs CD4 and reads/writes the adjacent (address ^ 1) bytes; tests now use the real $0000/$00C0 command.
+- [x] **VDP-02** · H · Event — When the 68k reads the VDP status register, the VDP shall keep a pending VINT asserted until interrupt acknowledge.
   - *Evidence:* `vdp/mod.rs:687` clears `STATUS_VINT_PENDING` (F flag and IRQ latch combined); `main.rs:843-846` then cancels IRQ 6.
   - *Verify:* T — status poll with SR=$2700, then unmask → VINT taken.
-- [ ] **VDP-03** · H · Ubiquitous — The GUI and debugger shall read VDP status through a side-effect-free accessor.
+  - *Resolution:* GPGX `vdp_68k_ctrl_r` clears only SOVR/SCOL; bit 7 clears on IRQ acknowledge (`vdp_68k_irq_ack`). No main.rs/bus change needed: the existing request/cancel logic now sees the flag stay set.
+- [x] **VDP-03** · H · Ubiquitous — The GUI and debugger shall read VDP status through a side-effect-free accessor.
   - *Evidence:* `gui.rs:2227` `collect_debug_info` calls `read_status()` each redraw (clears VINT pending, command pending, SOVR, collision; `vdp/mod.rs:670, 687`).
   - *Verify:* T — status unchanged across GUI redraws.
-- [ ] **VDP-04** · M · Event — When a 68k→VDP DMA source address increments past a 128 KiB boundary, the VDP shall wrap within the 128 KiB block and leave register 23 unchanged.
+- [x] **VDP-04** · M · Event — When a 68k→VDP DMA source address increments past a 128 KiB boundary, the VDP shall wrap within the 128 KiB block and leave register 23 unchanged.
   - *Evidence:* `vdp/dma.rs:245-249` writes `next_source>>17` into reg 23.
   - *Verify:* T — RAM source crossing $FFFFFE reads $FE0000.
-- [ ] **VDP-05** · M · State — While a HINT is pending and unacknowledged, the VDP shall keep the HINT request asserted across line boundaries.
+- [x] **VDP-05** · M · State — While a HINT is pending and unacknowledged, the VDP shall keep the HINT request asserted across line boundaries.
   - *Evidence:* `vdp/mod.rs:1130`; `main.rs:984` clear at line wrap.
   - *Verify:* T — HINT raised during masked VINT handler is taken after RTE.
-- [ ] **VDP-06** · M · Event — When the data port is read while the write FIFO is non-empty, the VDP shall commit the FIFO before performing the read.
+- [x] **VDP-06** · M · Event — When the data port is read while the write FIFO is non-empty, the VDP shall commit the FIFO before performing the read.
   - *Evidence:* `vdp/mod.rs:547-562, 625-627` return stale `read_buffer`.
   - *Verify:* T — write, set read address, read returns written data.
-- [ ] **VDP-07** · M · State — While the window plane occupies the right side of a line, the renderer shall not draw plane A pixels at or beyond the window boundary.
+- [x] **VDP-07** · M · State — While the window plane occupies the right side of a line, the renderer shall not draw plane A pixels at or beyond the window boundary.
   - *Evidence:* `vdp/render.rs:639-669, 737-739` `pixels_to_process` unclamped (hscroll=3, window from x=160 → plane A to 162).
   - *Verify:* T.
-- [ ] **VDP-08** · M · Ubiquitous — The renderer shall not query process environment variables during line rendering.
+- [x] **VDP-08** · M · Ubiquitous — The renderer shall not query process environment variables during line rendering.
   - *Evidence:* `render.rs:550-555` calls `std::env::var("GENTEEL_DEBUG_PLANE")` twice per `render_line_from`, in release too. Use `self.debug_plane`.
   - *Verify:* I.
-- [ ] **VDP-09** · M · Event — When multiple CRAM, VSRAM or register writes occur during one line's active display, the VDP shall recomposite that line at most once per write position rather than re-rendering the full line per write.
+- [x] **VDP-09** · M · Event — When multiple CRAM, VSRAM or register writes occur during one line's active display, the VDP shall recomposite that line at most once per write position rather than re-rendering the full line per write.
   - *Evidence:* `vdp/mod.rs:533, 541, 654`; `dma.rs:230, 238` (64-word CRAM DMA → 64 full renders).
   - *Verify:* A — benchmark; T — output identical.
-- [ ] **VDP-10** · M · Optional — Where interlace mode 1 or 2 is selected in register 12, the VDP shall render per hardware (mode 2: 8×16 tiles, ×64 pattern addressing, 11-bit V counter, sprite rules).
+  - *Resolution:* Colour-only changes reuse the cached layer buffers and only recomposite from the beam position; unchanged writes are skipped. T: `cram_recomposite_matches_full_rerender`. No separate benchmark number recorded.
+- [x] **VDP-10** · M · Optional — Where interlace mode 1 or 2 is selected in register 12, the VDP shall render per hardware (mode 2: 8×16 tiles, ×64 pattern addressing, 11-bit V counter, sprite rules).
   - *Evidence:* reg 12 bits 1–2 never read (Sonic 2 2P, Combat Cars).
   - *Verify:* D — Sonic 2 2P renders correctly.
-- [ ] **VDP-11** · M · Optional — Where interlace is enabled, the VDP shall toggle the odd-frame status bit each frame.
+  - *Resolution:* Rendering per GPGX `render_bg_m5_im2`/`parse_satb_m5_im2`: field line doubled plus parity, 8x16 tiles (10-bit index, 64-byte patterns), 10-bit sprite Y. The framebuffer shows the current field (240-line buffer). Unit tests in `tests_interlace.rs`; Sonic 2 2P demonstration not possible here (no ROM).
+- [x] **VDP-11** · M · Optional — Where interlace is enabled, the VDP shall toggle the odd-frame status bit each frame.
   - *Evidence:* `STATUS_ODD_FRAME` (`constants.rs:50`) never set.
   - *Verify:* T.
-- [ ] **VDP-12** · M · State — While in H40 mode with horizontal scroll not a multiple of 16, the renderer shall apply to the partial left column the AND of VSRAM entry 19 for plane A and plane B; and while in H32 mode it shall use 0. (plausible)
+- [x] **VDP-12** · M · State — While in H40 mode with horizontal scroll not a multiple of 16, the renderer shall apply to the partial left column the AND of VSRAM entry 19 for plane A and plane B; and while in H32 mode it shall use 0. (plausible)
   - *Evidence:* `render.rs:705-727` ANDs strips 18/19 of one plane for all x<16 plus a game-specific heuristic.
   - *Verify:* T — vs GPGX column model.
-- [ ] **VDP-13** · M · State — While 2-cell vertical scroll is enabled, the renderer shall align VSRAM columns to the scrolled plane rather than the screen.
+  - *Resolution:* Confirmed by GPGX `render_bg_m5_vs` ("verified on PAL MD2"): the partial left column uses A19 & B19 in H40 and 0 in H32. The earlier strip-18/19 fallback heuristic was removed.
+- [x] **VDP-13** · M · State — While 2-cell vertical scroll is enabled, the renderer shall align VSRAM columns to the scrolled plane rather than the screen.
   - *Evidence:* uses `current_x>>3`.
   - *Verify:* T.
-- [ ] **VDP-14** · L · State — While not in interlace mode 2, the renderer shall use 9 bits of sprite Y position.
+- [x] **VDP-14** · L · State — While not in interlace mode 2, the renderer shall use 9 bits of sprite Y position.
   - *Evidence:* `render.rs:46` masks 10 bits (Y=0x280 invisible; no wrap near 0x1FF).
   - *Verify:* T.
-- [ ] **VDP-15** · L · Unwanted — If a VSRAM write targets an address at or above 0x50, then the VDP shall discard the write.
+- [x] **VDP-15** · L · Unwanted — If a VSRAM write targets an address at or above 0x50, then the VDP shall discard the write.
   - *Evidence:* `vdp/mod.rs:536-540`; `dma.rs:233-237` `% 80` wraps onto entries 0–23.
   - *Verify:* T.
-- [ ] **VDP-16** · L · Ubiquitous — The VDP shall ignore address bit 0 for VSRAM accesses and store only the implemented bits of each VSRAM entry.
+- [x] **VDP-16** · L · Ubiquitous — The VDP shall ignore address bit 0 for VSRAM accesses and store only the implemented bits of each VSRAM entry.
   - *Evidence:* `vdp/mod.rs:587-592` writes misaligned pair; top 6 bits stored.
   - *Verify:* T.
-- [ ] **VDP-17** · L · Ubiquitous — The VDP shall ignore address bit 0 for VRAM and CRAM reads.
+  - *Resolution:* VSRAM entries are 11 bits (GPGX masks 0x7FF), not 10 as the old comment said.
+- [x] **VDP-17** · L · Ubiquitous — The VDP shall ignore address bit 0 for VRAM and CRAM reads.
   - *Evidence:* `vdp/mod.rs:570, 575-580` (swapped bytes / straddled entries).
   - *Verify:* T.
-- [ ] **VDP-18** · L · Ubiquitous — The VDP shall store CRAM entries masked to the 9 implemented colour bits.
+- [x] **VDP-18** · L · Ubiquitous — The VDP shall store CRAM entries masked to the 9 implemented colour bits.
   - *Verify:* T — read-back of $FFFF → $0EEE.
-- [ ] **VDP-19** · L · Ubiquitous — `get_cram_raw` shall return CRAM words in the VDP's native byte order.
+- [x] **VDP-19** · L · Ubiquitous — `get_cram_raw` shall return CRAM words in the VDP's native byte order.
   - *Evidence:* `render.rs:1061` byte-swapped (debugger/GUI palette wrong).
   - *Verify:* T.
-- [ ] **VDP-20** · L · Event — When a line's sprite dot budget (320 H40 / 256 H32) is exhausted mid-sprite, the renderer shall truncate that sprite at the limit.
+- [x] **VDP-20** · L · Event — When a line's sprite dot budget (320 H40 / 256 H32) is exhausted mid-sprite, the renderer shall truncate that sprite at the limit.
   - *Evidence:* `render.rs:801` draws the crossing sprite in full.
   - *Verify:* T.
-- [ ] **VDP-21** · L · Event — When a sprite link value is ≥ the mode's sprite count (64 H32 / 80 H40), the renderer shall terminate the sprite list.
+- [x] **VDP-21** · L · Event — When a sprite link value is ≥ the mode's sprite count (64 H32 / 80 H40), the renderer shall terminate the sprite list.
   - *Evidence:* `render.rs:81`.
   - *Verify:* T.
-- [ ] **VDP-22** · L · Event — When a VRAM write hits the sprite attribute table range, the VDP shall update the SAT cache; and when register 5 changes, the VDP shall not reload the SAT cache.
+- [x] **VDP-22** · L · Event — When a VRAM write hits the sprite attribute table range, the VDP shall update the SAT cache; and when register 5 changes, the VDP shall not reload the SAT cache.
   - *Evidence:* `vdp/mod.rs:523-526, 1125`; `render.rs:456` (Castlevania Bloodlines tricks). Cache should hold only Y/size/link.
   - *Verify:* T.
-- [ ] **VDP-23** · L · Ubiquitous — The VDP shall not copy the full SAT cache more than once per line.
+- [x] **VDP-23** · L · Ubiquitous — The VDP shall not copy the full SAT cache more than once per line.
   - *Evidence:* full 1 KB copy at wrap and again in `render_line`.
   - *Verify:* I / A.
-- [ ] **VDP-24** · L · Event — When a DMA fill starts, the VDP shall commit pending FIFO entries before filling. (plausible)
+- [x] **VDP-24** · L · Event — When a DMA fill starts, the VDP shall commit pending FIFO entries before filling. (plausible)
   - *Evidence:* `vdp/mod.rs:467-475`; `dma.rs:66-109` fill runs ahead, queued entries overwrite fill.
   - *Verify:* T.
-- [ ] **VDP-25** · L · Event — When a DMA fill or copy completes, the VDP shall leave DMA length registers at zero.
+- [x] **VDP-25** · L · Event — When a DMA fill or copy completes, the VDP shall leave DMA length registers at zero.
   - *Evidence:* `dma.rs:111-170`.
   - *Verify:* T.
-- [ ] **VDP-26** · L · Event — When a DMA fill targets CRAM or VSRAM, the VDP shall perform the fill per hardware.
+- [x] **VDP-26** · L · Event — When a DMA fill targets CRAM or VSRAM, the VDP shall perform the fill per hardware.
   - *Evidence:* ignored.
   - *Verify:* T.
-- [ ] **VDP-27** · L · Event — When a DMA fill writes a VRAM byte, the VDP shall place the fill byte at the hardware-defined address (GPGX: word write then MSB at addr^1). (plausible)
+  - *Resolution:* Per GPGX `vdp_dma_fill`: CRAM/VSRAM fills write the word in the next FIFO slot, not the fill data.
+- [x] **VDP-27** · L · Event — When a DMA fill writes a VRAM byte, the VDP shall place the fill byte at the hardware-defined address (GPGX: word write then MSB at addr^1). (plausible)
   - *Verify:* T — vs hardware test ROM.
-- [ ] **VDP-28** · L · Unwanted — If `execute_dma` is invoked for a 68k→VDP transfer without a bus reader, then the VDP shall return an error instead of writing 0xFFFF.
+  - *Resolution:* Per GPGX: the triggering word is written normally, then each step writes the MSB to address ^ 1.
+- [x] **VDP-28** · L · Unwanted — If `execute_dma` is invoked for a 68k→VDP transfer without a bus reader, then the VDP shall return an error instead of writing 0xFFFF.
   - *Evidence:* `dma.rs:161-165` `step_dma(&mut |_| 0xFFFF)`.
   - *Verify:* T.
-- [ ] **VDP-29** · L · Event — When a register write is received on the control port, the VDP shall also load address bits 13–0 and code bits CD1–CD0.
+- [x] **VDP-29** · L · Event — When a register write is received on the control port, the VDP shall also load address bits 13–0 and code bits CD1–CD0.
   - *Evidence:* `vdp/mod.rs:630-658` early return.
   - *Verify:* T.
-- [ ] **VDP-30** · L · Unwanted — If a restored state contains out-of-range VDP counters, then the VDP shall clamp them without panicking.
+- [x] **VDP-30** · L · Unwanted — If a restored state contains out-of-range VDP counters, then the VDP shall clamp them without panicking.
   - *Evidence:* `vdp/mod.rs:888, 1069, 1120, 1258` (`v_counter=65535` overflows; huge `mclk_line_clocks`).
   - *Verify:* T — fuzzed `write_state`.
-- [ ] **VDP-31** · L · Event — When a single `tick` spans more than one line, the VDP shall process every line wrap in the span.
+  - *Resolution:* Counters are clamped in `tick` and after `write_state`; the plausible "huge mclk_line_clocks" overflow is also covered.
+- [x] **VDP-31** · L · Event — When a single `tick` spans more than one line, the VDP shall process every line wrap in the span.
   - *Evidence:* `vdp/mod.rs:1117, 1164-1184` wraps once; `next_line_curr_slot` not capped.
   - *Verify:* T.
-- [ ] **VDP-32** · L · Ubiquitous — The VDP shall select H40 mode from register 12 bit 0 (RS1).
+- [x] **VDP-32** · L · Ubiquitous — The VDP shall select H40 mode from register 12 bit 0 (RS1).
   - *Evidence:* `constants.rs:38` `MODE4_H40_MODE = 0x81` equality.
   - *Verify:* T.
-- [ ] **VDP-33** · L · Ubiquitous — The VDP module shall contain no dead or duplicate code.
+- [x] **VDP-33** · L · Ubiquitous — The VDP module shall contain no dead or duplicate code.
   - *Evidence:* `h_counter`, `set_h_counter`, `v30_offset` dead; `line_split_x` unread; `set_pal`/`set_region` duplicate; `get_h_scroll` `_is_plane_a` used despite underscore; `render_line` double check (446, 473); HV uses 211-tick line vs 210 slots in `tick`. S/H colour-14 rule and high-priority transparent pixel handling unverified (plausible).
   - *Verify:* I — clippy dead-code clean.
-- [ ] **VDP-34** · I · Ubiquitous — The VDP shall not index out of bounds on ROM-controlled data.
+  - *Resolution:* Removed `h_counter`, `set_h_counter`, `v30_offset`/`update_v30_offset` (and its call in `src/main.rs`), `line_split_x`, the scroll latches, `set_region`, `set_vblank`, `trigger_vint`; renamed `_is_plane_a`. The 211 H values over 210 slots are intentional (0xB6 and 0xE4 are half-length steps). S/H now follows GPGX `make_lut_bg_ste`/`make_lut_bgobj_ste`: transparent high-priority plane pixels count, sprite colour 14 of palettes 0-2 is never shadowed, low-priority operators under high-priority planes have no effect.
+- [x] **VDP-34** · I · Ubiquitous — The VDP shall not index out of bounds on ROM-controlled data.
   - *Evidence:* currently satisfied (VRAM `u16`/`&0xFFFF`, CRAM `&0x3F`, VSRAM `%80`, SAT iterator bounded, framebuffer ≤240 lines).
   - *Verify:* T — fuzz `vdp_render` once BLD-05 is fixed.
+  - *Resolution:* Covered by proptest `prop_render_never_panics_on_arbitrary_state`; the cargo-fuzz target itself is tracked separately.
 
 ## 5. Audio — PSG, YM2612, mixing, output (APU)
 
@@ -780,7 +795,7 @@ Status: `[ ]` open, `[x]` satisfied.
 - [ ] **BLD-03** · M · Ubiquitous — The build shall enforce deny-warnings through CI flags rather than crate-level `#![deny(warnings)]`.
   - *Evidence:* `lib.rs:1`, `main.rs:1` (new toolchain lints break local builds).
   - *Verify:* I.
-- [ ] **BLD-04** · H · Ubiquitous — Every test assertion shall be capable of failing.
+- [x] **BLD-04** · H · Ubiquitous — Every test assertion shall be capable of failing.
   - *Evidence:* `vdp/tests_properties.rs:293` `!(0xEB..=0xE4).contains(&v)` empty range. (verified)
   - *Verify:* T — mutation check.
 - [ ] **BLD-05** · H · Ubiquitous — Every fuzz target shall compile against the current crate API.
