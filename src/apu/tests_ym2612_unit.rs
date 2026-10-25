@@ -1021,7 +1021,9 @@ fn test_ym2612_ssg_inverted_output_uses_half_range_transform() {
     plain.force_operator_envelope(0, 0, 0x080, "decay");
     plain.force_operator_phase(0, 0, 256 << 10);
 
-    let inv_out = inv.operator_output_debug(0, 0, 0, 0, 0, 0x08, false).unwrap();
+    let inv_out = inv
+        .operator_output_debug(0, 0, 0, 0, 0, 0x08, false)
+        .unwrap();
     let plain_out = plain
         .operator_output_debug(0, 0, 0, 0, 0, 0x00, false)
         .unwrap();
@@ -1090,7 +1092,10 @@ fn test_ym2612_ssg_envelope_freezes_at_0x200_outside_release() {
 
     ym.step(144 * 30);
     let (level, _, _) = ym.operator_envelope_debug(0, 0).unwrap();
-    assert_eq!(level, 0x210, "level must freeze at/above 0x200, got {level:#x}");
+    assert_eq!(
+        level, 0x210,
+        "level must freeze at/above 0x200, got {level:#x}"
+    );
 }
 
 #[test]

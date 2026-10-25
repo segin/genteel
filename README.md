@@ -49,8 +49,8 @@ Genteel is architected to be "agent-friendly," treating AI models as first-class
 git clone https://github.com/segin/genteel.git
 cd genteel
 
-# Build release binary with GUI
-cargo build --release --features gui
+# Build release binary (the GUI is a default feature)
+cargo build --release
 
 # Run a ROM
 ./target/release/genteel path/to/your/rom.md
@@ -59,10 +59,21 @@ cargo build --release --features gui
 ### Running the Test Suite
 ```bash
 # Run all verified tests
-cargo test --features gui
+cargo test
 
 # Run the security/quality audit
 python3 scripts/audit_tool.py
+```
+
+#### 68000 SingleStepTests (optional)
+The M68k core can be checked against the
+[SingleStepTests 680x0](https://github.com/SingleStepTests/680x0) data set. The
+harness is ignored by default because the data is external:
+```bash
+git clone --depth 1 https://github.com/SingleStepTests/680x0.git
+mkdir harte && for f in 680x0/68000/v1/*.json.gz; do gunzip -c "$f" > harte/$(basename "${f%.gz}"); done
+HARTE_DIR=$PWD/harte cargo test --release --lib cpu::tests_harte::harte_run -- --ignored --nocapture
+# HARTE_ONLY=ASR limits the run to matching files; HARTE_SAMPLES=N sets failures printed per file.
 ```
 
 ## 📜 License

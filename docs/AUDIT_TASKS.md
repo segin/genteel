@@ -26,10 +26,10 @@ Status: `[ ]` open, `[x]` satisfied.
 
 ## 0. Uncommitted working-tree changes (UNC)
 
-- [ ] **UNC-01** · H · Event — When the M68k core executes ASR on a negative operand with a shift count greater than the operand size, the M68k core shall set the C and X flags to 1.
-  - *Evidence:* `src/cpu/ops/bits.rs:241-256` uncommitted hunk sets C/X=0; previous code was correct (Musashi agrees). (verified)
-  - *Verify:* T — `ASR.B D1,D0` with D0=$80, D1=9 yields D0.B=$FF, C=X=1. Revert hunk; add regression test.
-- [ ] **UNC-02** · I · Event — When the M68k core executes ASL on a memory operand and the sign bit changes during the shift, the M68k core shall set the V flag to 1.
+- [x] **UNC-01** · H · Event — When the M68k core executes ASR on a negative operand with a shift count greater than the operand size, the M68k core shall produce an all-ones result with C and X clear; and when the count equals the size, the M68k core shall set C and X.
+  - *Evidence:* Audit originally claimed C=X=1 (Musashi). SingleStepTests 68000 `ASR.b` contradicts it: 1642/1642 negative cases with count > 8 give `$FF`, C=X=0; count == 8 gives C=X=1. The uncommitted `bits.rs:241-256` hunk is correct and was kept.
+  - *Verify:* T — `test_asr_b_negative_count_equals_size_sets_carry`, `test_asr_b_negative_count_exceeds_size_clears_carry`; Harte `ASR.*` 0 failures.
+- [x] **UNC-02** · I · Event — When the M68k core executes ASL on a memory operand and the sign bit changes during the shift, the M68k core shall set the V flag to 1.
   - *Evidence:* `bits.rs:349-354` uncommitted hunk satisfies this. Keep.
   - *Verify:* T — ASL.W (A0) on $4000 sets V=1.
 - [ ] **UNC-03** · H · Event — When the 68k reads the HV counter, the VDP shall return a V value equal to the line the renderer is producing at that master-clock position.
@@ -44,21 +44,21 @@ Status: `[ ]` open, `[x]` satisfied.
 - [ ] **UNC-06** · L · Event — When the HV counter first reports the first VBlank line, the VDP shall have the VBLANK status flag set.
   - *Evidence:* Around line 0xDF HV reads 0xE0 before VBLANK is set (flag/VINT switch at wrap).
   - *Verify:* T — read status at V=0xE0 shows VBLANK=1.
-- [ ] **UNC-07** · L · Ubiquitous — The Harte test harness shall compare PC, the full SR, A7, USP and SSP against each test case's expected final state.
+- [x] **UNC-07** · L · Ubiquitous — The Harte test harness shall compare PC, the full SR, A7, USP and SSP against each test case's expected final state.
   - *Evidence:* `src/cpu/tests_harte.rs:186-201` omits them, so exception/stack bugs cannot fail.
   - *Verify:* I — comparison code covers all listed fields.
-- [ ] **UNC-08** · L · Event — When the Harte harness begins a test case, the harness shall reset `interrupt_pending_mask`.
+- [x] **UNC-08** · L · Event — When the Harte harness begins a test case, the harness shall reset `interrupt_pending_mask`.
   - *Evidence:* `tests_harte.rs` does not reset it.
   - *Verify:* I.
 - [ ] **UNC-09** · L · Ubiquitous — The Harte harness shall expose `disasm_range` as a helper function rather than a `#[test]`.
   - *Evidence:* `tests_harte.rs` treats a utility as a test.
   - *Verify:* I.
-- [ ] **UNC-10** · L · Ubiquitous — The repository documentation shall state the data location (`HARTE_DIR`, `DISASM_ROM`) required by `tests_harte.rs`.
+- [x] **UNC-10** · L · Ubiquitous — The repository documentation shall state the data location (`HARTE_DIR`, `DISASM_ROM`) required by `tests_harte.rs`.
   - *Verify:* I.
-- [ ] **UNC-11** · L · Ubiquitous — The M68k core shall restrict `Cpu::invalidate_cache_entry` to crate or test visibility.
+- [x] **UNC-11** · L · Ubiquitous — The M68k core shall restrict `Cpu::invalidate_cache_entry` to crate or test visibility.
   - *Evidence:* `src/cpu/mod.rs` makes it `pub` only for the harness (implementation itself correct).
   - *Verify:* I — `pub(crate)` or `#[cfg(test)]`.
-- [ ] **UNC-12** · L · Ubiquitous — The source tree shall pass `cargo fmt --check`.
+- [x] **UNC-12** · L · Ubiquitous — The source tree shall pass `cargo fmt --check`.
   - *Evidence:* `cpu/mod.rs:796` `mod tests_harte` ordering. (See also BLD-11.)
   - *Verify:* T — `cargo fmt --check` exits 0.
 
@@ -817,7 +817,7 @@ Status: `[ ]` open, `[x]` satisfied.
 - [ ] **BLD-23** · L · Ubiquitous — `ARCHITECTURE.md` shall describe the current module layout, CI status and a single-date "Date of Last Update".
   - *Evidence:* §1 omits `src/z80/`, `gui.rs`, `frontend.rs`, `audio.rs`, `input.rs`, `wav_writer.rs`, `src/bin/`, `fuzz/`, `benches/`, `tests/`, places Z80 under `apu/`; §6 "CI to be configured"; line 155 changelog dated 2026-07-04; no GDB auth design.
   - *Verify:* I.
-- [ ] **BLD-24** · L · Ubiquitous — `README.md` build instructions shall not include redundant feature flags.
+- [x] **BLD-24** · L · Ubiquitous — `README.md` build instructions shall not include redundant feature flags.
   - *Evidence:* `--features gui` (default).
   - *Verify:* I.
 - [ ] **BLD-25** · L · Ubiquitous — `scripts/audit_tool.py` shall detect `unsafe` blocks, functions, impls and traits.
