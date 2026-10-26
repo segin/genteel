@@ -9,55 +9,124 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
+serde_json = "1.0"
 
 [dependencies.genteel]
 path = ".."
+default-features = false
 
-[[bin]]
-name = "memory_ops"
-path = "fuzz_targets/memory_ops.rs"
-test = false
-doc = false
+# Keep the fuzz crate out of any parent workspace.
+[workspace]
+members = ["."]
 
 [[bin]]
 name = "bus_shared"
 path = "fuzz_targets/bus_shared.rs"
 test = false
 doc = false
+bench = false
+
+[[bin]]
+name = "gdb_packet"
+path = "fuzz_targets/gdb_packet.rs"
+test = false
+doc = false
+bench = false
 
 [[bin]]
 name = "m68k_arithmetic"
 path = "fuzz_targets/m68k_arithmetic.rs"
 test = false
 doc = false
+bench = false
 
 [[bin]]
 name = "m68k_control"
 path = "fuzz_targets/m68k_control.rs"
 test = false
 doc = false
+bench = false
 
 [[bin]]
 name = "m68k_random"
 path = "fuzz_targets/m68k_random.rs"
 test = false
 doc = false
+bench = false
+
+[[bin]]
+name = "memory_ops"
+path = "fuzz_targets/memory_ops.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "state_restore"
+path = "fuzz_targets/state_restore.rs"
+test = false
+doc = false
+bench = false
 
 [[bin]]
 name = "vdp_control"
 path = "fuzz_targets/vdp_control.rs"
 test = false
 doc = false
+bench = false
 
 [[bin]]
 name = "vdp_data"
 path = "fuzz_targets/vdp_data.rs"
 test = false
 doc = false
+bench = false
 
 [[bin]]
 name = "vdp_render"
 path = "fuzz_targets/vdp_render.rs"
 test = false
 doc = false
+bench = false
 
+[[bin]]
+name = "z80_flags"
+path = "fuzz_targets/z80_flags.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "z80_fuzz"
+path = "fuzz_targets/z80_fuzz.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "z80_memory"
+path = "fuzz_targets/z80_memory.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "z80_prefix"
+path = "fuzz_targets/z80_prefix.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "z80_random_program"
+path = "fuzz_targets/z80_random_program.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "z80_smart"
+path = "fuzz_targets/z80_smart.rs"
+test = false
+doc = false
+bench = false

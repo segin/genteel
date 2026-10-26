@@ -1,36 +1,45 @@
 #![no_main]
+
+//! VDP renderer fuzzer.
+//!
+//! Loads arbitrary VRAM, CRAM, VSRAM and register contents, then renders
+//! every visible line directly and runs one full frame through `tick`.
+//! Rendering must never panic or index out of bounds.
+
+use genteel::vdp::{RenderOps, Vdp, NUM_REGISTERS};
 use libfuzzer_sys::fuzz_target;
-use genteel::vdp::Vdp;
+
+/// Master clocks per scanline.
+const MCLK_PER_LINE: u32 = 3420;
+/// Lines in a PAL frame (the longer of the two).
+const LINES_PER_FRAME: u32 = 313;
 
 fuzz_target!(|data: &[u8]| {
-    if data.len() < 1024 {
-        return; // Need some data to make rendering interesting
+    /* Registers, then 128 bytes of CRAM, 80 of VSRAM and the VRAM image. */
+    if data.len() < NUM_REGISTERS + 128 + 80 + 1024 {
+        return;
     }
-    
+    let (regs, rest) = data.split_at(NUM_REGISTERS);
+    let (cram, rest) = rest.split_at(128);
+    let (vsram, vram) = rest.split_at(80);
+
     let mut vdp = Vdp::new();
-    
-    // Fill VRAM with fuzz data
-    let vram_len = data.len().min(0x10000);
-    vdp.vram[..vram_len].copy_from_slice(&data[..vram_len]);
-    
-    // Fill CRAM with some of the fuzz data
-    if data.len() >= 128 {
-        vdp.cram.copy_from_slice(&data[..128]);
-    }
-    
-    // Set up registers for rendering
-    // Enable display (reg 1 bit 6)
-    vdp.registers[1] = 0x44;
-    // Set Plane A address
-    vdp.registers[2] = 0x30;
-    // Set auto-increment
-    vdp.registers[15] = 2;
-    
-    // Render several lines
-    for line in 0..224 {
+    vdp.registers.copy_from_slice(regs);
+    /* Keep the display on so the render paths are reached. */
+    vdp.registers[1] |= 0x40;
+    vdp.cram.copy_from_slice(cram);
+    vdp.reconstruct_cram_cache();
+    vdp.vsram.copy_from_slice(vsram);
+    let vram_len = vram.len().min(vdp.vram.len());
+    vdp.vram[..vram_len].copy_from_slice(&vram[..vram_len]);
+
+    let height = vdp.screen_height();
+    for line in 0..height {
         vdp.render_line(line);
     }
-    
-    // Render full frame
-    vdp.render_frame();
+
+    vdp.tick(MCLK_PER_LINE * LINES_PER_FRAME, |addr| {
+        let i = (addr as usize) % data.len();
+        u16::from_be_bytes([data[i], data[(i + 1) % data.len()]])
+    });
 });
