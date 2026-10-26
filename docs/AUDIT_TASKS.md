@@ -816,39 +816,49 @@ Status: `[ ]` open, `[x]` satisfied.
 - [x] **BLD-01** · C · Ubiquitous — The repository shall not track build output directories.
   - *Evidence:* `fuzz/target/` 317 files (~72 MB) tracked; `.gitignore` covers only `/target`. (verified)
   - *Verify:* I — `git ls-files fuzz/target` empty; `**/target/` ignored.
-- [ ] **BLD-02** · H · Ubiquitous — The codebase shall pass `cargo clippy --all-targets` with warnings denied.
+- [x] **BLD-02** · H · Ubiquitous — The codebase shall pass `cargo clippy --all-targets` with warnings denied.
   - *Evidence:* 62 errors: `bool_assert_comparison` ×33 (`z80/tests_ed.rs:26-261`, `z80/tests_reset.rs:51-56`, `vdp/tests_sprite_iterator.rs:36-39`); `needless_range_loop` ×5 (`ym2612.rs:166, 170`; `psg.rs:318, 344, 360`); `manual_range_patterns` ×4 (`ym2612.rs:869, 870, 875, 917`); `manual_is_multiple_of` ×2 (`ym2612.rs:669, 848`); `too_many_arguments` (`ym2612.rs:1621`); `let_and_return` (`ym2612.rs:1903`); `chunks_exact_mut` (`frontend.rs:137`); `single_match` (`vdp/tests_render.rs:1188`); `unusual_byte_groupings` (`apu/tests_blip_buf.rs:112`); `should_implement_trait` (`test_utils.rs:10`); `reversed_empty_ranges` (BLD-04).
   - *Verify:* T — clippy exits 0.
-- [ ] **BLD-03** · M · Ubiquitous — The build shall enforce deny-warnings through CI flags rather than crate-level `#![deny(warnings)]`.
+  - *Resolution:* Confirmed clean: `cargo clippy --all-targets -- -D warnings` (with and without default features) exits 0; CI runs it.
+- [x] **BLD-03** · M · Ubiquitous — The build shall enforce deny-warnings through CI flags rather than crate-level `#![deny(warnings)]`.
   - *Evidence:* `lib.rs:1`, `main.rs:1` (new toolchain lints break local builds).
   - *Verify:* I.
+  - *Resolution:* Both crate roots dropped `#![deny(warnings)]`; CI sets `RUSTFLAGS=-Dwarnings` for every job.
 - [x] **BLD-04** · H · Ubiquitous — Every test assertion shall be capable of failing.
   - *Evidence:* `vdp/tests_properties.rs:293` `!(0xEB..=0xE4).contains(&v)` empty range. (verified)
   - *Verify:* T — mutation check.
-- [ ] **BLD-05** · H · Ubiquitous — Every fuzz target shall compile against the current crate API.
+- [x] **BLD-05** · H · Ubiquitous — Every fuzz target shall compile against the current crate API.
   - *Evidence:* `m68k_arithmetic.rs:33, 34, 42`; `m68k_control.rs:40, 41, 51`; `m68k_random.rs:46, 47` (`Cpu::new(&mut M)`, arity); `vdp_render.rs:31, 35` (`render_line`/`render_frame` gone).
   - *Verify:* T — `cargo check` in `fuzz/`.
-- [ ] **BLD-06** · H · Ubiquitous — `fuzz/Cargo.toml` shall register every fuzz target source file.
+  - *Resolution:* All targets updated to the current CPU/Z80/VDP/bus APIs; false invariants (24-bit PC, even A7, staying in supervisor mode) replaced by cycle-accounting checks. Added `gdb_packet` and `state_restore` targets. `cargo check` in `fuzz/` passes on stable; each target was also smoke-run (libFuzzer without coverage, debug assertions on), which found an unbounded DD/FD prefix recursion, now fixed in the Z80 core.
+- [x] **BLD-06** · H · Ubiquitous — `fuzz/Cargo.toml` shall register every fuzz target source file.
   - *Evidence:* `z80_flags`, `z80_fuzz`, `z80_memory`, `z80_prefix`, `z80_random_program`, `z80_smart` unregistered; use old `Z80::new(memory)`.
   - *Verify:* I.
-- [ ] **BLD-07** · M · Ubiquitous — `fuzz/Cargo.lock` shall be consistent with `fuzz/Cargo.toml`.
+  - *Resolution:* All 16 target files are registered; the fuzz crate builds `genteel` without default features (no GUI system libraries) and has its own `[workspace]`.
+- [x] **BLD-07** · M · Ubiquitous — `fuzz/Cargo.lock` shall be consistent with `fuzz/Cargo.toml`.
   - *Evidence:* `--locked` refuses.
   - *Verify:* T.
-- [ ] **BLD-08** · M · Ubiquitous — CI shall run clippy, `fmt --check`, fuzz-target build, `--no-default-features` build and `--all-targets` build.
+  - *Resolution:* Regenerated; `cargo check --locked` in `fuzz/` passes.
+- [x] **BLD-08** · M · Ubiquitous — CI shall run clippy, `fmt --check`, fuzz-target build, `--no-default-features` build and `--all-targets` build.
   - *Evidence:* `.github/workflows/ci.yml` lacks them.
   - *Verify:* I.
-- [ ] **BLD-09** · M · Ubiquitous — CI shall run once per change (push to main/tags or pull request).
+  - *Resolution:* `ci.yml` has fmt (crate and fuzz crate), clippy `--all-targets`, test, a headless `--no-default-features` build plus `--all-targets` check, and a `--locked` fuzz-target check, all with `-Dwarnings`. The fuzz check uses stable (nightly is only needed to run cargo-fuzz).
+- [x] **BLD-09** · M · Ubiquitous — CI shall run once per change (push to main/tags or pull request).
   - *Evidence:* triggers on every push plus PRs.
   - *Verify:* I.
-- [ ] **BLD-10** · M · Event — When a `v*` tag is pushed, the release workflow shall publish a GitHub Release with least-privilege `permissions:` and build caching.
+  - *Resolution:* CI triggers on pushes to `main` and pull requests into `main`, with per-ref concurrency cancelling superseded runs; tags only trigger the release workflow.
+- [x] **BLD-10** · M · Event — When a `v*` tag is pushed, the release workflow shall publish a GitHub Release with least-privilege `permissions:` and build caching.
   - *Evidence:* `release.yml` runs on every PR/main push, no cache, no Release, no `permissions:`.
   - *Verify:* I.
-- [ ] **BLD-11** · M · Ubiquitous — The source tree shall pass `cargo fmt --check`.
+  - *Resolution:* `release.yml` runs on `v*` tags or manually, with top-level `permissions: contents: read`, `contents: write` only on the publish job (`softprops/action-gh-release@v2`), per-target `rust-cache` and `--locked` builds.
+- [x] **BLD-11** · M · Ubiquitous — The source tree shall pass `cargo fmt --check`.
   - *Evidence:* `apu/tests_ym2612_unit.rs:1021, 1090` (committed); `cpu/mod.rs:796` (UNC-12).
   - *Verify:* T.
-- [ ] **BLD-12** · M · Ubiquitous — The binary crate shall consume emulator modules from the library crate.
+  - *Resolution:* Confirmed: `cargo fmt --all --check` passes (crate and fuzz crate) and CI checks both.
+- [x] **BLD-12** · M · Ubiquitous — The binary crate shall consume emulator modules from the library crate.
   - *Evidence:* `main.rs:10-25` redeclares all modules → double compile, tests run twice (~245 s).
   - *Verify:* I — only `gui`/`tests_gui` local.
+  - *Resolution:* `main.rs` imports the core modules from the library (`use genteel::{...}` at the crate root keeps `crate::` paths in `gui.rs` working); only `gui`/`tests_gui` are binary modules. Core tests run once (lib) and the binary's own tests take ~30 s. `Vdp::window_address` became `pub`; a test-only GUI helper is now `cfg(test)` and an unused GUI field was removed.
 - [x] **BLD-13** · M · Ubiquitous — `Cargo.toml` shall declare no unused dependencies.
   - *Evidence:* `chrono`, `image`, `rodio`.
   - *Verify:* T — `cargo machete`/`udeps`.
@@ -856,9 +866,11 @@ Status: `[ ]` open, `[x]` satisfied.
 - [ ] **BLD-14** · M · Ubiquitous — Dependencies shall be on maintained releases without future-incompatibility warnings.
   - *Evidence:* `winit 0.29`, `egui*/0.26`, `pixels 0.15`, `cpal 0.15`, `rodio 0.17`, `gilrs 0.10`, `rfd 0.14`, `zip 2.x`; `ashpd 0.8.1` future-incompat.
   - *Verify:* T — `cargo report future-incompatibilities` clean.
+  - *Resolution:* Partly done. `cargo update` (with `resolver = "3"` so updates respect `rust-version` 1.87) moved `ashpd` to 0.8.2, which clears the future-incompatibility report. The GUI stack (`winit 0.29`, `egui*/0.26`, `pixels 0.15`, `cpal 0.15`, `gilrs 0.10`, `rfd 0.14`) and `zip 2.x` were not bumped: the GUI crates need a coordinated port, and `zip 9` builds with a one-line change but needs Rust 1.88.
 - [ ] **BLD-15** · M · Ubiquitous — The dependency graph shall minimize duplicate crate versions.
   - *Evidence:* bitflags 1/2, getrandom 0.2/0.3/0.4, rand 0.8/0.10, rand_core 0.6/0.10, hashbrown, libloading, rustix, linux-raw-sys, raw-window-handle 0.5/0.6, thiserror 1/2, zune-core/zune-jpeg.
   - *Verify:* T — `cargo tree -d`.
+  - *Resolution:* Not reduced. `cargo tree -d` (host): 17 duplicated crates / 20 extra versions before and after the semver update (thiserror 1/2 and rand_chacha went, syn 1/2 and miniz_oxide appeared). The remaining duplicates (bitflags, raw-window-handle, libloading, rustix, getrandom, rand, ...) come from the old GUI stack and go with the GUI upgrade in BLD-14.
 - [x] **BLD-16** · M · Ubiquitous — `Cargo.toml` shall define a release profile with LTO and `codegen-units = 1`.
   - *Evidence:* no `[profile.release]`. (Debug overflow checks are what make many arithmetic findings panic.)
   - *Verify:* I.
@@ -867,22 +879,26 @@ Status: `[ ]` open, `[x]` satisfied.
 - [x] **BLD-18** · M · Ubiquitous — Benchmarks depending on GUI crates shall declare `required-features = ["gui"]`.
   - *Evidence:* `benches/gui_bench.rs`, `benches/gui_texture_clone.rs` break `--no-default-features --all-targets`.
   - *Verify:* T.
-- [ ] **BLD-19** · M · Ubiquitous — The default `cargo test` run shall exclude timing-only benchmarks.
+- [x] **BLD-19** · M · Ubiquitous — The default `cargo test` run shall exclude timing-only benchmarks.
   - *Evidence:* 16 assert-free `#[test]`s: `cpu/bench_decoder.rs:4`; `cpu/tests_performance.rs:76, 114, 150, 186`; `memory/tests_performance.rs:10, 48, 85`; `vdp/bench_dma.rs:4, 38`; `vdp/bench_render.rs:4, 85`; `tests/bench_execution.rs:5`.
   - *Verify:* I — criterion or `#[ignore]`.
-- [ ] **BLD-20** · L · Ubiquitous — Every unit test shall contain at least one assertion on observable behaviour.
+  - *Resolution:* All 15 timing-only tests (the evidence list, `cpu/tests_performance.rs` `benchmark_interrupt_handler`, and `vdp/tests_render.rs` `test_render_line_performance`, which asserts a wall-clock bound) are `#[ignore = "timing benchmark; run with --ignored"]`. The 10,000-frame scheduler accounting test in `main.rs` now runs 600 frames (about four minutes down to seconds).
+- [x] **BLD-20** · L · Ubiquitous — Every unit test shall contain at least one assertion on observable behaviour.
   - *Evidence:* `z80/tests_memptr.rs:4` (no assertion, unresolved comment); possibly `vdp/tests_draw_row_refactor.rs:33`, `vdp/tests_render.rs:1065`.
   - *Verify:* I.
+  - *Resolution:* `tests_memptr.rs` LD BC,nn asserts BC and that MEMPTR is untouched; `test_draw_full_tile_row_bounds_safe` asserts a row that does not fit is skipped and the last fitting position draws; `test_sprite_fully_oob_rendering` asserts no sprite pixel reaches the line; `tests_gaps.rs` `test_prefix_cancellation` asserts IX, HL, PC and T-states instead of `pc > 0`. Remaining assertion-free tests are deliberate never-panics checks or delegate to asserting helpers.
 - [x] **BLD-21** · L · Ubiquitous — The repository shall not track stray or one-off files.
   - *Evidence:* `fix_params.py`, `gleylancer.png` (commercial game screenshot), `src/main.rs_perf_test.rs`, `src/debugger/dummy.txt`, empty `.codex`, `conductor/` (~20 planning files).
   - *Verify:* I.
   - *Resolution:* Removed `fix_params.py`, `gleylancer.png`, `src/main.rs_perf_test.rs`, `src/debugger/dummy.txt`. Kept `conductor/` (active Gemini Conductor planning workspace, referenced by its own workflow) and `.codex` (tool marker); delete them by hand if no longer used.
-- [ ] **BLD-22** · L · Ubiquitous — Test-only modules shall be gated by `#[cfg(test)]`.
+- [x] **BLD-22** · L · Ubiquitous — Test-only modules shall be gated by `#[cfg(test)]`.
   - *Evidence:* `memory/mod.rs:11` `pub mod tests_performance;`.
   - *Verify:* I.
-- [ ] **BLD-23** · L · Ubiquitous — `ARCHITECTURE.md` shall describe the current module layout, CI status and a single-date "Date of Last Update".
+  - *Resolution:* `memory/tests_performance` is now a `#[cfg(test)]` private module; a scan found no other ungated test or bench module.
+- [x] **BLD-23** · L · Ubiquitous — `ARCHITECTURE.md` shall describe the current module layout, CI status and a single-date "Date of Last Update".
   - *Evidence:* §1 omits `src/z80/`, `gui.rs`, `frontend.rs`, `audio.rs`, `input.rs`, `wav_writer.rs`, `src/bin/`, `fuzz/`, `benches/`, `tests/`, places Z80 under `apu/`; §6 "CI to be configured"; line 155 changelog dated 2026-07-04; no GDB auth design.
   - *Verify:* I.
+  - *Resolution:* Section 1 lists the current tree (lib/bin split, `z80/`, GUI, frontend, audio, input, WAV writer, `src/bin/`, `benches/`, `tests/`, `fuzz/`, workflows) and no longer places the Z80 under `apu/`; section 6 describes CI and releases; section 7 describes GDB authentication; the date field holds a single date.
 - [x] **BLD-24** · L · Ubiquitous — `README.md` build instructions shall not include redundant feature flags.
   - *Evidence:* `--features gui` (default).
   - *Verify:* I.
@@ -892,15 +908,18 @@ Status: `[ ]` open, `[x]` satisfied.
 - [x] **BLD-26** · L · Optional — Where invoked with a dry-run option, `audit_tool.py` shall write results to stdout only.
   - *Evidence:* always writes `audit_reports/`.
   - *Verify:* T.
-- [ ] **BLD-27** · L · Ubiquitous — Both crate roots shall declare `#![forbid(unsafe_code)]`.
+- [x] **BLD-27** · L · Ubiquitous — Both crate roots shall declare `#![forbid(unsafe_code)]`.
   - *Evidence:* zero `unsafe` today (`tests_security.rs:8` name, `render.rs:384` comment only).
   - *Verify:* I.
-- [ ] **BLD-28** · L · Ubiquitous — Each proptest suite shall declare an explicit case count.
+  - *Resolution:* `audit_tool.py --dry-run` finds no `unsafe` in Rust code (its hits are in docs only); both crate roots `#![forbid(unsafe_code)]`.
+- [x] **BLD-28** · L · Ubiquitous — Each proptest suite shall declare an explicit case count.
   - *Evidence:* only `memory/tests_everdrive.rs:281`.
   - *Verify:* I.
-- [ ] **BLD-29** · I · Ubiquitous — The repository shall contain no secrets.
+  - *Resolution:* All 28 proptest blocks set `ProptestConfig::with_cases`; the 24 that relied on the default now state 256 (the default) explicitly.
+- [x] **BLD-29** · I · Ubiquitous — The repository shall contain no secrets.
   - *Evidence:* currently satisfied (test fixtures only, `gdb.rs:1411, 1645`). CLAUDE.md/GEMINI.md are symlinks to AGENTS.md; `proptest-regressions/` tracked correctly; `generate_builds.py` fine; `output.wav`, `__pycache__`, `gui_config.json` ignored.
   - *Verify:* T — `audit_tool.py`.
+  - *Resolution:* Confirmed: `audit_tool.py --dry-run` reports only the `"secret"` fixtures in the `gdb.rs` tests and documentation mentions of `unsafe`.
 
 ---
 

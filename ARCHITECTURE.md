@@ -9,25 +9,34 @@ This section provides a high-level overview of the project's directory and file 
 ```text
 genteel/
 ├── src/
-│   ├── main.rs           # Application entry point
-│   ├── lib.rs            # Library exports
-│   ├── cpu/              # M68k CPU implementation
-│   │   └── mod.rs
-│   ├── apu/              # Audio Processing Unit (Z80, YM2612, SN76489)
-│   │   └── mod.rs
-│   ├── vdp/              # Video Display Processor
-│   │   └── mod.rs
-│   ├── memory/           # Memory bus and mapping
-│   │   └── mod.rs
-│   ├── io/               # Input/Output (controllers)
-│   │   └── mod.rs
-│   └── debugger/         # GDB RSP debugging interface
-│       └── mod.rs
-├── docs/                 # Additional documentation
-├── scripts/              # Automation and auditing scripts
+│   ├── lib.rs            # Library crate: the emulator core (every module below except gui)
+│   ├── main.rs           # Binary crate: CLI, Emulator/scheduler, save states; uses the library
+│   ├── gui.rs            # egui/winit/pixels front end (binary only, `gui` feature)
+│   ├── tests_gui.rs      # GUI state tests (binary only)
+│   ├── frontend.rs       # Keyboard-to-pad mapping and RGB565 framebuffer conversion
+│   ├── audio.rs          # Host audio ring buffer and cpal consumer
+│   ├── input.rs          # Controller input manager and input scripts (record/replay)
+│   ├── wav_writer.rs     # WAV dump of the mixed output
+│   ├── test_utils.rs     # Shared unit-test helpers (`cfg(test)`)
+│   ├── cpu/              # M68k CPU: decoder, addressing, ops/, tests
+│   ├── z80/              # Z80 sound CPU: op_general/op_cb/op_ed/op_index, tests
+│   ├── apu/              # YM2612 FM, SN76489 PSG, blip buffer, state clamping
+│   ├── vdp/              # VDP: ports, DMA, line timing, renderer
+│   ├── memory/           # Bus, cartridge/SRAM, EverDrive mapper, Z80 bus view
+│   ├── io/               # Controller ports and I/O registers
+│   ├── debugger/         # Debuggable trait and the GDB RSP stub (gdb.rs)
+│   └── bin/              # Stand-alone micro-benchmarks (*_bench.rs) using the library
+├── benches/              # Criterion benchmarks (GUI ones need the `gui` feature)
+├── tests/                # Integration tests (Rust) and audit-tool tests (Python)
+├── fuzz/                 # cargo-fuzz crate: one target per fuzz_targets/*.rs
+├── proptest-regressions/ # Saved proptest failure seeds
+├── docs/                 # Hardware notes, scripting guide, audit task list
+├── scripts/              # Audit tool and release build helper
+├── conductor/            # Planning workspace for the Gemini Conductor workflow
+├── .github/workflows/    # CI (ci.yml) and tag-driven releases (release.yml)
 ├── Cargo.toml            # Rust project manifest
 ├── README.md             # Project overview for humans
-├── AGENTS.md             # AI agent operational context
+├── AGENTS.md             # AI agent operational context (CLAUDE.md, GEMINI.md link here)
 └── ARCHITECTURE.md       # This document
 ```
 
@@ -44,7 +53,7 @@ Provide a simple block diagram or a clear text-based description of the major co
                                                   |
                                                   +--> [CPU (M68k)]
                                                   |
-                                                  +--> [APU (Z80, YM2612, PSG)]
+                                                  +--> [Z80 (sound CPU)] --> [APU (YM2612, PSG)]
                                                   |
                                                   +--> [VDP (Graphics)]
                                                   |
@@ -67,7 +76,7 @@ Technologies: Rust
 
 ### 3.3. Audio Processing Unit (APU)
 Name: APU (`src/apu/`)
-Description: Contains the implementation of the Zilog Z80 sound co-processor, the Yamaha YM2612 FM synthesizer, and the Texas Instruments SN76489 PSG. The APU timing is configurable by video region and output sample rate, with both PSG and YM2612 clocking derived from the active Genesis master clock through the shared `Apu::set_timing` path. That timing reconfiguration now preserves final low-pass filter history when the requested timing is unchanged, instead of resetting the mixed output state on every normal sync slice, while still repairing stale child clock/sample-rate state if needed. The YM2612 core is being moved toward Genesis Plus GX behavior with native-sample timing, 42-MCLK internal-cycle stepping with per-channel subcycle clocking, sample-latched YM state so mid-sample register writes do not skew later channel slots, current-sample stereo mixing, or the already-latched current EG tick, DAC state changes that now become audible through the channel-6 sample pipeline instead of write-time blip injection, EG-tick scheduling, reference-style LFO PM tables, more accurate SSG-EG state handling, immediate active SSG-EG shape-write application, CSM keying behavior, tighter detune/phase stepping, selectable discrete-YM2612 versus YM3438 read-port behavior, single-data-port bank selection that follows the last addressed register group, profile-aware BUSY timing for address and data writes, including correct YM3438 wait-cycle conversion into the Genesis MCLK domain consumed by `step()`, data-port writes that require the port's A1 line to match the last-addressed bank and are otherwise ignored (writes are applied regardless of BUSY, matching real hardware and BlastEm; BUSY affects only the status read), deferred FNUM/block commit semantics that apply on the matching low-byte write, Timer B’s `/16` sample cadence, profile-gated DAC ladder coloration so YM3438 mode does not inherit discrete-YM2612 output offsets, profile-gated carrier quantization masks, wider internal phase-modulation buses that avoid premature 14-bit truncation in operator routing, and operator-time carrier masking so algorithm-7 feedback history sees quantized output like the reference core. Final APU mixing to the host is now linear/saturated rather than running through an artificial soft-clipping stage, the FM/PSG blend is normalized instead of boosted, the mixed output now runs through a Genesis-style first-order Butterworth low-pass filter before host delivery, the OS callback holds the last delivered sample on buffer lock misses and stereo underruns (decaying it toward zero so a stopped producer cannot park a DC level) instead of snapping to zero, queue trimming stays stereo-aligned instead of severing left/right pairs, freshly generated temp-buffer samples are not dropped just because the per-frame queue hit a cap, GUI-side audio uploads are staged locally and flushed with non-blocking locks, and emulation/audio production now runs from the event-loop pacing path with a small bounded catch-up burst before redraw so rendering stalls do not directly starve the callback while the GUI still follows the active NTSC/PAL frame cadence. The Z80 implementation handles architectural nuances like MEMPTR (WZ Register), R Register refresh (once per M1 fetch, bit 7 stable), the Q register used by SCF/CCF, ignored DD/FD prefixes, and EI interrupt shadowing, and is checked against the SingleStepTests Z80 data by an ignored harness (`src/z80/tests_sst.rs`). The Z80 INT line is modelled as a level held for one scanline (`Z80::assert_int_for`) and sampled at instruction boundaries inside `Z80::step`, which returns the acknowledge T-states so they are charged to the Z80 cycle budget; while the 68000 holds BUSREQ or reset the Z80 does not step, so no interrupt is delivered and the line only times out.
+Description: Contains the Yamaha YM2612 FM synthesizer and the Texas Instruments SN76489 PSG; the Zilog Z80 sound co-processor that drives them lives in `src/z80/` and is described at the end of this section. The APU timing is configurable by video region and output sample rate, with both PSG and YM2612 clocking derived from the active Genesis master clock through the shared `Apu::set_timing` path. That timing reconfiguration now preserves final low-pass filter history when the requested timing is unchanged, instead of resetting the mixed output state on every normal sync slice, while still repairing stale child clock/sample-rate state if needed. The YM2612 core is being moved toward Genesis Plus GX behavior with native-sample timing, 42-MCLK internal-cycle stepping with per-channel subcycle clocking, sample-latched YM state so mid-sample register writes do not skew later channel slots, current-sample stereo mixing, or the already-latched current EG tick, DAC state changes that now become audible through the channel-6 sample pipeline instead of write-time blip injection, EG-tick scheduling, reference-style LFO PM tables, more accurate SSG-EG state handling, immediate active SSG-EG shape-write application, CSM keying behavior, tighter detune/phase stepping, selectable discrete-YM2612 versus YM3438 read-port behavior, single-data-port bank selection that follows the last addressed register group, profile-aware BUSY timing for address and data writes, including correct YM3438 wait-cycle conversion into the Genesis MCLK domain consumed by `step()`, data-port writes that require the port's A1 line to match the last-addressed bank and are otherwise ignored (writes are applied regardless of BUSY, matching real hardware and BlastEm; BUSY affects only the status read), deferred FNUM/block commit semantics that apply on the matching low-byte write, Timer B’s `/16` sample cadence, profile-gated DAC ladder coloration so YM3438 mode does not inherit discrete-YM2612 output offsets, profile-gated carrier quantization masks, wider internal phase-modulation buses that avoid premature 14-bit truncation in operator routing, and operator-time carrier masking so algorithm-7 feedback history sees quantized output like the reference core. Final APU mixing to the host is now linear/saturated rather than running through an artificial soft-clipping stage, the FM/PSG blend is normalized instead of boosted, the mixed output now runs through a Genesis-style first-order Butterworth low-pass filter before host delivery, the OS callback holds the last delivered sample on buffer lock misses and stereo underruns (decaying it toward zero so a stopped producer cannot park a DC level) instead of snapping to zero, queue trimming stays stereo-aligned instead of severing left/right pairs, freshly generated temp-buffer samples are not dropped just because the per-frame queue hit a cap, GUI-side audio uploads are staged locally and flushed with non-blocking locks, and emulation/audio production now runs from the event-loop pacing path with a small bounded catch-up burst before redraw so rendering stalls do not directly starve the callback while the GUI still follows the active NTSC/PAL frame cadence. The Z80 implementation handles architectural nuances like MEMPTR (WZ Register), R Register refresh (once per M1 fetch, bit 7 stable), the Q register used by SCF/CCF, ignored DD/FD prefixes (a run of them is folded into one step, at most 16 per step, with interrupts held off until the run ends), and EI interrupt shadowing, and is checked against the SingleStepTests Z80 data by an ignored harness (`src/z80/tests_sst.rs`). The Z80 INT line is modelled as a level held for one scanline (`Z80::assert_int_for`) and sampled at instruction boundaries inside `Z80::step`, which returns the acknowledge T-states so they are charged to the Z80 cycle budget; while the 68000 holds BUSREQ or reset the Z80 does not step, so no interrupt is delivered and the line only times out.
 
 Audio signal path (current state, superseding the callback notes above): the PSG (`apu/psg.rs`) follows Genesis Plus GX `psg.c` and MAME `segapsg_device` for the integrated Sega chip: counters tick once per 16 PSG clocks (240 MCLK), so a tone of period N sounds at `PSG_clock / (32·N)`; period 0 behaves as 1; the noise register is the 16-bit Sega LFSR (seed 0x8000, taps 0x0009, feedback into bit 15) shifted only on the rising edge of the noise divider flip-flop, with rate 3 driven by tone 2's reloads; data bytes to the latched noise register rewrite its control and reset the LFSR; channel output is unipolar and its DC is removed by a one-pole DC blocker in `Apu::generate_sample` (the role of blip_buf's built-in high-pass / the output coupling capacitor). `BlipBuf` (`apu/blip_buf.rs`) maps source clocks to output samples with an absolute 64.64 fixed-point timebase (no lost time while a source is silent, no per-delta division), uses a 256-phase, 16-tap windowed-sinc kernel with blargg's phase orientation and a cutoff at 0.875 × output Nyquist (blargg uses 0.9), and on a timing change keeps its settled level so sources' delta baselines stay valid. The YM2612 shares one F-number high latch for $A4-$A6 and one for $AC-$AE (GPGX `fn_h`, Nuked `reg_a4`/`reg_ac`), and discrete-chip reads of ports 1-3 return the last port-0 status for Nuked's 300000 internal cycles, then 0. `Apu::write_fm_data` has the hardware single-data-port semantics. Restored APU state (save states, debugger `write_state`) is range-clamped field by field (`apu/state_clamp.rs`) and `BlipBuf` validates/repairs its buffer on deserialization. Host output (`audio.rs`) is a lock-free SPSC ring of packed stereo frames; the cpal callback (`AudioConsumer`) steers the fill level to 40 ms with ±0.5 % dynamic rate control, primes before playback, decays a held sample on underrun and skips ahead only beyond a 100 ms bound. `WavWriter` refuses existing files and symlinked escapes, stops cleanly at the 4 GiB RIFF limit or on the first I/O error, and always finalizes a header that matches the bytes written.
 Technologies: Rust
@@ -132,13 +141,13 @@ Integration Method: Local network socket (GDB RSP)
 
 Cloud Provider: Local / Standalone Application (Linux, macOS, Windows)
 Key Services Used: Native OS execution
-CI/CD Pipeline: To be configured (Supports headless validation for CI)
+CI/CD Pipeline: GitHub Actions. `ci.yml` runs once per change (pushes to `main` and pull requests into `main`) with `RUSTFLAGS=-Dwarnings`: `cargo fmt --check` (crate and fuzz crate), `cargo clippy --all-targets`, `cargo test` plus the Python tests, a headless `--no-default-features` build and `--all-targets` check without GUI system libraries, and a `--locked` check of every fuzz target. `release.yml` runs on `v*` tags (or manually), builds Linux and Windows release archives with build caching and publishes them as a GitHub Release; only the publish job gets `contents: write`. Warnings are denied by CI flags rather than `#![deny(warnings)]` in the crate roots, so newer local toolchains do not break local builds. Both crate roots `#![forbid(unsafe_code)]`.
 Monitoring & Logging: `log` and `env_logger` crates for structured output (`RUST_LOG=debug`)
 
 ## 7. Security Considerations
 
-Authentication: N/A
-Authorization: N/A
+Authentication: The GDB stub binds to 127.0.0.1 only and every command except detach/kill/interrupt requires `monitor auth <secret>` first. The secret is `--gdb-password`/`--gdb-password-file`, or a random 128-bit token printed at startup. Comparison is constant-time (`subtle`); after 10 failed attempts authentication is locked out for 10 seconds. Authentication, no-ack mode and breakpoints are reset for every connection.
+Authorization: N/A (an authenticated client has full debugger access)
 Data Encryption: N/A
 Key Security Tools/Practices:
 - Bounds-check all memory accesses (emulator runs untrusted ROM code).
@@ -149,7 +158,7 @@ Key Security Tools/Practices:
 ## 8. Development & Testing Environment
 
 Local Setup Instructions: `cargo build` (debug) or `cargo build --release`
-Testing Frameworks: `cargo test` (unit/integration), `proptest` (property-based tests), `cargo-fuzz` (fuzzing)
+Testing Frameworks: `cargo test` (unit/integration), `proptest` (property-based tests; every suite sets its case count), `cargo-fuzz` (fuzzing, nightly; `cargo check --manifest-path fuzz/Cargo.toml --bins` works on stable). The core's unit tests live in the library crate and run once; the binary's tests cover the scheduler, save states, CLI and GUI state. Timing-only benchmarks are `#[ignore]`d (`cargo test -- --ignored` runs them), as are the SingleStepTests harnesses that need external data.
 Code Quality Tools: `cargo clippy`, `cargo fmt`, `make audit` (custom audit script)
 
 ## 9. Future Considerations / Roadmap
@@ -168,7 +177,7 @@ Code Quality Tools: `cargo clippy`, `cargo fmt`, `make audit` (custom audit scri
 Project Name: genteel
 Repository URL: https://github.com/segin/genteel
 Primary Contact/Team: N/A
-Date of Last Update: 2026-10-25 (Frontend/GDB: master-clock scanline scheduler with debugger stop limits, hardened byte-level GDB stub with a shared command loop, side-effect-free debugger memory access, state load keeping SRAM/ROM/session, atomic SRAM/state/config writes, SMD de-interleaving, GUI off-thread file I/O and emulated-rate pacing. Memory/IO: Genesis Plus GX style SRAM mapping and .srm layout, Sega mapper for ROMs over 4 MiB, VDP mirror decode, 8-bit Z80 window, region detection, 6-button pad protocol and timeout, I/O register decode. Audio: PSG prescaler and Sega noise LFSR per GPGX/MAME, absolute-time band-limited buffer, PSG DC blocker, shared YM2612 F-number latches, Nuked-style undefined-port reads, clamped APU state restore, lock-free latency-bounded audio ring, hardened WAV writer; VDP: unified line timeline for HV counter, flags, interrupts, access slots and renderer; status reads keep VINT pending; DMA fill/copy/68k-source semantics per GPGX; SAT cache maintained by VRAM writes; 2-cell vertical scroll columns follow the scrolled plane; interlace modes; M68k: bus-cycle sequenced execution with exact timing, aborting address errors with group 0 frames, illegal-mode decoding, trace, SR/CCR masks, shared decode table, bus-level TAS write-back; Z80: SingleStepTests-conformant core, INT line modelled as a level; audit fixes: GPGX-style envelope increment table, register-order slot offsets, algorithm 4/5/6 routing corrections, Timer B period without the doubled /16 prescaler, A1-bank-matched data-port writes replacing BUSY-gated write rejection, serde defaults for save-state compatibility, frame-pacer stall resync, audio callback 0-channel guard and DC decay. Earlier YM2612 parity work: added discrete-vs-YM3438 read-port behavior, single-data-port bank selection, profile-aware BUSY timing, corrected YM3438 BUSY wait-cycle units, deferred FNUM/block commit semantics, 42-MCLK internal-cycle YM stepping with per-channel subcycle clocking, sample-latched YM state for current-sample output and EG-tick coherence, DAC writes routed through the channel-6 sample pipeline instead of write-time blip injection, Timer B /16 cadence, profile-gated ladder coloration, profile-gated carrier quantization, wider internal phase-modulation buses, operator-time carrier masking, immediate active SSG-EG shape-write application, Genesis-style first-order Butterworth low-pass filtering on final APU output, linear final APU mixing, normalized FM/PSG blending, callback-side last-sample hold on both lock misses and stereo underruns, preserved APU filter state across unchanged timing syncs, stereo-aligned queue trimming, removal of temp-buffer sample dropping, staged non-blocking GUI audio uploads, moving emulation/audio production into the event-loop pacing path, bounded frame catch-up before redraw, PAL-aware GUI frame pacing, reference-style PM tables, and tighter SSG-EG/CSM/detune handling alongside prior region-aware APU timing updates)
+Date of Last Update: 2026-10-25
 
 ## 11. Glossary / Acronyms
 
