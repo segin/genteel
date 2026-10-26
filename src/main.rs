@@ -85,6 +85,18 @@ pub enum RunOutcome {
     Stopped,
 }
 
+/// A validated ROM image and its battery save, read off the emulator so
+/// the file I/O can run on a worker thread.
+#[derive(Debug)]
+pub struct LoadedRom {
+    /// Canonical path of the file that was read.
+    pub path: std::path::PathBuf,
+    /// Linear ROM bytes (zip extracted, SMD converted).
+    pub data: Vec<u8>,
+    /// Contents of the matching `.srm`, if one exists.
+    pub sram: Option<Vec<u8>>,
+}
+
 /// 68k run state while a GDB client is attached.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum GdbExecState {
@@ -322,7 +334,16 @@ impl Emulator {
 
     /// Close current ROM and return to default state
     pub fn close_rom(&mut self) {
-        self.save_sram();
+        if let Some((path, image)) = self.close_rom_deferred() {
+            Self::write_sram_file(&path, &image);
+        }
+    }
+
+    /// Close the current ROM without touching the disk and return the
+    /// pending SRAM write (path and image), so a frontend can perform it
+    /// on a worker thread.
+    pub fn close_rom_deferred(&mut self) -> Option<(std::path::PathBuf, Vec<u8>)> {
+        let job = self.sram_save_job();
 
         let allowed_paths = self.allowed_paths.clone();
         let mapping = self.input_mapping;
@@ -335,6 +356,7 @@ impl Emulator {
         self.allowed_paths = allowed_paths;
         self.input_mapping = mapping;
         self.bus.borrow_mut().sample_rate = sample_rate;
+        job
     }
 
     /// Path of a file derived from the ROM path by swapping the extension
@@ -370,19 +392,15 @@ impl Emulator {
         Ok(Self::derived_path(rom, ext))
     }
 
-    pub fn load_sram(&mut self) {
-        let Some(sram_path) = self.sram_path() else {
-            return;
-        };
-        let Ok(file) = std::fs::File::open(&sram_path) else {
-            return;
-        };
+    /// Read a `.srm` file with a size limit. Touches no emulator state.
+    fn read_sram_file(sram_path: &std::path::Path) -> Option<Vec<u8>> {
+        let file = std::fs::File::open(sram_path).ok()?;
 
         // 1. Check metadata size
         if let Ok(metadata) = file.metadata() {
             if metadata.len() > MAX_SRAM_SIZE {
                 eprintln!("SRAM file too large: {} bytes", metadata.len());
-                return;
+                return None;
             }
         }
 
@@ -391,31 +409,45 @@ impl Emulator {
         let mut data = Vec::new();
         if let Err(e) = file.take(MAX_SRAM_SIZE + 1).read_to_end(&mut data) {
             eprintln!("Failed to read SRAM: {}", e);
-            return;
+            return None;
         }
 
         if data.len() as u64 > MAX_SRAM_SIZE {
             eprintln!("SRAM exceeds size limit");
-            return;
+            return None;
         }
-
         println!("Loading SRAM from {:?}", sram_path);
-        self.bus.borrow_mut().sram.load_image(&data);
+        Some(data)
+    }
+
+    pub fn load_sram(&mut self) {
+        if let Some(data) = self.sram_path().and_then(|p| Self::read_sram_file(&p)) {
+            self.bus.borrow_mut().sram.load_image(&data);
+        }
+    }
+
+    /// The pending SRAM write: `.srm` path and image. `None` when no ROM is
+    /// loaded, the cartridge has no SRAM, or the game never wrote to it.
+    pub fn sram_save_job(&self) -> Option<(std::path::PathBuf, Vec<u8>)> {
+        let sram_path = self.sram_path()?;
+        let image = self.bus.borrow().sram.image();
+        (!image.is_empty()).then_some((sram_path, image))
+    }
+
+    /// Write an SRAM image atomically, reporting the outcome.
+    pub fn write_sram_file(sram_path: &std::path::Path, image: &[u8]) {
+        if let Err(e) = write_atomic(sram_path, image) {
+            eprintln!("Failed to save SRAM to {:?}: {}", sram_path, e);
+        } else {
+            println!("Saved SRAM to {:?}", sram_path);
+        }
     }
 
     /// Write battery RAM to the `.srm` file. Nothing is written when the
     /// cartridge has no SRAM or the game never wrote to it.
     pub fn save_sram(&self) {
-        let Some(sram_path) = self.sram_path() else {
-            return;
-        };
-        let image = self.bus.borrow().sram.image();
-        if !image.is_empty() {
-            if let Err(e) = write_atomic(&sram_path, &image) {
-                eprintln!("Failed to save SRAM to {:?}: {}", sram_path, e);
-            } else {
-                println!("Saved SRAM to {:?}", sram_path);
-            }
+        if let Some((path, image)) = self.sram_save_job() {
+            Self::write_sram_file(&path, &image);
         }
     }
 
@@ -425,16 +457,24 @@ impl Emulator {
         Ok(())
     }
 
+    /// Serialize the machine state for a save state.
+    pub fn serialize_state(&self) -> Result<Vec<u8>, String> {
+        serde_json::to_vec(self).map_err(|e| format!("Failed to serialize state: {}", e))
+    }
+
+    /// Write serialized state bytes atomically, reporting the outcome.
+    pub fn write_state_file(state_path: &std::path::Path, data: &[u8]) {
+        if let Err(e) = write_atomic(state_path, data) {
+            eprintln!("Failed to save state to {:?}: {}", state_path, e);
+        } else {
+            println!("Saved state to {:?}", state_path);
+        }
+    }
+
     pub fn save_state_to_path(&self, state_path: std::path::PathBuf) {
-        match serde_json::to_vec(self) {
-            Ok(json) => {
-                if let Err(e) = write_atomic(&state_path, &json) {
-                    eprintln!("Failed to save state to {:?}: {}", state_path, e);
-                } else {
-                    println!("Saved state to {:?}", state_path);
-                }
-            }
-            Err(e) => eprintln!("Failed to serialize state: {}", e),
+        match self.serialize_state() {
+            Ok(data) => Self::write_state_file(&state_path, &data),
+            Err(e) => eprintln!("{}", e),
         }
     }
 
@@ -457,38 +497,44 @@ impl Emulator {
         Ok(())
     }
 
-    pub fn load_state_from_path(&mut self, state_path: std::path::PathBuf) {
-        let Ok(file) = std::fs::File::open(&state_path) else {
-            return;
-        };
+    /// Read a save-state file with a size limit. Touches no emulator
+    /// state, so it can run on a worker thread.
+    pub fn read_state_file(state_path: &std::path::Path) -> Result<String, String> {
+        let file = std::fs::File::open(state_path)
+            .map_err(|e| format!("Failed to open save state {:?}: {}", state_path, e))?;
 
         // 1. Check metadata size
         if let Ok(metadata) = file.metadata() {
             if metadata.len() > MAX_STATE_SIZE {
-                eprintln!("Save state too large: {} bytes", metadata.len());
-                return;
+                return Err(format!("Save state too large: {} bytes", metadata.len()));
             }
         }
 
         // 2. Read with limit to prevent OOM
         use std::io::Read;
         let mut json = String::new();
-        if let Err(e) = file.take(MAX_STATE_SIZE + 1).read_to_string(&mut json) {
-            eprintln!("Failed to read save state: {}", e);
-            return;
-        }
+        file.take(MAX_STATE_SIZE + 1)
+            .read_to_string(&mut json)
+            .map_err(|e| format!("Failed to read save state: {}", e))?;
 
         if json.len() as u64 > MAX_STATE_SIZE {
-            eprintln!("Save state exceeds size limit");
-            return;
+            return Err("Save state exceeds size limit".to_string());
         }
+        Ok(json)
+    }
 
-        match serde_json::from_str::<Self>(&json) {
-            Ok(new_emulator) => {
-                self.adopt_state(new_emulator);
-                println!("Loaded state from {:?}", state_path);
-            }
-            Err(e) => eprintln!("Failed to parse save state: {}", e),
+    /// Apply a serialized save state read by `read_state_file`.
+    pub fn apply_state_json(&mut self, json: &str) -> Result<(), String> {
+        let new_emulator = serde_json::from_str::<Self>(json)
+            .map_err(|e| format!("Failed to parse save state: {}", e))?;
+        self.adopt_state(new_emulator);
+        Ok(())
+    }
+
+    pub fn load_state_from_path(&mut self, state_path: std::path::PathBuf) {
+        match Self::read_state_file(&state_path).and_then(|json| self.apply_state_json(&json)) {
+            Ok(()) => println!("Loaded state from {:?}", state_path),
+            Err(e) => eprintln!("{}", e),
         }
     }
 
@@ -551,11 +597,22 @@ impl Emulator {
     }
 
     pub fn load_rom(&mut self, path: &str) -> std::io::Result<()> {
+        let rom = Self::read_rom_image(path, &self.allowed_paths)?;
+        self.install_loaded_rom(rom);
+        Ok(())
+    }
+
+    /// Read and validate a ROM (allowed roots, zip extraction, size limit,
+    /// SMD conversion) and its `.srm`, without touching emulator state, so
+    /// it can run on a worker thread. Finish with `install_loaded_rom`.
+    pub fn read_rom_image(
+        path: &str,
+        allowed_paths: &[std::path::PathBuf],
+    ) -> std::io::Result<LoadedRom> {
         let canonical_path = std::path::Path::new(path).canonicalize()?;
 
-        let allowed = self.allowed_paths.is_empty()
-            || self
-                .allowed_paths
+        let allowed = allowed_paths.is_empty()
+            || allowed_paths
                 .iter()
                 .any(|allowed_base| canonical_path.starts_with(allowed_base));
         if !allowed {
@@ -576,18 +633,29 @@ impl Emulator {
             let is_smd = has_extension(&canonical_path.to_string_lossy(), ".smd");
             Self::deinterleave_smd_if_needed(raw, is_smd)
         };
+        let sram = Self::read_sram_file(&Self::derived_path(&canonical_path, "srm"));
+        Ok(LoadedRom {
+            path: canonical_path,
+            data,
+            sram,
+        })
+    }
+
+    /// Install a ROM read by `read_rom_image` and reset the CPUs.
+    pub fn install_loaded_rom(&mut self, rom: LoadedRom) {
         let mut bus = self.bus.borrow_mut();
-        bus.load_rom(&data);
+        bus.load_rom(&rom.data);
+        if let Some(image) = &rom.sram {
+            bus.sram.load_image(image);
+        }
         drop(bus);
 
-        self.current_rom_path = Some(canonical_path);
-        self.load_sram();
+        self.current_rom_path = Some(rom.path);
 
         // Reset again to load initial PC/SP from ROM vectors
         let mut bus = self.bus.borrow_mut();
         self.cpu.reset(&mut *bus);
         self.z80.reset();
-        Ok(())
     }
 
     /// Convert a Super Magic Drive (`.smd`) dump to a linear image.

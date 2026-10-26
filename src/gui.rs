@@ -103,15 +103,168 @@ pub struct GuiState {
     pub load_requested: Option<u8>,
     #[serde(skip)]
     pub delete_state_requested: Option<u8>,
+    #[serde(skip)]
+    pub quit_requested: bool,
+    /// Problem found while loading the stored configuration, shown to the
+    /// user until dismissed.
+    #[serde(skip)]
+    pub config_warning: Option<String>,
 }
 
+/// Duration of one emulated frame: lines per frame x 3420 master clocks
+/// per line at the region's master clock (NTSC 53.693175 MHz / 896040 =
+/// 59.92 Hz, PAL 53.203424 MHz / 1070460 = 49.70 Hz, as in Genesis Plus GX).
 fn frame_duration_for_region(is_pal: bool) -> std::time::Duration {
-    let fps = if is_pal {
-        crate::audio::PAL_FPS
+    let (mclk, lines) = if is_pal {
+        (crate::audio::PAL_MCLK, 313u32)
     } else {
-        crate::audio::FPS
+        (crate::audio::NTSC_MCLK, 262u32)
     };
-    std::time::Duration::from_secs_f64(1.0 / fps as f64)
+    let mclk_per_frame = f64::from(lines) * f64::from(crate::MCLK_PER_LINE);
+    std::time::Duration::from_secs_f64(mclk_per_frame / f64::from(mclk))
+}
+
+/// Messages for the configuration writer thread.
+enum ConfigMsg {
+    Save(PathBuf, String),
+    Flush(std::sync::mpsc::Sender<()>),
+}
+
+/// Single background writer for `gui_config.json`. Saves are applied in
+/// order, bursts are coalesced to the latest snapshot, and each write goes
+/// to a temporary file that is atomically renamed over the target, so the
+/// file is never interleaved or truncated.
+pub struct ConfigWriter {
+    tx: Mutex<std::sync::mpsc::Sender<ConfigMsg>>,
+}
+
+impl ConfigWriter {
+    pub fn spawn() -> Self {
+        let (tx, rx) = std::sync::mpsc::channel::<ConfigMsg>();
+        std::thread::spawn(move || {
+            while let Ok(first) = rx.recv() {
+                let mut batch = vec![first];
+                batch.extend(rx.try_iter());
+                let mut latest: Option<(PathBuf, String)> = None;
+                let mut acks = Vec::new();
+                for msg in batch {
+                    match msg {
+                        ConfigMsg::Save(path, json) => latest = Some((path, json)),
+                        ConfigMsg::Flush(ack) => acks.push(ack),
+                    }
+                }
+                if let Some((path, json)) = latest {
+                    if let Some(parent) = path.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    if let Err(e) = crate::write_atomic(&path, json.as_bytes()) {
+                        eprintln!("Failed to save GUI configuration {:?}: {}", path, e);
+                    }
+                }
+                for ack in acks {
+                    let _ = ack.send(());
+                }
+            }
+        });
+        Self { tx: Mutex::new(tx) }
+    }
+
+    fn send(&self, msg: ConfigMsg) {
+        if let Ok(tx) = self.tx.lock() {
+            let _ = tx.send(msg);
+        }
+    }
+
+    pub fn save(&self, path: PathBuf, json: String) {
+        self.send(ConfigMsg::Save(path, json));
+    }
+
+    /// Wait (bounded) until every save queued so far is on disk.
+    pub fn flush(&self) {
+        let (ack_tx, ack_rx) = std::sync::mpsc::channel();
+        self.send(ConfigMsg::Flush(ack_tx));
+        let _ = ack_rx.recv_timeout(std::time::Duration::from_secs(5));
+    }
+}
+
+fn config_writer() -> &'static ConfigWriter {
+    static WRITER: std::sync::OnceLock<ConfigWriter> = std::sync::OnceLock::new();
+    WRITER.get_or_init(ConfigWriter::spawn)
+}
+
+/// File I/O requested by the GUI, executed on a worker thread.
+enum IoRequest {
+    LoadRom(PathBuf, Vec<PathBuf>),
+    ReadState(PathBuf),
+    WriteState(PathBuf, Vec<u8>),
+    WriteSram(PathBuf, Vec<u8>),
+}
+
+/// Completed I/O, applied to the emulator on the UI thread.
+enum IoResult {
+    Rom(PathBuf, Result<crate::LoadedRom, String>),
+    State(PathBuf, Result<String, String>),
+}
+
+/// Worker thread that performs ROM, zip, save-state and SRAM file I/O so
+/// the event loop never blocks on the disk.
+struct IoWorker {
+    tx: std::sync::mpsc::Sender<IoRequest>,
+    rx: std::sync::mpsc::Receiver<IoResult>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl IoWorker {
+    fn spawn() -> Self {
+        let (tx, req_rx) = std::sync::mpsc::channel::<IoRequest>();
+        let (res_tx, rx) = std::sync::mpsc::channel::<IoResult>();
+        let handle = std::thread::spawn(move || {
+            for req in req_rx {
+                let result = match req {
+                    IoRequest::LoadRom(path, allowed) => {
+                        let r = Emulator::read_rom_image(&path.to_string_lossy(), &allowed)
+                            .map_err(|e| e.to_string());
+                        Some(IoResult::Rom(path, r))
+                    }
+                    IoRequest::ReadState(path) => {
+                        let r = Emulator::read_state_file(&path);
+                        Some(IoResult::State(path, r))
+                    }
+                    IoRequest::WriteState(path, data) => {
+                        Emulator::write_state_file(&path, &data);
+                        None
+                    }
+                    IoRequest::WriteSram(path, data) => {
+                        Emulator::write_sram_file(&path, &data);
+                        None
+                    }
+                };
+                if let Some(r) = result {
+                    if res_tx.send(r).is_err() {
+                        break;
+                    }
+                }
+            }
+        });
+        Self {
+            tx,
+            rx,
+            handle: Some(handle),
+        }
+    }
+
+    fn request(&self, req: IoRequest) {
+        let _ = self.tx.send(req);
+    }
+
+    /// Stop accepting work and wait for queued writes to finish.
+    fn finish(&mut self) {
+        let (dummy_tx, _) = std::sync::mpsc::channel();
+        drop(std::mem::replace(&mut self.tx, dummy_tx));
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
+    }
 }
 
 fn trim_pending_audio_to_limit(pending_audio: &mut Vec<i16>, max_samples: usize) {
@@ -248,33 +401,78 @@ impl GuiState {
             save_requested: None,
             load_requested: None,
             delete_state_requested: None,
+            quit_requested: false,
+            config_warning: None,
         };
         state.register_default_windows();
         state
     }
 
-    pub fn load_or_default(input_mapping: InputMapping) -> Self {
-        let config_path = get_gui_config_path();
-        if let Ok(file) = std::fs::File::open(&config_path) {
-            if let Ok(metadata) = file.metadata() {
-                if metadata.len() <= MAX_GUI_CONFIG_SIZE {
-                    use std::io::Read;
-                    let mut content = String::new();
-                    if file
-                        .take(MAX_GUI_CONFIG_SIZE + 1)
-                        .read_to_string(&mut content)
-                        .is_ok()
-                        && content.len() as u64 <= MAX_GUI_CONFIG_SIZE
-                    {
-                        if let Ok(mut state) = serde_json::from_str::<Self>(&content) {
-                            state.register_default_windows();
-                            return state;
-                        }
-                    }
-                }
+    /// Load the stored configuration (see `load_from_path`).
+    pub fn load_or_default(input_mapping: InputMapping, cli_mapping: Option<InputMapping>) -> Self {
+        Self::load_from_path(&get_gui_config_path(), input_mapping, cli_mapping)
+    }
+
+    /// Load the configuration at `path`, falling back to defaults.
+    ///
+    /// A file that exists but cannot be read or parsed is moved aside to
+    /// `<name>.bad` (so later saves do not destroy it) and the user is told
+    /// via `config_warning`. An input mapping given on the command line
+    /// overrides the stored one.
+    pub fn load_from_path(
+        path: &std::path::Path,
+        input_mapping: InputMapping,
+        cli_mapping: Option<InputMapping>,
+    ) -> Self {
+        let mut state = match Self::read_config(path) {
+            Ok(Some(state)) => state,
+            Ok(None) => Self::new(input_mapping),
+            Err(reason) => {
+                let mut backup = path.as_os_str().to_os_string();
+                backup.push(".bad");
+                let backup = PathBuf::from(backup);
+                let kept = std::fs::rename(path, &backup).is_ok();
+                let msg = if kept {
+                    format!(
+                        "The GUI configuration {:?} could not be loaded ({}). Defaults are in use; the original was kept as {:?}.",
+                        path, reason, backup
+                    )
+                } else {
+                    format!(
+                        "The GUI configuration {:?} could not be loaded ({}). Defaults are in use.",
+                        path, reason
+                    )
+                };
+                eprintln!("Warning: {}", msg);
+                let mut state = Self::new(input_mapping);
+                state.config_warning = Some(msg);
+                state
             }
+        };
+        if let Some(mapping) = cli_mapping {
+            state.input_mapping = mapping;
         }
-        Self::new(input_mapping)
+        state
+    }
+
+    /// `Ok(None)` when no configuration exists yet.
+    fn read_config(path: &std::path::Path) -> Result<Option<Self>, String> {
+        let file = match std::fs::File::open(path) {
+            Ok(f) => f,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e.to_string()),
+        };
+        use std::io::Read;
+        let mut content = String::new();
+        file.take(MAX_GUI_CONFIG_SIZE + 1)
+            .read_to_string(&mut content)
+            .map_err(|e| e.to_string())?;
+        if content.len() as u64 > MAX_GUI_CONFIG_SIZE {
+            return Err("file too large".to_string());
+        }
+        let mut state = serde_json::from_str::<Self>(&content).map_err(|e| e.to_string())?;
+        state.register_default_windows();
+        Ok(Some(state))
     }
 
     fn register_default_windows(&mut self) {
@@ -305,20 +503,16 @@ impl GuiState {
         }
     }
 
+    /// Queue the configuration for the single background writer.
     pub fn save(&self) {
-        let state = self.clone();
-        // Use a background thread to prevent blocking the GUI thread during disk I/O.
-        // Note: This may lead to out-of-order writes if save() is called frequently,
-        // and may be interrupted if the application exits before the thread completes.
-        std::thread::spawn(move || {
-            if let Ok(json) = serde_json::to_string_pretty(&state) {
-                let path = get_gui_config_path();
-                if let Some(parent) = path.parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                let _ = std::fs::write(path, json);
-            }
-        });
+        if let Ok(json) = serde_json::to_string_pretty(self) {
+            config_writer().save(get_gui_config_path(), json);
+        }
+    }
+
+    /// Wait until queued configuration saves are on disk.
+    pub fn flush_saves() {
+        config_writer().flush();
     }
 
     pub fn is_window_open(&self, name: &str) -> bool {
@@ -430,6 +624,7 @@ impl Framework {
         scale_factor: f32,
         pixels: &pixels::Pixels,
         input_mapping: InputMapping,
+        cli_mapping: Option<InputMapping>,
     ) -> Self {
         let egui_ctx = egui::Context::default();
         let egui_state = egui_winit::State::new(
@@ -445,7 +640,7 @@ impl Framework {
         };
         let renderer =
             egui_wgpu::Renderer::new(pixels.device(), pixels.render_texture_format(), None, 1);
-        let gui_state = GuiState::load_or_default(input_mapping);
+        let gui_state = GuiState::load_or_default(input_mapping, cli_mapping);
         Self {
             egui_ctx,
             egui_state,
@@ -663,6 +858,7 @@ impl Framework {
         self.render_controller_viewer_window(debug_info);
         self.render_expansion_status_window();
         self.render_state_browser_window(debug_info);
+        self.render_config_warning_window();
     }
 
     fn render_top_menu_bar(&mut self, debug_info: &DebugInfo) {
@@ -749,7 +945,8 @@ impl Framework {
                     }
                     ui.separator();
                     if ui.button("Quit").clicked() {
-                        std::process::exit(0);
+                        self.gui_state.quit_requested = true;
+                        ui.close_menu();
                     }
                 });
                 ui.menu_button("Settings", |ui| {
@@ -799,6 +996,24 @@ impl Framework {
                 });
             });
         });
+    }
+
+    fn render_config_warning_window(&mut self) {
+        let Some(msg) = self.gui_state.config_warning.clone() else {
+            return;
+        };
+        let mut dismissed = false;
+        egui::Window::new("Configuration Problem")
+            .collapsible(false)
+            .show(&self.egui_ctx, |ui| {
+                ui.label(&msg);
+                if ui.button("OK").clicked() {
+                    dismissed = true;
+                }
+            });
+        if dismissed {
+            self.gui_state.config_warning = None;
+        }
     }
 
     fn render_about_window(&mut self) {
@@ -2119,6 +2334,7 @@ impl Framework {
             }
         }
         self.gui_state.save();
+        GuiState::flush_saves();
         if let Some(path) = record_path {
             let script: InputScript = emulator.input.stop_recording();
             if let Err(e) = script.save(path) {
@@ -2127,7 +2343,58 @@ impl Framework {
                 println!("Recorded script saved to: {}", path);
             }
         }
+        /* Battery RAM must reach the disk on every way out. */
+        emulator.save_sram();
     }
+}
+
+type M68kDisasmLine = (u32, crate::cpu::instructions::Instruction, [u16; 5]);
+
+/// Side-effect-free big-endian word read for the debugger views.
+fn peek_word(bus: &crate::memory::bus::Bus, addr: u32) -> u16 {
+    u16::from_be_bytes([bus.peek_byte(addr), bus.peek_byte(addr.wrapping_add(1))])
+}
+
+/// Ten decoded 68k instructions starting at `pc`, read without hardware
+/// side effects; addresses wrap around the 32-bit space.
+fn m68k_disassembly(bus: &crate::memory::bus::Bus, pc: u32) -> [M68kDisasmLine; 10] {
+    let mut lines = [(
+        0u32,
+        crate::cpu::instructions::Instruction::System(
+            crate::cpu::instructions::SystemInstruction::Unimplemented { opcode: 0 },
+        ),
+        [0u16; 5],
+    ); 10];
+    let mut addr = pc;
+    for item in &mut lines {
+        let instr = crate::cpu::decode(peek_word(bus, addr));
+        let len = instr.length_words().min(5);
+        let mut words = [0u16; 5];
+        for (i, w) in words.iter_mut().enumerate().take(len as usize) {
+            *w = peek_word(bus, addr.wrapping_add((i as u32) * 2));
+        }
+        *item = (addr, instr, words);
+        addr = addr.wrapping_add(instr.length_words().wrapping_mul(2));
+    }
+    lines
+}
+
+/// Ten bytes of Z80 code from `pc` as the Z80 sees them (RAM and its
+/// mirror, or the banked 68k window), read without side effects; the
+/// address wraps at 0xFFFF.
+fn z80_disassembly(bus: &crate::memory::bus::Bus, pc: u16) -> [(u16, u8); 10] {
+    let mut lines = [(0u16, 0u8); 10];
+    let mut addr = pc;
+    for item in &mut lines {
+        let byte = match addr {
+            0x0000..=0x3FFF => bus.z80_ram[usize::from(addr & 0x1FFF)],
+            0x8000..=0xFFFF => bus.peek_byte(bus.z80_bank_addr | u32::from(addr & 0x7FFF)),
+            _ => 0xFF,
+        };
+        *item = (addr, byte);
+        addr = addr.wrapping_add(1);
+    }
+    lines
 }
 
 #[cfg(feature = "gui")]
@@ -2141,33 +2408,8 @@ fn collect_debug_info(
     if force_red {
         bus.vdp.framebuffer.fill(0xF800); // Red in RGB565
     }
-    let mut m68k_disasm = [(
-        0u32,
-        crate::cpu::instructions::Instruction::System(
-            crate::cpu::instructions::SystemInstruction::Unimplemented { opcode: 0 },
-        ),
-        [0u16; 5],
-    ); 10];
-    let mut addr = emulator.cpu.pc;
-    for item in &mut m68k_disasm {
-        let opcode = bus.read_word(addr);
-        let instr = crate::cpu::decode(opcode);
-        let len = instr.length_words().min(5);
-        let mut words = [0u16; 5];
-        for (i, w) in words.iter_mut().enumerate().take(len as usize) {
-            *w = bus.read_word(addr + (i as u32) * 2);
-        }
-        *item = (addr, instr, words);
-        addr += instr.length_words() * 2;
-    }
-
-    let mut z80_disasm = [(0u16, 0u8); 10];
-    let mut addr = emulator.z80.pc;
-    for item in &mut z80_disasm {
-        let byte = bus.read_byte(0xA00000 + addr as u32);
-        *item = (addr, byte);
-        addr += 1;
-    }
+    let m68k_disasm = m68k_disassembly(&bus, emulator.cpu.pc);
+    let z80_disasm = z80_disassembly(&bus, emulator.z80.pc);
 
     let mut cram_raw = [0u16; 64];
     for (i, value) in cram_raw.iter_mut().enumerate() {
@@ -2363,7 +2605,11 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
         window.scale_factor() as f32,
         &pixels,
         emulator.input_mapping,
+        emulator
+            .input_mapping_from_cli
+            .then_some(emulator.input_mapping),
     );
+    let mut io = IoWorker::spawn();
     // Audio setup
     let audio_buffer = audio::create_audio_buffer();
     let audio_output = match audio::AudioOutput::new(audio_buffer.clone()) {
@@ -2399,6 +2645,7 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                         WindowEvent::CloseRequested => {
                             println!("Using CloseRequested to exit");
                             framework.handle_exit(&mut emulator, &record_path);
+                            io.finish();
                             target.exit();
                         }
                         WindowEvent::KeyboardInput {
@@ -2411,6 +2658,7 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                                 &mut framework,
                                 &record_path,
                             ) {
+                                io.finish();
                                 target.exit();
                             }
                         }
@@ -2434,7 +2682,7 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                                 framework.gui_state.pick_rom_requested = false;
                             }
 
-                            // Check for pending ROM load
+                            // Check for pending ROM load (read on the I/O worker)
                             let pending = {
                                 match framework.pending_rom_path.lock() {
                                     Ok(mut lock) => lock.take(),
@@ -2446,25 +2694,50 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                             };
                             if let Some(path) = pending {
                                 println!("Loading ROM: {:?}", path);
-                                if let Err(e) = emulator.load_rom(path.to_str().unwrap_or("")) {
-                                    eprintln!("Failed to load ROM: {}", e);
-                                } else {
-                                    // Update recent ROMs
-                                    let mut recent = framework.gui_state.recent_roms.clone();
-                                    recent.retain(|p| p != &path);
-                                    recent.insert(0, path.clone());
-                                    recent.truncate(10);
-                                    framework.gui_state.recent_roms = recent;
-                                    framework.gui_state.save();
+                                io.request(IoRequest::LoadRom(
+                                    path,
+                                    emulator.allowed_paths.clone(),
+                                ));
+                            }
+                            // Apply completed I/O
+                            while let Ok(result) = io.rx.try_recv() {
+                                match result {
+                                    IoResult::Rom(path, Ok(rom)) => {
+                                        /* The previous cartridge's battery RAM is
+                                         * written before it is replaced. */
+                                        if let Some((p, d)) = emulator.sram_save_job() {
+                                            io.request(IoRequest::WriteSram(p, d));
+                                        }
+                                        emulator.install_loaded_rom(rom);
+                                        // Update recent ROMs
+                                        let mut recent = framework.gui_state.recent_roms.clone();
+                                        recent.retain(|p| p != &path);
+                                        recent.insert(0, path.clone());
+                                        recent.truncate(10);
+                                        framework.gui_state.recent_roms = recent;
+                                        framework.gui_state.save();
 
-                                    // Auto-Load if enabled
-                                    if framework.gui_state.auto_save_load {
-                                        let auto_path =
-                                            crate::Emulator::derived_path(&path, "auto");
-                                        if auto_path.exists() {
-                                            emulator.load_state_from_path(auto_path);
+                                        // Auto-Load if enabled
+                                        if framework.gui_state.auto_save_load {
+                                            if let Some(rom_path) = &emulator.current_rom_path {
+                                                let auto_path =
+                                                    crate::Emulator::derived_path(rom_path, "auto");
+                                                if auto_path.exists() {
+                                                    io.request(IoRequest::ReadState(auto_path));
+                                                }
+                                            }
                                         }
                                     }
+                                    IoResult::Rom(path, Err(e)) => {
+                                        eprintln!("Failed to load ROM {:?}: {}", path, e);
+                                    }
+                                    IoResult::State(path, Ok(json)) => {
+                                        match emulator.apply_state_json(&json) {
+                                            Ok(()) => println!("Loaded state from {:?}", path),
+                                            Err(e) => eprintln!("{}", e),
+                                        }
+                                    }
+                                    IoResult::State(_, Err(e)) => eprintln!("{}", e),
                                 }
                             }
                             if framework.gui_state.reset_requested {
@@ -2476,32 +2749,46 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                                 println!("Closing ROM");
                                 if framework.gui_state.auto_save_load {
                                     if let Some(path) = &emulator.current_rom_path {
-                                        emulator.save_state_to_path(crate::Emulator::derived_path(
-                                            path, "auto",
-                                        ));
+                                        let auto_path = crate::Emulator::derived_path(path, "auto");
+                                        match emulator.serialize_state() {
+                                            Ok(data) => {
+                                                io.request(IoRequest::WriteState(auto_path, data))
+                                            }
+                                            Err(e) => eprintln!("{}", e),
+                                        }
                                     }
                                 }
-                                emulator.close_rom();
+                                if let Some((p, d)) = emulator.close_rom_deferred() {
+                                    io.request(IoRequest::WriteSram(p, d));
+                                }
                                 framework.gui_state.save();
                                 framework.gui_state.close_requested = false;
                             }
-                            if let Some(slot) = framework.gui_state.save_requested {
-                                if let Err(e) = emulator.save_state(slot) {
-                                    eprintln!("Save state failed: {}", e);
+                            if let Some(slot) = framework.gui_state.save_requested.take() {
+                                match emulator
+                                    .state_path(slot)
+                                    .and_then(|p| emulator.serialize_state().map(|d| (p, d)))
+                                {
+                                    Ok((p, d)) => io.request(IoRequest::WriteState(p, d)),
+                                    Err(e) => eprintln!("Save state failed: {}", e),
                                 }
-                                framework.gui_state.save_requested = None;
                             }
-                            if let Some(slot) = framework.gui_state.load_requested {
-                                if let Err(e) = emulator.load_state(slot) {
-                                    eprintln!("Load state failed: {}", e);
+                            if let Some(slot) = framework.gui_state.load_requested.take() {
+                                match emulator.state_path(slot) {
+                                    Ok(p) => io.request(IoRequest::ReadState(p)),
+                                    Err(e) => eprintln!("Load state failed: {}", e),
                                 }
-                                framework.gui_state.load_requested = None;
                             }
-                            if let Some(slot) = framework.gui_state.delete_state_requested {
+                            if let Some(slot) = framework.gui_state.delete_state_requested.take() {
                                 if let Err(e) = emulator.delete_state(slot) {
                                     eprintln!("Delete state failed: {}", e);
                                 }
-                                framework.gui_state.delete_state_requested = None;
+                            }
+                            if framework.gui_state.quit_requested {
+                                framework.handle_exit(&mut emulator, &record_path);
+                                io.finish();
+                                target.exit();
+                                return;
                             }
 
                             // Sync settings from GUI. single_step is NOT
@@ -2564,7 +2851,7 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                     let now = std::time::Instant::now();
                     let frame_duration =
                         frame_duration_for_region(emulator.bus.borrow().vdp.is_pal);
-                    let next_frame = last_frame_inst + frame_duration;
+                    let mut next_frame = last_frame_inst + frame_duration;
                     if now >= next_frame {
                         emulator.input_mapping = framework.gui_state.input_mapping;
                         emulator.paused = framework.gui_state.paused;
@@ -2593,10 +2880,13 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                         frame_count += frames_to_run as u64;
                         fps_count += frames_to_run as u64;
                         window.request_redraw();
+                        next_frame = last_frame_inst + frame_duration;
                     } else {
                         flush_pending_audio_upload(&audio_buffer, &mut pending_audio_upload);
                     }
-                    target.set_control_flow(winit::event_loop::ControlFlow::Poll);
+                    /* Sleep until the next frame deadline or the next event
+                     * instead of spinning, whether running, paused or idle. */
+                    target.set_control_flow(winit::event_loop::ControlFlow::WaitUntil(next_frame));
                 }
                 _ => {}
             }
@@ -2614,8 +2904,104 @@ mod tests {
         let pal = frame_duration_for_region(true);
 
         assert!(ntsc < pal);
-        assert_eq!(ntsc, std::time::Duration::from_secs_f64(1.0 / 60.0));
-        assert_eq!(pal, std::time::Duration::from_secs_f64(1.0 / 50.0));
+        /* 262 x 3420 MCLK at 53.693175 MHz and 313 x 3420 at 53.203424 MHz. */
+        let ntsc_hz = 1.0 / ntsc.as_secs_f64();
+        let pal_hz = 1.0 / pal.as_secs_f64();
+        assert!((ntsc_hz - 59.9227).abs() < 0.001, "{}", ntsc_hz);
+        assert!((pal_hz - 49.7015).abs() < 0.001, "{}", pal_hz);
+    }
+
+    #[test]
+    fn test_frame_pacing_matches_audio_sample_production() {
+        /* Samples produced per paced second equal the device rate within
+         * 0.01%: one frame of MCLK at the paced rate is one second of MCLK. */
+        for &pal in &[false, true] {
+            let mclk = if pal {
+                crate::audio::PAL_MCLK
+            } else {
+                crate::audio::NTSC_MCLK
+            };
+            let lines = if pal { 313.0 } else { 262.0 };
+            let frames_per_sec = 1.0 / frame_duration_for_region(pal).as_secs_f64();
+            let mclk_per_sec = frames_per_sec * lines * f64::from(crate::MCLK_PER_LINE);
+            let samples = mclk_per_sec / (f64::from(mclk) / 48_000.0);
+            assert!((samples - 48_000.0).abs() / 48_000.0 < 1e-4, "{}", samples);
+        }
+    }
+
+    fn temp_path(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("genteel-gui-{}-{}", name, std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join("gui_config.json")
+    }
+
+    #[test]
+    fn test_config_writer_keeps_last_snapshot_intact() {
+        let path = temp_path("writer");
+        let writer = ConfigWriter::spawn();
+        let mut state = GuiState::new(InputMapping::Original);
+        for i in 0..200 {
+            state.recent_roms = vec![PathBuf::from(format!("rom{}.bin", i)); 1 + i % 7];
+            writer.save(path.clone(), serde_json::to_string_pretty(&state).unwrap());
+        }
+        writer.flush();
+        let text = std::fs::read_to_string(&path).unwrap();
+        let loaded: GuiState = serde_json::from_str(&text).expect("complete JSON");
+        assert_eq!(loaded.recent_roms[0], PathBuf::from("rom199.bin"));
+        let dir = path.parent().unwrap();
+        assert_eq!(
+            std::fs::read_dir(dir).unwrap().count(),
+            1,
+            "temp files left"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_corrupt_config_is_reported_and_preserved() {
+        let path = temp_path("corrupt");
+        std::fs::write(&path, b"{ not json").unwrap();
+        let state = GuiState::load_from_path(&path, InputMapping::Original, None);
+        assert!(state.config_warning.is_some());
+        let mut backup = path.as_os_str().to_os_string();
+        backup.push(".bad");
+        assert_eq!(std::fs::read(PathBuf::from(backup)).unwrap(), b"{ not json");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn test_cli_input_mapping_overrides_stored_config() {
+        let path = temp_path("mapping");
+        let mut stored = GuiState::new(InputMapping::Original);
+        stored.input_mapping = InputMapping::Original;
+        std::fs::write(&path, serde_json::to_string(&stored).unwrap()).unwrap();
+        let state =
+            GuiState::load_from_path(&path, InputMapping::Original, Some(InputMapping::Ergonomic));
+        assert_eq!(state.input_mapping, InputMapping::Ergonomic);
+        let state = GuiState::load_from_path(&path, InputMapping::Ergonomic, None);
+        assert_eq!(state.input_mapping, InputMapping::Original);
+        assert!(state.config_warning.is_none());
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn test_disassembly_wraps_and_has_no_side_effects() {
+        let mut bus = crate::memory::bus::Bus::new();
+        bus.vdp.command.pending = true;
+        let lines = m68k_disassembly(&bus, 0xFFFF_FFFE);
+        assert_eq!(lines[0].0, 0xFFFF_FFFE);
+        assert!(lines[1].0 < 0x10);
+        /* Disassembling over the VDP ports must not reset its state. */
+        let _ = m68k_disassembly(&bus, 0x00C0_0000);
+        assert!(bus.vdp.command.pending);
+        bus.z80_ram[0x1FFF] = 0xAB;
+        let z80 = z80_disassembly(&bus, 0xFFF7);
+        assert_eq!(z80[9].0, 0x0000);
+        let z80 = z80_disassembly(&bus, 0x1FFF);
+        assert_eq!(z80[0].1, 0xAB);
+        bus.z80_bus_request = false;
+        assert_eq!(z80_disassembly(&bus, 0x1FFF)[0].1, 0xAB);
     }
 
     #[test]
