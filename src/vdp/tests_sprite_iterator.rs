@@ -33,10 +33,10 @@ fn test_sprite_iterator_basic() {
     assert_eq!(attr.h_pos, 20);
     assert_eq!(attr.h_size, 2);
     assert_eq!(attr.v_size, 3);
-    assert_eq!(attr.priority, true);
+    assert!(attr.priority);
     assert_eq!(attr.palette, 2);
-    assert_eq!(attr.v_flip, true);
-    assert_eq!(attr.h_flip, false);
+    assert!(attr.v_flip);
+    assert!(!attr.h_flip);
     assert_eq!(attr.base_tile, 0x123);
     assert_eq!(attr.index, 0);
     assert_eq!(attr.link, 1);

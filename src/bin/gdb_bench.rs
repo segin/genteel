@@ -1,86 +1,47 @@
+//! Benchmark of the GDB stub's packet framing and stop-reply strings.
+
+use genteel::debugger::{GdbServer, PacketParser, ParseEvent, StopReason};
 use std::time::Instant;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StopReason {
-    Halted,
-    Breakpoint,
-    Step,
-    Interrupt,
-}
-
-impl StopReason {
-    pub fn signal(&self) -> u8 {
-        match self {
-            StopReason::Halted => 5,
-            StopReason::Breakpoint => 5,
-            StopReason::Step => 5,
-            StopReason::Interrupt => 2,
-        }
-    }
-
-    pub fn signal_string(&self) -> &'static str {
-        match self {
-            StopReason::Halted => "S05",
-            StopReason::Breakpoint => "S05",
-            StopReason::Step => "S05",
-            StopReason::Interrupt => "S02",
-        }
-    }
-}
-
 fn main() {
-    // Basic verification tests
+    // Basic verification
     assert_eq!(StopReason::Breakpoint.signal_string(), "S05");
     assert_eq!(StopReason::Step.signal_string(), "S05");
     assert_eq!(StopReason::Interrupt.signal_string(), "S02");
 
-    let iterations = 10_000_000;
-    let reason = StopReason::Breakpoint;
-
-    // Benchmark dynamic formatting
-    let start_dynamic = Instant::now();
-    for _ in 0..iterations {
-        let formatted = format!("S{:02x}", reason.signal());
-        std::hint::black_box(formatted);
+    /* A realistic stream: register reads, memory reads, a continue. */
+    let mut stream = Vec::new();
+    for cmd in ["g", "m200,40", "?", "Z0,20a,2", "c"] {
+        stream.extend_from_slice(b"+");
+        stream.extend_from_slice(&GdbServer::frame_packet(cmd));
     }
-    let duration_dynamic = start_dynamic.elapsed();
+    let iterations = 200_000;
 
-    // Benchmark static string return
-    let start_static = Instant::now();
+    let start = Instant::now();
+    let mut parser = PacketParser::new();
+    let mut packets = 0usize;
     for _ in 0..iterations {
-        let static_str = reason.signal_string();
-        std::hint::black_box(static_str);
+        for &b in &stream {
+            if let Some(ParseEvent::Packet(p)) = parser.push(b) {
+                packets += p.len();
+            }
+        }
     }
-    let duration_static = start_static.elapsed();
+    let parse = start.elapsed();
 
-    // Benchmark static to_string
-    let start_to_string = Instant::now();
+    let start = Instant::now();
+    let mut framed = 0usize;
     for _ in 0..iterations {
-        let allocated_str = reason.signal_string().to_string();
-        std::hint::black_box(allocated_str);
+        framed += GdbServer::frame_packet(StopReason::Breakpoint.signal_string()).len();
     }
-    let duration_to_string = start_to_string.elapsed();
+    let frame = start.elapsed();
 
     println!("Iterations: {}", iterations);
-    println!("Dynamic `format!`: {:?}", duration_dynamic);
-    println!("Static `&'static str`: {:?}", duration_static);
-    println!("Static `.to_string()`: {:?}", duration_to_string);
-    println!();
-
-    let dyn_secs = duration_dynamic.as_secs_f64();
-    let stat_secs = duration_static.as_secs_f64();
-    let to_str_secs = duration_to_string.as_secs_f64();
-
-    if stat_secs > 0.0 {
-        println!(
-            "Improvement (Static over Dynamic): {:.2}x",
-            dyn_secs / stat_secs
-        );
-    }
-    if to_str_secs > 0.0 {
-        println!(
-            "Improvement (.to_string() over Dynamic): {:.2}x",
-            dyn_secs / to_str_secs
-        );
-    }
+    println!(
+        "Parse {} bytes/iteration: {:?} ({} payload bytes)",
+        stream.len(),
+        parse,
+        packets
+    );
+    println!("Frame stop reply: {:?} ({} bytes)", frame, framed);
 }

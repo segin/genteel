@@ -323,6 +323,26 @@ impl InputManager {
         self.recorded.clear();
     }
 
+    /// Take the input for the next frame and advance the frame counter.
+    ///
+    /// `live` input (from a frontend) takes precedence over the script.
+    /// While recording, the effective input is recorded under the frame
+    /// index it applies to, so every frame gets its own entry.
+    pub fn next_frame(&mut self, live: Option<&FrameInput>) -> FrameInput {
+        let frame = self.current_frame;
+        let input = match live {
+            Some(i) => {
+                self.current_frame += 1;
+                i.clone()
+            }
+            None => self.advance_frame().into_owned(),
+        };
+        if self.recording {
+            self.recorded.push((frame, input.clone()));
+        }
+        input
+    }
+
     /// Record input for current frame
     pub fn record(&mut self, input: &FrameInput) {
         if self.recording {

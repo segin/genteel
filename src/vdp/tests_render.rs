@@ -1191,7 +1191,7 @@ fn test_sh_high_priority_plane_normal_state() {
 #[test]
 fn test_sh_color_transform() {
     let vdp = Vdp::new();
-    let color = 0b00000_010000_00000_u16; // mid-level green
+    let color = 0b01_0000_u16 << 5; // mid-level green (G6 = 16)
     let shadowed = vdp.apply_color_transform(color, 0);
     let normal = vdp.apply_color_transform(color, 1);
     let highlighted = vdp.apply_color_transform(color, 2);

@@ -2,7 +2,10 @@ use serde_json::Value;
 
 pub mod gdb;
 
-pub use gdb::{GdbMemory, GdbRegisters, GdbServer, StopReason, DEFAULT_PORT};
+pub use gdb::{
+    GdbMemory, GdbRegisters, GdbServer, PacketParser, ParseEvent, RunRequest, StopReason,
+    DEFAULT_PORT,
+};
 
 /// A trait for components that can be debugged.
 pub trait Debuggable {

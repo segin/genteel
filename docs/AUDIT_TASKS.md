@@ -470,16 +470,16 @@ Status: `[ ]` open, `[x]` satisfied.
   - *Evidence:* `psg.rs:76, 185, 233-238` TI 15-bit, seed 0x4000, taps bits 0/1.
   - *Verify:* T — periodic noise period 16; white sequence matches reference.
   - *Resolution:* confirmed against GPGX `psg.c` (integrated: 15-bit shift width, `noiseBitMask = 0x9`, seed `1 << 15`) and MAME `segapsg_device` (feedback 0x8000, taps 0x01/0x08). White-noise period measured 57337.
-- [ ] **APU-04** · H · Ubiquitous — The frontend shall pace emulated frames at the emulated frame rate (NTSC ≈ 59.92 Hz, PAL ≈ 49.70 Hz).
+- [x] **APU-04** · H · Ubiquitous — The frontend shall pace emulated frames at the emulated frame rate (NTSC ≈ 59.92 Hz, PAL ≈ 49.70 Hz).
   - *Evidence:* `gui.rs:108, 2557` paces at exactly 60/50 Hz.
   - *Verify:* A — sample production rate equals device rate ±0.01%.
 - [x] **APU-05** · H · Ubiquitous — The audio output path shall bound playback latency to a configured maximum (≤ 100 ms) without discarding samples in normal operation.
   - *Evidence:* `audio.rs:157` 32768-frame ring grows to ~680 ms then clicks (PAL ~2 min, NTSC ~9 min).
   - *Verify:* D — 30-minute PAL run, latency stable.
-- [ ] **APU-06** · M · Ubiquitous — The WAV writer shall record the sample rate actually written in the WAV header.
+- [x] **APU-06** · M · Ubiquitous — The WAV writer shall record the sample rate actually written in the WAV header.
   - *Evidence:* `main.rs:1480` uses 53267; `gui.rs:2374` switches to device rate.
   - *Verify:* T — header rate == `bus.sample_rate`.
-- [ ] **APU-07** · M · Event — When a save state is loaded during a WAV dump, the emulator shall continue the dump.
+- [x] **APU-07** · M · Event — When a save state is loaded during a WAV dump, the emulator shall continue the dump.
   - *Evidence:* `main.rs:318-338` drops `serde(skip)` `wav_writer`.
   - *Verify:* T.
 - [x] **APU-08** · M · Ubiquitous — The band-limited buffer shall apply the sub-sample phase so that a later step is placed later within the output sample.
@@ -564,10 +564,10 @@ Status: `[ ]` open, `[x]` satisfied.
 - [x] **MEM-04** · H · Event — When the console is reset, the bus shall re-derive the SRAM enable state from the ROM header.
   - *Evidence:* `bus.rs:212` `sram_enabled = false`.
   - *Verify:* T.
-- [ ] **MEM-05** · H · Event — When a save state is loaded, the emulator shall retain the SRAM contents deserialized from that state.
+- [x] **MEM-05** · H · Event — When a save state is loaded, the emulator shall retain the SRAM contents deserialized from that state.
   - *Evidence:* `main.rs:322-327` → `bus.load_rom` (`bus.rs:175`) reallocates SRAM.
   - *Verify:* T.
-- [ ] **MEM-06** · H · Event — When a save state is loaded, the emulator shall obtain ROM bytes through the same validated loader used for initial ROM load (zip extraction, `MAX_ROM_SIZE`).
+- [x] **MEM-06** · H · Event — When a save state is loaded, the emulator shall obtain ROM bytes through the same validated loader used for initial ROM load (zip extraction, `MAX_ROM_SIZE`).
   - *Evidence:* `main.rs:323-324` raw `std::fs::read` — zipped ROM loads archive bytes; unbounded; failed read leaves ROM empty silently.
   - *Verify:* T — zipped ROM state round-trip.
 - [x] **MEM-07** · H · Ubiquitous — The I/O subsystem shall implement the 6-button pad TH protocol per hardware (3rd TH-low: SA0000; 4th TH-high: CBMXYZ; active-low).
@@ -607,7 +607,7 @@ Status: `[ ]` open, `[x]` satisfied.
 - [x] **MEM-18** · M · Optional — Where the ROM exceeds 4 MiB, the bus shall enable the standard Sega mapper (0xA130F3–FF; slot 0 fixed).
   - *Evidence:* `bus.rs:270-278` requires "SEGA SSF" header (Super Street Fighter II).
   - *Verify:* D.
-- [ ] **MEM-19** · M · Event — When a ROM file with an SMD header (size % 16384 == 512, bytes 8–9 = 0xAA 0xBB) is loaded, the emulator shall de-interleave it.
+- [x] **MEM-19** · M · Event — When a ROM file with an SMD header (size % 16384 == 512, bytes 8–9 = 0xAA 0xBB) is loaded, the emulator shall de-interleave it.
   - *Evidence:* `main.rs:379-387, 438` accepts `.smd` raw.
   - *Verify:* T.
 - [x] **MEM-20** · M · Event — When a ROM larger than 2 MiB is loaded, the bus shall keep ROM mapped at 0x200000 until SRAM is enabled via 0xA130F1.
@@ -616,7 +616,7 @@ Status: `[ ]` open, `[x]` satisfied.
 - [x] **MEM-21** · M · State — While 0xA130F1 bit 1 (write-protect) is set, the bus shall discard SRAM writes.
   - *Evidence:* ignored.
   - *Verify:* T.
-- [ ] **MEM-22** · M · Event — When headless input recording is active, the emulator shall record the effective input for every frame under a distinct frame index.
+- [x] **MEM-22** · M · Event — When headless input recording is active, the emulator shall record the effective input for every frame under a distinct frame index.
   - *Evidence:* `main.rs:480-486, 1022-1037`; `input.rs:287-290` (`record()` only in `Some` branch; `current_frame` not advanced).
   - *Verify:* T — N-frame recording has N entries.
 - [x] **MEM-23** · L · Ubiquitous — The bus shall report BUSACK granted (0xA11100 bit 0 = 0) only while bus request is asserted and Z80 reset is released.
@@ -674,132 +674,140 @@ Status: `[ ]` open, `[x]` satisfied.
 
 ## 7. Frontend, GUI, debugger (FE)
 
-- [ ] **FE-01** · H · Unwanted — If a GDB packet contains a non-ASCII byte, then the GDB stub shall reject the packet without panicking.
+- [x] **FE-01** · H · Unwanted — If a GDB packet contains a non-ASCII byte, then the GDB stub shall reject the packet without panicking.
   - *Evidence:* `debugger/gdb.rs:314` byte→char; `decode_hex_command` (`:774-786`) slices by byte index; `qRcmd,` allowed pre-auth (`:362-366`) → unauthenticated crash (`$qRcmd,a\xC3b#..`; plausibly via cross-protocol browser POST to 127.0.0.1:1234). Same in `write_registers` (540-562), `write_memory` (663).
   - *Verify:* T — fuzz packets with bytes ≥0x80.
-- [ ] **FE-02** · H · Event — When a GDB client disconnects or a new client is accepted, the GDB stub shall reset the authenticated, no-ack and stop-reason state.
+- [x] **FE-02** · H · Event — When a GDB client disconnects or a new client is accepted, the GDB stub shall reset the authenticated, no-ack and stop-reason state.
   - *Evidence:* `gdb.rs:196, 214-237, 267, 286, 395, 400` — `authenticated` reset only in `new()`. (verified)
   - *Verify:* T — second connection requires token.
-- [ ] **FE-03** · H · Unwanted — If a GDB `m` request length exceeds the advertised PacketSize capacity, then the GDB stub shall reply with an error.
+- [x] **FE-03** · H · Unwanted — If a GDB `m` request length exceeds the advertised PacketSize capacity, then the GDB stub shall reply with an error.
   - *Evidence:* `gdb.rs:621-631` `String::with_capacity(len*2)` overflow (`m0,ffffffffffffffff`); `m0,7fffffff` 4 GB alloc.
   - *Verify:* T.
-- [ ] **FE-04** · H · Ubiquitous — The GDB stub shall transmit each reply packet completely and contiguously.
+- [x] **FE-04** · H · Ubiquitous — The GDB stub shall transmit each reply packet completely and contiguously.
   - *Evidence:* `write_all` on non-blocking socket fails mid-packet on WouldBlock.
   - *Verify:* T — slow-reader client.
-- [ ] **FE-05** · H · Ubiquitous — The GDB stub shall retain received bytes beyond the current packet for subsequent parsing.
+- [x] **FE-05** · H · Ubiquitous — The GDB stub shall retain received bytes beyond the current packet for subsequent parsing.
   - *Evidence:* `gdb.rs:258, 321` new `BufReader` on `try_clone()` per call drops pipelined packets / `0x03`.
   - *Verify:* T — two packets in one TCP segment both processed.
-- [ ] **FE-06** · H · Event — When a GDB packet arrives split across TCP segments, the GDB stub shall reassemble it.
+- [x] **FE-06** · H · Event — When a GDB packet arrives split across TCP segments, the GDB stub shall reassemble it.
   - *Evidence:* `gdb.rs:321, 327` mid-packet WouldBlock returns None; `read_exact` checksum fails.
   - *Verify:* T.
-- [ ] **FE-07** · L · Ubiquitous — The GDB stub shall poll the socket without a per-poll file-descriptor duplication.
+- [x] **FE-07** · L · Ubiquitous — The GDB stub shall poll the socket without a per-poll file-descriptor duplication.
   - *Evidence:* `try_clone()` → `dup()` per 68k instruction in `run_with_gdb`.
   - *Verify:* I.
-- [ ] **FE-08** · H · State — While running under the headless GDB server, the emulator shall advance the VDP, Z80, APU and interrupt logic with the 68k.
+- [x] **FE-08** · H · State — While running under the headless GDB server, the emulator shall advance the VDP, Z80, APU and interrupt logic with the 68k.
   - *Evidence:* `main.rs:1185-1189` steps CPU only (games waiting for VBlank hang).
   - *Verify:* D — game boots under headless GDB.
-- [ ] **FE-09** · H · Event — When the GDB client sends an interrupt (0x03), the emulator shall stop execution.
+- [x] **FE-09** · H · Event — When the GDB client sends an interrupt (0x03), the emulator shall stop execution.
   - *Evidence:* `main.rs:1169-1181` sends `S02` but leaves `running = true`.
   - *Verify:* T.
-- [ ] **FE-10** · H · State — While a GDB client is attached in GUI mode, the emulator shall stop at breakpoints.
+- [x] **FE-10** · H · State — While a GDB client is attached in GUI mode, the emulator shall stop at breakpoints.
   - *Evidence:* `main.rs:1089-1128` `is_breakpoint` never called outside `run_with_gdb`.
   - *Verify:* T.
-- [ ] **FE-11** · H · Event — When the GDB client requests a single step in GUI mode, the emulator shall execute exactly one 68k instruction.
+- [x] **FE-11** · H · Event — When the GDB client requests a single step in GUI mode, the emulator shall execute exactly one 68k instruction.
   - *Evidence:* `gui.rs:2508, 2565` `single_step` runs a frame.
   - *Verify:* T.
-- [ ] **FE-12** · H · Event — When execution halts after continue or step, the GDB stub shall send a stop reply.
+- [x] **FE-12** · H · Event — When execution halts after continue or step, the GDB stub shall send a stop reply.
   - *Evidence:* no `S05` sent; client hangs.
   - *Verify:* T.
-- [ ] **FE-13** · H · Event — When a GDB client attaches, the emulator shall halt the target.
+- [x] **FE-13** · H · Event — When a GDB client attaches, the emulator shall halt the target.
   - *Verify:* T.
-- [ ] **FE-14** · H · Ubiquitous — The main scheduler shall advance scanlines by accumulated master clocks (3420 per line), carrying overshoot into the next line.
+- [x] **FE-14** · H · Ubiquitous — The main scheduler shall advance scanlines by accumulated master clocks (3420 per line), carrying overshoot into the next line.
   - *Evidence:* `main.rs:837, 932-960` `CYCLES_PER_LINE = 488` (true 488.57), overshoot dropped while VDP advances by actual cycles → drift (tearing, Z80 VINT out of phase, ~0.5–1% fast audio).
   - *Verify:* A — loop line == VDP v-counter over 10,000 frames.
-- [ ] **FE-15** · H · Event — When the emulator exits by any path (window close, Escape, `handle_exit`, headless completion, Drop), the emulator shall write SRAM to disk.
+- [x] **FE-15** · H · Event — When the emulator exits by any path (window close, Escape, `handle_exit`, headless completion, Drop), the emulator shall write SRAM to disk.
   - *Evidence:* `main.rs:178` is the only `save_sram` call (Close ROM); `gui.rs:2112`. (verified)
   - *Verify:* T.
-- [ ] **FE-16** · M · Unwanted — If a zip entry name contains multi-byte UTF-8 characters, then the ROM loader shall evaluate its extension without panicking.
+- [x] **FE-16** · M · Unwanted — If a zip entry name contains multi-byte UTF-8 characters, then the ROM loader shall evaluate its extension without panicking.
   - *Evidence:* `main.rs:448` byte slicing.
   - *Verify:* T.
-- [ ] **FE-17** · M · Ubiquitous — The GDB memory accessors shall read and write emulated memory without triggering hardware side effects.
+- [x] **FE-17** · M · Ubiquitous — The GDB memory accessors shall read and write emulated memory without triggering hardware side effects.
   - *Evidence:* `main.rs:1325-1344` go through bus (VDP ports, I/O, Z80 bus).
   - *Verify:* T — GDB read of 0xC00004 leaves VDP state unchanged.
-- [ ] **FE-18** · M · Ubiquitous — The GDB memory write path shall not emit debug prints.
+- [x] **FE-18** · M · Ubiquitous — The GDB memory write path shall not emit debug prints.
   - *Evidence:* leftover `eprintln!` for `addr < 0x2000` ("a guess").
   - *Verify:* I.
-- [ ] **FE-19** · M · Event — When a save state is loaded, the emulator shall preserve session-only state (input script/recording, debug flags, pause, input mapping).
+- [x] **FE-19** · M · Event — When a save state is loaded, the emulator shall preserve session-only state (input script/recording, debug flags, pause, input mapping).
   - *Evidence:* `main.rs:315-338` overwrites them.
   - *Verify:* T — load during `--record` keeps recording.
-- [ ] **FE-20** · M · Ubiquitous — The emulator shall be able to load every save state it writes. (plausible)
+- [x] **FE-20** · M · Ubiquitous — The emulator shall be able to load every save state it writes. (plausible)
   - *Evidence:* pretty JSON with large SRAM may exceed 25 MB load limit.
   - *Verify:* T — max-SRAM state round-trip.
-- [ ] **FE-21** · M · Ubiquitous — The ROM path allow-list shall deny paths outside configured roots, or the allow-list shall be removed.
+  - *Resolution:* Not reproducible: SRAM is now capped at 64 KiB, and a test with every RAM filled shows the largest state is far below the 25 MB load limit (states are also written as compact JSON now).
+- [x] **FE-21** · M · Ubiquitous — The ROM path allow-list shall deny paths outside configured roots, or the allow-list shall be removed.
   - *Evidence:* `main.rs:1490-1496`; `gui.rs:2445-2448` add ROM's parent before checking.
   - *Verify:* T.
-- [ ] **FE-22** · M · Ubiquitous — The ROM loader shall open the same canonicalized path it validated.
+  - *Resolution:* The allow-list is opt-in: with no roots configured the file the user named is loaded (the frontends no longer add the ROM's directory); configured roots deny paths outside them, including `..` traversal.
+- [x] **FE-22** · M · Ubiquitous — The ROM loader shall open the same canonicalized path it validated.
   - *Evidence:* `main.rs:379-386` TOCTOU.
   - *Verify:* I.
-- [ ] **FE-23** · M · Ubiquitous — The GUI shall persist `gui_config.json` through a single writer using write-to-temp and atomic rename.
+- [x] **FE-23** · M · Ubiquitous — The GUI shall persist `gui_config.json` through a single writer using write-to-temp and atomic rename.
   - *Evidence:* `gui.rs:308-322` thread per toggle → interleaving/truncation.
   - *Verify:* T.
-- [ ] **FE-24** · M · Unwanted — If `gui_config.json` fails to parse, then the GUI shall notify the user and preserve the original file.
+- [x] **FE-24** · M · Unwanted — If `gui_config.json` fails to parse, then the GUI shall notify the user and preserve the original file.
   - *Evidence:* `load_or_default` silently resets settings/recent ROMs.
   - *Verify:* T.
-- [ ] **FE-25** · M · Ubiquitous — The GUI shall give a CLI `--input-mapping` precedence over the stored configuration.
+- [x] **FE-25** · M · Ubiquitous — The GUI shall give a CLI `--input-mapping` precedence over the stored configuration.
   - *Evidence:* `gui.rs:269-271`.
   - *Verify:* T.
-- [ ] **FE-26** · M · State — While paused or idle, the GUI event loop shall sleep until the next frame deadline or event.
+- [x] **FE-26** · M · State — While paused or idle, the GUI event loop shall sleep until the next frame deadline or event.
   - *Evidence:* `gui.rs:2591` `ControlFlow::Poll` busy-spins.
   - *Verify:* A — CPU usage while paused < 5%.
-- [ ] **FE-27** · M · Ubiquitous — The GUI shall perform ROM, zip, save-state and SRAM file I/O off the UI thread.
+  - *Resolution:* The event loop uses `ControlFlow::WaitUntil(next frame deadline)` instead of `Poll`; CPU usage was not measured on a desktop session.
+- [x] **FE-27** · M · Ubiquitous — The GUI shall perform ROM, zip, save-state and SRAM file I/O off the UI thread.
   - *Evidence:* `gui.rs:2450, 2465, 2487-2491` synchronous in `RedrawRequested`.
   - *Verify:* I.
-- [ ] **FE-28** · L · Ubiquitous — The debugger disassembly view shall compute addresses with wrapping arithmetic through a side-effect-free reader.
+- [x] **FE-28** · L · Ubiquitous — The debugger disassembly view shall compute addresses with wrapping arithmetic through a side-effect-free reader.
   - *Evidence:* `gui.rs:2155-2166` overflow (Z80 PC ≥ 0xFFF7; 68k PC via `P11=ffffffff`).
   - *Verify:* T.
-- [ ] **FE-29** · L · Unwanted — If a GDB packet checksum is not two valid hex digits, then the GDB stub shall reject the packet.
+- [x] **FE-29** · L · Unwanted — If a GDB packet checksum is not two valid hex digits, then the GDB stub shall reject the packet.
   - *Evidence:* `gdb.rs:332-333` parses as 0.
   - *Verify:* T.
-- [ ] **FE-30** · L · Event — When the GDB client sends `D` or `k`, the GDB stub shall send the reply before closing the connection.
+- [x] **FE-30** · L · Event — When the GDB client sends `D` or `k`, the GDB stub shall send the reply before closing the connection.
   - *Evidence:* `gdb.rs:395, 1123` clears client first.
   - *Verify:* T.
-- [ ] **FE-31** · L · Ubiquitous — The emulator shall not print a user-supplied GDB password.
+  - *Resolution:* `D` replies `OK` before the connection is closed; `k` has no reply in the RSP, so only the ACK is sent before closing.
+- [x] **FE-31** · L · Ubiquitous — The emulator shall not print a user-supplied GDB password.
   - *Evidence:* `main.rs:1136-1141`.
   - *Verify:* I.
-- [ ] **FE-32** · L · Optional — Where GDB authentication is enabled, the emulator shall accept the password from a file.
+- [x] **FE-32** · L · Optional — Where GDB authentication is enabled, the emulator shall accept the password from a file.
   - *Evidence:* `--gdb-password` visible in `ps`/`/proc`.
   - *Verify:* T.
-- [ ] **FE-33** · L · Ubiquitous — The emulator shall derive SRAM and save-state paths that cannot equal the ROM path.
+  - *Resolution:* `--gdb-password-file` already existed; an unreadable file is now a usage error instead of a warning.
+- [x] **FE-33** · L · Ubiquitous — The emulator shall derive SRAM and save-state paths that cannot equal the ROM path.
   - *Evidence:* `main.rs:195, 237, 250` `with_extension` (ROM `foo.srm` overwritten).
   - *Verify:* T.
-- [ ] **FE-34** · L · Optional — Where the ROM declares no battery RAM, the emulator shall not create an `.srm` file.
+- [x] **FE-34** · L · Optional — Where the ROM declares no battery RAM, the emulator shall not create an `.srm` file.
   - *Evidence:* `bus.rs:116` 64 KB default.
   - *Verify:* T.
-- [ ] **FE-35** · L · Unwanted — If a save-slot index ≥ 10 is requested, then the emulator shall return an error.
+  - *Resolution:* Already satisfied after the SRAM rework: `Sram::image()` is empty until the game writes SRAM, so no `.srm` is created otherwise (test added). Headerless ROMs keep the Genesis Plus GX default SRAM.
+- [x] **FE-35** · L · Unwanted — If a save-slot index ≥ 10 is requested, then the emulator shall return an error.
   - *Evidence:* `SLOT_EXTS[slot as usize]` panics (public API).
   - *Verify:* T.
-- [ ] **FE-36** · L · Unwanted — If more than one positional argument is given, then the CLI shall report a usage error.
+- [x] **FE-36** · L · Unwanted — If more than one positional argument is given, then the CLI shall report a usage error.
   - *Evidence:* `main.rs:1446-1452` joins with spaces.
   - *Verify:* T.
-- [ ] **FE-37** · L · Ubiquitous — The emulator shall write save states and SRAM atomically.
+- [x] **FE-37** · L · Ubiquitous — The emulator shall write save states and SRAM atomically.
   - *Evidence:* non-atomic `fs::write`.
   - *Verify:* I.
-- [ ] **FE-38** · L · Unwanted — If `--headless` is given without a frame count or script, then the CLI shall report a usage error.
+- [x] **FE-38** · L · Unwanted — If `--headless` is given without a frame count or script, then the CLI shall report a usage error.
   - *Evidence:* `main.rs:1032` loops forever.
   - *Verify:* T.
-- [ ] **FE-39** · L · Ubiquitous — The screenshot function shall capture the current display resolution.
+- [x] **FE-39** · L · Ubiquitous — The screenshot function shall capture the current display resolution.
   - *Evidence:* `main.rs:1085` hardcodes 320×240.
   - *Verify:* T — H32 screenshot is 256 wide.
-- [ ] **FE-40** · L · Ubiquitous — The screenshot function shall create its output file without a check-then-create race.
+- [x] **FE-40** · L · Ubiquitous — The screenshot function shall create its output file without a check-then-create race.
   - *Evidence:* `main.rs:563-571`.
   - *Verify:* I — `create_new`.
-- [ ] **FE-41** · L · Ubiquitous — Each benchmark binary shall exercise the `genteel` crate code it names.
+- [x] **FE-41** · L · Ubiquitous — Each benchmark binary shall exercise the `genteel` crate code it names.
   - *Evidence:* `bin/gdb_bench.rs` (own `StopReason`), `gui_format_bench.rs`, `gui_string_bench.rs`, `zip_bench.rs`.
   - *Verify:* I.
-- [ ] **FE-42** · L · Ubiquitous — The application layer shall implement the GDB command loop, IRQ request/cancel and script READ/WRITE/ASSERT handling each once.
+  - *Resolution:* `gdb_bench` now benchmarks the crate's `PacketParser`/`frame_packet`; the GUI-format, GUI-string and zip benchmarks only timed std/zip code (the GUI and loader are in the binary crate), so they were removed.
+- [x] **FE-42** · L · Ubiquitous — The application layer shall implement the GDB command loop, IRQ request/cancel and script READ/WRITE/ASSERT handling each once.
   - *Evidence:* `poll_gdb` vs `run_with_gdb`; `main.rs:841-852` vs `889-900`; script handlers. Also `main.rs` 2007 lines / `gui.rs` 2685 lines; `run_cpu_loop` redundant writes (955-959); `vdp_scanline_setup` no-op; `Debuggable` possibly unused.
   - *Verify:* I.
-- [ ] **FE-43** · I · Ubiquitous — The GDB stub shall bind to the loopback interface only.
+  - *Resolution:* GDB command loop (`GdbServer::service`), IRQ raise/cancel (`update_m68k_irqs`) and script READ/WRITE/ASSERT (one width-generic handler) each exist once; the no-op scanline hook and redundant Z80 line write-back are gone. `Debuggable` is used (APU, I/O, Z80, Bus). `main.rs`/`gui.rs` were not split into more files.
+- [x] **FE-43** · I · Ubiquitous — The GDB stub shall bind to the loopback interface only.
   - *Evidence:* currently satisfied (`gdb.rs:163`; constant-time compare via `subtle`; random 128-bit token default).
   - *Verify:* T.
 
