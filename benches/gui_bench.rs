@@ -9,8 +9,7 @@ fn bench_vec_allocation(c: &mut Criterion) {
     group.bench_function("current_implementation", |b| {
         b.iter(|| {
             let mut points = Vec::new();
-            for i in 0..128 {
-                let val = channel_waveform[i];
+            for (i, &val) in channel_waveform.iter().enumerate() {
                 let x = i as f32 * 2.0;
                 let y = 100.0 - (val as f32 / 16384.0 * 20.0);
                 // We use a dummy tuple to represent egui::pos2
@@ -23,8 +22,7 @@ fn bench_vec_allocation(c: &mut Criterion) {
     group.bench_function("pre_allocated", |b| {
         b.iter(|| {
             let mut points = Vec::with_capacity(128);
-            for i in 0..128 {
-                let val = channel_waveform[i];
+            for (i, &val) in channel_waveform.iter().enumerate() {
                 let x = i as f32 * 2.0;
                 let y = 100.0 - (val as f32 / 16384.0 * 20.0);
                 points.push((x, y));
@@ -52,8 +50,7 @@ fn bench_vec_allocation(c: &mut Criterion) {
     group.bench_function("reuse_buffer", |b| {
         b.iter(|| {
             reusable_buffer.clear();
-            for i in 0..128 {
-                let val = channel_waveform[i];
+            for (i, &val) in channel_waveform.iter().enumerate() {
                 let x = i as f32 * 2.0;
                 let y = 100.0 - (val as f32 / 16384.0 * 20.0);
                 reusable_buffer.push((x, y));
@@ -75,12 +72,8 @@ fn bench_image_allocation_optimization(c: &mut Criterion) {
     group.bench_function("old_approach", |b| {
         b.iter(|| {
             let mut pixels = vec![0u8; plane_w * 8 * plane_h * 8 * 4];
-            for i in 0..(plane_w * 8 * plane_h * 8) {
-                let pixel_idx = i * 4;
-                pixels[pixel_idx] = 255;
-                pixels[pixel_idx + 1] = 0;
-                pixels[pixel_idx + 2] = 0;
-                pixels[pixel_idx + 3] = 255;
+            for pixel in pixels.chunks_exact_mut(4) {
+                pixel.copy_from_slice(&[255, 0, 0, 255]);
             }
             let image =
                 egui::ColorImage::from_rgba_unmultiplied([plane_w * 8, plane_h * 8], &pixels);
@@ -91,8 +84,8 @@ fn bench_image_allocation_optimization(c: &mut Criterion) {
     group.bench_function("new_approach", |b| {
         b.iter(|| {
             let mut pixels = vec![egui::Color32::TRANSPARENT; plane_w * 8 * plane_h * 8];
-            for i in 0..(plane_w * 8 * plane_h * 8) {
-                pixels[i] = egui::Color32::from_rgb(255, 0, 0);
+            for pixel in pixels.iter_mut() {
+                *pixel = egui::Color32::from_rgb(255, 0, 0);
             }
             let image = egui::ColorImage {
                 size: [plane_w * 8, plane_h * 8],

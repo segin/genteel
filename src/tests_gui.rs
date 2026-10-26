@@ -14,8 +14,7 @@ mod tests {
 
     #[test]
     fn test_window_state_modification() {
-        let mut state = WindowState::default();
-        state.open = true;
+        let mut state = WindowState { open: true };
         assert!(state.open);
         state.open = false;
         assert!(!state.open);

@@ -116,7 +116,7 @@ pub fn key_to_button(key: &Key, mapping: InputMapping) -> Option<(&'static str, 
 /// Lookup table for RGB565 to RGBA8 conversion
 static RGB565_TO_RGBA8_LUT: LazyLock<[u32; 65536]> = LazyLock::new(|| {
     let mut lut = [0u32; 65536];
-    for pixel in 0..65536 {
+    for (pixel, entry) in lut.iter_mut().enumerate() {
         let p = pixel as u16;
         let r5 = ((p >> 11) & 0x1F) as u8;
         let g6 = ((p >> 5) & 0x3F) as u8;
@@ -127,7 +127,7 @@ static RGB565_TO_RGBA8_LUT: LazyLock<[u32; 65536]> = LazyLock::new(|| {
         let b = (b5 << 3) | (b5 >> 2);
         let a = 255u8;
 
-        lut[pixel] = u32::from_le_bytes([r, g, b, a]);
+        *entry = u32::from_le_bytes([r, g, b, a]);
     }
     lut
 });

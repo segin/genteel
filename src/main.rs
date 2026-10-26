@@ -1414,13 +1414,11 @@ impl Emulator {
                 self.gdb_skip_breakpoint = true;
             }
             Some(RunRequest::Step) => self.gdb_exec = GdbExecState::Stepping,
-            Some(RunRequest::Interrupt) => {
-                if self.gdb_exec != GdbExecState::Halted {
-                    self.gdb_exec = GdbExecState::Halted;
-                    gdb.report_stop(StopReason::Interrupt);
-                }
+            Some(RunRequest::Interrupt) if self.gdb_exec != GdbExecState::Halted => {
+                self.gdb_exec = GdbExecState::Halted;
+                gdb.report_stop(StopReason::Interrupt);
             }
-            None => {}
+            Some(RunRequest::Interrupt) | None => {}
         }
     }
 
