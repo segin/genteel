@@ -528,6 +528,7 @@ impl GuiState {
         self.save();
     }
 
+    #[cfg(test)]
     pub fn toggle_window(&mut self, name: &str) {
         let open = self.is_window_open(name);
         self.set_window_open(name, !open);
@@ -612,7 +613,6 @@ pub struct Framework {
     #[cfg(feature = "gilrs")]
     pub gilrs: Option<Gilrs>,
     pub label_buffer: String,
-    pub waveform_points: Vec<egui::Pos2>,
 }
 
 #[cfg(feature = "gui")]
@@ -666,7 +666,6 @@ impl Framework {
             #[cfg(feature = "gilrs")]
             gilrs: init_gilrs(),
             label_buffer: String::with_capacity(64),
-            waveform_points: Vec::with_capacity(128),
         }
     }
     pub fn handle_event(

@@ -1,4 +1,4 @@
-#![deny(warnings)]
+#![forbid(unsafe_code)]
 //! Genteel - An instrumentable Sega Mega Drive/Genesis emulator
 //!
 //! This library provides the core emulation components for the Genesis.

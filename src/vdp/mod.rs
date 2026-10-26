@@ -1072,7 +1072,7 @@ impl Vdp {
         Self::decode_plane_size(self.registers[REG_PLANE_SIZE])
     }
 
-    pub(crate) fn window_address(&self) -> usize {
+    pub fn window_address(&self) -> usize {
         if self.h40_mode() {
             ((self.registers[REG_WINDOW] as usize) & 0x3C) << 10
         } else {

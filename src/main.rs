@@ -1,4 +1,4 @@
-#![deny(warnings)]
+#![forbid(unsafe_code)]
 /// Graceful println that ignores broken pipe errors (for `| head` usage)
 #[allow(unused_macros)]
 macro_rules! println_safe {
@@ -7,22 +7,17 @@ macro_rules! println_safe {
         let _ = writeln!(std::io::stdout(), $($arg)*);
     }};
 }
-pub mod apu;
-pub mod audio;
-pub mod cpu;
-pub mod debugger;
-pub mod frontend;
+/* The emulator core comes from the library crate; only the GUI front end
+lives in the binary. Importing the modules at the crate root keeps
+`crate::cpu`-style paths working inside the binary's own modules. */
 #[cfg(feature = "gui")]
-pub mod gui;
-pub mod input;
-pub mod io;
-pub mod memory;
-pub mod test_utils;
+use genteel::io;
+use genteel::{apu, audio, cpu, debugger, frontend, input, memory, vdp, wav_writer, z80};
+
+#[cfg(feature = "gui")]
+mod gui;
 #[cfg(all(feature = "gui", test))]
-pub mod tests_gui;
-pub mod vdp;
-pub mod wav_writer;
-pub mod z80;
+mod tests_gui;
 
 pub const SLOT_EXTS: [&str; 10] = ["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9"];
 
