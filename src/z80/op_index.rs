@@ -313,6 +313,9 @@ fn execute_index_undoc_alu<M: MemoryInterface, I: IoInterface>(
     8
 }
 
+/// Most redundant DD/FD prefixes folded into a single step (4 T-states each).
+const MAX_FOLDED_PREFIXES: u8 = 16;
+
 fn execute_index_prefix<M: MemoryInterface, I: IoInterface>(
     cpu: &mut Z80<M, I>,
     is_ix: bool,
@@ -320,7 +323,36 @@ fn execute_index_prefix<M: MemoryInterface, I: IoInterface>(
     /* The prefix is executed like an instruction that writes no flags, so the
     following opcode sees Q = 0 (visible through SCF/CCF). */
     cpu.q = 0;
-    let opcode = cpu.fetch_opcode();
+    let mut is_ix = is_ix;
+    let mut folded = 0u8;
+    loop {
+        let opcode = cpu.fetch_opcode();
+        if opcode != 0xDD && opcode != 0xFD {
+            return folded * 4 + execute_indexed_opcode(cpu, opcode, is_ix);
+        }
+        if folded == MAX_FOLDED_PREFIXES {
+            /* A run of prefixes can be arbitrarily long (RAM filled with FD).
+            Stop folding so the T-state count fits a step: undo this fetch,
+            leave the prefix for the next step and keep interrupts held off
+            so the run still behaves as one instruction. */
+            cpu.pc = cpu.pc.wrapping_sub(1);
+            cpu.r = (cpu.r & 0x80) | (cpu.r.wrapping_sub(1) & 0x7F);
+            cpu.pending_ei = true;
+            return (folded + 1) * 4;
+        }
+        /* Only the last prefix of a run applies. */
+        is_ix = opcode == 0xDD;
+        folded += 1;
+    }
+}
+
+/// Execute the opcode following a DD (`is_ix`) or FD prefix. The returned
+/// T-states include the prefix's own 4.
+fn execute_indexed_opcode<M: MemoryInterface, I: IoInterface>(
+    cpu: &mut Z80<M, I>,
+    opcode: u8,
+    is_ix: bool,
+) -> u8 {
     let params = OpParams::decode(opcode);
 
     match params.opcode {
@@ -363,8 +395,8 @@ fn execute_index_prefix<M: MemoryInterface, I: IoInterface>(
             let opcode = cpu.fetch_byte();
             cpu.execute_indexed_cb(opcode, addr)
         }
-        /* Any other opcode (including ED and further DD/FD prefixes) runs
-        with its unprefixed semantics; the ignored prefix costs 4 T-states. */
+        /* Any other opcode (including ED) runs with its unprefixed
+        semantics; the ignored prefix costs 4 T-states. */
         _ => 4 + cpu.execute_opcode(opcode),
     }
 }
