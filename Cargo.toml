@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.87"
 license = "MIT"
+# MSRV-aware dependency resolution: `cargo update` picks versions that
+# build on `rust-version`.
+resolver = "3"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

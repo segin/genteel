@@ -413,6 +413,7 @@ fn serialized_bus_keeps_legacy_sram_keys() {
 }
 
 proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
     /// Every byte/word access to $C00000-$DFFFFF decodes to a VDP port
     /// exactly when (addr & 0xE700E0) == 0xC00000.
     #[test]

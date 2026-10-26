@@ -51,6 +51,7 @@ fn index_displacement_wraps_around_64k() {
 }
 
 proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
     #[test]
     fn prop_index_address_is_modular(ix in any::<u16>(), d in any::<i8>()) {
         let mut c = at(&[0xDD, 0x7E, d as u8], 0x0000);
@@ -127,6 +128,40 @@ fn consecutive_index_prefixes_use_the_last() {
     c.step();
     assert_eq!(c.ix, 0x5678);
     assert_eq!(c.iy, 0);
+}
+
+#[test]
+fn long_prefix_run_is_split_across_steps_without_overflow() {
+    /* 1000 FD prefixes then LD IY,nn: far more T-states than one step's
+    u8 count can hold, and deep enough to overflow the stack if each prefix
+    recursed into the next. */
+    let mut program = vec![0xFD; 1000];
+    program.extend_from_slice(&[0x21, 0x34, 0x12]);
+    let mut c = create_z80(&program);
+    c.iff1 = true;
+    c.iff2 = true;
+
+    /* Raise INT once the run has started: it must wait for the run to end. */
+    let mut total = c.step() as u32;
+    let mut steps = 1;
+    c.assert_int_for(100_000, 0xFF);
+    while c.pc as usize != program.len() {
+        let t = c.step();
+        assert!(t > 0);
+        total += t as u32;
+        steps += 1;
+        assert!(steps < 1000, "prefix run never finished");
+        if c.pc as usize != program.len() {
+            assert!(c.iff1, "no interrupt may be taken inside a prefix run");
+        }
+    }
+    assert!(steps > 1, "a 1000-prefix run cannot fit in one step");
+    assert_eq!(c.iy, 0x1234);
+    assert_eq!(c.hl(), 0);
+    /* 999 ignored prefixes at 4 T-states each, plus LD IY,nn (14). */
+    assert_eq!(total, 999 * 4 + 14);
+    /* R counts one M1 fetch per prefix plus the opcode. */
+    assert_eq!(c.r & 0x7F, (1001 % 128) as u8);
 }
 
 #[test]
@@ -374,6 +409,7 @@ fn bit_hl_xy_after_jp_comes_from_target() {
 // ============ BIT flags ============
 
 proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
     #[test]
     fn prop_bit_register_flags(val in any::<u8>(), bit in 0u8..8, f_in in any::<u8>()) {
         let mut c = create_z80(&[0xCB, 0x40 | (bit << 3)]); // BIT bit,B
@@ -515,6 +551,7 @@ fn cp_copies_xy_from_operand() {
 }
 
 proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
     #[test]
     fn prop_cp_flags(a in any::<u8>(), v in any::<u8>()) {
         let mut c = create_z80(&[0xFE, v]);
@@ -570,6 +607,7 @@ fn ref_block_io(b_new: u8, val: u8, k: u8) -> u8 {
 }
 
 proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
     #[test]
     fn prop_ini_ind_flags(b in any::<u8>(), cc in any::<u8>(), val in any::<u8>(), dec in any::<bool>()) {
         let mut c = create_z80(&[0xED, if dec { 0xAA } else { 0xA2 }]);
@@ -663,6 +701,7 @@ fn q_is_cleared_by_non_flag_instructions() {
 }
 
 proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
     #[test]
     fn prop_ccf_flags(a in any::<u8>(), f_in in any::<u8>(), q in any::<u8>()) {
         let mut c = create_z80(&[0x3F]);

@@ -2,6 +2,7 @@ use super::*;
 use std::time::Instant;
 
 #[test]
+#[ignore = "timing benchmark; run with --ignored"]
 fn bench_dma_fill_performance() {
     let mut vdp = Vdp::new();
     // Setup DMA fill
@@ -36,6 +37,7 @@ fn bench_dma_fill_performance() {
 }
 
 #[test]
+#[ignore = "timing benchmark; run with --ignored"]
 fn bench_dma_fill_write_data() {
     let mut vdp = Vdp::new();
     // Enable DMA (bit 4 of Mode 2)

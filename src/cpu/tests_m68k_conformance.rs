@@ -247,6 +247,7 @@ fn ccr_writes_keep_only_bits_0_to_4() {
 }
 
 proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
     #[test]
     fn move_to_sr_masks_any_value(v in any::<u16>()) {
         let (mut cpu, mut memory) = setup(&[0x46FC, v]);

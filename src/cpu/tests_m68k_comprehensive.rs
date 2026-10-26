@@ -531,6 +531,7 @@ fn test_divu_boundary_values() {
 // === Property-Based Tests ===
 
 proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
     #[test]
     fn prop_add_commutative(a in 0u32..0xFFFF, b in 0u32..0xFFFF) {
         let (mut cpu1, mut memory1) = create_test_cpu();

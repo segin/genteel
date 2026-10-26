@@ -3,6 +3,7 @@ use genteel::memory::{Memory, MemoryInterface};
 use std::time::Instant;
 
 #[test]
+#[ignore = "timing benchmark; run with --ignored"]
 fn bench_execution_loop() {
     let mut memory = Memory::new(0x10000);
     // Program:

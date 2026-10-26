@@ -4,6 +4,7 @@ use crate::memory::{Memory, MemoryInterface};
 use std::time::Instant;
 
 #[test]
+#[ignore = "timing benchmark; run with --ignored"]
 fn benchmark_interrupt_handler() {
     let mut memory = Memory::new(0x10000);
     // Initial SP and PC
@@ -75,6 +76,7 @@ fn benchmark_interrupt_handler() {
 }
 
 #[test]
+#[ignore = "timing benchmark; run with --ignored"]
 fn benchmark_movem_sparse() {
     use crate::cpu::decoder::{AddressingMode, Size};
     use crate::cpu::ops::data::exec_movem;
@@ -109,6 +111,7 @@ fn benchmark_movem_sparse() {
 }
 
 #[test]
+#[ignore = "timing benchmark; run with --ignored"]
 fn benchmark_movem_dense() {
     use crate::cpu::decoder::{AddressingMode, Size};
     use crate::cpu::ops::data::exec_movem;
@@ -141,6 +144,7 @@ fn benchmark_movem_dense() {
 }
 
 #[test]
+#[ignore = "timing benchmark; run with --ignored"]
 fn benchmark_movem_predec_sparse() {
     use crate::cpu::decoder::{AddressingMode, Size};
     use crate::cpu::ops::data::exec_movem;
@@ -179,6 +183,7 @@ fn benchmark_movem_predec_sparse() {
 }
 
 #[test]
+#[ignore = "timing benchmark; run with --ignored"]
 fn benchmark_movem_mem2reg_sparse() {
     use crate::cpu::decoder::{AddressingMode, Size};
     use crate::cpu::ops::data::exec_movem;

@@ -32,12 +32,20 @@ fn test_draw_full_tile_row_refactor() {
 
 #[test]
 fn test_draw_full_tile_row_bounds_safe() {
-    let vdp = Vdp::new();
-    // Try to draw at end of scanline
-    let dest_idx = 316; // Not enough space for 8 pixels in 320-byte line_buf
-                        // Should not panic
-    let mut line_buf = [0u8; 320];
-    vdp.draw_full_tile_row(0, 0, dest_idx, &mut line_buf);
+    let mut vdp = Vdp::new();
+    /* Tile 0, row 0: all eight pixels use colour 1. */
+    vdp.vram[..4].fill(0x11);
+
+    /* At 316 there is no room for 8 pixels: the row is skipped, not
+    clipped, and nothing is written. */
+    let mut line_buf = [0xAAu8; 320];
+    vdp.draw_full_tile_row(0, 0, 316, &mut line_buf);
+    assert!(line_buf.iter().all(|&p| p == 0xAA));
+
+    /* The last position that fits draws the whole row. */
+    vdp.draw_full_tile_row(0, 0, 312, &mut line_buf);
+    assert_eq!(line_buf[312..], [0x01; 8]);
+    assert!(line_buf[..312].iter().all(|&p| p == 0xAA));
 }
 
 #[test]

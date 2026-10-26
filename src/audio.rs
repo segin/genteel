@@ -835,6 +835,7 @@ mod tests {
     }
 
     proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
         #[test]
         fn prop_push_pop_preserves_frames(
             capacity in 2usize..512,

@@ -301,6 +301,7 @@ fn test_andi_to_ccr() {
 // ============ Property Tests ============
 
 proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
     #[test]
     fn prop_add_sub_inverse(a in 0u16..0xFFFF, b in 0u16..0xFFFF) {
         let (mut cpu, mut memory) = create_test_cpu();

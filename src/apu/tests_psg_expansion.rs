@@ -267,6 +267,7 @@ fn test_noise_shift_rates() {
 }
 
 proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
     /// Tone half-period equals N counter ticks (16·N PSG clocks) for every
     /// period, so the frequency is PSG_clock / (32·N).
     #[test]

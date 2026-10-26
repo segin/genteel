@@ -198,6 +198,7 @@ fn odd_word_access_faults_without_touching_memory() {
 }
 
 proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
     /* Address arithmetic wraps at 32 bits for any base and displacement. */
     #[test]
     fn displacement_wraps(base in any::<u32>(), disp in any::<i16>()) {

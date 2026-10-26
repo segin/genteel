@@ -1,15 +1,23 @@
 name: Release Builds
 
+# Release archives are built for v* tags (and on demand); ordinary pushes
+# and pull requests are covered by CI.
 on:
   push:
-    branches: [ "main" ]
     tags:
       - 'v*'
-  pull_request:
-    branches: [ "main" ]
+  workflow_dispatch:
+
+# Least privilege: only the publish job can write (to create the Release).
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -39,8 +47,12 @@ jobs:
       with:
         targets: ${{ matrix.target }}
 
+    - uses: Swatinem/rust-cache@v2
+      with:
+        key: ${{ matrix.target }}
+
     - name: Build
-      run: cargo build --release --target ${{ matrix.target }} --features gui
+      run: cargo build --locked --release --target ${{ matrix.target }}
 
     - name: Prepare Artifacts (Linux)
       if: matrix.os == 'ubuntu-latest'
@@ -56,9 +68,25 @@ jobs:
         copy target\${{ matrix.target }}\release\genteel.exe release\
         Compress-Archive -Path release\* -DestinationPath genteel-windows.zip
 
-
     - name: Upload Artifact
       uses: actions/upload-artifact@v6
       with:
         name: ${{ matrix.artifact_name }}
         path: ${{ matrix.artifact_name }}.zip
+
+  publish:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/download-artifact@v5
+      with:
+        path: dist
+        merge-multiple: true
+    - uses: softprops/action-gh-release@v2
+      with:
+        files: dist/*.zip
+        generate_release_notes: true

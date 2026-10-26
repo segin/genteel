@@ -298,12 +298,11 @@ fn test_prefix_cancellation() {
     cpu.ix = 0x0000;
     cpu.set_hl(0x0000);
 
-    cpu.step(); // First DD
-    cpu.step(); // Second DD + LD IX,nn
-
-    // Second DD should take effect, loading IX
-    // (or first DD is consumed as NOP-like prefix)
-    assert!(cpu.pc > 0);
+    /* The redundant first DD is folded into the same step (4 T-states). */
+    assert_eq!(cpu.step(), 4 + 14);
+    assert_eq!(cpu.ix, 0x1000);
+    assert_eq!(cpu.hl(), 0x0000);
+    assert_eq!(cpu.pc, 5);
 }
 
 /// Item 36: LD A,I when IFF2=1 - P/V flag set

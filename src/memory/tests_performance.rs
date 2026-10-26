@@ -8,6 +8,7 @@ mod performance_tests {
     use std::time::Instant;
 
     #[test]
+    #[ignore = "timing benchmark; run with --ignored"]
     fn benchmark_z80_bus_access() {
         let bus = Rc::new(RefCell::new(Bus::new()));
         let mut z80_bus = Z80Bus::new(SharedBus::new(bus.clone()));
@@ -46,6 +47,7 @@ mod performance_tests {
     }
 
     #[test]
+    #[ignore = "timing benchmark; run with --ignored"]
     fn benchmark_dma_transfer() {
         let mut bus = Bus::new();
         // Setup 64KB ROM
@@ -83,6 +85,7 @@ mod performance_tests {
     }
 
     #[test]
+    #[ignore = "timing benchmark; run with --ignored"]
     fn benchmark_vdp_long_access() {
         let mut bus = Bus::new();
         // Setup VDP for VRAM Write at address 0

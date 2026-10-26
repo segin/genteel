@@ -465,6 +465,7 @@ mod tests {
     }
 
     proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
         #[test]
         fn prop_image_round_trip(
             kind in prop::sample::select(vec![0xE0u8, 0xF0, 0xF8]),
