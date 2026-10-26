@@ -2376,6 +2376,8 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
     if let Some(output) = &audio_output {
         emulator.bus.borrow_mut().sample_rate = output.sample_rate;
     }
+    // The output rate is final now, so the WAV header matches the samples.
+    emulator.start_pending_wav_dump();
     let _audio_output = audio_output;
     // Input and Timing state
     let mut input = crate::input::FrameInput::default();

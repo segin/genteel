@@ -193,6 +193,14 @@ pub struct Emulator {
     /// Execute the instruction at a breakpoint once when resuming.
     #[serde(skip)]
     gdb_skip_breakpoint: bool,
+    /// The input mapping was given on the command line and takes
+    /// precedence over the stored GUI configuration.
+    #[serde(skip)]
+    pub input_mapping_from_cli: bool,
+    /// WAV dump requested but not started yet (it starts once the output
+    /// sample rate is final, see `start_pending_wav_dump`).
+    #[serde(skip)]
+    pub pending_wav_dump: Option<String>,
 }
 impl Default for Emulator {
     fn default() -> Self {
@@ -275,6 +283,8 @@ impl Emulator {
             z80_vint_pending: false,
             gdb_exec: GdbExecState::Halted,
             gdb_skip_breakpoint: false,
+            input_mapping_from_cli: false,
+            pending_wav_dump: None,
         };
         {
             let mut bus = emulator.bus.borrow_mut();
@@ -293,6 +303,21 @@ impl Emulator {
         }
         self.z80.reset();
         self.internal_frame_count = 0;
+    }
+
+    /// Start a requested WAV dump. The header records the bus output
+    /// sample rate in effect now, which is the rate samples are produced
+    /// at, so call this after the frontend has set the device rate.
+    pub fn start_pending_wav_dump(&mut self) {
+        let Some(path) = self.pending_wav_dump.take() else {
+            return;
+        };
+        let rate = self.bus.borrow().sample_rate;
+        println!("Dumping audio to: {} ({} Hz)", path, rate);
+        match wav_writer::WavWriter::new(&path, rate, 2) {
+            Ok(writer) => self.wav_writer = Some(writer),
+            Err(e) => eprintln!("Failed to create audio dump file: {}", e),
+        }
     }
 
     /// Close current ROM and return to default state
@@ -494,6 +519,11 @@ impl Emulator {
             &mut new_emulator.current_rom_path,
             &mut self.current_rom_path,
         );
+        std::mem::swap(
+            &mut new_emulator.pending_wav_dump,
+            &mut self.pending_wav_dump,
+        );
+        new_emulator.input_mapping_from_cli = self.input_mapping_from_cli;
         new_emulator.input_mapping = self.input_mapping;
         new_emulator.debug = self.debug;
         new_emulator.paused = self.paused;
@@ -712,17 +742,12 @@ impl Emulator {
         }
 
         let cmd_upper = parts[0].to_uppercase();
+        if let Some((op, width)) = ScriptMemOp::parse(&cmd_upper) {
+            self.handle_memory_cmd(op, width, &parts);
+            return;
+        }
         match cmd_upper.as_str() {
             "SCREENSHOT" => self.handle_screenshot_cmd(&parts),
-            "READ_BYTE" | "WRITE_BYTE" | "ASSERT_BYTE" => {
-                self.handle_byte_cmd(cmd_upper.as_str(), &parts)
-            }
-            "READ_WORD" | "WRITE_WORD" | "ASSERT_WORD" => {
-                self.handle_word_cmd(cmd_upper.as_str(), &parts)
-            }
-            "READ_LONG" | "WRITE_LONG" | "ASSERT_LONG" => {
-                self.handle_long_cmd(cmd_upper.as_str(), &parts)
-            }
             "LOG" => self.handle_log_cmd(&parts),
             _ => {
                 eprintln!("Script Warning: Unknown command '{}'", parts[0]);
@@ -755,140 +780,67 @@ impl Emulator {
                 );
             }
 
-            // 3. Prevent overwriting existing files to protect local data
-            if std::path::Path::new(path).exists() {
-                eprintln!(
-                    "Script Error: Refusing to overwrite existing file: {}",
-                    path
+            // 3. Never overwrite existing files: the file is created with
+            // create_new, so there is no check-then-create window.
+            match self.save_screenshot_new(path) {
+                Ok(()) => println!("Script: Saved screenshot to {}", path),
+                Err(e) => eprintln!("Script Error: Failed to save screenshot to {}: {}", path, e),
+            }
+        }
+    }
+
+    /// READ/WRITE/ASSERT of a byte, word or long through the 68k bus.
+    fn handle_memory_cmd(&self, op: ScriptMemOp, width: ScriptWidth, parts: &[&str]) {
+        let parse = |s: &str| u32::from_str_radix(s.trim_start_matches("0x"), 16).ok();
+        let Some(addr) = parts.get(1).and_then(|s| parse(s)) else {
+            return;
+        };
+        let value = parts
+            .get(2)
+            .and_then(|s| parse(s))
+            .filter(|&v| v <= width.max());
+        let name = width.name();
+        let digits = width.digits();
+        let mut bus = self.bus.borrow_mut();
+        match (op, value) {
+            (ScriptMemOp::Read, _) => {
+                let val = width.read(&mut bus, addr);
+                println!(
+                    "Script: READ_{} 0x{:06X} = 0x{:0digits$X}",
+                    name,
+                    addr,
+                    val,
+                    digits = digits
                 );
-                return;
             }
-
-            if let Err(e) = self.save_screenshot(path) {
-                eprintln!("Script Error: Failed to save screenshot to {}: {}", path, e);
-            } else {
-                println!("Script: Saved screenshot to {}", path);
+            (ScriptMemOp::Write, Some(val)) => {
+                width.write(&mut bus, addr, val);
+                println!(
+                    "Script: WRITE_{} 0x{:06X} = 0x{:0digits$X}",
+                    name,
+                    addr,
+                    val,
+                    digits = digits
+                );
             }
-        }
-    }
-
-    fn handle_byte_cmd(&self, cmd: &str, parts: &[&str]) {
-        match cmd {
-            "READ_BYTE" => {
-                if parts.len() > 1 {
-                    if let Ok(addr) = u32::from_str_radix(parts[1].trim_start_matches("0x"), 16) {
-                        let val = self.bus.borrow_mut().read_byte(addr);
-                        println!("Script: READ_BYTE 0x{:06X} = 0x{:02X}", addr, val);
-                    }
-                }
-            }
-            "WRITE_BYTE" => {
-                if parts.len() > 2 {
-                    let addr_res = u32::from_str_radix(parts[1].trim_start_matches("0x"), 16);
-                    let val_res = u8::from_str_radix(parts[2].trim_start_matches("0x"), 16);
-                    if let (Ok(addr), Ok(val)) = (addr_res, val_res) {
-                        self.bus.borrow_mut().write_byte(addr, val);
-                        println!("Script: WRITE_BYTE 0x{:06X} = 0x{:02X}", addr, val);
-                    }
-                }
-            }
-            "ASSERT_BYTE" => {
-                if parts.len() > 2 {
-                    let addr_res = u32::from_str_radix(parts[1].trim_start_matches("0x"), 16);
-                    let val_res = u8::from_str_radix(parts[2].trim_start_matches("0x"), 16);
-                    if let (Ok(addr), Ok(expected)) = (addr_res, val_res) {
-                        let actual = self.bus.borrow_mut().read_byte(addr);
-                        if actual != expected {
-                            eprintln!("Script Assertion Failed: [0x{:06X}] == 0x{:02X} (Expected 0x{:02X})", addr, actual, expected);
-                        } else {
-                            println!(
-                                "Script: ASSERT_BYTE 0x{:06X} == 0x{:02X} OK",
-                                addr, expected
-                            );
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn handle_word_cmd(&self, cmd: &str, parts: &[&str]) {
-        match cmd {
-            "READ_WORD" => {
-                if parts.len() > 1 {
-                    if let Ok(addr) = u32::from_str_radix(parts[1].trim_start_matches("0x"), 16) {
-                        let val = self.bus.borrow_mut().read_word(addr);
-                        println!("Script: READ_WORD 0x{:06X} = 0x{:04X}", addr, val);
-                    }
-                }
-            }
-            "WRITE_WORD" => {
-                if parts.len() > 2 {
-                    let addr_res = u32::from_str_radix(parts[1].trim_start_matches("0x"), 16);
-                    let val_res = u16::from_str_radix(parts[2].trim_start_matches("0x"), 16);
-                    if let (Ok(addr), Ok(val)) = (addr_res, val_res) {
-                        self.bus.borrow_mut().write_word(addr, val);
-                        println!("Script: WRITE_WORD 0x{:06X} = 0x{:04X}", addr, val);
-                    }
-                }
-            }
-            "ASSERT_WORD" => {
-                if parts.len() > 2 {
-                    let addr_res = u32::from_str_radix(parts[1].trim_start_matches("0x"), 16);
-                    let val_res = u16::from_str_radix(parts[2].trim_start_matches("0x"), 16);
-                    if let (Ok(addr), Ok(expected)) = (addr_res, val_res) {
-                        let actual = self.bus.borrow_mut().read_word(addr);
-                        if actual != expected {
-                            eprintln!("Script Assertion Failed: [0x{:06X}] == 0x{:04X} (Expected 0x{:04X})", addr, actual, expected);
-                        } else {
-                            println!(
-                                "Script: ASSERT_WORD 0x{:06X} == 0x{:04X} OK",
-                                addr, expected
-                            );
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn handle_long_cmd(&self, cmd: &str, parts: &[&str]) {
-        match cmd {
-            "READ_LONG" => {
-                if parts.len() > 1 {
-                    if let Ok(addr) = u32::from_str_radix(parts[1].trim_start_matches("0x"), 16) {
-                        let val = self.bus.borrow_mut().read_long(addr);
-                        println!("Script: READ_LONG 0x{:06X} = 0x{:08X}", addr, val);
-                    }
-                }
-            }
-            "WRITE_LONG" => {
-                if parts.len() > 2 {
-                    let addr_res = u32::from_str_radix(parts[1].trim_start_matches("0x"), 16);
-                    let val_res = u32::from_str_radix(parts[2].trim_start_matches("0x"), 16);
-                    if let (Ok(addr), Ok(val)) = (addr_res, val_res) {
-                        self.bus.borrow_mut().write_long(addr, val);
-                        println!("Script: WRITE_LONG 0x{:06X} = 0x{:08X}", addr, val);
-                    }
-                }
-            }
-            "ASSERT_LONG" => {
-                if parts.len() > 2 {
-                    let addr_res = u32::from_str_radix(parts[1].trim_start_matches("0x"), 16);
-                    let val_res = u32::from_str_radix(parts[2].trim_start_matches("0x"), 16);
-                    if let (Ok(addr), Ok(expected)) = (addr_res, val_res) {
-                        let actual = self.bus.borrow_mut().read_long(addr);
-                        if actual != expected {
-                            eprintln!("Script Assertion Failed: [0x{:06X}] == 0x{:08X} (Expected 0x{:08X})", addr, actual, expected);
-                        } else {
-                            println!(
-                                "Script: ASSERT_LONG 0x{:06X} == 0x{:08X} OK",
-                                addr, expected
-                            );
-                        }
-                    }
+            (ScriptMemOp::Assert, Some(expected)) => {
+                let actual = width.read(&mut bus, addr);
+                if actual != expected {
+                    eprintln!(
+                        "Script Assertion Failed: [0x{:06X}] == 0x{:0digits$X} (Expected 0x{:0digits$X})",
+                        addr,
+                        actual,
+                        expected,
+                        digits = digits
+                    );
+                } else {
+                    println!(
+                        "Script: ASSERT_{} 0x{:06X} == 0x{:0digits$X} OK",
+                        name,
+                        addr,
+                        expected,
+                        digits = digits
+                    );
                 }
             }
             _ => {}
@@ -1297,20 +1249,57 @@ impl Emulator {
         );
     }
 
-    pub fn save_screenshot(&self, path: &str) -> Result<(), String> {
+    /// The visible display as packed RGB8 plus its size. The framebuffer
+    /// has a fixed 320-pixel stride; only the active width (256 in H32,
+    /// 320 in H40) and height (224 or 240 lines) are returned.
+    pub fn screenshot_rgb(&self) -> (Vec<u8>, u32, u32) {
         let bus = self.bus.borrow();
-        let fb = &bus.vdp.framebuffer;
-        let mut rgb_data = Vec::with_capacity(fb.len() * 3);
-        for &pixel in fb {
-            let r5 = ((pixel >> 11) & 0x1F) as u8;
-            let g6 = ((pixel >> 5) & 0x3F) as u8;
-            let b5 = (pixel & 0x1F) as u8;
-            rgb_data.push((r5 << 3) | (r5 >> 2));
-            rgb_data.push((g6 << 2) | (g6 >> 4));
-            rgb_data.push((b5 << 3) | (b5 >> 2));
+        let stride = frontend::GENESIS_WIDTH as usize;
+        let width = usize::from(bus.vdp.screen_width()).min(stride);
+        let height = usize::from(bus.vdp.screen_height()).min(bus.vdp.framebuffer.len() / stride);
+        let mut rgb_data = Vec::with_capacity(width * height * 3);
+        for row in bus.vdp.framebuffer.chunks_exact(stride).take(height) {
+            for &pixel in &row[..width] {
+                let r5 = ((pixel >> 11) & 0x1F) as u8;
+                let g6 = ((pixel >> 5) & 0x3F) as u8;
+                let b5 = (pixel & 0x1F) as u8;
+                rgb_data.push((r5 << 3) | (r5 >> 2));
+                rgb_data.push((g6 << 2) | (g6 >> 4));
+                rgb_data.push((b5 << 3) | (b5 >> 2));
+            }
         }
-        image::save_buffer(path, &rgb_data, 320, 240, image::ExtendedColorType::Rgb8)
-            .map_err(|e| e.to_string())
+        (rgb_data, width as u32, height as u32)
+    }
+
+    fn write_screenshot(&self, file: std::fs::File) -> Result<(), String> {
+        let (rgb, width, height) = self.screenshot_rgb();
+        let mut writer = std::io::BufWriter::new(file);
+        image::write_buffer_with_format(
+            &mut writer,
+            &rgb,
+            width,
+            height,
+            image::ExtendedColorType::Rgb8,
+            image::ImageFormat::Png,
+        )
+        .map_err(|e| e.to_string())
+    }
+
+    /// Save the visible display as PNG, replacing `path` if it exists.
+    pub fn save_screenshot(&self, path: &str) -> Result<(), String> {
+        let file = std::fs::File::create(path).map_err(|e| e.to_string())?;
+        self.write_screenshot(file)
+    }
+
+    /// Save the visible display as PNG to a new file; fails if `path`
+    /// already exists (checked atomically by the open itself).
+    pub fn save_screenshot_new(&self, path: &str) -> Result<(), String> {
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .map_err(|e| e.to_string())?;
+        self.write_screenshot(file)
     }
     /// Whether a GDB client is currently attached.
     pub fn gdb_attached(&self) -> bool {
@@ -1516,6 +1505,80 @@ impl Emulator {
         gui::run(self, record_path)
     }
 }
+/// Input-script memory command kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScriptMemOp {
+    Read,
+    Write,
+    Assert,
+}
+
+/// Access width of an input-script memory command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScriptWidth {
+    Byte,
+    Word,
+    Long,
+}
+
+impl ScriptMemOp {
+    /// Parse `READ_BYTE`, `WRITE_WORD`, `ASSERT_LONG`, ... (upper case).
+    fn parse(cmd: &str) -> Option<(Self, ScriptWidth)> {
+        let (op, width) = cmd.split_once('_')?;
+        let op = match op {
+            "READ" => Self::Read,
+            "WRITE" => Self::Write,
+            "ASSERT" => Self::Assert,
+            _ => return None,
+        };
+        let width = match width {
+            "BYTE" => ScriptWidth::Byte,
+            "WORD" => ScriptWidth::Word,
+            "LONG" => ScriptWidth::Long,
+            _ => return None,
+        };
+        Some((op, width))
+    }
+}
+
+impl ScriptWidth {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Byte => "BYTE",
+            Self::Word => "WORD",
+            Self::Long => "LONG",
+        }
+    }
+    fn digits(self) -> usize {
+        match self {
+            Self::Byte => 2,
+            Self::Word => 4,
+            Self::Long => 8,
+        }
+    }
+    fn max(self) -> u32 {
+        match self {
+            Self::Byte => 0xFF,
+            Self::Word => 0xFFFF,
+            Self::Long => u32::MAX,
+        }
+    }
+    fn read(self, bus: &mut Bus, addr: u32) -> u32 {
+        match self {
+            Self::Byte => u32::from(bus.read_byte(addr)),
+            Self::Word => u32::from(bus.read_word(addr)),
+            Self::Long => bus.read_long(addr),
+        }
+    }
+    fn write(self, bus: &mut Bus, addr: u32, value: u32) {
+        match self {
+            Self::Byte => bus.write_byte(addr, value as u8),
+            Self::Word => bus.write_word(addr, value as u16),
+            Self::Long => bus.write_long(addr, value),
+        }
+    }
+}
+
 /// Case-insensitive file-extension test that compares bytes, so names with
 /// multi-byte UTF-8 characters are handled without slicing a character.
 fn has_extension(name: &str, ext: &str) -> bool {
@@ -1573,9 +1636,12 @@ struct Config {
     gdb_password: Option<String>,
     dump_audio_path: Option<String>,
     record_path: Option<String>,
-    input_mapping: InputMapping,
+    /// Set only when `--input-mapping` was given.
+    input_mapping: Option<InputMapping>,
     debug: bool,
     show_help: bool,
+    /// Usage errors found while parsing.
+    errors: Vec<String>,
 }
 impl Config {
     fn from_args<I>(args: I) -> Self
@@ -1633,11 +1699,16 @@ impl Config {
                     current_opt = iter.next();
                 }
                 "--gdb-password-file" => {
-                    if let Some(path) = iter.next() {
-                        match std::fs::read_to_string(&path) {
+                    match iter.next() {
+                        Some(path) => match std::fs::read_to_string(&path) {
                             Ok(password) => config.gdb_password = Some(password.trim().to_string()),
-                            Err(e) => eprintln!("Failed to read GDB password file {}: {}", path, e),
-                        }
+                            Err(e) => config
+                                .errors
+                                .push(format!("cannot read GDB password file {}: {}", path, e)),
+                        },
+                        None => config
+                            .errors
+                            .push("--gdb-password-file needs a path".to_string()),
                     }
                     current_opt = iter.next();
                 }
@@ -1647,14 +1718,10 @@ impl Config {
                 }
                 "--input-mapping" => {
                     if let Some(mapping_str) = iter.next() {
-                        match mapping_str.to_lowercase().as_str() {
-                            "ergonomic" | "modern" | "wasd" => {
-                                config.input_mapping = InputMapping::Ergonomic;
-                            }
-                            _ => {
-                                config.input_mapping = InputMapping::Original;
-                            }
-                        }
+                        config.input_mapping = Some(match mapping_str.to_lowercase().as_str() {
+                            "ergonomic" | "modern" | "wasd" => InputMapping::Ergonomic,
+                            _ => InputMapping::Original,
+                        });
                     }
                     current_opt = iter.next();
                 }
@@ -1663,9 +1730,11 @@ impl Config {
                     current_opt = iter.next();
                 }
                 arg if !arg.starts_with('-') => {
-                    if let Some(ref mut path) = config.rom_path {
-                        path.push(' ');
-                        path.push_str(arg);
+                    if let Some(ref first) = config.rom_path {
+                        config.errors.push(format!(
+                            "more than one ROM path given ({:?} and {:?}); quote paths that contain spaces",
+                            first, arg
+                        ));
                     } else {
                         config.rom_path = Some(arg.to_string());
                     }
@@ -1677,6 +1746,15 @@ impl Config {
                 }
             }
         }
+        if config.headless
+            && config.headless_frames.is_none()
+            && config.script_path.is_none()
+            && config.gdb_port.is_none()
+        {
+            config.errors.push(
+                "--headless needs a frame count (--headless <N>), a --script, or --gdb".to_string(),
+            );
+        }
         config
     }
 }
@@ -1687,20 +1765,21 @@ fn main() {
         print_usage();
         return;
     }
+    if !config.errors.is_empty() {
+        for e in &config.errors {
+            eprintln!("Error: {}", e);
+        }
+        eprintln!("Run with --help for usage.");
+        std::process::exit(2);
+    }
     let rom_path = config.rom_path;
     let script_path = config.script_path;
     let gdb_port = config.gdb_port;
-    let dump_audio_path = config.dump_audio_path;
     let mut emulator = Emulator::new();
-    emulator.input_mapping = config.input_mapping;
+    emulator.input_mapping = config.input_mapping.unwrap_or_default();
+    emulator.input_mapping_from_cli = config.input_mapping.is_some();
     emulator.debug = config.debug;
-    if let Some(path) = dump_audio_path {
-        println!("Dumping audio to: {}", path);
-        match wav_writer::WavWriter::new(&path, audio::SAMPLE_RATE, 2) {
-            Ok(writer) => emulator.wav_writer = Some(writer),
-            Err(e) => eprintln!("Failed to create audio dump file: {}", e),
-        }
-    }
+    emulator.pending_wav_dump = config.dump_audio_path;
     // Load ROM if provided
     if let Some(ref path) = rom_path {
         println!("Loading ROM: {}", path);
@@ -1724,6 +1803,7 @@ fn main() {
     if let Some(port) = gdb_port {
         if config.headless {
             // Debug mode with GDB (CLI)
+            emulator.start_pending_wav_dump();
             if let Err(e) = emulator.run_with_gdb(port, config.gdb_password) {
                 eprintln!("GDB server error: {}", e);
             }
@@ -1741,13 +1821,15 @@ fn main() {
     }
 
     if config.headless {
+        emulator.start_pending_wav_dump();
         emulator.run(
             config.headless_frames,
             config.screenshot_path,
             config.record_path,
         );
     } else {
-        // Interactive mode with SDL2 window
+        // Interactive mode; the WAV dump starts once the audio device rate
+        // is known.
         #[cfg(feature = "gui")]
         if let Err(e) = emulator.run_with_frontend(config.record_path) {
             eprintln!("Frontend error: {}", e);
@@ -1948,7 +2030,12 @@ mod tests {
             "part2.bin".to_string(),
         ];
         let config = Config::from_args(args);
-        assert_eq!(config.rom_path, Some("rom part2.bin".to_string()));
+        assert_eq!(config.rom_path, Some("rom".to_string()));
+        assert_eq!(
+            config.errors.len(),
+            1,
+            "extra positional must be a usage error"
+        );
     }
     #[test]
     fn test_step_frame_basic() {
@@ -2759,17 +2846,130 @@ mod tests {
         // Setup memory to value 0x00 at 0x1000
         emulator.bus.borrow_mut().write_byte(0x1000, 0x00);
 
-        // This should not panic, but print an error via eprintln
-        emulator.handle_byte_cmd("ASSERT_BYTE", &["ASSERT_BYTE", "0x1000", "0xFF"]);
+        emulator.execute_script_command("ASSERT_BYTE 0x1000 0xFF");
 
         // Test word assertion
-        emulator.bus.borrow_mut().write_word(0x1000, 0x0000);
-        emulator.handle_word_cmd("ASSERT_WORD", &["ASSERT_WORD", "0x1000", "0xFFFF"]);
+        emulator.execute_script_command("ASSERT_WORD 0x1000 0xFFFF");
 
         // Test long assertion
-        emulator.bus.borrow_mut().write_long(0x1000, 0x00000000);
-        emulator.handle_long_cmd("ASSERT_LONG", &["ASSERT_LONG", "0x1000", "0xFFFFFFFF"]);
+        emulator.execute_script_command("ASSERT_LONG 0x1000 0xFFFFFFFF");
 
         // If we reach here without panicking, the test passes
+    }
+
+    #[test]
+    fn test_script_memory_commands_round_trip() {
+        let emulator = Emulator::new();
+        emulator.execute_script_command("WRITE_LONG 0xFF0010 0x12345678");
+        assert_eq!(emulator.bus.borrow_mut().read_long(0xFF0010), 0x12345678);
+        emulator.execute_script_command("write_word 0xFF0010 0xBEEF");
+        assert_eq!(emulator.bus.borrow_mut().read_word(0xFF0010), 0xBEEF);
+        emulator.execute_script_command("WRITE_BYTE 0xFF0010 0x42");
+        assert_eq!(emulator.bus.borrow_mut().read_byte(0xFF0010), 0x42);
+        /* Values wider than the access are rejected, not truncated. */
+        emulator.execute_script_command("WRITE_BYTE 0xFF0010 0x1FF");
+        assert_eq!(emulator.bus.borrow_mut().read_byte(0xFF0010), 0x42);
+        assert_eq!(
+            ScriptMemOp::parse("ASSERT_LONG"),
+            Some((ScriptMemOp::Assert, ScriptWidth::Long))
+        );
+        assert_eq!(ScriptMemOp::parse("READ_QUAD"), None);
+    }
+
+    fn args(list: &[&str]) -> Vec<String> {
+        std::iter::once("genteel")
+            .chain(list.iter().copied())
+            .map(String::from)
+            .collect()
+    }
+
+    #[test]
+    fn test_cli_usage_errors() {
+        assert!(!Config::from_args(args(&["--headless"])).errors.is_empty());
+        assert!(!Config::from_args(args(&["--headless", "rom.bin"]))
+            .errors
+            .is_empty());
+        assert!(Config::from_args(args(&["--headless", "5", "rom.bin"]))
+            .errors
+            .is_empty());
+        assert!(
+            Config::from_args(args(&["--headless", "--script", "s.txt", "rom.bin"]))
+                .errors
+                .is_empty()
+        );
+        assert!(Config::from_args(args(&["--headless", "--gdb", "rom.bin"]))
+            .errors
+            .is_empty());
+        assert!(!Config::from_args(args(&["a.bin", "b.bin"]))
+            .errors
+            .is_empty());
+        let missing = Config::from_args(args(&[
+            "--gdb-password-file",
+            "/nonexistent/genteel/pw",
+            "rom.bin",
+        ]));
+        assert!(!missing.errors.is_empty());
+        assert_eq!(missing.gdb_password, None);
+    }
+
+    #[test]
+    fn test_cli_input_mapping_is_only_set_when_given() {
+        assert_eq!(Config::from_args(args(&["rom.bin"])).input_mapping, None);
+        assert_eq!(
+            Config::from_args(args(&["--input-mapping", "wasd", "rom.bin"])).input_mapping,
+            Some(InputMapping::Ergonomic)
+        );
+    }
+
+    #[test]
+    fn test_screenshot_matches_display_resolution() {
+        let emulator = Emulator::new();
+        {
+            let mut bus = emulator.bus.borrow_mut();
+            bus.vdp.registers[crate::vdp::REG_MODE4] = 0x00; // H32
+        }
+        let (rgb, w, h) = emulator.screenshot_rgb();
+        assert_eq!((w, h), (256, 224));
+        assert_eq!(rgb.len(), 256 * 224 * 3);
+        emulator.bus.borrow_mut().vdp.registers[crate::vdp::REG_MODE4] = 0x81; // H40
+        let (_, w, _) = emulator.screenshot_rgb();
+        assert_eq!(w, 320);
+
+        let dir = scratch_dir("shot");
+        let path = dir.join("s.png");
+        let path_str = path.to_str().unwrap();
+        emulator.save_screenshot_new(path_str).unwrap();
+        assert!(
+            emulator.save_screenshot_new(path_str).is_err(),
+            "existing file overwritten"
+        );
+        let img = image::open(&path).unwrap();
+        assert_eq!((img.width(), img.height()), (320, 224));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_wav_header_uses_output_sample_rate() {
+        let dir = scratch_dir("wavrate");
+        let rel = dir
+            .strip_prefix(std::env::current_dir().unwrap())
+            .map(|p| p.to_path_buf());
+        /* WavWriter::new only writes inside the current directory. */
+        let name = format!("genteel-wavrate-{}.wav", std::process::id());
+        let path = match rel {
+            Ok(r) => r.join(&name),
+            Err(_) => std::path::PathBuf::from(&name),
+        };
+        let mut emulator = Emulator::new();
+        emulator.pending_wav_dump = Some(path.to_string_lossy().into_owned());
+        emulator.bus.borrow_mut().sample_rate = 48_000; // device rate
+        emulator.start_pending_wav_dump();
+        assert!(emulator.wav_writer.is_some());
+        emulator.wav_writer = None;
+        let bytes = std::fs::read(&path).unwrap();
+        let rate = u32::from_le_bytes(bytes[24..28].try_into().unwrap());
+        assert_eq!(rate, 48_000);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
