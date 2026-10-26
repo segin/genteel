@@ -151,6 +151,7 @@ fn test_dma_type_checks() {
 }
 
 proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
     #[test]
     fn test_dma_mode_prop(val in 0u8..=255) {
         let mut vdp = Vdp::new();

@@ -2,6 +2,7 @@ use super::*;
 use std::time::Instant;
 
 #[test]
+#[ignore = "timing benchmark; run with --ignored"]
 fn bench_render_line_performance() {
     let mut vdp = Vdp::new();
 
@@ -83,6 +84,7 @@ fn bench_render_line_performance() {
 }
 
 #[test]
+#[ignore = "timing benchmark; run with --ignored"]
 fn bench_render_line_sparse() {
     let mut vdp = Vdp::new();
     vdp.registers[1] = 0x40 | 0x04;

@@ -2415,6 +2415,7 @@ mod tests {
         use proptest::prelude::*;
 
         proptest! {
+            #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
             #[test]
             fn parser_never_panics_and_is_chunking_invariant(
                 bytes in proptest::collection::vec(any::<u8>(), 0..2048),

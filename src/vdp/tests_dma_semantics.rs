@@ -187,6 +187,7 @@ fn vram_fill_writes_msb_to_adjacent_addresses() {
 }
 
 proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
     #[test]
     fn prop_68k_dma_source_stays_in_its_block(
         hi in 0u8..0x40,

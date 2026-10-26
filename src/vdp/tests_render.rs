@@ -278,6 +278,7 @@ fn test_window_plane_uses_horizontal_split_outside_vertical_window() {
 }
 
 #[test]
+#[ignore = "timing benchmark; run with --ignored"]
 fn test_render_line_performance() {
     let mut vdp = Vdp::new();
     vdp.is_pal = false;
@@ -1094,8 +1095,13 @@ fn test_sprite_fully_oob_rendering() {
     vdp.vram[sat_base + 6] = 0x01;
     vdp.vram[sat_base + 7] = 0xC0;
 
-    // This should not panic.
     vdp.render_line(0);
+
+    /* Nothing of the sprite may reach the visible line. */
+    assert!(
+        vdp.framebuffer[..320].iter().all(|&p| p != 0xF800),
+        "an off-screen sprite was drawn"
+    );
 }
 
 /// $3E (palette 3, color 14) is the **highlight** operator: it hides the

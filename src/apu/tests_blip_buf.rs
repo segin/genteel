@@ -251,6 +251,7 @@ fn test_restored_state_with_zero_rates_is_rejected() {
 }
 
 proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
     /// Whatever the timing, the integrated output settles to the exact sum
     /// of all deltas (no amplitude is lost or invented).
     #[test]

@@ -10,6 +10,7 @@ fn create_z80_with_program(program: &[u8]) -> Z80<Memory, TestIo> {
 }
 
 proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
     // ==================== Register Pair Invariants ====================
 
     #[test]

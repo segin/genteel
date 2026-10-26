@@ -86,6 +86,7 @@ fn test_ex_sp_iy_memptr_and_flags() {
 }
 
 proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
     #[test]
     fn prop_ex_sp_hl_swaps_correctly(hl_val in 0u16..=0xFFFF, sp_val in 2u16..=0xFFFE, mem_val in 0u16..=0xFFFF) {
         let mut cpu = create_z80(&[0xE3]);

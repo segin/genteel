@@ -51,6 +51,7 @@ fn index_displacement_wraps_around_64k() {
 }
 
 proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
     #[test]
     fn prop_index_address_is_modular(ix in any::<u16>(), d in any::<i8>()) {
         let mut c = at(&[0xDD, 0x7E, d as u8], 0x0000);
@@ -408,6 +409,7 @@ fn bit_hl_xy_after_jp_comes_from_target() {
 // ============ BIT flags ============
 
 proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
     #[test]
     fn prop_bit_register_flags(val in any::<u8>(), bit in 0u8..8, f_in in any::<u8>()) {
         let mut c = create_z80(&[0xCB, 0x40 | (bit << 3)]); // BIT bit,B
@@ -549,6 +551,7 @@ fn cp_copies_xy_from_operand() {
 }
 
 proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
     #[test]
     fn prop_cp_flags(a in any::<u8>(), v in any::<u8>()) {
         let mut c = create_z80(&[0xFE, v]);
@@ -604,6 +607,7 @@ fn ref_block_io(b_new: u8, val: u8, k: u8) -> u8 {
 }
 
 proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
     #[test]
     fn prop_ini_ind_flags(b in any::<u8>(), cc in any::<u8>(), val in any::<u8>(), dec in any::<bool>()) {
         let mut c = create_z80(&[0xED, if dec { 0xAA } else { 0xA2 }]);
@@ -697,6 +701,7 @@ fn q_is_cleared_by_non_flag_instructions() {
 }
 
 proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
     #[test]
     fn prop_ccf_flags(a in any::<u8>(), f_in in any::<u8>(), q in any::<u8>()) {
         let mut c = create_z80(&[0x3F]);

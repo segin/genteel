@@ -845,6 +845,7 @@ mod tests {
     }
 
     proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
         #[test]
         fn prop_escape_round_trip(cmd in ".*") {
             let escaped = InputScript::escape_command(&cmd);

@@ -9,7 +9,8 @@ pub mod bus;
 pub mod byte_utils;
 pub mod cart;
 pub mod everdrive;
-pub mod tests_performance;
+#[cfg(test)]
+mod tests_performance;
 pub mod z80_bus;
 use bus::Bus;
 pub use z80_bus::Z80Bus;

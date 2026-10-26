@@ -2,6 +2,7 @@ use super::bus::Bus;
 use proptest::prelude::*;
 
 proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
     // Test that ROM reading is consistent across different access sizes
     #[test]
     fn prop_rom_read_consistency(addr in 0..0x3FFF0u32) {

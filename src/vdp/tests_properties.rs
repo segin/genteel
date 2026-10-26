@@ -9,6 +9,7 @@ use crate::vdp::{
 use proptest::prelude::*;
 
 proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
     /// Any CRAM color should convert to valid RGB565
     #[test]
     fn cram_color_converts_to_valid_rgb565(

@@ -2,6 +2,7 @@ use super::decoder::decode;
 use std::time::Instant;
 
 #[test]
+#[ignore = "timing benchmark; run with --ignored"]
 fn bench_decode_performance() {
     let mut opcodes = Vec::with_capacity(65536);
     for i in 0..=65535 {

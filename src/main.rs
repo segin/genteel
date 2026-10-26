@@ -2374,7 +2374,9 @@ mod tests {
     #[test]
     fn test_scheduler_accumulates_master_clocks_per_line() {
         let mut emulator = emulator_with_rom(&idle_loop_rom());
-        let frames = 10_000u64;
+        /* Ten emulated seconds: any per-line rounding loss would already
+         * show as a mismatch, and a debug build runs this in seconds. */
+        let frames = 600u64;
         for _ in 0..frames {
             emulator.step_frame_internal();
         }

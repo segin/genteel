@@ -1047,6 +1047,7 @@ mod tests {
     }
 
     proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
         /// A data read is always `(latch & mask) | (pins & !mask)` with
         /// mask = ctrl | 0x80, whatever the pad state.
         #[test]

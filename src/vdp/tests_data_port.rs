@@ -183,6 +183,7 @@ fn register_write_loads_address_and_code_bits() {
 }
 
 proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
     #[test]
     fn prop_vsram_write_respects_size_alignment_and_width(addr in 0u16..0x80, value: u16) {
         let mut vdp = Vdp::new();
