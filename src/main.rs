@@ -174,7 +174,11 @@ pub struct Emulator {
     pub single_step: bool,
     #[serde(skip)]
     pub gdb: Option<GdbServer>,
+    /// Session state, not part of a save state.
+    #[serde(skip)]
     pub allowed_paths: Vec<std::path::PathBuf>,
+    /// Session state, not part of a save state.
+    #[serde(skip)]
     pub current_rom_path: Option<std::path::PathBuf>,
     pub z80_cycle_debt: f32,
     /// Total master clocks executed (68k cycles x 7).
@@ -194,6 +198,47 @@ impl Default for Emulator {
     fn default() -> Self {
         Self::new()
     }
+}
+
+impl Drop for Emulator {
+    /// Battery RAM is written on every way out (window close, Escape, Quit,
+    /// headless completion, GDB session end), not only on Close ROM.
+    fn drop(&mut self) {
+        self.save_sram();
+    }
+}
+
+/// Write `data` to `path` atomically: write a temporary file in the same
+/// directory, sync it, then rename it over the destination, so a crash or a
+/// concurrent reader never sees a truncated file.
+pub fn write_atomic(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let dir = match path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+        _ => std::path::PathBuf::from("."),
+    };
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "no file name"))?;
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let unique = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let mut tmp_name = std::ffi::OsString::from(".");
+    tmp_name.push(file_name);
+    tmp_name.push(format!(".{}.{}.tmp", std::process::id(), unique));
+    let tmp_path = dir.join(tmp_name);
+    let result = (|| {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp_path)?;
+        file.write_all(data)?;
+        file.sync_all()?;
+        std::fs::rename(&tmp_path, path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp_path);
+    }
+    result
 }
 impl Emulator {
     pub fn new() -> Self {
@@ -257,6 +302,8 @@ impl Emulator {
         let allowed_paths = self.allowed_paths.clone();
         let mapping = self.input_mapping;
         let sample_rate = self.bus.borrow().sample_rate;
+        /* The ROM is gone; nothing more may be written to its .srm. */
+        self.current_rom_path = None;
 
         *self = Self::new();
 
@@ -265,11 +312,43 @@ impl Emulator {
         self.bus.borrow_mut().sample_rate = sample_rate;
     }
 
+    /// Path of a file derived from the ROM path by swapping the extension
+    /// (`game.bin` -> `game.srm`). If that would name the ROM itself (a ROM
+    /// called `game.srm`), the extension is appended instead
+    /// (`game.srm.srm`) so the ROM can never be overwritten.
+    pub fn derived_path(rom_path: &std::path::Path, ext: &str) -> std::path::PathBuf {
+        let swapped = rom_path.with_extension(ext);
+        if swapped != rom_path {
+            return swapped;
+        }
+        let mut name = rom_path.as_os_str().to_os_string();
+        name.push(".");
+        name.push(ext);
+        std::path::PathBuf::from(name)
+    }
+
+    fn sram_path(&self) -> Option<std::path::PathBuf> {
+        self.current_rom_path
+            .as_deref()
+            .map(|p| Self::derived_path(p, "srm"))
+    }
+
+    /// Path of save-state `slot` (0-9) for the current ROM.
+    pub fn state_path(&self, slot: u8) -> Result<std::path::PathBuf, String> {
+        let ext = SLOT_EXTS
+            .get(slot as usize)
+            .ok_or_else(|| format!("Invalid save slot {} (valid slots are 0-9)", slot))?;
+        let rom = self
+            .current_rom_path
+            .as_deref()
+            .ok_or_else(|| "No ROM loaded".to_string())?;
+        Ok(Self::derived_path(rom, ext))
+    }
+
     pub fn load_sram(&mut self) {
-        let Some(path) = &self.current_rom_path else {
+        let Some(sram_path) = self.sram_path() else {
             return;
         };
-        let sram_path = path.with_extension("srm");
         let Ok(file) = std::fs::File::open(&sram_path) else {
             return;
         };
@@ -299,14 +378,15 @@ impl Emulator {
         self.bus.borrow_mut().sram.load_image(&data);
     }
 
+    /// Write battery RAM to the `.srm` file. Nothing is written when the
+    /// cartridge has no SRAM or the game never wrote to it.
     pub fn save_sram(&self) {
-        let Some(path) = &self.current_rom_path else {
+        let Some(sram_path) = self.sram_path() else {
             return;
         };
         let image = self.bus.borrow().sram.image();
         if !image.is_empty() {
-            let sram_path = path.with_extension("srm");
-            if let Err(e) = std::fs::write(&sram_path, &image) {
+            if let Err(e) = write_atomic(&sram_path, &image) {
                 eprintln!("Failed to save SRAM to {:?}: {}", sram_path, e);
             } else {
                 println!("Saved SRAM to {:?}", sram_path);
@@ -314,39 +394,33 @@ impl Emulator {
         }
     }
 
-    pub fn save_state(&self, slot: u8) {
-        let Some(path) = &self.current_rom_path else {
-            return;
-        };
-        let state_path = path.with_extension(SLOT_EXTS[slot as usize]);
-
+    pub fn save_state(&self, slot: u8) -> Result<(), String> {
+        let state_path = self.state_path(slot)?;
         self.save_state_to_path(state_path);
+        Ok(())
     }
 
     pub fn save_state_to_path(&self, state_path: std::path::PathBuf) {
-        if let Ok(json) = serde_json::to_string_pretty(self) {
-            if let Err(e) = std::fs::write(&state_path, json) {
-                eprintln!("Failed to save state to {:?}: {}", state_path, e);
-            } else {
-                println!("Saved state to {:?}", state_path);
+        match serde_json::to_vec(self) {
+            Ok(json) => {
+                if let Err(e) = write_atomic(&state_path, &json) {
+                    eprintln!("Failed to save state to {:?}: {}", state_path, e);
+                } else {
+                    println!("Saved state to {:?}", state_path);
+                }
             }
+            Err(e) => eprintln!("Failed to serialize state: {}", e),
         }
     }
 
-    pub fn load_state(&mut self, slot: u8) {
-        let Some(path) = &self.current_rom_path else {
-            return;
-        };
-        let state_path = path.with_extension(SLOT_EXTS[slot as usize]);
-
+    pub fn load_state(&mut self, slot: u8) -> Result<(), String> {
+        let state_path = self.state_path(slot)?;
         self.load_state_from_path(state_path);
+        Ok(())
     }
 
-    pub fn delete_state(&self, slot: u8) {
-        let Some(path) = &self.current_rom_path else {
-            return;
-        };
-        let state_path = path.with_extension(SLOT_EXTS[slot as usize]);
+    pub fn delete_state(&self, slot: u8) -> Result<(), String> {
+        let state_path = self.state_path(slot)?;
 
         if state_path.exists() {
             if let Err(e) = std::fs::remove_file(&state_path) {
@@ -355,6 +429,7 @@ impl Emulator {
                 println!("Deleted state {:?}", state_path);
             }
         }
+        Ok(())
     }
 
     pub fn load_state_from_path(&mut self, state_path: std::path::PathBuf) {
@@ -385,38 +460,60 @@ impl Emulator {
 
         match serde_json::from_str::<Self>(&json) {
             Ok(new_emulator) => {
-                // 1. Preserve critical session state
-                let gdb = self.gdb.take();
-                let allowed_paths = self.allowed_paths.clone();
-                let current_rom_path = self.current_rom_path.clone();
-                let sample_rate = self.bus.borrow().sample_rate;
-
-                // 2. Load ROM data into the new emulator's bus
-                if let Some(ref rom_path) = current_rom_path {
-                    if let Ok(data) = std::fs::read(rom_path) {
-                        let mut bus = new_emulator.bus.borrow_mut();
-                        bus.load_rom(&data);
-                    }
-                }
-
-                // 3. Apply the new state
-                *self = new_emulator;
-
-                // 4. Restore critical session state
-                self.gdb = gdb;
-                self.allowed_paths = allowed_paths;
-                self.current_rom_path = current_rom_path;
-                self.bus.borrow_mut().sample_rate = sample_rate;
-
+                self.adopt_state(new_emulator);
                 println!("Loaded state from {:?}", state_path);
             }
             Err(e) => eprintln!("Failed to parse save state: {}", e),
         }
     }
 
-    /// Add a path to the whitelist of allowed ROM directories.
-    /// If no paths are added, `load_rom` will fail (secure by default).
-    /// The path is canonicalized before addition.
+    /// Replace the machine state with a deserialized one while keeping
+    /// everything that belongs to the session rather than the machine.
+    fn adopt_state(&mut self, mut new_emulator: Self) {
+        /* The ROM image is not serialized: re-attach the bytes that are in
+         * memory now (they came through the validated loader). restore_rom
+         * keeps the SRAM, mapper banks and region from the state. */
+        let rom = std::mem::take(&mut self.bus.borrow_mut().rom);
+        new_emulator.bus.borrow_mut().restore_rom(&rom);
+        let sample_rate = self.bus.borrow().sample_rate;
+        new_emulator.bus.borrow_mut().sample_rate = sample_rate;
+
+        /* The Z80 deserializes with a detached default bus; connect it to
+         * the restored bus. */
+        let z80_bus = Z80Bus::new(SharedBus::new(new_emulator.bus.clone()));
+        new_emulator.z80.memory = z80_bus.clone();
+        new_emulator.z80.io = z80_bus;
+
+        /* Session state: frontend, debugger, recording and dump state. */
+        std::mem::swap(&mut new_emulator.gdb, &mut self.gdb);
+        std::mem::swap(&mut new_emulator.wav_writer, &mut self.wav_writer);
+        std::mem::swap(&mut new_emulator.input, &mut self.input);
+        std::mem::swap(&mut new_emulator.audio_buffer, &mut self.audio_buffer);
+        std::mem::swap(&mut new_emulator.allowed_paths, &mut self.allowed_paths);
+        std::mem::swap(
+            &mut new_emulator.current_rom_path,
+            &mut self.current_rom_path,
+        );
+        new_emulator.input_mapping = self.input_mapping;
+        new_emulator.debug = self.debug;
+        new_emulator.paused = self.paused;
+        new_emulator.single_step = self.single_step;
+        new_emulator.gdb_exec = self.gdb_exec;
+        new_emulator.gdb_skip_breakpoint = self.gdb_skip_breakpoint;
+
+        /* The old machine must not write its SRAM over the restored one
+         * when it is dropped below. */
+        self.current_rom_path = None;
+        *self = new_emulator;
+    }
+
+    /// Restrict ROM loading to files under `path` (canonicalized).
+    ///
+    /// With no roots configured, any file the user names may be loaded:
+    /// the frontends load exactly the file given on the command line or
+    /// picked in the file dialog. Embedders that load ROM paths from less
+    /// trusted sources can configure roots, and paths outside every root
+    /// are then denied.
     pub fn add_allowed_path<P: AsRef<std::path::Path>>(&mut self, path: P) -> std::io::Result<()> {
         let canonical = path.as_ref().canonicalize()?;
         self.allowed_paths.push(canonical);
@@ -424,22 +521,13 @@ impl Emulator {
     }
 
     pub fn load_rom(&mut self, path: &str) -> std::io::Result<()> {
-        // Security: Validate path against whitelist
-        let path_obj = std::path::Path::new(path);
-        let canonical_path = path_obj.canonicalize()?;
+        let canonical_path = std::path::Path::new(path).canonicalize()?;
 
-        if self.allowed_paths.is_empty() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::PermissionDenied,
-                "ROM loading is restricted. No allowed paths configured.",
-            ));
-        }
-
-        let allowed = self
-            .allowed_paths
-            .iter()
-            .any(|allowed_base| canonical_path.starts_with(allowed_base));
-
+        let allowed = self.allowed_paths.is_empty()
+            || self
+                .allowed_paths
+                .iter()
+                .any(|allowed_base| canonical_path.starts_with(allowed_base));
         if !allowed {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::PermissionDenied,
@@ -447,14 +535,16 @@ impl Emulator {
             ));
         }
 
-        let data = if path.to_lowercase().ends_with(".zip") {
-            // Extract ROM from zip file
-            Self::load_rom_from_zip(path)?
+        /* Open the canonical path that was validated, once, and read
+         * everything (archive or raw image) from that handle. */
+        let mut file = std::fs::File::open(&canonical_path)?;
+        let data = if has_extension(&canonical_path.to_string_lossy(), ".zip") {
+            Self::load_rom_from_zip_reader(file)?
         } else {
-            let mut file = std::fs::File::open(path)?;
-            let metadata = file.metadata()?;
-            let size = metadata.len();
-            Self::read_rom_with_limit(&mut file, size)?
+            let size = file.metadata()?.len();
+            let raw = Self::read_rom_with_limit(&mut file, size)?;
+            let is_smd = has_extension(&canonical_path.to_string_lossy(), ".smd");
+            Self::deinterleave_smd_if_needed(raw, is_smd)
         };
         let mut bus = self.bus.borrow_mut();
         bus.load_rom(&data);
@@ -469,6 +559,33 @@ impl Emulator {
         self.z80.reset();
         Ok(())
     }
+
+    /// Convert a Super Magic Drive (`.smd`) dump to a linear image.
+    ///
+    /// An SMD file is a 512-byte header (bytes 8 and 9 are 0xAA 0xBB)
+    /// followed by 16 KiB blocks, each holding the block's odd bytes in its
+    /// first half and its even bytes in the second half (Genesis Plus GX
+    /// `deinterleave_block`). Images that do not match are returned as is.
+    fn deinterleave_smd_if_needed(data: Vec<u8>, smd_extension: bool) -> Vec<u8> {
+        const HEADER: usize = 512;
+        const BLOCK: usize = 16 * 1024;
+        let sized = data.len() > HEADER && data.len() % BLOCK == HEADER;
+        let marked = data.len() > 9 && data[8] == 0xAA && data[9] == 0xBB;
+        if !sized || !(marked || smd_extension) {
+            return data;
+        }
+        let body = &data[HEADER..];
+        let mut out = vec![0u8; body.len()];
+        for (src, dst) in body.chunks_exact(BLOCK).zip(out.chunks_exact_mut(BLOCK)) {
+            let (odd, even) = src.split_at(BLOCK / 2);
+            for (i, pair) in dst.chunks_exact_mut(2).enumerate() {
+                pair[0] = even[i];
+                pair[1] = odd[i];
+            }
+        }
+        out
+    }
+
     fn read_rom_with_limit<R: std::io::Read>(
         reader: &mut R,
         size: u64,
@@ -500,9 +617,16 @@ impl Emulator {
         }
         Ok(data)
     }
+
     /// Load ROM from a zip file (finds first .bin, .md, .gen, or .smd file)
+    #[cfg(test)]
     fn load_rom_from_zip(path: &str) -> std::io::Result<Vec<u8>> {
-        let file = std::fs::File::open(path)?;
+        Self::load_rom_from_zip_reader(std::fs::File::open(path)?)
+    }
+
+    /// Extract the first ROM entry (.bin, .md, .gen, .smd, .32x) from an
+    /// already opened zip archive.
+    fn load_rom_from_zip_reader(file: std::fs::File) -> std::io::Result<Vec<u8>> {
         let mut archive = zip::ZipArchive::new(file)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         // ROM file extensions to look for
@@ -513,11 +637,8 @@ impl Emulator {
                 .by_index(i)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
 
-            let name = entry.name();
-            // Case-insensitive check without allocating strings
-            let is_rom = rom_extensions.iter().any(|&ext| {
-                name.len() >= ext.len() && name[name.len() - ext.len()..].eq_ignore_ascii_case(ext)
-            });
+            let name = entry.name().to_string();
+            let is_rom = rom_extensions.iter().any(|&ext| has_extension(&name, ext));
 
             if is_rom {
                 let size = entry.size();
@@ -531,8 +652,11 @@ impl Emulator {
                     ));
                 }
                 let data = Self::read_rom_with_limit(&mut entry, size)?;
-                println!("Extracted ROM: {} ({} bytes)", entry.name(), data.len());
-                return Ok(data);
+                println!("Extracted ROM: {} ({} bytes)", name, data.len());
+                return Ok(Self::deinterleave_smd_if_needed(
+                    data,
+                    has_extension(&name, ".smd"),
+                ));
             }
         }
         Err(std::io::Error::new(
@@ -1392,6 +1516,13 @@ impl Emulator {
         gui::run(self, record_path)
     }
 }
+/// Case-insensitive file-extension test that compares bytes, so names with
+/// multi-byte UTF-8 characters are handled without slicing a character.
+fn has_extension(name: &str, ext: &str) -> bool {
+    let (n, e) = (name.as_bytes(), ext.as_bytes());
+    n.len() >= e.len() && n[n.len() - e.len()..].eq_ignore_ascii_case(e)
+}
+
 fn print_usage() {
     println!("Genteel - Sega Genesis/Mega Drive Emulator");
     println!();
@@ -1573,16 +1704,6 @@ fn main() {
     // Load ROM if provided
     if let Some(ref path) = rom_path {
         println!("Loading ROM: {}", path);
-
-        // Security: Whitelist the directory containing the ROM
-        if let Ok(canonical) = std::path::Path::new(path).canonicalize() {
-            if let Some(parent) = canonical.parent() {
-                if let Err(e) = emulator.add_allowed_path(parent) {
-                    eprintln!("Warning: Failed to whitelist ROM directory: {}", e);
-                }
-            }
-        }
-
         if let Err(e) = emulator.load_rom(path) {
             eprintln!("Failed to load ROM: {}", e);
             return;
@@ -1875,43 +1996,35 @@ mod tests {
 
     #[test]
     fn test_path_traversal_protection() {
-        let dummy_rom = "dummy_traversal.bin";
-        std::fs::write(dummy_rom, b"dummy rom content").unwrap();
+        let inside = scratch_dir("allow-inside");
+        let outside = scratch_dir("allow-outside");
+        let rom_in = inside.join("in.bin");
+        let rom_out = outside.join("out.bin");
+        std::fs::write(&rom_in, idle_loop_rom()).unwrap();
+        std::fs::write(&rom_out, idle_loop_rom()).unwrap();
 
+        /* No roots configured: the file the user named is loaded. */
         let mut emulator = Emulator::new();
+        assert!(emulator.load_rom(rom_out.to_str().unwrap()).is_ok());
 
-        // 1. Should fail without whitelist (Secure by Default)
-        let result = emulator.load_rom(dummy_rom);
-        assert!(result.is_err(), "Should fail without whitelisted path");
+        /* Roots configured: paths outside every root are denied, including
+         * via `..` traversal out of an allowed root. */
+        let mut emulator = Emulator::new();
+        emulator.add_allowed_path(&inside).unwrap();
+        let result = emulator.load_rom(rom_out.to_str().unwrap());
         assert_eq!(
-            result.as_ref().err().unwrap().kind(),
-            std::io::ErrorKind::PermissionDenied
+            result.err().map(|e| e.kind()),
+            Some(std::io::ErrorKind::PermissionDenied)
         );
+        let traversal = inside
+            .join("..")
+            .join(outside.file_name().unwrap())
+            .join("out.bin");
+        assert!(emulator.load_rom(traversal.to_str().unwrap()).is_err());
+        assert!(emulator.load_rom(rom_in.to_str().unwrap()).is_ok());
 
-        // 2. Should fail if whitelist doesn't cover the file
-        // Whitelist a different directory (e.g., system temp)
-        let temp_dir = std::env::temp_dir();
-        // Only if temp_dir exists and is different from CWD
-        if emulator.add_allowed_path(&temp_dir).is_ok() {
-            let result = emulator.load_rom(dummy_rom);
-            // Assuming dummy_rom is in CWD and not in temp_dir
-            // If CWD == temp_dir, this test is weak but passes.
-            // Usually CWD is project root.
-            // We can check canonical paths to be sure.
-            let cwd = std::env::current_dir().unwrap().canonicalize().unwrap();
-            let temp = temp_dir.canonicalize().unwrap();
-            if !cwd.starts_with(&temp) {
-                assert!(result.is_err(), "Should fail if path not in whitelist");
-            }
-        }
-
-        // 3. Should succeed if whitelisted
-        emulator.add_allowed_path(".").unwrap();
-        let result = emulator.load_rom(dummy_rom);
-        assert!(result.is_ok(), "Should succeed if path is whitelisted");
-
-        // Cleanup
-        let _ = std::fs::remove_file(dummy_rom);
+        let _ = std::fs::remove_dir_all(inside);
+        let _ = std::fs::remove_dir_all(outside);
     }
 
     #[test]
@@ -2126,6 +2239,303 @@ mod tests {
             frames * lines * u64::from(MCLK_PER_LINE) + carried
         );
         assert_eq!(emulator.internal_frame_count, frames);
+    }
+
+    /// A per-test scratch directory under the system temp dir.
+    fn scratch_dir(name: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("genteel-test-{}-{}", name, std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write_zip(path: &std::path::Path, entry: &str, data: &[u8]) {
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(path).unwrap());
+        zip.start_file(entry, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(data).unwrap();
+        zip.finish().unwrap();
+    }
+
+    #[test]
+    fn test_zip_entry_with_multibyte_name_loads_without_panic() {
+        let dir = scratch_dir("zipname");
+        let zip_path = dir.join("game.zip");
+        write_zip(&zip_path, "\u{e9}\u{e9}", b"not a rom");
+        let zip2 = dir.join("game2.zip");
+        write_zip(&zip2, "\u{e9}\u{e9}.md", &idle_loop_rom());
+        let mut emulator = Emulator::new();
+        emulator.add_allowed_path(&dir).unwrap();
+        assert!(emulator.load_rom(zip_path.to_str().unwrap()).is_err());
+        emulator.load_rom(zip2.to_str().unwrap()).unwrap();
+        assert_eq!(emulator.cpu.pc, 0x200);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Interleave a linear image into SMD format (header + 16 KiB blocks of
+    /// odd bytes then even bytes).
+    fn to_smd(linear: &[u8]) -> Vec<u8> {
+        let mut out = vec![0u8; 512];
+        out[0] = (linear.len() / 16384) as u8;
+        out[1] = 3;
+        out[8] = 0xAA;
+        out[9] = 0xBB;
+        for block in linear.chunks(16384) {
+            let odd: Vec<u8> = block.iter().skip(1).step_by(2).copied().collect();
+            let even: Vec<u8> = block.iter().step_by(2).copied().collect();
+            out.extend_from_slice(&odd);
+            out.extend_from_slice(&even);
+        }
+        out
+    }
+
+    #[test]
+    fn test_smd_rom_is_deinterleaved() {
+        let mut linear = idle_loop_rom();
+        linear.resize(32 * 1024, 0);
+        for (i, b) in linear.iter_mut().enumerate().skip(0x400) {
+            *b = (i * 7) as u8;
+        }
+        let dir = scratch_dir("smd");
+        let path = dir.join("game.smd");
+        std::fs::write(&path, to_smd(&linear)).unwrap();
+        let zip_path = dir.join("game.zip");
+        write_zip(&zip_path, "game.smd", &to_smd(&linear));
+        for p in [&path, &zip_path] {
+            let mut emulator = Emulator::new();
+            emulator.add_allowed_path(&dir).unwrap();
+            emulator.load_rom(p.to_str().unwrap()).unwrap();
+            assert_eq!(emulator.bus.borrow().rom, linear, "{:?}", p);
+            assert_eq!(emulator.cpu.pc, 0x200);
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_plain_bin_with_smd_like_size_is_not_deinterleaved() {
+        let mut linear = idle_loop_rom();
+        linear.resize(16 * 1024 + 512, 0x11);
+        let dir = scratch_dir("notsmd");
+        let path = dir.join("game.bin");
+        std::fs::write(&path, &linear).unwrap();
+        let mut emulator = Emulator::new();
+        emulator.add_allowed_path(&dir).unwrap();
+        emulator.load_rom(path.to_str().unwrap()).unwrap();
+        assert_eq!(emulator.bus.borrow().rom, linear);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Run `f` on a thread with a large stack: deserializing an `Emulator`
+    /// (inline VRAM and other large arrays) needs more than the default
+    /// 2 MiB test-thread stack in unoptimized builds.
+    fn with_big_stack(f: fn()) {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(f)
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    /// Idle-loop ROM whose header declares battery-backed SRAM at
+    /// $200001-$203FFF (odd lane).
+    fn battery_rom() -> Vec<u8> {
+        let mut rom = idle_loop_rom();
+        rom[0x1B0..0x1B4].copy_from_slice(&[b'R', b'A', 0xF8, 0x20]);
+        rom[0x1B4..0x1B8].copy_from_slice(&0x0020_0001u32.to_be_bytes());
+        rom[0x1B8..0x1BC].copy_from_slice(&0x0020_3FFFu32.to_be_bytes());
+        rom
+    }
+
+    fn load_from_dir(dir: &std::path::Path, name: &str, rom: &[u8]) -> Emulator {
+        let path = dir.join(name);
+        std::fs::write(&path, rom).unwrap();
+        let mut emulator = Emulator::new();
+        emulator.load_rom(path.to_str().unwrap()).unwrap();
+        emulator
+    }
+
+    #[test]
+    fn test_state_load_keeps_saved_sram() {
+        with_big_stack(test_state_load_keeps_saved_sram_body);
+    }
+
+    fn test_state_load_keeps_saved_sram_body() {
+        let dir = scratch_dir("state-sram");
+        let mut emulator = load_from_dir(&dir, "game.bin", &battery_rom());
+        emulator.bus.borrow_mut().write_byte(0x200001, 0x42);
+        assert_eq!(emulator.bus.borrow_mut().read_byte(0x200001), 0x42);
+        emulator.save_state(1).unwrap();
+        emulator.bus.borrow_mut().write_byte(0x200001, 0x17);
+        emulator.load_state(1).unwrap();
+        assert_eq!(emulator.bus.borrow_mut().read_byte(0x200001), 0x42);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_state_load_keeps_rom_from_zip() {
+        with_big_stack(test_state_load_keeps_rom_from_zip_body);
+    }
+
+    fn test_state_load_keeps_rom_from_zip_body() {
+        let dir = scratch_dir("state-zip");
+        let zip_path = dir.join("game.zip");
+        write_zip(&zip_path, "game.bin", &idle_loop_rom());
+        let mut emulator = Emulator::new();
+        emulator.load_rom(zip_path.to_str().unwrap()).unwrap();
+        let rom = emulator.bus.borrow().rom.clone();
+        emulator.save_state(0).unwrap();
+        emulator.load_state(0).unwrap();
+        assert_eq!(emulator.bus.borrow().rom, rom);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_state_load_rewires_z80_to_the_live_bus() {
+        with_big_stack(test_state_load_rewires_z80_to_the_live_bus_body);
+    }
+
+    fn test_state_load_rewires_z80_to_the_live_bus_body() {
+        let dir = scratch_dir("state-z80");
+        let mut emulator = load_from_dir(&dir, "game.bin", &idle_loop_rom());
+        emulator.save_state(0).unwrap();
+        emulator.load_state(0).unwrap();
+        crate::memory::MemoryInterface::write_byte(&mut emulator.z80.memory, 0x0123, 0x99);
+        assert_eq!(emulator.bus.borrow().z80_ram[0x0123], 0x99);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_state_load_preserves_session_state() {
+        with_big_stack(test_state_load_preserves_session_state_body);
+    }
+
+    fn test_state_load_preserves_session_state_body() {
+        let dir = scratch_dir("state-session");
+        let mut emulator = load_from_dir(&dir, "game.bin", &idle_loop_rom());
+        emulator.save_state(0).unwrap();
+        emulator.input.start_recording();
+        emulator.step_frame(None);
+        emulator.debug = true;
+        emulator.input_mapping = InputMapping::Ergonomic;
+        emulator.paused = true;
+        emulator.load_state(0).unwrap();
+        assert!(emulator.debug);
+        assert!(emulator.paused);
+        assert_eq!(emulator.input_mapping, InputMapping::Ergonomic);
+        emulator.paused = false;
+        emulator.step_frame(None);
+        let script = emulator.input.stop_recording();
+        assert!(script.get(0).is_some() && script.get(1).is_some());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_state_load_continues_wav_dump() {
+        with_big_stack(test_state_load_continues_wav_dump_body);
+    }
+
+    fn test_state_load_continues_wav_dump_body() {
+        let dir = scratch_dir("state-wav");
+        let mut emulator = load_from_dir(&dir, "game.bin", &idle_loop_rom());
+        let rate = emulator.bus.borrow().sample_rate;
+        emulator.wav_writer =
+            Some(wav_writer::WavWriter::new_in(&dir, "dump.wav", rate, 2).unwrap());
+        emulator.save_state(0).unwrap();
+        emulator.load_state(0).unwrap();
+        assert!(
+            emulator.wav_writer.is_some(),
+            "WAV dump dropped by state load"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_slot_out_of_range_is_an_error() {
+        let dir = scratch_dir("state-slot");
+        let mut emulator = load_from_dir(&dir, "game.bin", &idle_loop_rom());
+        assert!(emulator.save_state(10).is_err());
+        assert!(emulator.load_state(255).is_err());
+        assert!(emulator.delete_state(10).is_err());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_sram_and_state_paths_never_equal_rom_path() {
+        let dir = scratch_dir("state-paths");
+        for name in ["game.srm", "game.s3"] {
+            let rom = battery_rom();
+            let emulator = load_from_dir(&dir, name, &rom);
+            emulator.bus.borrow_mut().write_byte(0x200001, 0x42);
+            emulator.save_sram();
+            emulator.save_state(3).unwrap();
+            assert_eq!(
+                std::fs::read(dir.join(name)).unwrap(),
+                rom,
+                "{} overwritten",
+                name
+            );
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_write_atomic_replaces_file_without_leftovers() {
+        let dir = scratch_dir("atomic");
+        let target = dir.join("out.bin");
+        std::fs::write(&target, b"old contents that are longer").unwrap();
+        write_atomic(&target, b"new").unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"new");
+        let entries: Vec<_> = std::fs::read_dir(&dir).unwrap().collect();
+        assert_eq!(entries.len(), 1, "temporary file left behind");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_no_srm_file_without_sram_writes() {
+        let dir = scratch_dir("no-srm");
+        let emulator = load_from_dir(&dir, "plain.bin", &idle_loop_rom());
+        emulator.save_sram();
+        assert!(!dir.join("plain.srm").exists());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_sram_is_saved_when_emulator_is_dropped() {
+        let dir = scratch_dir("srm-drop");
+        {
+            let emulator = load_from_dir(&dir, "game.bin", &battery_rom());
+            emulator.bus.borrow_mut().write_byte(0x200001, 0x42);
+        }
+        assert!(dir.join("game.srm").exists());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_largest_state_round_trips() {
+        with_big_stack(test_largest_state_round_trips_body);
+    }
+
+    fn test_largest_state_round_trips_body() {
+        let dir = scratch_dir("state-max");
+        let mut emulator = load_from_dir(&dir, "game.bin", &battery_rom());
+        {
+            let mut bus = emulator.bus.borrow_mut();
+            bus.work_ram.fill(0xFF);
+            bus.z80_ram.fill(0xFF);
+            bus.sram.data.fill(0xEE);
+            bus.vdp.vram.fill(0xFF);
+        }
+        emulator.save_state(2).unwrap();
+        let size = std::fs::metadata(emulator.state_path(2).unwrap())
+            .unwrap()
+            .len();
+        assert!(size < MAX_STATE_SIZE / 4, "state is {} bytes", size);
+        emulator.bus.borrow_mut().work_ram.fill(0);
+        emulator.load_state(2).unwrap();
+        assert!(emulator.bus.borrow().work_ram.iter().all(|&b| b == 0xFF));
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     mod gdb_session {

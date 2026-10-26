@@ -2022,7 +2022,10 @@ impl Framework {
 
                                 for slot in 0..10 {
                                     ui.label(SLOT_NAMES[slot as usize]);
-                                    let state_path = path.with_extension(SLOT_EXTS[slot as usize]);
+                                    let state_path = crate::Emulator::derived_path(
+                                        path,
+                                        SLOT_EXTS[slot as usize],
+                                    );
                                     if state_path.exists() {
                                         let meta = state_path.metadata().ok();
                                         let time = meta
@@ -2112,7 +2115,7 @@ impl Framework {
     pub fn handle_exit(&mut self, emulator: &mut Emulator, record_path: &Option<String>) {
         if self.gui_state.auto_save_load {
             if let Some(path) = &emulator.current_rom_path {
-                emulator.save_state_to_path(path.with_extension("auto"));
+                emulator.save_state_to_path(crate::Emulator::derived_path(path, "auto"));
             }
         }
         self.gui_state.save();
@@ -2441,12 +2444,6 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                             };
                             if let Some(path) = pending {
                                 println!("Loading ROM: {:?}", path);
-                                // Security: Whitelist the directory containing the ROM
-                                if let Ok(canonical) = path.canonicalize() {
-                                    if let Some(parent) = canonical.parent() {
-                                        let _ = emulator.add_allowed_path(parent);
-                                    }
-                                }
                                 if let Err(e) = emulator.load_rom(path.to_str().unwrap_or("")) {
                                     eprintln!("Failed to load ROM: {}", e);
                                 } else {
@@ -2460,7 +2457,8 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
 
                                     // Auto-Load if enabled
                                     if framework.gui_state.auto_save_load {
-                                        let auto_path = path.with_extension("auto");
+                                        let auto_path =
+                                            crate::Emulator::derived_path(&path, "auto");
                                         if auto_path.exists() {
                                             emulator.load_state_from_path(auto_path);
                                         }
@@ -2476,7 +2474,9 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                                 println!("Closing ROM");
                                 if framework.gui_state.auto_save_load {
                                     if let Some(path) = &emulator.current_rom_path {
-                                        emulator.save_state_to_path(path.with_extension("auto"));
+                                        emulator.save_state_to_path(crate::Emulator::derived_path(
+                                            path, "auto",
+                                        ));
                                     }
                                 }
                                 emulator.close_rom();
@@ -2484,15 +2484,21 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
                                 framework.gui_state.close_requested = false;
                             }
                             if let Some(slot) = framework.gui_state.save_requested {
-                                emulator.save_state(slot);
+                                if let Err(e) = emulator.save_state(slot) {
+                                    eprintln!("Save state failed: {}", e);
+                                }
                                 framework.gui_state.save_requested = None;
                             }
                             if let Some(slot) = framework.gui_state.load_requested {
-                                emulator.load_state(slot);
+                                if let Err(e) = emulator.load_state(slot) {
+                                    eprintln!("Load state failed: {}", e);
+                                }
                                 framework.gui_state.load_requested = None;
                             }
                             if let Some(slot) = framework.gui_state.delete_state_requested {
-                                emulator.delete_state(slot);
+                                if let Err(e) = emulator.delete_state(slot) {
+                                    eprintln!("Delete state failed: {}", e);
+                                }
                                 framework.gui_state.delete_state_requested = None;
                             }
 
