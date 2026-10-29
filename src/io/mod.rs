@@ -297,7 +297,9 @@ impl ControllerPort {
     /// Advance the TH switch delay and the 6-button timeout by `cycles` 68k
     /// cycles.
     pub fn tick(&mut self, cycles: u32) {
-        self.th_switch_delay = self.th_switch_delay.saturating_sub(cycles);
+        if self.th_switch_delay != 0 {
+            self.th_switch_delay = self.th_switch_delay.saturating_sub(cycles);
+        }
         if self.controller_type == ControllerType::SixButton {
             self.th_timer = self.th_timer.saturating_add(cycles);
             if self.th_timer > SIX_BUTTON_TIMEOUT_CYCLES {

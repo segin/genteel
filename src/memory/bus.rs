@@ -133,6 +133,8 @@ fn dma_read_word(
     if addr <= 0x3FFFFF {
         cart_read_word(rom, mapper, everdrive, sram, addr)
     } else if addr <= 0x9FFFFF {
+        // Linear ROM above 4 MiB, wherever the image is held.
+        let rom = rom_image(rom, everdrive);
         let idx = addr as usize;
         byte_utils::join_u16(
             rom.get(idx).copied().unwrap_or(0xFF),
@@ -818,7 +820,7 @@ impl Bus {
     /// The word a VDP 68k->VDP DMA would fetch from `addr`.
     pub fn dma_source_word(&self, addr: u32) -> u16 {
         dma_read_word(
-            rom_image(&self.rom, &self.everdrive),
+            &self.rom,
             &self.rom_mapper,
             &self.everdrive,
             &self.sram,
@@ -829,7 +831,7 @@ impl Bus {
 
     /// Advance system state by N MCLK cycles.
     pub fn tick(&mut self, mclk: u32) {
-        let rom = rom_image(&self.rom, &self.everdrive);
+        let rom = &self.rom;
         let mapper = &self.rom_mapper;
         let everdrive = &self.everdrive;
         let sram = &self.sram;
