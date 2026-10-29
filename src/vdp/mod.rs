@@ -948,8 +948,11 @@ impl Vdp {
         }
     }
 
-    /// Capture the HV counter on a controller TH transition. Only latches while
-    /// latching is enabled (reg 0 bit 1); otherwise a no-op.
+    /// Capture the HV counter when a device drives the TH input (a light
+    /// gun seeing the beam, Genesis Plus GX `lightgun.c`). Only latches while
+    /// latching is enabled (reg 0 bit 1); otherwise a no-op. The 68k writing
+    /// TH through the I/O ports never calls this, and no light gun is
+    /// emulated yet, so nothing in the emulator latches the counter.
     pub fn latch_hv_counter(&mut self) {
         if self.hv_latch_enabled() {
             self.hv_latched = Some(self.compute_hv_counter());

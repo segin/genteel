@@ -2486,7 +2486,7 @@ fn collect_debug_info(
         port1_type: bus.io.port1.controller_type,
         port2_state: bus.io.port2.state,
         port2_type: bus.io.port2.controller_type,
-        has_rom: !bus.rom.is_empty(),
+        has_rom: bus.has_rom(),
         current_rom_path: emulator.current_rom_path.clone(),
     };
     frontend::rgb565_to_rgba8(&bus.vdp.framebuffer, pixels_frame);

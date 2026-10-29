@@ -134,6 +134,12 @@ pub const SIX_BUTTON_TIMEOUT_CYCLES: u32 = 7_670_453 * 3 / 2000;
 /// returning 3-button data until the timeout.
 const SIX_BUTTON_COUNTER_MAX: u8 = 8;
 
+/// Delay before a pad sees TH go high when TH is switched from a low output
+/// to an input (pulled high): 172 master clocks in Genesis Plus GX
+/// `gamepad.c` (measured on an MK-1650 pad, needed by Decap Attack), about
+/// 25 68k cycles.
+pub const TH_SWITCH_DELAY_CYCLES: u32 = 172_u32.div_ceil(7);
+
 /// A controller port
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ControllerPort {
@@ -152,6 +158,10 @@ pub struct ControllerPort {
     pub(crate) th_counter: u8,
     /// 68k cycles since the last counted TH rising edge.
     pub(crate) th_timer: u32,
+    /// 68k cycles until a pad sees TH high after TH was released to an
+    /// input while low; until then it still returns its TH-low data.
+    #[serde(default)]
+    pub(crate) th_switch_delay: u32,
 }
 
 impl ControllerPort {
@@ -165,6 +175,7 @@ impl ControllerPort {
             th_state: true,
             th_counter: 0,
             th_timer: 0,
+            th_switch_delay: 0,
         }
     }
 
@@ -175,6 +186,7 @@ impl ControllerPort {
         self.th_state = true;
         self.th_counter = 0;
         self.th_timer = 0;
+        self.th_switch_delay = 0;
     }
 
     /// Level on the device's data pins (D6 = TH, D7 not connected).
@@ -191,13 +203,17 @@ impl ControllerPort {
     /// ```
     pub fn read_data(&self) -> u8 {
         let th = if self.th_state { 0x40 } else { 0x00 };
-        match self.controller_type {
-            ControllerType::None => 0x3F | th,
-            ControllerType::ThreeButton => Self::pad_pins(self.pad_bits(), th, th >> 6),
-            ControllerType::SixButton => {
-                Self::pad_pins(self.pad_bits(), th, self.th_counter | (th >> 6))
-            }
+        let counter = match self.controller_type {
+            ControllerType::None => return 0x3F | th,
+            ControllerType::ThreeButton => 0,
+            ControllerType::SixButton => self.th_counter,
+        };
+        let mut step = counter | (th >> 6);
+        if self.th_switch_delay > 0 {
+            // The pad has not switched to its TH-high state yet.
+            step &= !1;
         }
+        Self::pad_pins(self.pad_bits(), th, step)
     }
 
     /// Pressed buttons as an active-high mask in Genesis Plus GX `input.pad`
@@ -229,22 +245,32 @@ impl ControllerPort {
         (0x3F | th) & !(pulled_low as u8)
     }
 
-    /// Recompute the device's TH input from the data and control registers.
-    /// A 6-button pad counts TH rising edges (Genesis Plus GX `gamepad.c`;
-    /// its 172-cycle input-switch latency is not modelled).
+    /// Recompute the device's TH input from the data and control registers,
+    /// as Genesis Plus GX `gamepad_write` does. A 6-button pad counts rising
+    /// edges that the I/O chip drives on TH. Releasing a low TH to an input
+    /// lets it float high without counting, and the pad only notices after
+    /// [`TH_SWITCH_DELAY_CYCLES`].
     fn update_th(&mut self) {
-        // TH is pulled high unless the I/O chip drives it as an output.
-        let new_th = self.control & 0x40 == 0 || self.data & 0x40 != 0;
         let old_th = self.th_state;
-        if self.controller_type == ControllerType::SixButton
-            && new_th
-            && !old_th
-            && self.th_counter < SIX_BUTTON_COUNTER_MAX
-        {
-            self.th_counter += 2;
-            self.th_timer = 0;
+        if self.control & 0x40 != 0 {
+            let new_th = self.data & 0x40 != 0;
+            self.th_switch_delay = 0;
+            if self.controller_type == ControllerType::SixButton
+                && new_th
+                && !old_th
+                && self.th_counter < SIX_BUTTON_COUNTER_MAX
+            {
+                self.th_counter += 2;
+                self.th_timer = 0;
+            }
+            self.th_state = new_th;
+        } else {
+            // TH is pulled high while the I/O chip does not drive it.
+            if !old_th {
+                self.th_switch_delay = TH_SWITCH_DELAY_CYCLES;
+            }
+            self.th_state = true;
         }
-        self.th_state = new_th;
     }
 
     /// Write the data register.
@@ -268,8 +294,12 @@ impl ControllerPort {
         (self.data & out_mask) | (self.read_data() & !out_mask)
     }
 
-    /// Advance the 6-button timeout by `cycles` 68k cycles.
+    /// Advance the TH switch delay and the 6-button timeout by `cycles` 68k
+    /// cycles.
     pub fn tick(&mut self, cycles: u32) {
+        if self.th_switch_delay != 0 {
+            self.th_switch_delay = self.th_switch_delay.saturating_sub(cycles);
+        }
         if self.controller_type == ControllerType::SixButton {
             self.th_timer = self.th_timer.saturating_add(cycles);
             if self.th_timer > SIX_BUTTON_TIMEOUT_CYCLES {
@@ -925,10 +955,54 @@ mod tests {
         // Switching TH to output with a low latch drives it low.
         io.write(0xA10009, 0x40);
         assert!(!io.port1.th_state);
-        // Back to input: pulled high again, which is a rising edge.
+        // Back to input: pulled high again. Only edges the I/O chip drives
+        // are counted (Genesis Plus GX `gamepad_write`).
         io.write(0xA10009, 0x00);
         assert!(io.port1.th_state);
-        assert_eq!(io.port1.th_counter, 2);
+        assert_eq!(io.port1.th_counter, 0);
+    }
+
+    /// Releasing a low TH to an input: TH reads high at once, but the pad
+    /// keeps returning its TH-low data for about 172 master clocks.
+    #[test]
+    fn pad_sees_released_th_go_high_after_a_delay() {
+        let mut io = Io::new();
+        let pad = io.controller(1).unwrap();
+        pad.start = true; // TH-low data: D5 low
+        pad.c = true; // TH-high data: D5 low too
+        pad.right = true; // TH-high data only: D3 low
+        io.write(0xA10003, 0x00);
+        io.write(0xA10009, 0x40); // TH output, driven low
+        assert_eq!(io.read(0xA10003) & 0x7F, 0x13, "?0SA00DU with S pressed");
+
+        io.write(0xA10009, 0x00); // TH released: pulled high
+        assert_eq!(
+            io.read(0xA10003) & 0x7F,
+            0x53,
+            "TH reads high, data still TH-low (D3/D2 forced low)"
+        );
+        io.tick(TH_SWITCH_DELAY_CYCLES - 1);
+        assert_eq!(io.read(0xA10003) & 0x7F, 0x53, "not yet switched");
+        io.tick(1);
+        assert_eq!(
+            io.read(0xA10003) & 0x7F,
+            0x57,
+            "?1CBRLDU with C and R pressed"
+        );
+    }
+
+    /// Driving TH as an output never waits for the switch delay.
+    #[test]
+    fn driven_th_takes_effect_immediately() {
+        let mut io = Io::new();
+        io.controller(1).unwrap().right = true;
+        io.write(0xA10003, 0x00);
+        io.write(0xA10009, 0x40); // TH output low
+        io.write(0xA10009, 0x00); // released: delay starts
+        io.write(0xA10009, 0x40); // driven again: delay cancelled
+        io.write(0xA10003, 0x40); // and driven high
+        assert_eq!(io.port1.th_switch_delay, 0);
+        assert_eq!(io.read(0xA10003) & 0x3F, 0x37, "R pressed: D3 low");
     }
 
     /// Output pins and D7 read back the latch; input pins read the pad.

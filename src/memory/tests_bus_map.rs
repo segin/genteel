@@ -170,7 +170,8 @@ fn dma_source_sees_mapped_sram() {
 #[test]
 fn z80_window_word_read_duplicates_byte() {
     let mut bus = Bus::new();
-    bus.write_byte(0xA11100, 0x01);
+    bus.write_byte(0xA11100, 0x01); // BUSREQ
+    bus.write_byte(0xA11200, 0x01); // and out of reset: bus granted
     bus.z80_ram[0] = 0x12;
     bus.z80_ram[1] = 0x34;
     bus.z80_ram[2] = 0x56;
@@ -182,6 +183,7 @@ fn z80_window_word_read_duplicates_byte() {
 fn z80_window_word_write_stores_high_byte_only() {
     let mut bus = Bus::new();
     bus.write_byte(0xA11100, 0x01);
+    bus.write_byte(0xA11200, 0x01);
     bus.z80_ram[1] = 0x99;
     bus.write_word(0xA00000, 0xABCD);
     assert_eq!(bus.z80_ram[0], 0xAB);
@@ -194,10 +196,29 @@ fn z80_window_word_write_stores_high_byte_only() {
 fn z80_ram_is_mirrored_at_a02000() {
     let mut bus = Bus::new();
     bus.write_byte(0xA11100, 0x01);
+    bus.write_byte(0xA11200, 0x01);
     bus.write_byte(0xA02005, 0x77);
     assert_eq!(bus.z80_ram[5], 0x77);
     assert_eq!(bus.read_byte(0xA02005), 0x77);
     assert_eq!(bus.read_byte(0xA00005), 0x77);
+}
+
+#[test]
+fn z80_ram_needs_the_bus_granted_not_only_requested() {
+    let mut bus = Bus::new();
+    bus.z80_ram[0x10] = 0x5A;
+    bus.write_byte(0xA11100, 0x01); // BUSREQ, Z80 still in reset
+    assert_eq!(bus.read_byte(0xA00010), 0xFF, "no access while in reset");
+    bus.write_byte(0xA00010, 0x11);
+    assert_eq!(bus.z80_ram[0x10], 0x5A, "write dropped while in reset");
+
+    bus.write_byte(0xA11200, 0x01); // release reset: bus granted
+    assert_eq!(bus.read_byte(0xA00010), 0x5A);
+    bus.write_byte(0xA00010, 0x11);
+    assert_eq!(bus.z80_ram[0x10], 0x11);
+
+    bus.write_byte(0xA11100, 0x00); // Z80 takes its bus back
+    assert_eq!(bus.read_byte(0xA00010), 0xFF);
 }
 
 #[test]
@@ -268,6 +289,33 @@ fn pad_data_writes_do_not_latch_hv_counter() {
     bus.write_byte(0xA10009, 0x40);
     bus.write_byte(0xA10003, 0x00);
     bus.write_byte(0xA10003, 0x40);
+    assert!(bus.vdp.hv_latched.is_none());
+}
+
+/// Only a device driving the TH input (a light gun) latches the HV counter;
+/// the 68k toggling TH on any port, as data or as direction, never does.
+#[test]
+fn software_th_toggles_never_latch_hv_counter() {
+    let mut bus = Bus::new();
+    bus.write_word(0xC00004, 0x8104); // reg 1: mode 5
+    bus.write_word(0xC00004, 0x8002); // reg 0: M3 (HV latch enable)
+    for (data, ctrl) in [
+        (0xA10003, 0xA10009),
+        (0xA10005, 0xA1000B),
+        (0xA10007, 0xA1000D),
+    ] {
+        for (d, c) in [
+            (0x00, 0x40),
+            (0x40, 0x40),
+            (0x00, 0x40),
+            (0x00, 0x00),
+            (0x40, 0xC0),
+        ] {
+            bus.write_byte(ctrl, c);
+            bus.write_byte(data, d);
+        }
+    }
+    bus.tick(7 * 1000);
     assert!(bus.vdp.hv_latched.is_none());
 }
 
@@ -434,6 +482,7 @@ proptest! {
     fn prop_z80_ram_mirror(off in 0u32..0x2000, v in any::<u8>()) {
         let mut bus = Bus::new();
         bus.write_byte(0xA11100, 0x01);
+        bus.write_byte(0xA11200, 0x01);
         bus.write_byte(0xA02000 + off, v);
         prop_assert_eq!(bus.read_byte(0xA00000 + off), v);
     }

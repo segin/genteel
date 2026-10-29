@@ -13,7 +13,7 @@ pub mod everdrive;
 mod tests_performance;
 pub mod z80_bus;
 use bus::Bus;
-pub use z80_bus::Z80Bus;
+pub use z80_bus::{Z80Bus, Z80BusView, Z80Ports};
 
 use crate::cpu::decoder::Size;
 

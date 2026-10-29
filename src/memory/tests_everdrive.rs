@@ -270,10 +270,211 @@ fn test_serde_preserves_registers_and_rebuilds_memory() {
 
     // load_rom (which runs after deserialize) re-establishes the backing memory
     // without disturbing the restored register state.
-    restored.load_rom(&rom);
+    restored.load_rom(rom.as_slice());
     assert!(restored.enabled);
     assert_eq!(restored.banks[3], 6, "banks untouched by load_rom");
     assert_eq!(restored.read(3 * BANK_SIZE as u32), 6, "slot 3 -> bank 6");
+}
+
+#[test]
+fn ssf_image_is_held_once_by_the_mapper() {
+    let rom = ssf_rom_banked(NUM_SLOTS);
+    let mut bus = Bus::new();
+    bus.load_rom(&rom);
+    assert!(bus.rom.is_empty(), "the bus keeps no second copy");
+    assert_eq!(bus.rom_bytes(), &rom[..]);
+    assert_eq!(bus.rom_size(), rom.len());
+    assert!(bus.has_rom());
+
+    bus.clear_rom();
+    assert!(!bus.has_rom());
+    assert!(!bus.everdrive.enabled);
+}
+
+#[test]
+fn plain_rom_stays_on_the_bus() {
+    let rom = normal_rom();
+    let mut bus = Bus::new();
+    bus.load_rom(&rom);
+    assert_eq!(bus.rom, rom);
+    assert_eq!(bus.rom_bytes(), &rom[..]);
+    assert!(bus.everdrive.mem.is_empty());
+}
+
+#[test]
+fn taking_the_image_undoes_writes_over_rom() {
+    let rom = ssf_rom_banked(NUM_SLOTS);
+    let mut bus = Bus::new();
+    bus.load_rom(&rom);
+    bus.write_byte(0xA130F0, control(true, false, true, false));
+    bus.write_byte(0x0000, 0x12);
+    bus.write_byte(BANK_SIZE as u32 + 1, 0x34);
+    assert_eq!(bus.read_byte(0), 0x12);
+
+    let image = bus.take_rom_image();
+    assert_eq!(image, rom, "the image comes back as loaded");
+    assert!(!bus.has_rom());
+}
+
+/// SSF ROM shorter than the 4 MB window, so part of the window is RAM.
+fn ssf_rom_with_ram() -> Vec<u8> {
+    let mut rom = ssf_rom_banked(2);
+    rom[0x1234] = 0xAB;
+    rom
+}
+
+#[test]
+fn mapper_ram_and_banks_survive_serialization() {
+    let rom = ssf_rom_with_ram();
+    let mut bus = Bus::new();
+    bus.load_rom(&rom);
+    bus.write_byte(0xA130F0, control(true, false, true, true));
+    bus.write_byte(bank_reg(5), 3);
+    let ram = 3 * BANK_SIZE as u32 + 0x10;
+    bus.write_byte(ram, 0x5A); // bank 3: RAM past the 1 MB ROM
+    bus.write_byte(0x1234, 0xCD); // overwrites a ROM byte
+    let json = serde_json::to_string(&bus.everdrive).unwrap();
+
+    let mut restored = Bus::new();
+    restored.everdrive = serde_json::from_str(&json).unwrap();
+    restored.restore_rom(bus.take_rom_image());
+    assert_eq!(restored.everdrive.banks[5], 3);
+    assert!(restored.everdrive.write_enable && restored.everdrive.led);
+    assert_eq!(restored.read_byte(ram), 0x5A);
+    assert_eq!(restored.read_byte(0x1234), 0xCD);
+    assert_eq!(restored.read_byte(0x1235), rom[0x1235]);
+
+    // The restored mapper still knows the original ROM bytes.
+    assert_eq!(restored.take_rom_image(), rom);
+}
+
+#[test]
+fn unwritten_mapper_saves_no_pages() {
+    let mut bus = Bus::new();
+    bus.load_rom(&ssf_rom_with_ram());
+    bus.write_byte(0xA130F0, control(true, false, true, false));
+    // Writing a byte back to its loaded value leaves nothing to save.
+    bus.write_byte(0x1234, 0xAB);
+    bus.write_byte(3 * BANK_SIZE as u32, 0xFF);
+    let state = serde_json::to_value(&bus.everdrive).unwrap();
+    assert_eq!(state["ram_pages"], serde_json::json!([]));
+}
+
+#[test]
+fn state_without_mapper_ram_still_loads() {
+    let rom = ssf_rom_with_ram();
+    let old = r#"{"banks":[0,1,2,3,4,5,6,7],"write_enable":true,"led":false,"mode_32x":false}"#;
+    let mut bus = Bus::new();
+    bus.everdrive = serde_json::from_str(old).unwrap();
+    bus.restore_rom(rom.clone());
+    assert!(bus.everdrive.write_enable);
+    assert_eq!(bus.rom_bytes(), &rom[..]);
+}
+
+#[test]
+fn malformed_mapper_ram_pages_are_ignored() {
+    let rom = ssf_rom_with_ram();
+    let page = "11".repeat(0x1000);
+    let state = serde_json::json!({
+        "banks": [0, 1, 2, 3, 4, 5, 6, 7],
+        "ram_pages": [
+            {"page": 99999, "data": page},
+            {"page": 1, "data": "zz"},
+            {"page": 2, "data": page},
+        ],
+    });
+    let mut bus = Bus::new();
+    bus.everdrive = serde_json::from_value(state).unwrap();
+    bus.restore_rom(rom.clone());
+    assert_eq!(bus.read_byte(0x1234), 0xAB, "short page 1 is ignored");
+    assert_eq!(bus.read_byte(0x2000), 0x11, "valid page 2 applies");
+}
+
+/// Bus with a 1 MB SSF ROM and the window made writable, as a program
+/// using the 4 MB of cartridge RAM (e.g. a nommu Linux) sets it up.
+fn writable_ssf_bus() -> Bus {
+    let mut bus = Bus::new();
+    bus.load_rom(&ssf_rom_with_ram());
+    bus.write_word(0xA130F0, 0xA000); // P + W in the high byte, slot 0 = bank 0
+    assert!(bus.everdrive.write_enable);
+    bus
+}
+
+#[test]
+fn word_and_long_writes_land_in_mapper_ram() {
+    let mut bus = writable_ssf_bus();
+    bus.write_word(0x300000, 0x1234);
+    bus.write_long(0x300010, 0xDEADBEEF);
+    bus.write_long(0x0FFFFE, 0xCAFEF00D); // straddles ROM and RAM banks
+    assert_eq!(bus.read_word(0x300000), 0x1234);
+    assert_eq!(bus.read_long(0x300010), 0xDEADBEEF);
+    assert_eq!(bus.read_byte(0x300011), 0xAD);
+    assert_eq!(bus.read_long(0x0FFFFE), 0xCAFEF00D);
+    assert_eq!(bus.read_word(0x100000), 0xF00D);
+}
+
+#[test]
+fn cpu_stores_and_loads_through_mapper_ram() {
+    use crate::cpu::Cpu;
+    let mut bus = writable_ssf_bus();
+    // move.l #$11223344,($380000).l ; movea.l #$380000,a0 ; move.w (a0),d1
+    let code: [u16; 9] = [
+        0x23FC, 0x1122, 0x3344, 0x0038, 0x0000, 0x207C, 0x0038, 0x0000, 0x3210,
+    ];
+    for (i, w) in code.iter().enumerate() {
+        bus.write_word(0x200000 + 2 * i as u32, *w); // code in mapper RAM too
+    }
+    let mut cpu = Cpu::new(&mut bus);
+    cpu.pc = 0x200000;
+    for _ in 0..3 {
+        cpu.step_instruction(&mut bus);
+    }
+    assert_eq!(bus.read_long(0x380000), 0x11223344);
+    assert_eq!(cpu.d[1] & 0xFFFF, 0x1122);
+}
+
+#[test]
+fn vdp_dma_reads_mapper_ram() {
+    let mut bus = writable_ssf_bus();
+    for (i, w) in [0x0102u16, 0x0304, 0x0506, 0x0708].iter().enumerate() {
+        bus.write_word(0x300000 + 2 * i as u32, *w);
+    }
+    assert_eq!(bus.dma_source_word(0x300002), 0x0304);
+    for reg in [0x8114u16, 0x8F02, 0x9304, 0x9400, 0x9500, 0x9600, 0x9718] {
+        bus.write_word(0xC00004, reg); // mode 5 + DMA, 4 words from $300000
+    }
+    bus.write_word(0xC00004, 0x4000);
+    bus.write_word(0xC00004, 0x0080); // VRAM write at 0, DMA
+    for _ in 0..20 {
+        bus.tick(3420);
+    }
+    assert_eq!(
+        &bus.vdp.vram[..8],
+        &[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]
+    );
+}
+
+#[test]
+fn whole_window_of_ram_round_trips_through_a_state() {
+    // The whole 4 MB window, ROM pages included, used as RAM.
+    let mut bus = writable_ssf_bus();
+    for addr in (0..0x400000u32).step_by(0x1000) {
+        bus.write_long(addr, addr ^ 0x5A5A_5A5A);
+    }
+    let json = serde_json::to_string(&bus.everdrive).unwrap();
+    assert!(
+        json.len() < 9 * 1024 * 1024,
+        "state is {} bytes",
+        json.len()
+    );
+
+    let mut restored = Bus::new();
+    restored.everdrive = serde_json::from_str(&json).unwrap();
+    restored.restore_rom(bus.take_rom_image());
+    for addr in (0..0x400000u32).step_by(0x1000) {
+        assert_eq!(restored.read_long(addr), addr ^ 0x5A5A_5A5A);
+    }
+    assert_eq!(restored.read_byte(0x3FFFFF), 0xFF);
 }
 
 proptest! {
@@ -289,7 +490,7 @@ proptest! {
         val in any::<u8>(),
     ) {
         let mut m = EverdriveMapper::new();
-        m.load_rom(&[0u8; 0x1000]);   // minimum 4MB backing buffer
+        m.load_rom(vec![0u8; 0x1000]);   // minimum 4MB backing buffer
         m.write_enable = true;
         m.banks[slot] = bank;          // bank < 8 stays within the 4MB buffer
         let addr = (slot as u32) * BANK_SIZE as u32 + off;
@@ -304,7 +505,7 @@ proptest! {
         val in any::<u8>(),
     ) {
         let mut m = EverdriveMapper::new();
-        m.load_rom(&[0u8; 0x1000]);
+        m.load_rom(vec![0u8; 0x1000]);
         // write_enable defaults to false
         let before = m.read(addr);
         m.write(addr, val);

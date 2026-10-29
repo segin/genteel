@@ -320,6 +320,81 @@ impl<M: MemoryInterface, I: IoInterface> Z80<M, I> {
         }
     }
 
+    /// Run `f` with this CPU's state attached to another memory and I/O
+    /// interface, then keep the resulting state.
+    ///
+    /// This lets a caller hold one borrow of a shared bus for a whole run
+    /// of instructions (see `Z80BusView`) instead of borrowing per byte.
+    /// The register file is copied in and out once per call, so batching
+    /// several `step` calls inside `f` is cheaper than one call per step.
+    pub fn with_bus<M2, I2, R>(
+        &mut self,
+        memory: M2,
+        io: I2,
+        f: impl FnOnce(&mut Z80<M2, I2>) -> R,
+    ) -> R
+    where
+        M2: MemoryInterface,
+        I2: IoInterface,
+    {
+        /* Every field except `memory` and `io`. The struct literal below
+        fails to compile if a field is added and not listed here. */
+        macro_rules! cpu_state {
+            ($apply:ident) => {
+                $apply!(
+                    a,
+                    f,
+                    b,
+                    c,
+                    d,
+                    e,
+                    h,
+                    l,
+                    a_prime,
+                    f_prime,
+                    b_prime,
+                    c_prime,
+                    d_prime,
+                    e_prime,
+                    h_prime,
+                    l_prime,
+                    ix,
+                    iy,
+                    sp,
+                    pc,
+                    i,
+                    r,
+                    iff1,
+                    iff2,
+                    im,
+                    memptr,
+                    halted,
+                    pending_ei,
+                    q,
+                    flags_written,
+                    int_pending_cycles,
+                    int_vector,
+                    cycles,
+                    debug
+                )
+            };
+        }
+        macro_rules! attach {
+            ($($field:ident),*) => {
+                Z80 { $($field: self.$field,)* memory, io }
+            };
+        }
+        let mut cpu = cpu_state!(attach);
+        let result = f(&mut cpu);
+        macro_rules! detach {
+            ($($field:ident),*) => {
+                $(self.$field = cpu.$field;)*
+            };
+        }
+        cpu_state!(detach);
+        result
+    }
+
     /// Reset the CPU to initial state
     pub fn reset(&mut self) {
         self.a = 0xFF;

@@ -21,8 +21,10 @@ mod tests_gui;
 
 pub const SLOT_EXTS: [&str; 10] = ["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9"];
 
-/// Maximum save state size in bytes (25MB) to prevent OOM
-const MAX_STATE_SIZE: u64 = 25 * 1024 * 1024;
+/* Maximum save state size in bytes, to prevent OOM. The machine state is
+under 7 MB; an SSF cartridge can add up to 16 MB of written mapper RAM,
+which is saved as hex (32 MB). */
+const MAX_STATE_SIZE: u64 = 48 * 1024 * 1024;
 
 /// Maximum SRAM size in bytes (2MB) to prevent OOM/DoS
 const MAX_SRAM_SIZE: u64 = 2 * 1024 * 1024;
@@ -36,7 +38,7 @@ use debugger::{GdbMemory, GdbRegisters, GdbServer, RunRequest, StopReason};
 use frontend::InputMapping;
 use input::{InputManager, InputScript};
 use memory::bus::Bus;
-use memory::{SharedBus, Z80Bus};
+use memory::{SharedBus, Z80Bus, Z80BusView, Z80Ports};
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -537,10 +539,12 @@ impl Emulator {
     /// everything that belongs to the session rather than the machine.
     fn adopt_state(&mut self, mut new_emulator: Self) {
         /* The ROM image is not serialized: re-attach the bytes that are in
-         * memory now (they came through the validated loader). restore_rom
-         * keeps the SRAM, mapper banks and region from the state. */
-        let rom = std::mem::take(&mut self.bus.borrow_mut().rom);
-        new_emulator.bus.borrow_mut().restore_rom(&rom);
+         * memory now (they came through the validated loader), as loaded
+         * rather than as a program may have rewritten SSF mapper memory.
+         * restore_rom keeps the SRAM, mapper banks, mapper RAM and region
+         * from the state. */
+        let rom = self.bus.borrow_mut().take_rom_image();
+        new_emulator.bus.borrow_mut().restore_rom(rom);
         let sample_rate = self.bus.borrow().sample_rate;
         new_emulator.bus.borrow_mut().sample_rate = sample_rate;
 
@@ -1074,9 +1078,17 @@ impl Emulator {
         if z80_can_run {
             *ctx.z80_cycle_debt += m68k_cycles as f32 * Z80_CYCLES_PER_M68K_CYCLE;
 
-            while *ctx.z80_cycle_debt >= 1.0 {
-                let cycles = ctx.z80.step();
-                *ctx.z80_cycle_debt -= cycles as f32;
+            if *ctx.z80_cycle_debt >= 1.0 {
+                /* Borrow the bus once for the whole run of Z80 instructions
+                rather than once per memory access. */
+                let mut bus = ctx.bus_rc.borrow_mut();
+                let debt = &mut *ctx.z80_cycle_debt;
+                ctx.z80
+                    .with_bus(Z80BusView::new(&mut bus), Z80Ports, |z80| {
+                        while *debt >= 1.0 {
+                            *debt -= z80.step() as f32;
+                        }
+                    });
             }
         } else {
             /* While the 68000 holds BUSREQ or reset, the Z80 cannot respond,
@@ -1967,8 +1979,10 @@ mod tests {
         emulator.step_frame_internal();
         // At this point, Z80 PC should be 0 because reset was detected
         assert_eq!(emulator.z80.pc, 0, "Z80 PC should be 0 after reset");
-        // 2. Request Bus (Write 0x100 to 0xA11100)
+        // 2. Request Bus (Write 0x100 to 0xA11100), then release reset: a
+        // Z80 held in reset never grants its bus to the 68k.
         emulator.bus.borrow_mut().write_word(0xA11100, 0x0100);
+        emulator.bus.borrow_mut().write_word(0xA11200, 0x0100);
         // 3. Load Code to Z80 RAM (0xA00000)
         {
             let mut bus = emulator.bus.borrow_mut();
@@ -1983,7 +1997,8 @@ mod tests {
             0x00,
             "Z80 RAM should be 0 before run"
         );
-        // 4. Release Bus (Write 0 to 0xA11100)
+        // 4. Reset the Z80 again and release the bus (Write 0 to 0xA11100)
+        emulator.bus.borrow_mut().write_word(0xA11200, 0x0000);
         emulator.bus.borrow_mut().write_word(0xA11100, 0x0000);
         // 5. Release Reset (Write 0x100 to 0xA11200)
         emulator.bus.borrow_mut().write_word(0xA11200, 0x0100);
@@ -2273,11 +2288,11 @@ mod tests {
     #[test]
     fn test_large_state_prevention() {
         let path = std::path::PathBuf::from("test_large.state");
-        // Create a file larger than MAX_STATE_SIZE (25MB + 1 byte)
+        // Create a file one byte larger than MAX_STATE_SIZE.
         // Using valid UTF-8 data (spaces) to exercise the size check specifically.
         let mut file = std::fs::File::create(&path).unwrap();
         let chunk = vec![b' '; 1024 * 1024]; // 1MB chunk
-        for _ in 0..25 {
+        for _ in 0..MAX_STATE_SIZE / chunk.len() as u64 {
             std::io::Write::write_all(&mut file, &chunk).unwrap();
         }
         std::io::Write::write_all(&mut file, b" ").unwrap(); // last byte
@@ -2520,6 +2535,43 @@ mod tests {
         emulator.bus.borrow_mut().write_byte(0x200001, 0x17);
         emulator.load_state(1).unwrap();
         assert_eq!(emulator.bus.borrow_mut().read_byte(0x200001), 0x42);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_state_load_restores_ssf_mapper_banks_and_ram() {
+        with_big_stack(test_state_load_restores_ssf_mapper_banks_and_ram_body);
+    }
+
+    fn test_state_load_restores_ssf_mapper_banks_and_ram_body() {
+        let dir = scratch_dir("state-ssf");
+        let mut rom = idle_loop_rom();
+        rom.resize(0x10_0000, 0x77);
+        rom[0x100..0x108].copy_from_slice(b"SEGA SSF");
+        let mut emulator = load_from_dir(&dir, "game.bin", &rom);
+        {
+            let mut bus = emulator.bus.borrow_mut();
+            bus.write_byte(0xA130F0, 0xA0); // P + W: window becomes writable
+            bus.write_byte(0xA130F3, 0x05); // slot 1 -> bank 5 (RAM)
+            bus.write_byte(0x080010, 0x42); // RAM in bank 5
+            bus.write_byte(0x000400, 0x99); // over a ROM byte
+        }
+        emulator.save_state(2).unwrap();
+        {
+            let mut bus = emulator.bus.borrow_mut();
+            bus.write_byte(0xA130F3, 0x01);
+            bus.write_byte(0x080010, 0x00);
+            bus.write_byte(0x000400, 0x00);
+            bus.write_byte(0x003000, 0x11); // a page the state never saw
+        }
+        emulator.load_state(2).unwrap();
+        let mut bus = emulator.bus.borrow_mut();
+        assert_eq!(bus.everdrive.banks[1], 5);
+        assert_eq!(bus.read_byte(0x080010), 0x42);
+        assert_eq!(bus.read_byte(0x000400), 0x99);
+        assert_eq!(bus.read_byte(0x003000), 0x77, "unsaved write is undone");
+        assert!(bus.rom.is_empty(), "still one copy of the image");
+        drop(bus);
         let _ = std::fs::remove_dir_all(dir);
     }
 
