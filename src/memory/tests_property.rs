@@ -72,6 +72,7 @@ proptest! {
         let mut bus = Bus::new();
         // Request bus
         bus.write_byte(0xA11100, 0x01);
+        bus.write_byte(0xA11200, 0x01); // release reset so the bus is granted
 
         bus.write_byte(addr, val);
         prop_assert_eq!(bus.read_byte(addr), val);

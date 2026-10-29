@@ -508,13 +508,22 @@ impl Bus {
         }
     }
 
+    /// True while the 68k holds the Z80 bus: BUSREQ asserted and the Z80
+    /// out of reset. A Z80 held in reset never grants the bus, so Z80 RAM
+    /// is unreachable then (Genesis Plus GX maps the Z80 window only in
+    /// that state, `zstate == 3`).
+    #[inline]
+    fn m68k_owns_z80_bus(&self) -> bool {
+        self.z80_bus_request && !self.z80_reset
+    }
+
     /// 68k byte read in the Z80 window. Z80 RAM (8 KiB, mirrored over
     /// `$A00000-$A03FFF`) needs the Z80 bus; the bank register and the VDP
     /// window at `$A07F00` are not readable.
     fn read_z80_area(&mut self, addr: u32) -> u8 {
         match (addr >> 13) & 3 {
             0 | 1 => {
-                if self.z80_bus_request {
+                if self.m68k_owns_z80_bus() {
                     self.z80_ram[(addr & 0x1FFF) as usize]
                 } else {
                     0xFF
@@ -532,7 +541,7 @@ impl Bus {
             // BUSACK: 0 only once the Z80 has released the bus, which needs
             // the request asserted and the Z80 out of reset.
             0xA11100..=0xA11101 => {
-                if self.z80_bus_request && !self.z80_reset {
+                if self.m68k_owns_z80_bus() {
                     0x00
                 } else {
                     0x01
@@ -588,7 +597,7 @@ impl Bus {
     fn write_z80_area(&mut self, addr: u32, value: u8) {
         match (addr >> 13) & 3 {
             0 | 1 => {
-                if self.z80_bus_request {
+                if self.m68k_owns_z80_bus() {
                     self.z80_ram[(addr & 0x1FFF) as usize] = value;
                 }
             }

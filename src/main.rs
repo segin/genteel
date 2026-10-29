@@ -1979,8 +1979,10 @@ mod tests {
         emulator.step_frame_internal();
         // At this point, Z80 PC should be 0 because reset was detected
         assert_eq!(emulator.z80.pc, 0, "Z80 PC should be 0 after reset");
-        // 2. Request Bus (Write 0x100 to 0xA11100)
+        // 2. Request Bus (Write 0x100 to 0xA11100), then release reset: a
+        // Z80 held in reset never grants its bus to the 68k.
         emulator.bus.borrow_mut().write_word(0xA11100, 0x0100);
+        emulator.bus.borrow_mut().write_word(0xA11200, 0x0100);
         // 3. Load Code to Z80 RAM (0xA00000)
         {
             let mut bus = emulator.bus.borrow_mut();
@@ -1995,7 +1997,8 @@ mod tests {
             0x00,
             "Z80 RAM should be 0 before run"
         );
-        // 4. Release Bus (Write 0 to 0xA11100)
+        // 4. Reset the Z80 again and release the bus (Write 0 to 0xA11100)
+        emulator.bus.borrow_mut().write_word(0xA11200, 0x0000);
         emulator.bus.borrow_mut().write_word(0xA11100, 0x0000);
         // 5. Release Reset (Write 0x100 to 0xA11200)
         emulator.bus.borrow_mut().write_word(0xA11200, 0x0100);

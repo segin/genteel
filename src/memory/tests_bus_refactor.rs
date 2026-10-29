@@ -16,6 +16,7 @@ fn test_write_byte_z80_ram() {
     assert_eq!(bus.z80_ram[0], 0);
 
     bus.z80_bus_request = true;
+    bus.z80_reset = false;
     bus.write_byte(0xA00000, 0xAA);
     assert_eq!(bus.z80_ram[0], 0xAA);
 
