@@ -270,10 +270,124 @@ fn test_serde_preserves_registers_and_rebuilds_memory() {
 
     // load_rom (which runs after deserialize) re-establishes the backing memory
     // without disturbing the restored register state.
-    restored.load_rom(&rom);
+    restored.load_rom(rom.as_slice());
     assert!(restored.enabled);
     assert_eq!(restored.banks[3], 6, "banks untouched by load_rom");
     assert_eq!(restored.read(3 * BANK_SIZE as u32), 6, "slot 3 -> bank 6");
+}
+
+#[test]
+fn ssf_image_is_held_once_by_the_mapper() {
+    let rom = ssf_rom_banked(NUM_SLOTS);
+    let mut bus = Bus::new();
+    bus.load_rom(&rom);
+    assert!(bus.rom.is_empty(), "the bus keeps no second copy");
+    assert_eq!(bus.rom_bytes(), &rom[..]);
+    assert_eq!(bus.rom_size(), rom.len());
+    assert!(bus.has_rom());
+
+    bus.clear_rom();
+    assert!(!bus.has_rom());
+    assert!(!bus.everdrive.enabled);
+}
+
+#[test]
+fn plain_rom_stays_on_the_bus() {
+    let rom = normal_rom();
+    let mut bus = Bus::new();
+    bus.load_rom(&rom);
+    assert_eq!(bus.rom, rom);
+    assert_eq!(bus.rom_bytes(), &rom[..]);
+    assert!(bus.everdrive.mem.is_empty());
+}
+
+#[test]
+fn taking_the_image_undoes_writes_over_rom() {
+    let rom = ssf_rom_banked(NUM_SLOTS);
+    let mut bus = Bus::new();
+    bus.load_rom(&rom);
+    bus.write_byte(0xA130F0, control(true, false, true, false));
+    bus.write_byte(0x0000, 0x12);
+    bus.write_byte(BANK_SIZE as u32 + 1, 0x34);
+    assert_eq!(bus.read_byte(0), 0x12);
+
+    let image = bus.take_rom_image();
+    assert_eq!(image, rom, "the image comes back as loaded");
+    assert!(!bus.has_rom());
+}
+
+/// SSF ROM shorter than the 4 MB window, so part of the window is RAM.
+fn ssf_rom_with_ram() -> Vec<u8> {
+    let mut rom = ssf_rom_banked(2);
+    rom[0x1234] = 0xAB;
+    rom
+}
+
+#[test]
+fn mapper_ram_and_banks_survive_serialization() {
+    let rom = ssf_rom_with_ram();
+    let mut bus = Bus::new();
+    bus.load_rom(&rom);
+    bus.write_byte(0xA130F0, control(true, false, true, true));
+    bus.write_byte(bank_reg(5), 3);
+    let ram = 3 * BANK_SIZE as u32 + 0x10;
+    bus.write_byte(ram, 0x5A); // bank 3: RAM past the 1 MB ROM
+    bus.write_byte(0x1234, 0xCD); // overwrites a ROM byte
+    let json = serde_json::to_string(&bus.everdrive).unwrap();
+
+    let mut restored = Bus::new();
+    restored.everdrive = serde_json::from_str(&json).unwrap();
+    restored.restore_rom(bus.take_rom_image());
+    assert_eq!(restored.everdrive.banks[5], 3);
+    assert!(restored.everdrive.write_enable && restored.everdrive.led);
+    assert_eq!(restored.read_byte(ram), 0x5A);
+    assert_eq!(restored.read_byte(0x1234), 0xCD);
+    assert_eq!(restored.read_byte(0x1235), rom[0x1235]);
+
+    // The restored mapper still knows the original ROM bytes.
+    assert_eq!(restored.take_rom_image(), rom);
+}
+
+#[test]
+fn unwritten_mapper_saves_no_pages() {
+    let mut bus = Bus::new();
+    bus.load_rom(&ssf_rom_with_ram());
+    bus.write_byte(0xA130F0, control(true, false, true, false));
+    // Writing a byte back to its loaded value leaves nothing to save.
+    bus.write_byte(0x1234, 0xAB);
+    bus.write_byte(3 * BANK_SIZE as u32, 0xFF);
+    let state = serde_json::to_value(&bus.everdrive).unwrap();
+    assert_eq!(state["ram_pages"], serde_json::json!([]));
+}
+
+#[test]
+fn state_without_mapper_ram_still_loads() {
+    let rom = ssf_rom_with_ram();
+    let old = r#"{"banks":[0,1,2,3,4,5,6,7],"write_enable":true,"led":false,"mode_32x":false}"#;
+    let mut bus = Bus::new();
+    bus.everdrive = serde_json::from_str(old).unwrap();
+    bus.restore_rom(rom.clone());
+    assert!(bus.everdrive.write_enable);
+    assert_eq!(bus.rom_bytes(), &rom[..]);
+}
+
+#[test]
+fn malformed_mapper_ram_pages_are_ignored() {
+    let rom = ssf_rom_with_ram();
+    let page = "11".repeat(0x1000);
+    let state = serde_json::json!({
+        "banks": [0, 1, 2, 3, 4, 5, 6, 7],
+        "ram_pages": [
+            {"page": 99999, "data": page},
+            {"page": 1, "data": "zz"},
+            {"page": 2, "data": page},
+        ],
+    });
+    let mut bus = Bus::new();
+    bus.everdrive = serde_json::from_value(state).unwrap();
+    bus.restore_rom(rom.clone());
+    assert_eq!(bus.read_byte(0x1234), 0xAB, "short page 1 is ignored");
+    assert_eq!(bus.read_byte(0x2000), 0x11, "valid page 2 applies");
 }
 
 proptest! {

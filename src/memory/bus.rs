@@ -66,6 +66,17 @@ fn is_vdp_port(addr: u32) -> bool {
     addr & 0xE700E0 == 0xC00000
 }
 
+/// The cartridge image: the SSF mapper's backing memory when that mapper
+/// owns it, otherwise the bus's own ROM buffer.
+#[inline]
+fn rom_image<'a>(rom: &'a [u8], everdrive: &'a EverdriveMapper) -> &'a [u8] {
+    if everdrive.enabled {
+        everdrive.rom_image()
+    } else {
+        rom
+    }
+}
+
 /// Read a byte from the cartridge window (`$000000-$3FFFFF`).
 #[inline]
 fn cart_read_byte(
@@ -143,7 +154,8 @@ fn dma_read_word(
 /// Routes memory accesses to the appropriate component based on address.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Bus {
-    /// ROM data
+    /// ROM data. Empty while the SSF mapper is active: that mapper holds
+    /// the only copy of the image. Use [`Bus::rom_bytes`] to read either.
     #[serde(skip)]
     pub rom: Vec<u8>,
 
@@ -253,19 +265,21 @@ impl Bus {
 
     /// Install ROM bytes and activate the mapper the image needs. Shared by
     /// a fresh load and a save-state restore.
-    fn install_rom(&mut self, data: &[u8]) {
-        self.rom = data.to_vec();
+    fn install_rom(&mut self, mut rom: Vec<u8>) {
         // Pad ROM to at least 512 bytes to ensure vector table exists
-        if self.rom.len() < 512 {
-            self.rom.resize(512, 0);
+        if rom.len() < 512 {
+            rom.resize(512, 0);
         }
 
         // EverDrive / SSF mapper: ROMs whose header system field is "SEGA SSF"
-        // expose the cartridge window as banked, writable RAM.
-        if EverdriveMapper::rom_uses_mapper(&self.rom) {
-            self.everdrive.load_rom(&self.rom);
+        // expose the cartridge window as banked, writable RAM. The mapper
+        // takes the image as its backing memory, so the bus keeps no copy.
+        if EverdriveMapper::rom_uses_mapper(&rom) {
+            self.rom = Vec::new();
+            self.everdrive.load_rom(rom);
         } else {
             self.everdrive.disable();
+            self.rom = rom;
         }
         self.rom_mapper.enabled = !self.everdrive.enabled && self.rom.len() > SEGA_MAPPER_THRESHOLD;
     }
@@ -273,18 +287,39 @@ impl Bus {
     /// Load a ROM into the bus, configuring SRAM and the console region
     /// from its header.
     pub fn load_rom(&mut self, data: &[u8]) {
-        self.install_rom(data);
+        self.install_rom(data.to_vec());
         self.rom_mapper.reset();
-        self.sram = Sram::configure_from_rom(&self.rom);
+        self.sram = Sram::configure_from_rom(self.rom_bytes());
         self.apply_region();
     }
 
     /// Re-attach ROM bytes after a save state has been deserialized into
     /// this bus. Only state that is not serialized (the ROM image and mapper
-    /// activation) is rebuilt; SRAM contents and mapping, mapper banks and
-    /// the region come from the state.
-    pub fn restore_rom(&mut self, data: &[u8]) {
-        self.install_rom(data);
+    /// activation) is rebuilt; SRAM contents and mapping, mapper banks,
+    /// mapper RAM and the region come from the state.
+    pub fn restore_rom(&mut self, rom: Vec<u8>) {
+        self.install_rom(rom);
+    }
+
+    /// Take the ROM image out of the bus as it was loaded, without any
+    /// bytes a program wrote into SSF mapper memory. Leaves the bus with
+    /// no ROM; used to hand the image to a restored save state.
+    pub fn take_rom_image(&mut self) -> Vec<u8> {
+        if self.everdrive.enabled {
+            self.everdrive.take_rom()
+        } else {
+            std::mem::take(&mut self.rom)
+        }
+    }
+
+    /// The cartridge ROM image, wherever it is held.
+    pub fn rom_bytes(&self) -> &[u8] {
+        rom_image(&self.rom, &self.everdrive)
+    }
+
+    /// True when a cartridge image is loaded.
+    pub fn has_rom(&self) -> bool {
+        !self.rom_bytes().is_empty()
     }
 
     /// Force the console region (or return to header detection with `None`)
@@ -297,7 +332,7 @@ impl Bus {
     /// The region in effect: the configured override, else the ROM header.
     pub fn region(&self) -> ConsoleRegion {
         self.region_override
-            .unwrap_or_else(|| ConsoleRegion::from_header(&self.rom))
+            .unwrap_or_else(|| ConsoleRegion::from_header(self.rom_bytes()))
     }
 
     fn apply_region(&mut self) {
@@ -309,11 +344,12 @@ impl Bus {
     /// Clear the ROM
     pub fn clear_rom(&mut self) {
         self.rom.clear();
+        self.everdrive.disable();
     }
 
     /// Get ROM size
     pub fn rom_size(&self) -> usize {
-        self.rom.len()
+        self.rom_bytes().len()
     }
 
     /// Check if DMA is currently active
@@ -387,7 +423,7 @@ impl Bus {
         match addr {
             0x000000..=0x3FFFFF => self.read_cart_byte(addr),
             // Linear ROM beyond 4 MiB (open bus for smaller images).
-            0x400000..=0x9FFFFF => self.rom.get(addr as usize).copied().unwrap_or(0xFF),
+            0x400000..=0x9FFFFF => self.rom_bytes().get(addr as usize).copied().unwrap_or(0xFF),
             0xA00000..=0xA0FFFF => self.read_z80_area(addr),
             0xA10000..=0xA1FFFF => self.read_io_area(addr),
             0xC00000..=0xDFFFFF => self.read_vdp_byte(addr),
@@ -436,7 +472,7 @@ impl Bus {
         let addr = address & 0xFFFFFF;
         match addr {
             0x000000..=0x3FFFFF => self.read_cart_byte(addr),
-            0x400000..=0x9FFFFF => self.rom.get(addr as usize).copied().unwrap_or(0xFF),
+            0x400000..=0x9FFFFF => self.rom_bytes().get(addr as usize).copied().unwrap_or(0xFF),
             0xA00000..=0xA03FFF => self.z80_ram[(addr & 0x1FFF) as usize],
             0xE00000..=0xFFFFFF => self.work_ram[(addr & 0xFFFF) as usize],
             _ => 0xFF,
@@ -773,7 +809,7 @@ impl Bus {
     /// The word a VDP 68k->VDP DMA would fetch from `addr`.
     pub fn dma_source_word(&self, addr: u32) -> u16 {
         dma_read_word(
-            &self.rom,
+            rom_image(&self.rom, &self.everdrive),
             &self.rom_mapper,
             &self.everdrive,
             &self.sram,
@@ -784,7 +820,7 @@ impl Bus {
 
     /// Advance system state by N MCLK cycles.
     pub fn tick(&mut self, mclk: u32) {
-        let rom = &self.rom;
+        let rom = rom_image(&self.rom, &self.everdrive);
         let mapper = &self.rom_mapper;
         let everdrive = &self.everdrive;
         let sram = &self.sram;

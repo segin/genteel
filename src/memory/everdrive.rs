@@ -29,20 +29,25 @@
 //! this bit is set), `X` = 32X mode, `W` = ROM write-enable (`0` = write
 //! protected, `1` = writable RAM), `L` = on-board LED.
 //!
+//! The mapper owns the cartridge image: its backing memory *is* the ROM
+//! (plus RAM past the end of it), so the bus keeps no second copy. Writes
+//! made through the `W` bit are tracked in 4 KiB pages; save states carry
+//! only those pages, and the original bytes of any overwritten ROM page are
+//! kept so the unmodified image can be handed back for a state restore.
+//!
 //! References: krikzz "extended_ssf-v2" specification and Plutiedev "Beyond 4MB".
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::collections::BTreeMap;
 
 /// Size of one bank / page (512 KB).
 pub const BANK_SIZE: usize = 0x8_0000;
 /// Number of 512KB slots covering the `$000000-$3FFFFF` window (8 * 512KB = 4MB).
 pub const NUM_SLOTS: usize = 8;
-/// Bank register width is 5 bits -> up to 32 banks of backing memory.
-const NUM_BANKS: usize = 32;
-/// Hard cap on backing memory (32 banks * 512KB = 16MB).
-const MAX_MEM_SIZE: usize = NUM_BANKS * BANK_SIZE;
 /// The visible cartridge window is always 4MB.
 const WINDOW_SIZE: usize = NUM_SLOTS * BANK_SIZE;
+/// Granularity at which writes to backing memory are tracked for save states.
+pub const RAM_PAGE_SIZE: usize = 0x1000;
 /// Offset of the ROM header system field used to detect the mapper.
 const HEADER_SYSTEM_OFFSET: usize = 0x100;
 /// Magic string in the header that activates the mapper.
@@ -54,43 +59,103 @@ fn default_banks() -> [u8; NUM_SLOTS] {
     [0, 1, 2, 3, 4, 5, 6, 7]
 }
 
+/// One written page of backing memory in a save state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedRamPage {
+    /// Page index (byte offset / [`RAM_PAGE_SIZE`]).
+    pub page: u32,
+    /// The page contents as a hex string (two digits per byte).
+    pub data: String,
+}
+
+/// Serialized form of the mapper: the registers, plus the written pages.
+/// Every field defaults, so states written before the pages were saved
+/// still load (their mapper RAM simply comes back as the bare ROM image).
+#[derive(Serialize, Deserialize)]
+struct MapperState {
+    #[serde(default = "default_banks")]
+    banks: [u8; NUM_SLOTS],
+    #[serde(default)]
+    write_enable: bool,
+    #[serde(default)]
+    led: bool,
+    #[serde(default)]
+    mode_32x: bool,
+    #[serde(default)]
+    ram_pages: Vec<SavedRamPage>,
+}
+
 /// EverDrive / SSF bank-switching mapper state.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct EverdriveMapper {
     /// True once a `"SEGA SSF"` ROM has activated the mapper. This is derived
     /// from the ROM at load time, so it is not part of the serialized state
-    /// (it is re-established by [`Bus::load_rom`](crate::memory::bus::Bus) after
-    /// a save-state restore).
-    #[serde(skip)]
+    /// (it is re-established by [`Bus::restore_rom`](crate::memory::bus::Bus)
+    /// after a save-state restore).
     pub enabled: bool,
 
     /// Per-slot 5-bit bank selectors.
-    #[serde(default = "default_banks")]
     pub banks: [u8; NUM_SLOTS],
 
     /// `W` bit: when set, CPU writes to `$000000-$3FFFFF` land in backing memory,
     /// turning the window into RAM. Write-protected (`false`) at power-on.
-    #[serde(default)]
     pub write_enable: bool,
 
     /// `L` bit: on-board LED state (cosmetic; tracked for completeness).
-    #[serde(default)]
     pub led: bool,
 
     /// `X` bit: 32X passthrough flag (tracked for completeness).
-    #[serde(default)]
     pub mode_32x: bool,
 
-    /// Backing memory: the ROM image occupies the low bytes and the remainder is
-    /// usable as RAM. Reconstructed from the ROM by `Bus::load_rom`, so (like the
-    /// raw ROM) it is not serialized.
-    #[serde(skip)]
+    /// Backing memory: the ROM image occupies the low `rom_len` bytes and
+    /// the remainder is usable as RAM.
     pub mem: Vec<u8>,
+
+    /// Length of the ROM image at the start of `mem`.
+    rom_len: usize,
+
+    /// Pages of `mem` written since the ROM was loaded.
+    dirty: Vec<bool>,
+
+    /// Original contents of ROM pages that have been overwritten, so the
+    /// unmodified image can be recovered.
+    rom_originals: BTreeMap<usize, Box<[u8]>>,
+
+    /// Written pages from a deserialized state, applied by the next
+    /// [`load_rom`](Self::load_rom).
+    pending_pages: Vec<SavedRamPage>,
 }
 
 impl Default for EverdriveMapper {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Serialize for EverdriveMapper {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        MapperState {
+            banks: self.banks,
+            write_enable: self.write_enable,
+            led: self.led,
+            mode_32x: self.mode_32x,
+            ram_pages: self.written_pages(),
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for EverdriveMapper {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let state = MapperState::deserialize(deserializer)?;
+        Ok(Self {
+            banks: state.banks.map(|b| b & 0x1F),
+            write_enable: state.write_enable,
+            led: state.led,
+            mode_32x: state.mode_32x,
+            pending_pages: state.ram_pages,
+            ..Self::new()
+        })
     }
 }
 
@@ -104,6 +169,10 @@ impl EverdriveMapper {
             led: false,
             mode_32x: false,
             mem: Vec::new(),
+            rom_len: 0,
+            dirty: Vec::new(),
+            rom_originals: BTreeMap::new(),
+            pending_pages: Vec::new(),
         }
     }
 
@@ -113,32 +182,61 @@ impl EverdriveMapper {
             && &rom[HEADER_SYSTEM_OFFSET..HEADER_SYSTEM_OFFSET + HEADER_MAGIC.len()] == HEADER_MAGIC
     }
 
-    /// Activate the mapper for a freshly loaded ROM. The ROM image is copied into
-    /// a backing buffer sized to hold at least the full 4MB window (and the whole
-    /// ROM if it is larger), rounded up to a 512KB bank and capped at 16MB. Any
-    /// bytes past the ROM start out as open-bus (`0xFF`) and become RAM once the
-    /// `W` bit is set.
+    /// Activate the mapper for a freshly loaded ROM. The image becomes the
+    /// backing memory itself, grown to at least the full 4MB window and
+    /// rounded up to a 512KB bank. Bytes past the ROM start out as open bus
+    /// (`0xFF`) and become RAM once the `W` bit is set.
     ///
     /// The register state (banks / `W` / LED) is intentionally left untouched so
     /// that it survives a save-state restore, which loads the ROM *after*
-    /// deserializing the register values.
-    pub fn load_rom(&mut self, rom: &[u8]) {
-        let needed = rom.len().max(WINDOW_SIZE);
-        let size = needed
-            .div_ceil(BANK_SIZE)
-            .saturating_mul(BANK_SIZE)
-            .min(MAX_MEM_SIZE);
-        let mut mem = vec![0xFF; size];
-        let n = rom.len().min(size);
-        mem[..n].copy_from_slice(&rom[..n]);
+    /// deserializing the register values. Written pages from that state are
+    /// applied here.
+    pub fn load_rom(&mut self, rom: impl Into<Vec<u8>>) {
+        let mut mem = rom.into();
+        self.rom_len = mem.len();
+        let size = mem.len().max(WINDOW_SIZE).div_ceil(BANK_SIZE) * BANK_SIZE;
+        mem.resize(size, 0xFF);
         self.mem = mem;
+        self.dirty = vec![false; size / RAM_PAGE_SIZE];
+        self.rom_originals.clear();
         self.enabled = true;
+        for saved in std::mem::take(&mut self.pending_pages) {
+            if !self.apply_saved_page(&saved) {
+                log::warn!(
+                    "Ignoring invalid mapper RAM page {} in save state",
+                    saved.page
+                );
+            }
+        }
     }
 
     /// Deactivate the mapper and release its backing memory (non-SSF ROM).
     pub fn disable(&mut self) {
         self.enabled = false;
         self.mem = Vec::new();
+        self.rom_len = 0;
+        self.dirty = Vec::new();
+        self.rom_originals.clear();
+        self.pending_pages.clear();
+    }
+
+    /// The ROM image as the CPU currently sees it (including any bytes
+    /// overwritten through the `W` bit).
+    pub fn rom_image(&self) -> &[u8] {
+        &self.mem[..self.rom_len.min(self.mem.len())]
+    }
+
+    /// Take the unmodified ROM image out of the mapper, leaving it disabled.
+    /// Overwritten ROM pages are restored to their original bytes first.
+    pub fn take_rom(&mut self) -> Vec<u8> {
+        let mut mem = std::mem::take(&mut self.mem);
+        for (&page, original) in &self.rom_originals {
+            let start = page * RAM_PAGE_SIZE;
+            mem[start..start + original.len()].copy_from_slice(original);
+        }
+        mem.truncate(self.rom_len);
+        self.disable();
+        mem
     }
 
     /// Reset the register state to power-on defaults. The backing memory (which
@@ -177,9 +275,60 @@ impl EverdriveMapper {
             return;
         }
         let off = self.device_offset(addr);
-        if let Some(cell) = self.mem.get_mut(off) {
-            *cell = value;
+        if off < self.mem.len() {
+            self.mark_written(off / RAM_PAGE_SIZE);
+            self.mem[off] = value;
         }
+    }
+
+    /// Record that `page` is about to change, keeping its original bytes
+    /// the first time a ROM page is overwritten.
+    fn mark_written(&mut self, page: usize) {
+        if self.dirty[page] {
+            return;
+        }
+        self.dirty[page] = true;
+        let start = page * RAM_PAGE_SIZE;
+        if start < self.rom_len {
+            let original = self.mem[start..start + RAM_PAGE_SIZE].into();
+            self.rom_originals.insert(page, original);
+        }
+    }
+
+    /// Written pages whose contents differ from what loading the ROM gives.
+    fn written_pages(&self) -> Vec<SavedRamPage> {
+        let mut pages = Vec::new();
+        for (page, _) in self.dirty.iter().enumerate().filter(|(_, &d)| d) {
+            let start = page * RAM_PAGE_SIZE;
+            let data = &self.mem[start..start + RAM_PAGE_SIZE];
+            let unchanged = match self.rom_originals.get(&page) {
+                Some(original) => **original == *data,
+                None => data.iter().all(|&b| b == 0xFF),
+            };
+            if !unchanged {
+                pages.push(SavedRamPage {
+                    page: page as u32,
+                    data: encode_hex(data),
+                });
+            }
+        }
+        pages
+    }
+
+    /// Write a saved page into backing memory. Returns false (and changes
+    /// nothing) if the page is out of range or malformed.
+    fn apply_saved_page(&mut self, saved: &SavedRamPage) -> bool {
+        let page = saved.page as usize;
+        if page >= self.dirty.len() {
+            return false;
+        }
+        let Some(data) = decode_hex(&saved.data, RAM_PAGE_SIZE) else {
+            return false;
+        };
+        self.mark_written(page);
+        let start = page * RAM_PAGE_SIZE;
+        self.mem[start..start + RAM_PAGE_SIZE].copy_from_slice(&data);
+        true
     }
 
     /// Returns true for an address in the `$A130F0-$A130FF` register window.
@@ -214,4 +363,27 @@ impl EverdriveMapper {
             _ => {}
         }
     }
+}
+
+fn encode_hex(data: &[u8]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(data.len() * 2);
+    for &b in data {
+        out.push(DIGITS[(b >> 4) as usize] as char);
+        out.push(DIGITS[(b & 0xF) as usize] as char);
+    }
+    out
+}
+
+/// Decode exactly `len` bytes of hex, or `None` if the text is malformed.
+fn decode_hex(text: &str, len: usize) -> Option<Vec<u8>> {
+    let digits = text.as_bytes();
+    if digits.len() != len * 2 {
+        return None;
+    }
+    let nibble = |c: u8| (c as char).to_digit(16).map(|d| d as u8);
+    digits
+        .chunks_exact(2)
+        .map(|pair| Some((nibble(pair[0])? << 4) | nibble(pair[1])?))
+        .collect()
 }
