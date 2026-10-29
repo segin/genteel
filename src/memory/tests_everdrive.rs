@@ -390,6 +390,93 @@ fn malformed_mapper_ram_pages_are_ignored() {
     assert_eq!(bus.read_byte(0x2000), 0x11, "valid page 2 applies");
 }
 
+/// Bus with a 1 MB SSF ROM and the window made writable, as a program
+/// using the 4 MB of cartridge RAM (e.g. a nommu Linux) sets it up.
+fn writable_ssf_bus() -> Bus {
+    let mut bus = Bus::new();
+    bus.load_rom(&ssf_rom_with_ram());
+    bus.write_word(0xA130F0, 0xA000); // P + W in the high byte, slot 0 = bank 0
+    assert!(bus.everdrive.write_enable);
+    bus
+}
+
+#[test]
+fn word_and_long_writes_land_in_mapper_ram() {
+    let mut bus = writable_ssf_bus();
+    bus.write_word(0x300000, 0x1234);
+    bus.write_long(0x300010, 0xDEADBEEF);
+    bus.write_long(0x0FFFFE, 0xCAFEF00D); // straddles ROM and RAM banks
+    assert_eq!(bus.read_word(0x300000), 0x1234);
+    assert_eq!(bus.read_long(0x300010), 0xDEADBEEF);
+    assert_eq!(bus.read_byte(0x300011), 0xAD);
+    assert_eq!(bus.read_long(0x0FFFFE), 0xCAFEF00D);
+    assert_eq!(bus.read_word(0x100000), 0xF00D);
+}
+
+#[test]
+fn cpu_stores_and_loads_through_mapper_ram() {
+    use crate::cpu::Cpu;
+    let mut bus = writable_ssf_bus();
+    // move.l #$11223344,($380000).l ; movea.l #$380000,a0 ; move.w (a0),d1
+    let code: [u16; 9] = [
+        0x23FC, 0x1122, 0x3344, 0x0038, 0x0000, 0x207C, 0x0038, 0x0000, 0x3210,
+    ];
+    for (i, w) in code.iter().enumerate() {
+        bus.write_word(0x200000 + 2 * i as u32, *w); // code in mapper RAM too
+    }
+    let mut cpu = Cpu::new(&mut bus);
+    cpu.pc = 0x200000;
+    for _ in 0..3 {
+        cpu.step_instruction(&mut bus);
+    }
+    assert_eq!(bus.read_long(0x380000), 0x11223344);
+    assert_eq!(cpu.d[1] & 0xFFFF, 0x1122);
+}
+
+#[test]
+fn vdp_dma_reads_mapper_ram() {
+    let mut bus = writable_ssf_bus();
+    for (i, w) in [0x0102u16, 0x0304, 0x0506, 0x0708].iter().enumerate() {
+        bus.write_word(0x300000 + 2 * i as u32, *w);
+    }
+    assert_eq!(bus.dma_source_word(0x300002), 0x0304);
+    for reg in [0x8114u16, 0x8F02, 0x9304, 0x9400, 0x9500, 0x9600, 0x9718] {
+        bus.write_word(0xC00004, reg); // mode 5 + DMA, 4 words from $300000
+    }
+    bus.write_word(0xC00004, 0x4000);
+    bus.write_word(0xC00004, 0x0080); // VRAM write at 0, DMA
+    for _ in 0..20 {
+        bus.tick(3420);
+    }
+    assert_eq!(
+        &bus.vdp.vram[..8],
+        &[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]
+    );
+}
+
+#[test]
+fn whole_window_of_ram_round_trips_through_a_state() {
+    // The whole 4 MB window, ROM pages included, used as RAM.
+    let mut bus = writable_ssf_bus();
+    for addr in (0..0x400000u32).step_by(0x1000) {
+        bus.write_long(addr, addr ^ 0x5A5A_5A5A);
+    }
+    let json = serde_json::to_string(&bus.everdrive).unwrap();
+    assert!(
+        json.len() < 9 * 1024 * 1024,
+        "state is {} bytes",
+        json.len()
+    );
+
+    let mut restored = Bus::new();
+    restored.everdrive = serde_json::from_str(&json).unwrap();
+    restored.restore_rom(bus.take_rom_image());
+    for addr in (0..0x400000u32).step_by(0x1000) {
+        assert_eq!(restored.read_long(addr), addr ^ 0x5A5A_5A5A);
+    }
+    assert_eq!(restored.read_byte(0x3FFFFF), 0xFF);
+}
+
 proptest! {
     // Reduce cases: each builds a >=4MB backing buffer.
     #![proptest_config(ProptestConfig::with_cases(64))]
