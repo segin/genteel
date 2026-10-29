@@ -573,6 +573,7 @@ Status: `[ ]` open, `[x]` satisfied.
 - [x] **MEM-07** · H · Ubiquitous — The I/O subsystem shall implement the 6-button pad TH protocol per hardware (3rd TH-low: SA0000; 4th TH-high: CBMXYZ; active-low).
   - *Evidence:* `io/mod.rs:232-307` active-high, wrong counter phase.
   - *Verify:* T — vs GPGX sequence.
+  - *Note (TH switch delay):* Now modelled, as in GPGX `gamepad_write`/`gamepad_read`: when a low TH is released to an input it reads high at once, but the pad (3- or 6-button) keeps returning TH-low data for 172 master clocks (25 68k cycles, counted down by `Bus::tick`); driving TH as an output cancels it. The delay is measured from the I/O tick, which runs every 8 (active display) to 32 (blanking) 68k cycles, so it can end up to one slice early. Also as in GPGX, the 6-button counter now counts only TH rising edges the I/O chip drives, not TH floating high after release.
 - [x] **MEM-08** · H · Event — When ~1.5 ms elapse without a TH transition, the I/O subsystem shall reset the 6-button counter.
   - *Evidence:* `io/mod.rs:394` `Io::update` never called outside tests; threshold 1500 unitless.
   - *Verify:* T — tick in 68k cycles (~11k).
@@ -622,6 +623,7 @@ Status: `[ ]` open, `[x]` satisfied.
 - [x] **MEM-23** · L · Ubiquitous — The bus shall report BUSACK granted (0xA11100 bit 0 = 0) only while bus request is asserted and Z80 reset is released.
   - *Evidence:* `bus.rs:337-343`.
   - *Verify:* T.
+  - *Note (Z80 RAM access):* 68k access to Z80 RAM now needs the same condition as BUSACK (request asserted and reset released); before, BUSREQ alone was enough. GPGX enables the 68k's Z80 window only at `zstate == 3` (`gen_zbusreq_w`/`gen_zreset_w`). GPGX gates the whole `$A00000-$A0FFFF` window that way, including the YM2612 at `$A04000` and the bank register; genteel still lets the 68k reach the YM2612 without the Z80 bus. That remaining difference is recorded here and not changed.
 - [x] **MEM-24** · L · Event — When Z80 reset is asserted, the bus shall reset the YM2612. (plausible)
   - *Evidence:* `bus.rs:438-443` only clears bank register.
   - *Verify:* T.
@@ -642,7 +644,8 @@ Status: `[ ]` open, `[x]` satisfied.
 - [ ] **MEM-30** · L · Event — When TH falls on a light-gun port with VDP M3 set, the bus shall latch the HV counter; otherwise the bus shall not latch it.
   - *Evidence:* `bus.rs:433-435` latches on every data-port write.
   - *Verify:* T.
-  - *Status:* Pad data-port writes no longer latch the HV counter (GPGX latches only from a light gun's beam position in `lightgun.c`). No light-gun device is emulated, so the latching half remains.
+  - *Resolution:* Pad data-port writes no longer latch the HV counter. In GPGX the Mega Drive HV latch fires only from a device driving TH (a light gun's beam position in `lightgun.c`); the TH-transition latch in `io_ctrl.c` belongs to the Master System I/O port (`io_z80_write`). A test now drives TH as data and as direction on every port, with M3 set in mode 5, and checks the counter never latches. `Vdp::latch_hv_counter` is documented as the hook for a TH device. Emulating a light gun (Menacer, Justifier) is out of scope, so the latching half has no caller; it belongs to that device when one is added.
+  - *Note:* GPGX also latches the counter when the 68k sets M3 in mode 5 (`vdp_reg_w`, register 0) and freezes it until M3 is cleared; genteel instead shows the live counter until a latch. That is a VDP register behaviour, not a TH one, and is left for a VDP item.
 - [x] **MEM-31** · L · Event — When the 68k writes a long to the VDP data port, the bus shall charge the FIFO stall per word.
   - *Evidence:* `bus.rs:632-638`.
   - *Verify:* T.
@@ -650,14 +653,15 @@ Status: `[ ]` open, `[x]` satisfied.
   - *Evidence:* `everdrive.rs:204` makes slot 0 bank-selectable via 0xA130F1.
   - *Verify:* I — spec check.
   - *Resolution:* Already correct, no change: `$A130F1` is the low byte of the slot-0 bank register, the same as GPGX `mapper_512k_w` for "SEGA SSF" ROMs.
-- [ ] **MEM-33** · L · Ubiquitous — The EverDrive mapper shall hold a single copy of the ROM image.
+- [x] **MEM-33** · L · Ubiquitous — The EverDrive mapper shall hold a single copy of the ROM image.
   - *Evidence:* `everdrive.rs:125-136` keeps `rom` Vec plus up-to-16 MiB copy.
   - *Verify:* A.
-  - *Status:* Not done. The SSF backing buffer still copies the ROM; removing `Bus::rom` for SSF carts needs the GUI's `has_rom` check (reads `bus.rom`) to change. Only affects "SEGA SSF" ROMs (at most 16 MiB extra).
-- [ ] **MEM-34** · L · Ubiquitous — The Z80 bus shall acquire the shared-bus borrow at most once per Z80 instruction.
+  - *Resolution:* The mapper takes the ROM `Vec` as its backing memory (grown to the 4 MiB window with 0xFF) and `Bus::rom` stays empty for "SEGA SSF" carts. `Bus::rom_bytes`, `rom_size` and `has_rom` read the image wherever it lives; the GUI's `has_rom`, the region header, SRAM detection, linear reads above 4 MiB and DMA use them. A test checks the bus keeps no second copy.
+  - *Note (save states):* The bank and control registers were already saved (serde fields of `EverdriveMapper` inside `Bus`); the mapper RAM was not. Writes through the `W` bit are now tracked in 4 KiB pages and a state stores the written pages that differ from the loaded image, as hex, under `ram_pages` (serde default: older states load with bare ROM contents). The original bytes of an overwritten ROM page are kept on first write, so `Bus::take_rom_image` gives a state restore the image as loaded and writes the state never saw are undone. Out-of-range or malformed pages are ignored. The save-state limit went from 25 MB to 48 MB to fit a cart that writes all 16 MiB (32 MiB of hex). GPGX has no writable SSF memory and saves only the mapping (`md_cart_context_save`).
+- [x] **MEM-34** · L · Ubiquitous — The Z80 bus shall acquire the shared-bus borrow at most once per Z80 instruction.
   - *Evidence:* `z80_bus.rs:114-144` borrow per byte. (No BorrowMutError possible.)
   - *Verify:* A — benchmark.
-  - *Status:* Not done. Needs a Z80 core API that borrows the bus once per instruction; a `RefCell` borrow is a counter check and cannot fail here, so there is no correctness issue.
+  - *Resolution:* `Z80::with_bus` runs the CPU against another memory/I/O pair and keeps the resulting state; `Z80BusView` is the Z80 memory map over a `&mut Bus`. The scheduler borrows the bus once per Z80 slice and steps every instruction of the slice through the view, so the borrow is taken at most once per instruction (usually once per several). `Z80Bus` keeps its per-byte borrow for the debugger and tests. SingleStepTests Z80: 1,604,000 pass, 0 fail, 0 T-state mismatches. Measured on a Z80-heavy test ROM (LDIR, banked and indexed accesses), headless: wall-clock time for 3000 frames is unchanged within noise (mean 9.16 s before, 9.06 s after, ±0.4 s run to run), but retired instructions grow by about 0.56 %: the Z80 usually runs one instruction per 8-cycle sync slice, so copying the register file in and out costs slightly more than the per-byte borrows it saves. A cheaper version needs the register file split into its own `Copy` struct.
 - [x] **MEM-35** · L · Event — When the Z80 bank register points at the Z80 window (0xA00000) and the Z80 accesses 0x8000–0xFFFF, the bus shall emulate the hardware lock-up behaviour.
   - *Evidence:* returns 0xFF unless 68k holds bus.
   - *Verify:* T.
@@ -733,7 +737,7 @@ Status: `[ ]` open, `[x]` satisfied.
 - [x] **FE-20** · M · Ubiquitous — The emulator shall be able to load every save state it writes. (plausible)
   - *Evidence:* pretty JSON with large SRAM may exceed 25 MB load limit.
   - *Verify:* T — max-SRAM state round-trip.
-  - *Resolution:* Not reproducible: SRAM is now capped at 64 KiB, and a test with every RAM filled shows the largest state is far below the 25 MB load limit (states are also written as compact JSON now).
+  - *Resolution:* Not reproducible: SRAM is now capped at 64 KiB, and a test with every RAM filled shows the largest state is far below the 25 MB load limit (states are also written as compact JSON now). The limit is now 48 MB, to fit an SSF cart's written mapper RAM.
 - [x] **FE-21** · M · Ubiquitous — The ROM path allow-list shall deny paths outside configured roots, or the allow-list shall be removed.
   - *Evidence:* `main.rs:1490-1496`; `gui.rs:2445-2448` add ROM's parent before checking.
   - *Verify:* T.
