@@ -490,7 +490,7 @@ proptest! {
         val in any::<u8>(),
     ) {
         let mut m = EverdriveMapper::new();
-        m.load_rom(&[0u8; 0x1000]);   // minimum 4MB backing buffer
+        m.load_rom(vec![0u8; 0x1000]);   // minimum 4MB backing buffer
         m.write_enable = true;
         m.banks[slot] = bank;          // bank < 8 stays within the 4MB buffer
         let addr = (slot as u32) * BANK_SIZE as u32 + off;
@@ -505,7 +505,7 @@ proptest! {
         val in any::<u8>(),
     ) {
         let mut m = EverdriveMapper::new();
-        m.load_rom(&[0u8; 0x1000]);
+        m.load_rom(vec![0u8; 0x1000]);
         // write_enable defaults to false
         let before = m.read(addr);
         m.write(addr, val);
