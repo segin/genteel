@@ -133,6 +133,36 @@ impl Z80Bus {
     }
 }
 
+/// Word and long accessors shared by [`Z80Bus`] and [`Z80BusView`]. The Z80
+/// only issues byte accesses, so the wider ones are built from bytes.
+macro_rules! z80_wide_accessors {
+    () => {
+        fn read_word(&mut self, address: u32) -> u16 {
+            let hi = self.read_byte(address);
+            let lo = self.read_byte(address.wrapping_add(1));
+            byte_utils::join_u16(hi, lo)
+        }
+
+        fn write_word(&mut self, address: u32, value: u16) {
+            let (high, low) = byte_utils::split_u16(value);
+            self.write_byte(address, high);
+            self.write_byte(address.wrapping_add(1), low);
+        }
+
+        fn read_long(&mut self, address: u32) -> u32 {
+            let hi = self.read_word(address);
+            let lo = self.read_word(address.wrapping_add(2));
+            byte_utils::join_u32_words(hi, lo)
+        }
+
+        fn write_long(&mut self, address: u32, value: u32) {
+            let (high, low) = byte_utils::split_u32_to_words(value);
+            self.write_word(address, high);
+            self.write_word(address.wrapping_add(2), low);
+        }
+    };
+}
+
 impl MemoryInterface for Z80Bus {
     fn read_byte(&mut self, address: u32) -> u8 {
         Self::read_byte_from_bus(&mut self.bus.bus.borrow_mut(), address)
@@ -142,58 +172,60 @@ impl MemoryInterface for Z80Bus {
         Self::write_byte_to_bus(&mut self.bus.bus.borrow_mut(), address, value)
     }
 
-    fn read_word(&mut self, address: u32) -> u16 {
-        let hi = self.read_byte(address);
-        let lo = self.read_byte(address.wrapping_add(1));
-        byte_utils::join_u16(hi, lo)
-    }
-
-    fn write_word(&mut self, address: u32, value: u16) {
-        let (high, low) = byte_utils::split_u16(value);
-        self.write_byte(address, high);
-        self.write_byte(address.wrapping_add(1), low);
-    }
-
-    fn read_long(&mut self, address: u32) -> u32 {
-        let hi = self.read_word(address);
-        let lo = self.read_word(address.wrapping_add(2));
-        byte_utils::join_u32_words(hi, lo)
-    }
-
-    fn write_long(&mut self, address: u32, value: u32) {
-        let (high, low) = byte_utils::split_u32_to_words(value);
-        self.write_word(address, high);
-        self.write_word(address.wrapping_add(2), low);
-    }
-
-    fn read_size(&mut self, address: u32, size: crate::cpu::decoder::Size) -> u32 {
-        match size {
-            crate::cpu::decoder::Size::Byte => self.read_byte(address) as u32,
-            crate::cpu::decoder::Size::Word => self.read_word(address) as u32,
-            crate::cpu::decoder::Size::Long => self.read_long(address),
-        }
-    }
-
-    fn write_size(&mut self, address: u32, value: u32, size: crate::cpu::decoder::Size) {
-        match size {
-            crate::cpu::decoder::Size::Byte => self.write_byte(address, value as u8),
-            crate::cpu::decoder::Size::Word => self.write_word(address, value as u16),
-            crate::cpu::decoder::Size::Long => self.write_long(address, value),
-        }
-    }
+    z80_wide_accessors!();
 }
 
 impl IoInterface for Z80Bus {
+    fn read_port(&mut self, port: u16) -> u8 {
+        Z80Ports.read_port(port)
+    }
+
+    fn write_port(&mut self, port: u16, value: u8) {
+        Z80Ports.write_port(port, value)
+    }
+}
+
+/// The Z80 memory map over a Genesis bus that is already borrowed.
+///
+/// [`Z80Bus`] borrows the shared bus for every byte. The emulator instead
+/// borrows it once, wraps it in a view and runs the Z80 against the view
+/// with [`Z80::with_bus`](crate::z80::Z80::with_bus). The decode is the same.
+#[derive(Debug)]
+pub struct Z80BusView<'a> {
+    bus: &'a mut Bus,
+}
+
+impl<'a> Z80BusView<'a> {
+    pub fn new(bus: &'a mut Bus) -> Self {
+        Self { bus }
+    }
+}
+
+impl MemoryInterface for Z80BusView<'_> {
+    #[inline]
+    fn read_byte(&mut self, address: u32) -> u8 {
+        Z80Bus::read_byte_from_bus(self.bus, address)
+    }
+
+    #[inline]
+    fn write_byte(&mut self, address: u32, value: u8) {
+        Z80Bus::write_byte_to_bus(self.bus, address, value)
+    }
+
+    z80_wide_accessors!();
+}
+
+/// The Genesis Z80 I/O space. Nothing is connected to it, so `IN` reads the
+/// bus pull-ups (0xFF) and `OUT` does nothing.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Z80Ports;
+
+impl IoInterface for Z80Ports {
     fn read_port(&mut self, _port: u16) -> u8 {
-        // On a real Sega Genesis, the Z80 I/O space is not connected to any internal hardware.
-        // Any IN instruction will result in 0xFF (due to bus pull-ups).
         0xFF
     }
 
-    fn write_port(&mut self, _port: u16, _value: u8) {
-        // On a real Sega Genesis, the Z80 I/O space is not connected to any internal hardware.
-        // Any OUT instruction is effectively a no-op.
-    }
+    fn write_port(&mut self, _port: u16, _value: u8) {}
 }
 
 #[cfg(test)]
@@ -206,6 +238,42 @@ mod tests {
     fn create_test_z80_bus() -> Z80Bus {
         let bus = Rc::new(RefCell::new(Bus::new()));
         Z80Bus::new(SharedBus::new(bus))
+    }
+
+    #[test]
+    fn view_decodes_like_the_shared_adapter() {
+        let mut bus = Bus::new();
+        let mut view = Z80BusView::new(&mut bus);
+        view.write_byte(0x2005, 0x5A); // RAM mirror
+        assert_eq!(view.read_byte(0x0005), 0x5A);
+        assert_eq!(view.read_byte(0x6000), 0xFF);
+        assert_eq!(Z80Ports.read_port(0x12), 0xFF);
+        assert_eq!(bus.z80_ram[5], 0x5A);
+    }
+
+    #[test]
+    fn z80_runs_against_a_borrowed_bus_and_keeps_its_state() {
+        use crate::z80::Z80;
+        let shared = Rc::new(RefCell::new(Bus::new()));
+        let adapter = Z80Bus::new(SharedBus::new(shared.clone()));
+        let mut z80 = Z80::new(adapter.clone(), adapter);
+        // LD A,0x42 ; LD (0x0100),A ; INC A
+        shared.borrow_mut().z80_ram[..6].copy_from_slice(&[0x3E, 0x42, 0x32, 0x00, 0x01, 0x3C]);
+
+        let mut bus = shared.borrow_mut();
+        let t_states = z80.with_bus(Z80BusView::new(&mut bus), Z80Ports, |cpu| {
+            (0..3).map(|_| cpu.step() as u32).sum::<u32>()
+        });
+        assert_eq!(bus.z80_ram[0x100], 0x42);
+        drop(bus);
+
+        assert_eq!(t_states, 7 + 13 + 4);
+        assert_eq!(z80.a, 0x43);
+        assert_eq!(z80.pc, 6);
+        assert_eq!(z80.cycles, 24);
+        assert_eq!(z80.memptr, 0x4201, "LD (nn),A sets MEMPTR to A:(nn+1)");
+        // The CPU's own adapter still reaches the same bus afterwards.
+        assert_eq!(z80.memory.read_byte(0x0100), 0x42);
     }
 
     #[test]

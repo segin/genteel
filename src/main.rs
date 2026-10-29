@@ -36,7 +36,7 @@ use debugger::{GdbMemory, GdbRegisters, GdbServer, RunRequest, StopReason};
 use frontend::InputMapping;
 use input::{InputManager, InputScript};
 use memory::bus::Bus;
-use memory::{SharedBus, Z80Bus};
+use memory::{SharedBus, Z80Bus, Z80BusView, Z80Ports};
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -1074,9 +1074,17 @@ impl Emulator {
         if z80_can_run {
             *ctx.z80_cycle_debt += m68k_cycles as f32 * Z80_CYCLES_PER_M68K_CYCLE;
 
-            while *ctx.z80_cycle_debt >= 1.0 {
-                let cycles = ctx.z80.step();
-                *ctx.z80_cycle_debt -= cycles as f32;
+            if *ctx.z80_cycle_debt >= 1.0 {
+                /* Borrow the bus once for the whole run of Z80 instructions
+                rather than once per memory access. */
+                let mut bus = ctx.bus_rc.borrow_mut();
+                let debt = &mut *ctx.z80_cycle_debt;
+                ctx.z80
+                    .with_bus(Z80BusView::new(&mut bus), Z80Ports, |z80| {
+                        while *debt >= 1.0 {
+                            *debt -= z80.step() as f32;
+                        }
+                    });
             }
         } else {
             /* While the 68000 holds BUSREQ or reset, the Z80 cannot respond,
