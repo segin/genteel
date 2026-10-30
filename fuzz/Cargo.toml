@@ -27,6 +27,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "everdrive_mailbox"
+path = "fuzz_targets/everdrive_mailbox.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "gdb_packet"
 path = "fuzz_targets/gdb_packet.rs"
 test = false

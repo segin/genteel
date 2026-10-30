@@ -322,6 +322,8 @@ fn run_emulation_frames(
     }
     for _ in 0..frames_to_run {
         emulator.step_frame(Some(input));
+        // USB serial output goes to stdout; the GUI sends no input.
+        emulator.pump_usb_serial();
         pending_audio_upload.extend_from_slice(&emulator.audio_buffer);
         emulator.audio_buffer.clear();
     }
