@@ -12,9 +12,11 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 #[cfg(feature = "gui")]
 use winit::{
-    event::{ElementState, Event, WindowEvent},
+    application::ApplicationHandler,
+    event::{ElementState, WindowEvent},
+    event_loop::ActiveEventLoop,
     keyboard::{KeyCode, PhysicalKey},
-    window::WindowBuilder,
+    window::{Window, WindowId},
 };
 #[cfg(feature = "gilrs")]
 pub fn init_gilrs_with_builder<F, R, E>(builder: F) -> Option<R>
@@ -621,12 +623,14 @@ pub struct Framework {
     #[cfg(feature = "gilrs")]
     pub gilrs: Option<Gilrs>,
     pub label_buffer: String,
+    /// Screen area below the menu bar that debug windows are kept in.
+    pub window_area: egui::Rect,
 }
 
 #[cfg(feature = "gui")]
 impl Framework {
     pub fn new(
-        event_loop: &winit::event_loop::EventLoopWindowTarget<()>,
+        event_loop: &ActiveEventLoop,
         width: u32,
         height: u32,
         scale_factor: f32,
@@ -641,13 +645,24 @@ impl Framework {
             event_loop,
             Some(scale_factor),
             None,
+            None,
         );
         let screen_descriptor = egui_wgpu::ScreenDescriptor {
             size_in_pixels: [width, height],
             pixels_per_point: scale_factor,
         };
-        let renderer =
-            egui_wgpu::Renderer::new(pixels.device(), pixels.render_texture_format(), None, 1);
+        /* No MSAA, no depth buffer and no dithering: the overlay is drawn
+         * exactly as before over the scaled framebuffer. */
+        let renderer = egui_wgpu::Renderer::new(
+            pixels.device(),
+            pixels.render_texture_format(),
+            egui_wgpu::RendererOptions {
+                msaa_samples: 1,
+                depth_stencil_format: None,
+                dithering: false,
+                ..Default::default()
+            },
+        );
         let gui_state = GuiState::load_or_default(input_mapping, cli_mapping);
         Self {
             egui_ctx,
@@ -656,15 +671,15 @@ impl Framework {
             renderer,
             gui_state,
             tile_texture: None,
-            tile_viewer_image: std::sync::Arc::new(egui::ColorImage::new(
+            tile_viewer_image: std::sync::Arc::new(egui::ColorImage::filled(
                 [128, 1024],
                 egui::Color32::TRANSPARENT,
             )),
-            plane_a_viewer_image: std::sync::Arc::new(egui::ColorImage::new(
+            plane_a_viewer_image: std::sync::Arc::new(egui::ColorImage::filled(
                 [0, 0],
                 egui::Color32::TRANSPARENT,
             )),
-            plane_b_viewer_image: std::sync::Arc::new(egui::ColorImage::new(
+            plane_b_viewer_image: std::sync::Arc::new(egui::ColorImage::filled(
                 [0, 0],
                 egui::Color32::TRANSPARENT,
             )),
@@ -674,13 +689,10 @@ impl Framework {
             #[cfg(feature = "gilrs")]
             gilrs: init_gilrs(),
             label_buffer: String::with_capacity(64),
+            window_area: egui::Rect::EVERYTHING,
         }
     }
-    pub fn handle_event(
-        &mut self,
-        window: &winit::window::Window,
-        event: &winit::event::WindowEvent,
-    ) {
+    pub fn handle_event(&mut self, window: &Window, event: &WindowEvent) {
         let _ = self.egui_state.on_window_event(window, event);
     }
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -690,6 +702,12 @@ impl Framework {
     }
     pub fn scale_factor(&mut self, scale_factor: f32) {
         self.screen_descriptor.pixels_per_point = scale_factor;
+    }
+
+    /// A window constrained to the area below the menu bar, where egui
+    /// placed windows when the menu bar panel was shown on the context.
+    fn debug_window(&self, title: &'static str) -> egui::Window<'static> {
+        egui::Window::new(title).constrain_to(self.window_area)
     }
 
     fn label_fmt(buffer: &mut String, ui: &mut egui::Ui, args: std::fmt::Arguments) {
@@ -826,10 +844,10 @@ impl Framework {
         }
     }
 
-    pub fn prepare(&mut self, window: &winit::window::Window, debug_info: &DebugInfo) {
+    pub fn prepare(&mut self, window: &Window, debug_info: &DebugInfo) {
         let ctx = self.egui_ctx.clone();
         let raw_input = self.egui_state.take_egui_input(window);
-        ctx.begin_frame(raw_input);
+        ctx.begin_pass(raw_input);
 
         // Global shortcuts
         let ctrl = ctx.input(|i| i.modifiers.command);
@@ -869,17 +887,29 @@ impl Framework {
     }
 
     fn render_top_menu_bar(&mut self, debug_info: &DebugInfo) {
-        // Draw the GUI
-
-        egui::TopBottomPanel::top("menubar_container").show(&self.egui_ctx, |ui| {
-            egui::menu::bar(ui, |ui| {
+        /* Panels are laid out inside a Ui; this is the full-viewport
+         * background Ui that `Context::run_ui` would provide. */
+        let ctx = self.egui_ctx.clone();
+        let mut root_ui = egui::Ui::new(
+            ctx.clone(),
+            egui::Id::new("menubar_root"),
+            egui::UiBuilder::new()
+                .layer_id(egui::LayerId::background())
+                .max_rect(ctx.viewport_rect()),
+        );
+        /* Menus close only on an explicit `ui.close()` or a click outside,
+         * so toggling a window checkbox keeps the Debug menu open. */
+        let menu_config = egui::containers::menu::MenuConfig::new()
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
+        let menu_bar = egui::Panel::top("menubar_container").show(&mut root_ui, |ui| {
+            egui::MenuBar::new().config(menu_config).ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
                     if ui
                         .add(egui::Button::new("Open...").shortcut_text("Ctrl+O"))
                         .clicked()
                     {
                         self.gui_state.pick_rom_requested = true;
-                        ui.close_menu();
+                        ui.close();
                     }
                     ui.menu_button("Open Recent", |ui| {
                         if self.gui_state.recent_roms.is_empty() {
@@ -893,7 +923,7 @@ impl Framework {
                                 if ui.button(filename).clicked() {
                                     let mut lock = self.pending_rom_path.lock().unwrap();
                                     *lock = Some(path.clone());
-                                    ui.close_menu();
+                                    ui.close();
                                 }
                             }
                         }
@@ -907,14 +937,14 @@ impl Framework {
                         .clicked()
                     {
                         self.gui_state.reset_requested = true;
-                        ui.close_menu();
+                        ui.close();
                     }
                     if ui
                         .add_enabled(debug_info.has_rom, egui::Button::new("Close ROM"))
                         .clicked()
                     {
                         self.gui_state.close_requested = true;
-                        ui.close_menu();
+                        ui.close();
                     }
                     ui.separator();
                     ui.menu_button("Save State", |ui| {
@@ -926,7 +956,7 @@ impl Framework {
                             };
                             if ui.add_enabled(debug_info.has_rom, btn).clicked() {
                                 self.gui_state.save_requested = Some(slot);
-                                ui.close_menu();
+                                ui.close();
                             }
                         }
                     });
@@ -939,7 +969,7 @@ impl Framework {
                             };
                             if ui.add_enabled(debug_info.has_rom, btn).clicked() {
                                 self.gui_state.load_requested = Some(slot);
-                                ui.close_menu();
+                                ui.close();
                             }
                         }
                     });
@@ -948,22 +978,22 @@ impl Framework {
                         .clicked()
                     {
                         self.gui_state.set_window_open("State Browser", true);
-                        ui.close_menu();
+                        ui.close();
                     }
                     ui.separator();
                     if ui.button("Quit").clicked() {
                         self.gui_state.quit_requested = true;
-                        ui.close_menu();
+                        ui.close();
                     }
                 });
                 ui.menu_button("Settings", |ui| {
                     if ui.button("Video").clicked() {
                         self.gui_state.set_window_open("Settings", true);
-                        ui.close_menu();
+                        ui.close();
                     }
                     if ui.button("Input Mapping").clicked() {
                         self.gui_state.set_window_open("Settings", true);
-                        ui.close_menu();
+                        ui.close();
                     }
                 });
                 ui.menu_button("Debug", |ui| {
@@ -975,12 +1005,12 @@ impl Framework {
                     if ui.button(pause_label).clicked() {
                         self.gui_state.paused = !self.gui_state.paused;
                         self.gui_state.save();
-                        ui.close_menu();
+                        ui.close();
                     }
                     if ui.button("⏭ Single Step").clicked() {
                         self.gui_state.single_step = true;
                         self.gui_state.paused = true;
-                        ui.close_menu();
+                        ui.close();
                     }
                     ui.separator();
                     let mut names: Vec<String> = self.gui_state.windows.keys().cloned().collect();
@@ -998,11 +1028,14 @@ impl Framework {
                 ui.menu_button("Help", |ui| {
                     if ui.button("About").clicked() {
                         self.gui_state.show_about = true;
-                        ui.close_menu();
+                        ui.close();
                     }
                 });
             });
         });
+        let content = ctx.content_rect();
+        self.window_area =
+            content.with_min_y(menu_bar.response.rect.bottom().min(content.bottom()));
     }
 
     fn render_config_warning_window(&mut self) {
@@ -1010,7 +1043,7 @@ impl Framework {
             return;
         };
         let mut dismissed = false;
-        egui::Window::new("Configuration Problem")
+        self.debug_window("Configuration Problem")
             .collapsible(false)
             .show(&self.egui_ctx, |ui| {
                 ui.label(&msg);
@@ -1025,7 +1058,7 @@ impl Framework {
 
     fn render_about_window(&mut self) {
         if self.gui_state.show_about {
-            egui::Window::new("About Genteel")
+            self.debug_window("About Genteel")
                 .open(&mut self.gui_state.show_about)
                 .show(&self.egui_ctx, |ui| {
                     ui.vertical_centered(|ui| {
@@ -1066,7 +1099,7 @@ impl Framework {
         if self.gui_state.is_window_open("Performance & Debug") {
             let mut open = true;
 
-            egui::Window::new("Performance & Debug")
+            self.debug_window("Performance & Debug")
                 .open(&mut open)
                 .show(&self.egui_ctx, |ui| {
                     let dt = ui.ctx().input(|i| i.stable_dt);
@@ -1167,7 +1200,7 @@ impl Framework {
         if self.gui_state.is_window_open("Settings") {
             let mut open = true;
 
-            egui::Window::new("Settings")
+            self.debug_window("Settings")
                 .open(&mut open)
                 .show(&self.egui_ctx, |ui| {
                     ui.heading("Video");
@@ -1219,7 +1252,7 @@ impl Framework {
         if self.gui_state.is_window_open("Execution Control") {
             let mut open = true;
 
-            egui::Window::new("Execution Control")
+            self.debug_window("Execution Control")
                 .open(&mut open)
                 .show(&self.egui_ctx, |ui| {
                     ui.horizontal(|ui| {
@@ -1250,7 +1283,7 @@ impl Framework {
         if self.gui_state.is_window_open("M68k Status") {
             let mut open = true;
 
-            egui::Window::new("M68k Status")
+            self.debug_window("M68k Status")
                 .open(&mut open)
                 .show(&self.egui_ctx, |ui| {
                     ui.style_mut().override_text_style = Some(egui::TextStyle::Monospace);
@@ -1318,7 +1351,7 @@ impl Framework {
         if self.gui_state.is_window_open("Z80 Status") {
             let mut open = true;
 
-            egui::Window::new("Z80 Status")
+            self.debug_window("Z80 Status")
                 .open(&mut open)
                 .show(&self.egui_ctx, |ui| {
                     Self::label_fmt(
@@ -1429,7 +1462,7 @@ impl Framework {
         if self.gui_state.is_window_open("Disassembly") {
             let mut open = true;
 
-            egui::Window::new("Disassembly")
+            self.debug_window("Disassembly")
                 .open(&mut open)
                 .show(&self.egui_ctx, |ui| {
                     ui.horizontal(|ui| {
@@ -1442,7 +1475,7 @@ impl Framework {
                     });
                     let gnu = self.gui_state.gnu_syntax;
                     egui::ScrollArea::vertical()
-                        .id_source("m68k_disasm")
+                        .id_salt("m68k_disasm")
                         .show(ui, |ui| {
                             ui.style_mut().override_text_style = Some(egui::TextStyle::Monospace);
                             for (addr, instr, words) in &debug_info.m68k_disasm {
@@ -1467,7 +1500,7 @@ impl Framework {
                     ui.separator();
                     ui.heading("Z80 Disassembly");
                     egui::ScrollArea::vertical()
-                        .id_source("z80_disasm")
+                        .id_salt("z80_disasm")
                         .show(ui, |ui| {
                             ui.style_mut().override_text_style = Some(egui::TextStyle::Monospace);
                             for (addr, byte) in &debug_info.z80_disasm {
@@ -1505,7 +1538,7 @@ impl Framework {
         if self.gui_state.is_window_open("Palette Viewer") {
             let mut open = true;
 
-            egui::Window::new("Palette Viewer")
+            self.debug_window("Palette Viewer")
                 .open(&mut open)
                 .show(&self.egui_ctx, |ui| {
                     for palette in 0..4 {
@@ -1552,7 +1585,7 @@ impl Framework {
         if self.gui_state.is_window_open("Tile Viewer") {
             let mut open = true;
 
-            egui::Window::new("Tile Viewer")
+            self.debug_window("Tile Viewer")
                 .open(&mut open)
                 .show(&self.egui_ctx, |ui| {
                     if let Some(vram) = &debug_info.vram {
@@ -1587,7 +1620,7 @@ impl Framework {
                         // dimension makes wgpu panic on texture creation.
                         ui.ctx().load_texture(
                             "tile_viewer",
-                            egui::ColorImage::new([1, 1], egui::Color32::TRANSPARENT),
+                            egui::ColorImage::filled([1, 1], egui::Color32::TRANSPARENT),
                             Default::default(),
                         )
                     });
@@ -1607,7 +1640,7 @@ impl Framework {
         if self.gui_state.is_window_open("Sprite Viewer") {
             let mut open = true;
 
-            egui::Window::new("Sprite Viewer")
+            self.debug_window("Sprite Viewer")
                 .open(&mut open)
                 .show(&self.egui_ctx, |ui| {
                     if let Some(vram) = &debug_info.vram {
@@ -1691,7 +1724,7 @@ impl Framework {
         if self.gui_state.is_window_open("Scroll Plane Viewer") {
             let mut open = true;
 
-            egui::Window::new("Scroll Plane Viewer")
+            self.debug_window("Scroll Plane Viewer")
                 .open(&mut open)
                 .show(&self.egui_ctx, |ui| {
                     let size_bits = debug_info.vdp_registers[crate::vdp::REG_PLANE_SIZE];
@@ -1734,7 +1767,7 @@ impl Framework {
                             let image = std::sync::Arc::make_mut(image_arc);
                             let expected_size = [plane_w * 8, plane_h * 8];
                             if image.size != expected_size {
-                                *image = egui::ColorImage::new(
+                                *image = egui::ColorImage::filled(
                                     expected_size,
                                     egui::Color32::TRANSPARENT,
                                 );
@@ -1793,12 +1826,12 @@ impl Framework {
                         let texture = texture_opt.get_or_insert_with(|| {
                             ui.ctx().load_texture(
                                 id,
-                                egui::ColorImage::new([1, 1], egui::Color32::TRANSPARENT),
+                                egui::ColorImage::filled([1, 1], egui::Color32::TRANSPARENT),
                                 Default::default(),
                             )
                         });
                         texture.set(image_arc.clone(), Default::default());
-                        egui::ScrollArea::both().id_source(id).show(ui, |ui| {
+                        egui::ScrollArea::both().id_salt(id).show(ui, |ui| {
                             ui.image(&*texture);
                         });
                     };
@@ -1834,43 +1867,36 @@ impl Framework {
         if self.gui_state.is_window_open("VDP Memory Hex") {
             let mut open = true;
 
-            egui::Window::new("VDP Memory Hex")
+            self.debug_window("VDP Memory Hex")
                 .open(&mut open)
                 .show(&self.egui_ctx, |ui| {
                     if let Some(vram) = &debug_info.vram {
                         ui.collapsing("VRAM", |ui| {
-                            egui::ScrollArea::vertical()
-                                .id_source("vram_hex")
-                                .show_rows(
-                                    ui,
-                                    ui.text_style_height(&egui::TextStyle::Monospace),
-                                    0x10000 / 16,
-                                    |ui, row_range| {
-                                        egui::Grid::new("vram_grid").show(ui, |ui| {
-                                            let mut l_buffer = String::with_capacity(64);
-                                            for row in row_range {
-                                                let addr = row * 16;
-                                                l_buffer.clear();
-                                                let _ = write!(&mut l_buffer, "{:04X}:", addr);
-                                                ui.label(
-                                                    egui::RichText::new(&l_buffer).monospace(),
-                                                );
+                            egui::ScrollArea::vertical().id_salt("vram_hex").show_rows(
+                                ui,
+                                ui.text_style_height(&egui::TextStyle::Monospace),
+                                0x10000 / 16,
+                                |ui, row_range| {
+                                    egui::Grid::new("vram_grid").show(ui, |ui| {
+                                        let mut l_buffer = String::with_capacity(64);
+                                        for row in row_range {
+                                            let addr = row * 16;
+                                            l_buffer.clear();
+                                            let _ = write!(&mut l_buffer, "{:04X}:", addr);
+                                            ui.label(egui::RichText::new(&l_buffer).monospace());
 
-                                                l_buffer.clear();
-                                                for i in 0..16 {
-                                                    l_buffer.push_str(
-                                                        HEX_LOOKUP[vram[addr + i] as usize],
-                                                    );
-                                                    l_buffer.push(' ');
-                                                }
-                                                ui.label(
-                                                    egui::RichText::new(&l_buffer).monospace(),
-                                                );
-                                                ui.end_row();
+                                            l_buffer.clear();
+                                            for i in 0..16 {
+                                                l_buffer
+                                                    .push_str(HEX_LOOKUP[vram[addr + i] as usize]);
+                                                l_buffer.push(' ');
                                             }
-                                        });
-                                    },
-                                );
+                                            ui.label(egui::RichText::new(&l_buffer).monospace());
+                                            ui.end_row();
+                                        }
+                                    });
+                                },
+                            );
                         });
                     }
                     ui.collapsing("CRAM", |ui| {
@@ -1933,49 +1959,42 @@ impl Framework {
         if self.gui_state.is_window_open("Memory Viewer") {
             let mut open = true;
 
-            egui::Window::new("Memory Viewer")
+            self.debug_window("Memory Viewer")
                 .open(&mut open)
                 .show(&self.egui_ctx, |ui| {
                     if let Some(wram) = &debug_info.wram {
                         ui.collapsing("Work RAM (M68k)", |ui| {
-                            egui::ScrollArea::vertical()
-                                .id_source("wram_hex")
-                                .show_rows(
-                                    ui,
-                                    ui.text_style_height(&egui::TextStyle::Monospace),
-                                    0x10000 / 16,
-                                    |ui, row_range| {
-                                        egui::Grid::new("wram_grid").show(ui, |ui| {
-                                            let mut l_buffer = String::with_capacity(64);
-                                            for row in row_range {
-                                                let addr = row * 16;
-                                                l_buffer.clear();
-                                                let _ = write!(&mut l_buffer, "{:04X}:", addr);
-                                                ui.label(
-                                                    egui::RichText::new(&l_buffer).monospace(),
-                                                );
+                            egui::ScrollArea::vertical().id_salt("wram_hex").show_rows(
+                                ui,
+                                ui.text_style_height(&egui::TextStyle::Monospace),
+                                0x10000 / 16,
+                                |ui, row_range| {
+                                    egui::Grid::new("wram_grid").show(ui, |ui| {
+                                        let mut l_buffer = String::with_capacity(64);
+                                        for row in row_range {
+                                            let addr = row * 16;
+                                            l_buffer.clear();
+                                            let _ = write!(&mut l_buffer, "{:04X}:", addr);
+                                            ui.label(egui::RichText::new(&l_buffer).monospace());
 
-                                                l_buffer.clear();
-                                                for i in 0..16 {
-                                                    l_buffer.push_str(
-                                                        HEX_LOOKUP[wram[addr + i] as usize],
-                                                    );
-                                                    l_buffer.push(' ');
-                                                }
-                                                ui.label(
-                                                    egui::RichText::new(&l_buffer).monospace(),
-                                                );
-                                                ui.end_row();
+                                            l_buffer.clear();
+                                            for i in 0..16 {
+                                                l_buffer
+                                                    .push_str(HEX_LOOKUP[wram[addr + i] as usize]);
+                                                l_buffer.push(' ');
                                             }
-                                        });
-                                    },
-                                );
+                                            ui.label(egui::RichText::new(&l_buffer).monospace());
+                                            ui.end_row();
+                                        }
+                                    });
+                                },
+                            );
                         });
                     }
                     if let Some(z80_ram) = &debug_info.z80_ram {
                         ui.collapsing("Z80 RAM", |ui| {
                             egui::ScrollArea::vertical()
-                                .id_source("z80_ram_hex")
+                                .id_salt("z80_ram_hex")
                                 .show_rows(
                                     ui,
                                     ui.text_style_height(&egui::TextStyle::Monospace),
@@ -2019,7 +2038,7 @@ impl Framework {
         if self.gui_state.is_window_open("Sound Chip Visualizer") {
             let mut open = true;
 
-            egui::Window::new("Sound Chip Visualizer")
+            self.debug_window("Sound Chip Visualizer")
                 .open(&mut open)
                 .show(&self.egui_ctx, |ui| {
                     ui.collapsing("SN76489 PSG", |ui| {
@@ -2115,7 +2134,7 @@ impl Framework {
         if self.gui_state.is_window_open("Audio Channel Waveforms") {
             let mut open = true;
 
-            egui::Window::new("Audio Channel Waveforms")
+            self.debug_window("Audio Channel Waveforms")
                 .open(&mut open)
                 .show(&self.egui_ctx, |ui| {
                     for ch in 0..10 {
@@ -2158,7 +2177,7 @@ impl Framework {
         if self.gui_state.is_window_open("Controller Viewer") {
             let mut open = true;
 
-            egui::Window::new("Controller Viewer")
+            self.debug_window("Controller Viewer")
                 .open(&mut open)
                 .show(&self.egui_ctx, |ui| {
                     for (i, (state, c_type)) in [
@@ -2204,7 +2223,7 @@ impl Framework {
     fn render_expansion_status_window(&mut self) {
         if self.gui_state.is_window_open("Expansion Status") {
             let mut open = true;
-            egui::Window::new("Expansion Status")
+            self.debug_window("Expansion Status")
                 .open(&mut open)
                 .show(&self.egui_ctx, |ui| {
                     ui.group(|ui| {
@@ -2229,7 +2248,7 @@ impl Framework {
         if self.gui_state.is_window_open("State Browser") {
             let mut open = true;
 
-            egui::Window::new("State Browser")
+            self.debug_window("State Browser")
                 .open(&mut open)
                 .show(&self.egui_ctx, |ui| {
                     if let Some(path) = &debug_info.current_rom_path {
@@ -2295,7 +2314,7 @@ impl Framework {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) {
-        let full_output = self.egui_ctx.end_frame();
+        let full_output = self.egui_ctx.end_pass();
         let paint_jobs = self
             .egui_ctx
             .tessellate(full_output.shapes, full_output.pixels_per_point);
@@ -2304,26 +2323,36 @@ impl Framework {
             self.renderer
                 .update_texture(device, queue, id, &image_delta);
         }
-        // Prepare renderer
-        self.renderer
-            .update_buffers(device, queue, encoder, &paint_jobs, &self.screen_descriptor);
+        /* Prepare renderer. The returned command buffers only come from
+         * paint callbacks, which this UI does not use. */
+        let _callback_buffers = self.renderer.update_buffers(
+            device,
+            queue,
+            encoder,
+            &paint_jobs,
+            &self.screen_descriptor,
+        );
         // Render GUI
         {
             let attachments = [Some(wgpu::RenderPassColorAttachment {
                 view: render_target,
+                depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Load,
                     store: wgpu::StoreOp::Store,
                 },
             })];
-            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("egui"),
-                color_attachments: &attachments[..],
-                depth_stencil_attachment: None,
-                occlusion_query_set: None,
-                timestamp_writes: None,
-            });
+            let mut rpass = encoder
+                .begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("egui"),
+                    color_attachments: &attachments[..],
+                    depth_stencil_attachment: None,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                    multiview_mask: None,
+                })
+                .forget_lifetime();
             self.renderer
                 .render(&mut rpass, &paint_jobs, &self.screen_descriptor);
         }
@@ -2513,7 +2542,7 @@ fn handle_keyboard_input(
     record_path: &Option<String>,
 ) -> bool {
     // If egui wants focus, don't process game input
-    if framework.egui_ctx.wants_keyboard_input() {
+    if framework.egui_ctx.egui_wants_keyboard_input() {
         return false;
     }
     let pressed = key_event.state == ElementState::Pressed;
@@ -2551,6 +2580,369 @@ fn handle_keyboard_input(
     false
 }
 
+/// Window, surface and egui state. winit only allows creating windows once
+/// the event loop is running, so these are built on the first `resumed`.
+#[cfg(feature = "gui")]
+struct Graphics {
+    window: Arc<Window>,
+    pixels: pixels::Pixels<'static>,
+    framework: Framework,
+}
+
+#[cfg(feature = "gui")]
+fn create_graphics(event_loop: &ActiveEventLoop, emulator: &Emulator) -> Result<Graphics, String> {
+    let attributes = Window::default_attributes()
+        .with_title("Genteel - Sega Genesis Emulator")
+        .with_inner_size(winit::dpi::LogicalSize::new(
+            frontend::GENESIS_WIDTH as f64 * 3.0,
+            frontend::GENESIS_HEIGHT as f64 * 3.0,
+        ))
+        .with_min_inner_size(winit::dpi::LogicalSize::new(
+            frontend::GENESIS_WIDTH as f64,
+            frontend::GENESIS_HEIGHT as f64,
+        ));
+    let window = Arc::new(
+        event_loop
+            .create_window(attributes)
+            .map_err(|e| e.to_string())?,
+    );
+    let window_size = window.inner_size();
+    let pixels = {
+        let build_pixels = |backend| {
+            let surface_texture =
+                SurfaceTexture::new(window_size.width, window_size.height, Arc::clone(&window));
+            pixels::PixelsBuilder::new(320, 240, surface_texture)
+                .wgpu_backend(backend)
+                .build()
+        };
+
+        match build_pixels(wgpu::Backends::all()) {
+            Ok(p) => p,
+            Err(_) => {
+                log::warn!("wgpu Backends::all() failed; falling back to GL backend");
+                build_pixels(wgpu::Backends::GL).map_err(|e| e.to_string())?
+            }
+        }
+    };
+    let framework = Framework::new(
+        event_loop,
+        window_size.width,
+        window_size.height,
+        window.scale_factor() as f32,
+        &pixels,
+        emulator.input_mapping,
+        emulator
+            .input_mapping_from_cli
+            .then_some(emulator.input_mapping),
+    );
+    Ok(Graphics {
+        window,
+        pixels,
+        framework,
+    })
+}
+
+/// Front-end state driven by the winit event loop.
+#[cfg(feature = "gui")]
+struct App {
+    emulator: Emulator,
+    record_path: Option<String>,
+    gfx: Option<Graphics>,
+    /// Window or surface creation failure, returned from [`run`].
+    init_error: Option<String>,
+    io: IoWorker,
+    audio_buffer: audio::SharedAudioBuffer,
+    /// Keeps the output stream playing for the lifetime of the loop.
+    _audio_output: Option<audio::AudioOutput>,
+    input: crate::input::FrameInput,
+    frame_count: u64,
+    last_frame_inst: std::time::Instant,
+    fps_timer: std::time::Instant,
+    fps_count: u64,
+    pending_audio_upload: Vec<i16>,
+}
+
+#[cfg(feature = "gui")]
+impl App {
+    fn redraw(&mut self, event_loop: &ActiveEventLoop) {
+        let Some(Graphics {
+            window,
+            pixels,
+            framework,
+        }) = self.gfx.as_mut()
+        else {
+            return;
+        };
+        let emulator = &mut self.emulator;
+        let io = &mut self.io;
+        let input = &mut self.input;
+        let record_path = &self.record_path;
+
+        // Poll gamepads
+        #[cfg(feature = "gilrs")]
+        framework.poll_gamepads(&mut input.p1);
+
+        // Check for pick ROM request
+        if framework.gui_state.pick_rom_requested {
+            framework.pick_rom();
+            framework.gui_state.pick_rom_requested = false;
+        }
+
+        // Check for pending ROM load (read on the I/O worker)
+        let pending = {
+            match framework.pending_rom_path.lock() {
+                Ok(mut lock) => lock.take(),
+                Err(_) => {
+                    eprintln!("Failed to acquire pending_rom_path lock");
+                    None
+                }
+            }
+        };
+        if let Some(path) = pending {
+            println!("Loading ROM: {:?}", path);
+            io.request(IoRequest::LoadRom(path, emulator.allowed_paths.clone()));
+        }
+        // Apply completed I/O
+        while let Ok(result) = io.rx.try_recv() {
+            match result {
+                IoResult::Rom(path, Ok(rom)) => {
+                    /* The previous cartridge's battery RAM is
+                     * written before it is replaced. */
+                    if let Some((p, d)) = emulator.sram_save_job() {
+                        io.request(IoRequest::WriteSram(p, d));
+                    }
+                    emulator.install_loaded_rom(rom);
+                    // Update recent ROMs
+                    let mut recent = framework.gui_state.recent_roms.clone();
+                    recent.retain(|p| p != &path);
+                    recent.insert(0, path.clone());
+                    recent.truncate(10);
+                    framework.gui_state.recent_roms = recent;
+                    framework.gui_state.save();
+
+                    // Auto-Load if enabled
+                    if framework.gui_state.auto_save_load {
+                        if let Some(rom_path) = &emulator.current_rom_path {
+                            let auto_path = crate::Emulator::derived_path(rom_path, "auto");
+                            if auto_path.exists() {
+                                io.request(IoRequest::ReadState(auto_path));
+                            }
+                        }
+                    }
+                }
+                IoResult::Rom(path, Err(e)) => {
+                    eprintln!("Failed to load ROM {:?}: {}", path, e);
+                }
+                IoResult::State(path, Ok(json)) => match emulator.apply_state_json(&json) {
+                    Ok(()) => println!("Loaded state from {:?}", path),
+                    Err(e) => eprintln!("{}", e),
+                },
+                IoResult::State(_, Err(e)) => eprintln!("{}", e),
+            }
+        }
+        if framework.gui_state.reset_requested {
+            println!("Hard resetting emulator");
+            emulator.hard_reset();
+            framework.gui_state.reset_requested = false;
+        }
+        if framework.gui_state.close_requested {
+            println!("Closing ROM");
+            if framework.gui_state.auto_save_load {
+                if let Some(path) = &emulator.current_rom_path {
+                    let auto_path = crate::Emulator::derived_path(path, "auto");
+                    match emulator.serialize_state() {
+                        Ok(data) => io.request(IoRequest::WriteState(auto_path, data)),
+                        Err(e) => eprintln!("{}", e),
+                    }
+                }
+            }
+            if let Some((p, d)) = emulator.close_rom_deferred() {
+                io.request(IoRequest::WriteSram(p, d));
+            }
+            framework.gui_state.save();
+            framework.gui_state.close_requested = false;
+        }
+        if let Some(slot) = framework.gui_state.save_requested.take() {
+            match emulator
+                .state_path(slot)
+                .and_then(|p| emulator.serialize_state().map(|d| (p, d)))
+            {
+                Ok((p, d)) => io.request(IoRequest::WriteState(p, d)),
+                Err(e) => eprintln!("Save state failed: {}", e),
+            }
+        }
+        if let Some(slot) = framework.gui_state.load_requested.take() {
+            match emulator.state_path(slot) {
+                Ok(p) => io.request(IoRequest::ReadState(p)),
+                Err(e) => eprintln!("Load state failed: {}", e),
+            }
+        }
+        if let Some(slot) = framework.gui_state.delete_state_requested.take() {
+            if let Err(e) = emulator.delete_state(slot) {
+                eprintln!("Delete state failed: {}", e);
+            }
+        }
+        if framework.gui_state.quit_requested {
+            framework.handle_exit(emulator, record_path);
+            io.finish();
+            event_loop.exit();
+            return;
+        }
+
+        // Sync settings from GUI. single_step is NOT
+        // consumed here: frames only run in AboutToWait,
+        // and consuming the flag on an OS-triggered redraw
+        // would swallow the pending step.
+        emulator.input_mapping = framework.gui_state.input_mapping;
+        let force_red = framework.gui_state.force_red;
+        emulator.paused = framework.gui_state.paused;
+
+        // Poll GDB (can override GUI state)
+        emulator.poll_gdb();
+
+        // Sync emulator state back to GUI
+        framework.gui_state.paused = emulator.paused;
+        // Update FPS in title bar every second
+        if self.fps_timer.elapsed() >= std::time::Duration::from_secs(1) {
+            window.set_title(&format!(
+                "Genteel - Sega Genesis Emulator | FPS: {}",
+                self.fps_count
+            ));
+            self.fps_count = 0;
+            self.fps_timer = std::time::Instant::now();
+        }
+        // Debug: Print every 60 frames
+        if emulator.debug && self.frame_count % 60 == 1 {
+            emulator.log_debug(self.frame_count);
+        }
+
+        // Collect debug info and render
+        let debug_info = collect_debug_info(
+            emulator,
+            &framework.gui_state,
+            force_red,
+            pixels.frame_mut(),
+        );
+
+        // Update egui
+        framework.prepare(window, &debug_info);
+        if let Err(e) = pixels.render_with(|encoder, render_target, context| {
+            // Render the board
+            context.scaling_renderer.render(encoder, render_target);
+            // Render GUI
+            framework.render(encoder, render_target, &context.device, &context.queue);
+            Ok(())
+        }) {
+            eprintln!("Render error: {}", e);
+            event_loop.exit();
+        }
+    }
+}
+
+#[cfg(feature = "gui")]
+impl ApplicationHandler for App {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.gfx.is_some() {
+            return;
+        }
+        match create_graphics(event_loop, &self.emulator) {
+            Ok(gfx) => self.gfx = Some(gfx),
+            Err(e) => {
+                self.init_error = Some(e);
+                event_loop.exit();
+            }
+        }
+    }
+
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        let Some(gfx) = self.gfx.as_mut() else {
+            return;
+        };
+        // Handle GUI events
+        gfx.framework.handle_event(&gfx.window, &event);
+        match event {
+            WindowEvent::CloseRequested => {
+                println!("Using CloseRequested to exit");
+                gfx.framework
+                    .handle_exit(&mut self.emulator, &self.record_path);
+                self.io.finish();
+                event_loop.exit();
+            }
+            WindowEvent::KeyboardInput {
+                event: key_event, ..
+            } => {
+                if handle_keyboard_input(
+                    &key_event,
+                    &mut self.emulator,
+                    &mut self.input,
+                    &mut gfx.framework,
+                    &self.record_path,
+                ) {
+                    self.io.finish();
+                    event_loop.exit();
+                }
+            }
+            WindowEvent::Resized(size) => {
+                if size.width > 0 && size.height > 0 {
+                    gfx.pixels.resize_surface(size.width, size.height).ok();
+                    gfx.framework.resize(size.width, size.height);
+                }
+            }
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                gfx.framework.scale_factor(scale_factor as f32);
+            }
+            WindowEvent::RedrawRequested => self.redraw(event_loop),
+            _ => {}
+        }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        let Some(gfx) = self.gfx.as_mut() else {
+            return;
+        };
+        let framework = &mut gfx.framework;
+        let emulator = &mut self.emulator;
+        let now = std::time::Instant::now();
+        let frame_duration = frame_duration_for_region(emulator.bus.borrow().vdp.is_pal);
+        let mut next_frame = self.last_frame_inst + frame_duration;
+        if now >= next_frame {
+            emulator.input_mapping = framework.gui_state.input_mapping;
+            emulator.paused = framework.gui_state.paused;
+            emulator.single_step = framework.gui_state.single_step;
+            framework.gui_state.single_step = false;
+            emulator.poll_gdb();
+            framework.gui_state.paused = emulator.paused;
+
+            let frames_to_run = frames_due(now, self.last_frame_inst, frame_duration, 4);
+
+            run_emulation_frames(
+                emulator,
+                &self.input,
+                &mut self.pending_audio_upload,
+                frames_to_run,
+            );
+            flush_pending_audio_upload(&self.audio_buffer, &mut self.pending_audio_upload);
+            self.last_frame_inst += frame_duration.mul_f64(frames_to_run as f64);
+            // A stall longer than the catch-up budget (suspend,
+            // blocking window drag, sustained slowdown) must not
+            // be replayed at fast-forward speed: drop the backlog
+            // and resynchronize to wall-clock.
+            if now.duration_since(self.last_frame_inst) > frame_duration.mul_f64(4.0) {
+                self.last_frame_inst = now;
+            }
+            self.frame_count += frames_to_run as u64;
+            self.fps_count += frames_to_run as u64;
+            gfx.window.request_redraw();
+            next_frame = self.last_frame_inst + frame_duration;
+        } else {
+            flush_pending_audio_upload(&self.audio_buffer, &mut self.pending_audio_upload);
+        }
+        /* Sleep until the next frame deadline or the next event
+         * instead of spinning, whether running, paused or idle. */
+        event_loop.set_control_flow(winit::event_loop::ControlFlow::WaitUntil(next_frame));
+    }
+}
+
 #[cfg(feature = "gui")]
 pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), String> {
     if emulator.input_mapping == InputMapping::Original {
@@ -2566,7 +2958,7 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
     #[cfg(target_os = "linux")]
     let event_loop = {
         use winit::platform::x11::EventLoopBuilderExtX11;
-        let mut builder = winit::event_loop::EventLoopBuilder::new();
+        let mut builder = winit::event_loop::EventLoop::builder();
         builder.with_any_thread(true);
         builder.build()
     }
@@ -2574,52 +2966,7 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
 
     #[cfg(not(target_os = "linux"))]
     let event_loop = winit::event_loop::EventLoop::new().map_err(|e| e.to_string())?;
-    let size = winit::dpi::LogicalSize::new(
-        frontend::GENESIS_WIDTH as f64 * 3.0,
-        frontend::GENESIS_HEIGHT as f64 * 3.0,
-    );
-    let window = WindowBuilder::new()
-        .with_title("Genteel - Sega Genesis Emulator")
-        .with_inner_size(size)
-        .with_min_inner_size(winit::dpi::LogicalSize::new(
-            frontend::GENESIS_WIDTH as f64,
-            frontend::GENESIS_HEIGHT as f64,
-        ))
-        .build(&event_loop)
-        .map_err(|e| e.to_string())?;
-    // Leak the window to get a &'static Window, simplifying lifetime management
-    let window: &'static winit::window::Window = Box::leak(Box::new(window));
-    let mut pixels = {
-        let window_size = window.inner_size();
-        let build_pixels = |backend| {
-            let surface_texture =
-                SurfaceTexture::new(window_size.width, window_size.height, window);
-            pixels::PixelsBuilder::new(320, 240, surface_texture)
-                .wgpu_backend(backend)
-                .build()
-        };
-
-        match build_pixels(pixels::wgpu::Backends::all()) {
-            Ok(p) => p,
-            Err(_) => {
-                log::warn!("wgpu Backends::all() failed; falling back to GL backend");
-                build_pixels(pixels::wgpu::Backends::GL).map_err(|e| e.to_string())?
-            }
-        }
-    };
-    // Initialize egui framework
-    let mut framework = Framework::new(
-        &event_loop,
-        window.inner_size().width,
-        window.inner_size().height,
-        window.scale_factor() as f32,
-        &pixels,
-        emulator.input_mapping,
-        emulator
-            .input_mapping_from_cli
-            .then_some(emulator.input_mapping),
-    );
-    let mut io = IoWorker::spawn();
+    let io = IoWorker::spawn();
     // Audio setup
     let audio_buffer = audio::create_audio_buffer();
     let audio_output = match audio::AudioOutput::new(audio_buffer.clone()) {
@@ -2634,274 +2981,28 @@ pub fn run(mut emulator: Emulator, record_path: Option<String>) -> Result<(), St
     }
     // The output rate is final now, so the WAV header matches the samples.
     emulator.start_pending_wav_dump();
-    let _audio_output = audio_output;
-    // Input and Timing state
-    let mut input = crate::input::FrameInput::default();
-    let mut frame_count: u64 = 0;
-    let mut last_frame_inst = std::time::Instant::now();
-    let mut fps_timer = std::time::Instant::now();
-    let mut fps_count = 0;
-    let mut pending_audio_upload = Vec::new();
+    let now = std::time::Instant::now();
+    let mut app = App {
+        emulator,
+        record_path,
+        gfx: None,
+        init_error: None,
+        io,
+        audio_buffer,
+        _audio_output: audio_output,
+        input: crate::input::FrameInput::default(),
+        frame_count: 0,
+        last_frame_inst: now,
+        fps_timer: now,
+        fps_count: 0,
+        pending_audio_upload: Vec::new(),
+    };
     println!("Starting event loop...");
-    event_loop
-        .run(move |event, target| {
-            let _keep_audio_alive = &_audio_output; // Ensure audio_output is moved into the closure
-
-            match event {
-                Event::WindowEvent { event, .. } => {
-                    // Handle GUI events
-                    framework.handle_event(window, &event);
-                    match event {
-                        WindowEvent::CloseRequested => {
-                            println!("Using CloseRequested to exit");
-                            framework.handle_exit(&mut emulator, &record_path);
-                            io.finish();
-                            target.exit();
-                        }
-                        WindowEvent::KeyboardInput {
-                            event: key_event, ..
-                        } => {
-                            if handle_keyboard_input(
-                                &key_event,
-                                &mut emulator,
-                                &mut input,
-                                &mut framework,
-                                &record_path,
-                            ) {
-                                io.finish();
-                                target.exit();
-                            }
-                        }
-                        WindowEvent::Resized(size) => {
-                            if size.width > 0 && size.height > 0 {
-                                pixels.resize_surface(size.width, size.height).ok();
-                                framework.resize(size.width, size.height);
-                            }
-                        }
-                        WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                            framework.scale_factor(scale_factor as f32);
-                        }
-                        WindowEvent::RedrawRequested => {
-                            // Poll gamepads
-                            #[cfg(feature = "gilrs")]
-                            framework.poll_gamepads(&mut input.p1);
-
-                            // Check for pick ROM request
-                            if framework.gui_state.pick_rom_requested {
-                                framework.pick_rom();
-                                framework.gui_state.pick_rom_requested = false;
-                            }
-
-                            // Check for pending ROM load (read on the I/O worker)
-                            let pending = {
-                                match framework.pending_rom_path.lock() {
-                                    Ok(mut lock) => lock.take(),
-                                    Err(_) => {
-                                        eprintln!("Failed to acquire pending_rom_path lock");
-                                        None
-                                    }
-                                }
-                            };
-                            if let Some(path) = pending {
-                                println!("Loading ROM: {:?}", path);
-                                io.request(IoRequest::LoadRom(
-                                    path,
-                                    emulator.allowed_paths.clone(),
-                                ));
-                            }
-                            // Apply completed I/O
-                            while let Ok(result) = io.rx.try_recv() {
-                                match result {
-                                    IoResult::Rom(path, Ok(rom)) => {
-                                        /* The previous cartridge's battery RAM is
-                                         * written before it is replaced. */
-                                        if let Some((p, d)) = emulator.sram_save_job() {
-                                            io.request(IoRequest::WriteSram(p, d));
-                                        }
-                                        emulator.install_loaded_rom(rom);
-                                        // Update recent ROMs
-                                        let mut recent = framework.gui_state.recent_roms.clone();
-                                        recent.retain(|p| p != &path);
-                                        recent.insert(0, path.clone());
-                                        recent.truncate(10);
-                                        framework.gui_state.recent_roms = recent;
-                                        framework.gui_state.save();
-
-                                        // Auto-Load if enabled
-                                        if framework.gui_state.auto_save_load {
-                                            if let Some(rom_path) = &emulator.current_rom_path {
-                                                let auto_path =
-                                                    crate::Emulator::derived_path(rom_path, "auto");
-                                                if auto_path.exists() {
-                                                    io.request(IoRequest::ReadState(auto_path));
-                                                }
-                                            }
-                                        }
-                                    }
-                                    IoResult::Rom(path, Err(e)) => {
-                                        eprintln!("Failed to load ROM {:?}: {}", path, e);
-                                    }
-                                    IoResult::State(path, Ok(json)) => {
-                                        match emulator.apply_state_json(&json) {
-                                            Ok(()) => println!("Loaded state from {:?}", path),
-                                            Err(e) => eprintln!("{}", e),
-                                        }
-                                    }
-                                    IoResult::State(_, Err(e)) => eprintln!("{}", e),
-                                }
-                            }
-                            if framework.gui_state.reset_requested {
-                                println!("Hard resetting emulator");
-                                emulator.hard_reset();
-                                framework.gui_state.reset_requested = false;
-                            }
-                            if framework.gui_state.close_requested {
-                                println!("Closing ROM");
-                                if framework.gui_state.auto_save_load {
-                                    if let Some(path) = &emulator.current_rom_path {
-                                        let auto_path = crate::Emulator::derived_path(path, "auto");
-                                        match emulator.serialize_state() {
-                                            Ok(data) => {
-                                                io.request(IoRequest::WriteState(auto_path, data))
-                                            }
-                                            Err(e) => eprintln!("{}", e),
-                                        }
-                                    }
-                                }
-                                if let Some((p, d)) = emulator.close_rom_deferred() {
-                                    io.request(IoRequest::WriteSram(p, d));
-                                }
-                                framework.gui_state.save();
-                                framework.gui_state.close_requested = false;
-                            }
-                            if let Some(slot) = framework.gui_state.save_requested.take() {
-                                match emulator
-                                    .state_path(slot)
-                                    .and_then(|p| emulator.serialize_state().map(|d| (p, d)))
-                                {
-                                    Ok((p, d)) => io.request(IoRequest::WriteState(p, d)),
-                                    Err(e) => eprintln!("Save state failed: {}", e),
-                                }
-                            }
-                            if let Some(slot) = framework.gui_state.load_requested.take() {
-                                match emulator.state_path(slot) {
-                                    Ok(p) => io.request(IoRequest::ReadState(p)),
-                                    Err(e) => eprintln!("Load state failed: {}", e),
-                                }
-                            }
-                            if let Some(slot) = framework.gui_state.delete_state_requested.take() {
-                                if let Err(e) = emulator.delete_state(slot) {
-                                    eprintln!("Delete state failed: {}", e);
-                                }
-                            }
-                            if framework.gui_state.quit_requested {
-                                framework.handle_exit(&mut emulator, &record_path);
-                                io.finish();
-                                target.exit();
-                                return;
-                            }
-
-                            // Sync settings from GUI. single_step is NOT
-                            // consumed here: frames only run in AboutToWait,
-                            // and consuming the flag on an OS-triggered redraw
-                            // would swallow the pending step.
-                            emulator.input_mapping = framework.gui_state.input_mapping;
-                            let force_red = framework.gui_state.force_red;
-                            emulator.paused = framework.gui_state.paused;
-
-                            // Poll GDB (can override GUI state)
-                            emulator.poll_gdb();
-
-                            // Sync emulator state back to GUI
-                            framework.gui_state.paused = emulator.paused;
-                            // Update FPS in title bar every second
-                            if fps_timer.elapsed() >= std::time::Duration::from_secs(1) {
-                                window.set_title(&format!(
-                                    "Genteel - Sega Genesis Emulator | FPS: {}",
-                                    fps_count
-                                ));
-                                fps_count = 0;
-                                fps_timer = std::time::Instant::now();
-                            }
-                            // Debug: Print every 60 frames
-                            if emulator.debug && frame_count % 60 == 1 {
-                                emulator.log_debug(frame_count);
-                            }
-
-                            // Collect debug info and render
-                            let debug_info = collect_debug_info(
-                                &mut emulator,
-                                &framework.gui_state,
-                                force_red,
-                                pixels.frame_mut(),
-                            );
-
-                            // Update egui
-                            framework.prepare(window, &debug_info);
-                            if let Err(e) = pixels.render_with(|encoder, render_target, context| {
-                                // Render the board
-                                context.scaling_renderer.render(encoder, render_target);
-                                // Render GUI
-                                framework.render(
-                                    encoder,
-                                    render_target,
-                                    &context.device,
-                                    &context.queue,
-                                );
-                                Ok(())
-                            }) {
-                                eprintln!("Render error: {}", e);
-                                target.exit();
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                Event::AboutToWait => {
-                    let now = std::time::Instant::now();
-                    let frame_duration =
-                        frame_duration_for_region(emulator.bus.borrow().vdp.is_pal);
-                    let mut next_frame = last_frame_inst + frame_duration;
-                    if now >= next_frame {
-                        emulator.input_mapping = framework.gui_state.input_mapping;
-                        emulator.paused = framework.gui_state.paused;
-                        emulator.single_step = framework.gui_state.single_step;
-                        framework.gui_state.single_step = false;
-                        emulator.poll_gdb();
-                        framework.gui_state.paused = emulator.paused;
-
-                        let frames_to_run = frames_due(now, last_frame_inst, frame_duration, 4);
-
-                        run_emulation_frames(
-                            &mut emulator,
-                            &input,
-                            &mut pending_audio_upload,
-                            frames_to_run,
-                        );
-                        flush_pending_audio_upload(&audio_buffer, &mut pending_audio_upload);
-                        last_frame_inst += frame_duration.mul_f64(frames_to_run as f64);
-                        // A stall longer than the catch-up budget (suspend,
-                        // blocking window drag, sustained slowdown) must not
-                        // be replayed at fast-forward speed: drop the backlog
-                        // and resynchronize to wall-clock.
-                        if now.duration_since(last_frame_inst) > frame_duration.mul_f64(4.0) {
-                            last_frame_inst = now;
-                        }
-                        frame_count += frames_to_run as u64;
-                        fps_count += frames_to_run as u64;
-                        window.request_redraw();
-                        next_frame = last_frame_inst + frame_duration;
-                    } else {
-                        flush_pending_audio_upload(&audio_buffer, &mut pending_audio_upload);
-                    }
-                    /* Sleep until the next frame deadline or the next event
-                     * instead of spinning, whether running, paused or idle. */
-                    target.set_control_flow(winit::event_loop::ControlFlow::WaitUntil(next_frame));
-                }
-                _ => {}
-            }
-        })
-        .map_err(|e| e.to_string())
+    event_loop.run_app(&mut app).map_err(|e| e.to_string())?;
+    match app.init_error.take() {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
 }
 
 #[cfg(test)]

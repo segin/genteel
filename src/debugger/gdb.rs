@@ -878,8 +878,10 @@ impl GdbServer {
             return None;
         }
         bytes
-            .chunks_exact(2)
-            .map(|pair| Some((hex_digit_value(pair[0])? << 4) | hex_digit_value(pair[1])?))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&[hi, lo]| Some((hex_digit_value(hi)? << 4) | hex_digit_value(lo)?))
             .collect()
     }
 

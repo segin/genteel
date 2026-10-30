@@ -134,9 +134,8 @@ static RGB565_TO_RGBA8_LUT: LazyLock<[u32; 65536]> = LazyLock::new(|| {
 
 /// Convert RGB565 framebuffer to RGBA8 for pixels crate
 pub fn rgb565_to_rgba8(framebuffer_565: &[u16], output: &mut [u8]) {
-    for (&pixel, chunk) in framebuffer_565.iter().zip(output.chunks_exact_mut(4)) {
-        let rgba = RGB565_TO_RGBA8_LUT[pixel as usize];
-        chunk.copy_from_slice(&rgba.to_le_bytes());
+    for (&pixel, chunk) in framebuffer_565.iter().zip(output.as_chunks_mut::<4>().0) {
+        *chunk = RGB565_TO_RGBA8_LUT[pixel as usize].to_le_bytes();
     }
 }
 

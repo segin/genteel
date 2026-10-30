@@ -32,7 +32,7 @@ fn bench_texture_clone(c: &mut Criterion) {
     group.bench_function("direct_colorimage", |b| {
         b.iter(|| {
             let mut image =
-                egui::ColorImage::new([plane_w * 8, plane_h * 8], egui::Color32::TRANSPARENT);
+                egui::ColorImage::filled([plane_w * 8, plane_h * 8], egui::Color32::TRANSPARENT);
             for ty in 0..plane_h {
                 for tx in 0..plane_w {
                     for py in 0..8 {

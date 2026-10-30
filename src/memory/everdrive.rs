@@ -383,7 +383,9 @@ fn decode_hex(text: &str, len: usize) -> Option<Vec<u8>> {
     }
     let nibble = |c: u8| (c as char).to_digit(16).map(|d| d as u8);
     digits
-        .chunks_exact(2)
-        .map(|pair| Some((nibble(pair[0])? << 4) | nibble(pair[1])?))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&[hi, lo]| Some((nibble(hi)? << 4) | nibble(lo)?))
         .collect()
 }

@@ -761,11 +761,11 @@ impl Emulator {
         }
         let body = &data[HEADER..];
         let mut out = vec![0u8; body.len()];
-        for (src, dst) in body.chunks_exact(BLOCK).zip(out.chunks_exact_mut(BLOCK)) {
+        let blocks = body.as_chunks::<BLOCK>().0;
+        for (src, dst) in blocks.iter().zip(out.as_chunks_mut::<BLOCK>().0) {
             let (odd, even) = src.split_at(BLOCK / 2);
-            for (i, pair) in dst.chunks_exact_mut(2).enumerate() {
-                pair[0] = even[i];
-                pair[1] = odd[i];
+            for (i, pair) in dst.as_chunks_mut::<2>().0.iter_mut().enumerate() {
+                *pair = [even[i], odd[i]];
             }
         }
         out
@@ -822,7 +822,11 @@ impl Emulator {
                 .by_index(i)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
 
-            let name = entry.name().to_string();
+            /* An entry whose name cannot be decoded is not a ROM we
+             * can identify by extension. */
+            let Ok(name) = entry.name().map(|n| n.into_owned()) else {
+                continue;
+            };
             let is_rom = rom_extensions.iter().any(|&ext| has_extension(&name, ext));
 
             if is_rom {
