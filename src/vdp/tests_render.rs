@@ -1,4 +1,4 @@
-use super::render::PixelLayerData;
+use super::render::{shadow_highlight, PixelLayerData};
 use super::*;
 
 #[test]
@@ -1108,7 +1108,6 @@ fn test_sprite_fully_oob_rendering() {
 /// sprite and shifts state +1 saturating at 2.
 #[test]
 fn test_sh_operator_3e_is_highlight() {
-    let vdp = Vdp::new();
     let px = PixelLayerData {
         bg_color_idx: 0,
         s_pri: true,
@@ -1121,7 +1120,7 @@ fn test_sh_operator_3e_is_highlight() {
         b_trans: true,
         b_col: 0,
     };
-    let (top, state) = vdp.resolve_shadow_highlight_pixel(&px);
+    let (top, state) = shadow_highlight(&px);
     assert_eq!(top, 1, "Operator sprite is invisible; underlying A shows");
     assert_eq!(state, 1, "Shadow (0) bumped to normal (1) by $3E");
 }
@@ -1130,7 +1129,6 @@ fn test_sh_operator_3e_is_highlight() {
 /// and shifts state -1 saturating at 0.
 #[test]
 fn test_sh_operator_3f_is_shadow() {
-    let vdp = Vdp::new();
     // High-priority A lifts the default state to 1; the $3F sprite then drops it back to 0.
     let px = PixelLayerData {
         bg_color_idx: 0,
@@ -1144,7 +1142,7 @@ fn test_sh_operator_3f_is_shadow() {
         b_trans: true,
         b_col: 0,
     };
-    let (top, state) = vdp.resolve_shadow_highlight_pixel(&px);
+    let (top, state) = shadow_highlight(&px);
     assert_eq!(top, 2, "Operator sprite is invisible; high-prio A shows");
     assert_eq!(
         state, 0,
@@ -1156,7 +1154,6 @@ fn test_sh_operator_3f_is_shadow() {
 /// This is the bit the old simplified pipeline got wrong.
 #[test]
 fn test_sh_default_state_is_shadow() {
-    let vdp = Vdp::new();
     let px = PixelLayerData {
         bg_color_idx: 0,
         s_pri: false,
@@ -1169,14 +1166,13 @@ fn test_sh_default_state_is_shadow() {
         b_trans: true,
         b_col: 0,
     };
-    let (_, state) = vdp.resolve_shadow_highlight_pixel(&px);
+    let (_, state) = shadow_highlight(&px);
     assert_eq!(state, 0, "Low-prio plane only → state is shadow");
 }
 
 /// A high-priority plane pixel lifts the state to normal.
 #[test]
 fn test_sh_high_priority_plane_normal_state() {
-    let vdp = Vdp::new();
     let px = PixelLayerData {
         bg_color_idx: 0,
         s_pri: false,
@@ -1189,18 +1185,18 @@ fn test_sh_high_priority_plane_normal_state() {
         b_trans: true,
         b_col: 0,
     };
-    let (_, state) = vdp.resolve_shadow_highlight_pixel(&px);
+    let (_, state) = shadow_highlight(&px);
     assert_eq!(state, 1, "High-priority A pixel → state is normal");
 }
 
 /// Color transform: state 0 = shadow (halve), 1 = normal, 2 = highlight (toward max).
 #[test]
 fn test_sh_color_transform() {
-    let vdp = Vdp::new();
+    use super::render::color_transform;
     let color = 0b01_0000_u16 << 5; // mid-level green (G6 = 16)
-    let shadowed = vdp.apply_color_transform(color, 0);
-    let normal = vdp.apply_color_transform(color, 1);
-    let highlighted = vdp.apply_color_transform(color, 2);
+    let shadowed = color_transform(color, 0);
+    let normal = color_transform(color, 1);
+    let highlighted = color_transform(color, 2);
     let g_shadow = (shadowed >> 5) & 0x3F;
     let g_normal = (normal >> 5) & 0x3F;
     let g_highlight = (highlighted >> 5) & 0x3F;
@@ -1210,7 +1206,7 @@ fn test_sh_color_transform() {
 
 #[test]
 fn test_determine_top_layer() {
-    let vdp = Vdp::new();
+    use super::render::top_layer;
 
     // Test Sprite priority
     let px1 = PixelLayerData {
@@ -1226,9 +1222,9 @@ fn test_determine_top_layer() {
         b_col: 2,
     };
 
-    let (top_col, top_layer) = vdp.determine_top_layer(&px1);
+    let (top_col, layer) = top_layer(&px1);
     assert_eq!(top_col, 10, "Sprite should win priority");
-    assert_eq!(top_layer, 3, "Sprite is layer 3");
+    assert_eq!(layer, 3, "Sprite is layer 3");
 
     // Test Plane A priority over Plane B when both are low priority
     let px2 = PixelLayerData {
@@ -1244,9 +1240,9 @@ fn test_determine_top_layer() {
         b_col: 2,
     };
 
-    let (top_col, top_layer) = vdp.determine_top_layer(&px2);
+    let (top_col, layer) = top_layer(&px2);
     assert_eq!(top_col, 5, "Plane A should win over Plane B");
-    assert_eq!(top_layer, 2, "Plane A is layer 2");
+    assert_eq!(layer, 2, "Plane A is layer 2");
 }
 
 #[test]
@@ -1495,6 +1491,39 @@ fn test_h40_window_plane_a_boundary_glitches() {
     }
 }
 
+/// The window/plane A boundary glitch needs a fine horizontal scroll: a
+/// scroll that is a multiple of 16 pixels (here 16) leaves the boundary
+/// clean (GPGX `render_bg_m5`: `if (shift)` with `shift = xscroll & 0x0F`).
+#[test]
+fn test_window_boundary_glitch_needs_fine_scroll() {
+    for (scroll, glitch) in [(0x10u8, false), (0x18, true)] {
+        let mut vdp = Vdp::new();
+        vdp.registers[REG_MODE2] = MODE2_DISPLAY_ENABLE;
+        vdp.registers[REG_MODE4] = 0x81; // H40
+        vdp.registers[2] = 0x30; // Plane A @ 0xC000
+        vdp.registers[3] = 0x34; // Window @ 0xD000
+        vdp.registers[REG_PLANE_SIZE] = 0x00; // 32x32
+        vdp.registers[REG_WINDOW_H_POS] = 2; // window left of x = 32
+        vdp.vram[1] = scroll; // plane A full-screen scroll
+        for i in 0..32 {
+            vdp.vram[32 + i] = 0x11; // tile 1: red
+            vdp.vram[64 + i] = 0x22; // tile 2: green
+        }
+        vdp.cram_cache[1] = 0xF800;
+        vdp.cram_cache[2] = 0x07E0;
+        // Every window cell is red, every plane A cell green.
+        for cell in 0..64 {
+            vdp.vram[0xD000 + cell * 2 + 1] = 0x01;
+        }
+        for cell in 0..32 {
+            vdp.vram[0xC000 + cell * 2 + 1] = 0x02;
+        }
+        vdp.render_line(0);
+        let expected = if glitch { 0xF800 } else { 0x07E0 };
+        assert_eq!(vdp.framebuffer[32], expected, "scroll {scroll:#x}");
+    }
+}
+
 /// Road Rash II raster-effect regression: a mid-line CRAM write must NOT
 /// retroactively repaint pixels that were already drawn with the previous
 /// palette. Pixels left of the MCLK position keep the old palette; pixels
@@ -1625,17 +1654,45 @@ fn test_status_scol_set_on_sprite_overlap() {
     );
 }
 
-/// `prev_line_sprite_overflow` is set when the per-line sprite count limit is hit.
+/// Re-rendering a line in the middle of its display (here for a VSRAM
+/// write) does not set the sprite overflow and collision flags again after
+/// a status read has cleared them.
 #[test]
-fn test_prev_line_overflow_records_count_limit() {
+fn mid_line_rerender_does_not_reassert_sprite_flags() {
     let mut vdp = Vdp::new();
-    vdp.registers[REG_MODE4] = 0x81; // H40 → 20 sprites per line
+    vdp.registers[REG_MODE2] = MODE2_DISPLAY_ENABLE;
+    vdp.registers[REG_MODE4] = 0x81; // H40
     vdp.registers[REG_SPRITE_TABLE] = 0x6A;
     let sat_base = 0xD400;
+    vdp.vram[32..64].fill(0x11); // tile 1: opaque
+                                 // 21 overlapping one-tile sprites on line 10: overflow and collision.
+    for i in 0..21u8 {
+        let next = if i == 20 { 0 } else { i + 1 };
+        place_sprite(&mut vdp, sat_base, i as usize, 50, 10, next);
+        vdp.vram[sat_base + i as usize * 8 + 5] = 0x01;
+    }
+    vdp.render_line(10);
+    let first = vdp.read_status();
+    assert_ne!(first & STATUS_SOVR, 0);
+    assert_ne!(first & STATUS_COLLISION, 0);
 
-    // 25 sprites all on line 10 — pushes past the 20-sprite line limit.
-    for i in 0..25u8 {
-        let next = if i == 24 { 0 } else { i + 1 };
+    // The beam is in the middle of line 10.
+    vdp.v_counter = 10;
+    vdp.mclk_line_clocks = vdp.line_timing().active_start + 100 * 8;
+    vdp.write_vsram_word(0, 0x0001);
+    vdp.write_cram_word(2, 0x0EEE);
+    let again = vdp.read_status();
+    assert_eq!(again & (STATUS_SOVR | STATUS_COLLISION), 0);
+}
+
+/// H40 VDP with `count` sprites of `h_tiles` x 1 tiles on line 10.
+fn sprites_on_line(count: u8, h_tiles: u8) -> Vdp {
+    let mut vdp = Vdp::new();
+    vdp.registers[REG_MODE4] = 0x81; // H40: 20 sprites, 320 dots per line
+    vdp.registers[REG_SPRITE_TABLE] = 0x6A;
+    let sat_base = 0xD400;
+    for i in 0..count {
+        let next = if i + 1 == count { 0 } else { i + 1 };
         place_sprite(
             &mut vdp,
             sat_base,
@@ -1644,12 +1701,36 @@ fn test_prev_line_overflow_records_count_limit() {
             10,
             next,
         );
+        vdp.vram[sat_base + i as usize * 8 + 2] = (h_tiles - 1) << 2;
     }
+    vdp
+}
 
+/// Too many sprites on a line sets SOVR but does not arm the X=0 mask for
+/// the next line: 21 one-tile sprites use only 160 of the 320 dots (GPGX
+/// `parse_satb_m5` sets SOVR, `render_obj_m5` arms the mask only at the dot
+/// limit).
+#[test]
+fn sprite_count_overflow_sets_sovr_without_masking_next_line() {
+    let mut vdp = sprites_on_line(21, 1);
     let mut buf = [SpriteAttributes::default(); 80];
-    let _ = vdp.get_active_sprites(10, &mut buf);
-    assert!(
-        vdp.prev_line_sprite_overflow,
-        "Hitting the per-line sprite count limit must set prev_line_sprite_overflow"
-    );
+    assert_eq!(vdp.get_active_sprites(10, &mut buf), 20);
+    assert_ne!(vdp.status & STATUS_SOVR, 0);
+    assert!(!vdp.prev_line_sprite_overflow);
+}
+
+/// Reaching the dot limit arms the X=0 mask for the next line without
+/// setting SOVR: ten 4-tile sprites cover exactly 320 dots.
+#[test]
+fn sprite_dot_limit_masks_next_line_without_sovr() {
+    let mut vdp = sprites_on_line(10, 4);
+    let mut buf = [SpriteAttributes::default(); 80];
+    assert_eq!(vdp.get_active_sprites(10, &mut buf), 10);
+    assert_eq!(vdp.status & STATUS_SOVR, 0);
+    assert!(vdp.prev_line_sprite_overflow);
+
+    // Nine of them (288 dots) do not.
+    let mut vdp = sprites_on_line(9, 4);
+    vdp.get_active_sprites(10, &mut buf);
+    assert!(!vdp.prev_line_sprite_overflow);
 }

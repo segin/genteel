@@ -1,7 +1,7 @@
 //! Rendering rules: window clipping, 2-cell vertical scroll columns, sprite
 //! table parsing limits, the SAT cache and shadow/highlight priorities.
 
-use super::render::PixelLayerData;
+use super::render::{shadow_highlight, PixelLayerData};
 use super::*;
 
 const RED: u16 = 0xF800;
@@ -249,7 +249,6 @@ fn cram_recomposite_matches_full_rerender() {
 
 #[test]
 fn shadow_highlight_priority_rules() {
-    let vdp = Vdp::new();
     let px = |s_pri, s_col: u8, a_pri, a_col: u8, b_pri, b_col: u8| PixelLayerData {
         bg_color_idx: 0x05,
         s_pri,
@@ -264,28 +263,28 @@ fn shadow_highlight_priority_rules() {
     };
     // A transparent high-priority plane pixel still lifts the backdrop.
     assert_eq!(
-        vdp.resolve_shadow_highlight_pixel(&px(false, 0, true, 0, false, 0)),
+        shadow_highlight(&px(false, 0, true, 0, false, 0)),
         (0x05, 1)
     );
     // Sprite colour 14 of palettes 0-2 is never shadowed.
     assert_eq!(
-        vdp.resolve_shadow_highlight_pixel(&px(false, 0x1E, false, 0, false, 0)),
+        shadow_highlight(&px(false, 0x1E, false, 0, false, 0)),
         (0x1E, 1)
     );
     // Palette 3 colour 14 is an operator, not a colour.
     assert_eq!(
-        vdp.resolve_shadow_highlight_pixel(&px(false, 0x3E, false, 0x03, false, 0)),
+        shadow_highlight(&px(false, 0x3E, false, 0x03, false, 0)),
         (0x03, 1)
     );
     // A low-priority operator under a high-priority opaque plane pixel has
     // no effect.
     assert_eq!(
-        vdp.resolve_shadow_highlight_pixel(&px(false, 0x3F, false, 0, true, 0x22)),
+        shadow_highlight(&px(false, 0x3F, false, 0, true, 0x22)),
         (0x22, 1)
     );
     // A low-priority sprite over shadowed planes is shadowed.
     assert_eq!(
-        vdp.resolve_shadow_highlight_pixel(&px(false, 0x13, false, 0, false, 0)),
+        shadow_highlight(&px(false, 0x13, false, 0, false, 0)),
         (0x13, 0)
     );
 }
