@@ -162,6 +162,7 @@ Key Security Tools/Practices:
 ## 8. Development & Testing Environment
 
 Local Setup Instructions: `cargo build` (debug) or `cargo build --release`
+Toolchain and GUI stack: `rust-version` is 1.92, the minimum of the current dependency set (`egui 0.35`). The front end uses `winit 0.30` (an `ApplicationHandler`; the window, `pixels` surface and egui state are created on `resumed`), `pixels 0.17` for the scaled framebuffer, `egui`/`egui-winit`/`egui-wgpu 0.35` for the overlay (all three plus `pixels` share `wgpu 29`), `cpal 0.18` for audio, `gilrs 0.11` for gamepads and `rfd 0.17` (XDG portal) for file dialogs. egui is held at 0.35 because 0.36+ needs `wgpu 30`, which `pixels` does not support yet. The menu bar is a top `Panel` in a full-viewport root `Ui`, and debug windows are constrained to the area below it.
 Testing Frameworks: `cargo test` (unit/integration), `proptest` (property-based tests; every suite sets its case count), `cargo-fuzz` (fuzzing, nightly; `cargo check --manifest-path fuzz/Cargo.toml --bins` works on stable). The core's unit tests live in the library crate and run once; the binary's tests cover the scheduler, save states, CLI and GUI state. Timing-only benchmarks are `#[ignore]`d (`cargo test -- --ignored` runs them), as are the SingleStepTests harnesses that need external data.
 Code Quality Tools: `cargo clippy`, `cargo fmt`, `make audit` (custom audit script)
 
