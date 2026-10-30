@@ -72,8 +72,8 @@ fn bench_image_allocation_optimization(c: &mut Criterion) {
     group.bench_function("old_approach", |b| {
         b.iter(|| {
             let mut pixels = vec![0u8; plane_w * 8 * plane_h * 8 * 4];
-            for pixel in pixels.chunks_exact_mut(4) {
-                pixel.copy_from_slice(&[255, 0, 0, 255]);
+            for pixel in pixels.as_chunks_mut::<4>().0 {
+                *pixel = [255, 0, 0, 255];
             }
             let image =
                 egui::ColorImage::from_rgba_unmultiplied([plane_w * 8, plane_h * 8], &pixels);
@@ -87,10 +87,7 @@ fn bench_image_allocation_optimization(c: &mut Criterion) {
             for pixel in pixels.iter_mut() {
                 *pixel = egui::Color32::from_rgb(255, 0, 0);
             }
-            let image = egui::ColorImage {
-                size: [plane_w * 8, plane_h * 8],
-                pixels,
-            };
+            let image = egui::ColorImage::new([plane_w * 8, plane_h * 8], pixels);
             black_box(image);
         });
     });

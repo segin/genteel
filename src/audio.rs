@@ -526,7 +526,7 @@ impl AudioOutput {
 
         let (device, supported_config) =
             selected.ok_or_else(|| "Failed to locate a usable audio output device".to_string())?;
-        let sample_rate = supported_config.sample_rate().0;
+        let sample_rate = supported_config.sample_rate();
         let channels = supported_config.channels() as usize;
         let sample_format = supported_config.sample_format();
         let stream_config: cpal::StreamConfig = supported_config.into();
@@ -536,19 +536,19 @@ impl AudioOutput {
 
         let stream = match sample_format {
             cpal::SampleFormat::F32 => device.build_output_stream(
-                &stream_config,
+                stream_config,
                 move |data: &mut [f32], _| Self::write_output_f32(data, channels, &mut consumer),
                 err_fn,
                 None,
             ),
             cpal::SampleFormat::I16 => device.build_output_stream(
-                &stream_config,
+                stream_config,
                 move |data: &mut [i16], _| Self::write_output_i16(data, channels, &mut consumer),
                 err_fn,
                 None,
             ),
             cpal::SampleFormat::U16 => device.build_output_stream(
-                &stream_config,
+                stream_config,
                 move |data: &mut [u16], _| Self::write_output_u16(data, channels, &mut consumer),
                 err_fn,
                 None,
