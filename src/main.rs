@@ -210,6 +210,67 @@ pub struct Emulator {
     /// sample rate is final, see `start_pending_wav_dump`).
     #[serde(skip)]
     pub pending_wav_dump: Option<String>,
+    /// Host end of the EverDrive USB serial port (headless stdin).
+    /// Session state, not part of a save state.
+    #[serde(skip)]
+    pub usb_serial: UsbSerialInput,
+}
+
+/// Most host input bytes held for the EverDrive RX FIFO.
+const USB_SERIAL_INPUT_LIMIT: usize = 4096;
+
+/// Host input for the EverDrive USB serial port: chunks from a reader
+/// thread, and the bytes the guest has not taken yet.
+#[derive(Default)]
+pub struct UsbSerialInput {
+    source: Option<std::sync::mpsc::Receiver<Vec<u8>>>,
+    pending: std::collections::VecDeque<u8>,
+}
+
+impl UsbSerialInput {
+    /// Feed the port from stdin. A thread blocks on stdin and passes
+    /// chunks through a small bounded channel, so the emulator never waits
+    /// for input and unread input cannot pile up without limit.
+    pub fn from_stdin() -> Self {
+        let (tx, rx) = std::sync::mpsc::sync_channel(4);
+        let spawned = std::thread::Builder::new()
+            .name("usb-serial-stdin".to_string())
+            .spawn(move || {
+                use std::io::Read;
+                let mut stdin = std::io::stdin().lock();
+                let mut buf = [0u8; 1024];
+                loop {
+                    match stdin.read(&mut buf) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => {
+                            if tx.send(buf[..n].to_vec()).is_err() {
+                                break;
+                            }
+                        }
+                    }
+                }
+            });
+        if let Err(e) = spawned {
+            eprintln!("Cannot read USB serial input from stdin: {}", e);
+        }
+        Self {
+            source: Some(rx),
+            pending: std::collections::VecDeque::new(),
+        }
+    }
+
+    /// Collect what the reader thread has sent, up to the limit.
+    fn poll(&mut self) {
+        let Some(source) = &self.source else {
+            return;
+        };
+        while self.pending.len() < USB_SERIAL_INPUT_LIMIT {
+            match source.try_recv() {
+                Ok(chunk) => self.pending.extend(chunk),
+                Err(_) => break,
+            }
+        }
+    }
 }
 impl Default for Emulator {
     fn default() -> Self {
@@ -294,6 +355,7 @@ impl Emulator {
             gdb_skip_breakpoint: false,
             input_mapping_from_cli: false,
             pending_wav_dump: None,
+            usb_serial: UsbSerialInput::default(),
         };
         {
             let mut bus = emulator.bus.borrow_mut();
@@ -312,6 +374,28 @@ impl Emulator {
         }
         self.z80.reset();
         self.internal_frame_count = 0;
+    }
+
+    /// Exchange EverDrive USB serial data with the host: bytes the guest
+    /// wrote go to stdout, and pending host input goes into the device's RX
+    /// FIFO as far as it is accepted. Call once per frame.
+    pub fn pump_usb_serial(&mut self) {
+        let mut bus = self.bus.borrow_mut();
+        let out = bus.everdrive_io.take_usb_output();
+        if !out.is_empty() {
+            use std::io::Write;
+            let mut stdout = std::io::stdout().lock();
+            let _ = stdout.write_all(&out);
+            let _ = stdout.flush();
+        }
+        self.usb_serial.poll();
+        let serial = &mut self.usb_serial;
+        if !serial.pending.is_empty() && bus.everdrive.enabled {
+            let taken = bus
+                .everdrive_io
+                .push_host_input(serial.pending.make_contiguous());
+            serial.pending.drain(..taken);
+        }
     }
 
     /// Start a requested WAV dump. The header records the bus output
@@ -545,6 +629,14 @@ impl Emulator {
          * from the state. */
         let rom = self.bus.borrow_mut().take_rom_image();
         new_emulator.bus.borrow_mut().restore_rom(rom);
+        /* The EverDrive SD directory and serial output belong to the
+         * session; the restored device reopens its file by path. */
+        new_emulator
+            .bus
+            .borrow_mut()
+            .everdrive_io
+            .adopt_host(&mut self.bus.borrow_mut().everdrive_io);
+        std::mem::swap(&mut new_emulator.usb_serial, &mut self.usb_serial);
         let sample_rate = self.bus.borrow().sample_rate;
         new_emulator.bus.borrow_mut().sample_rate = sample_rate;
 
@@ -1289,6 +1381,7 @@ impl Emulator {
             }
 
             self.step_frame(None);
+            self.pump_usb_serial();
             // Clear audio buffer in headless mode to prevent memory leak
             self.audio_buffer.clear();
             current += 1;
@@ -1489,6 +1582,7 @@ impl Emulator {
                 std::thread::sleep(std::time::Duration::from_millis(5));
             } else {
                 self.run_gdb_slice();
+                self.pump_usb_serial();
                 // Headless: nobody consumes audio.
                 self.audio_buffer.clear();
             }
@@ -1673,6 +1767,8 @@ fn print_usage() {
     println!("  --gdb-password <pass>  Set password for GDB server authentication");
     println!("  --gdb-password-file <path> Read GDB password from a file");
     println!("  --dump-audio <file> Dump audio output to WAV file");
+    println!("  --everdrive-sd <dir> Serve <dir> read-only as the EverDrive SD card");
+    println!("                   (\"SEGA SSF\" ROMs; USB serial uses stdout/stdin)");
     println!(
         "  --input-mapping <type> Set keyboard mapping (original|ergonomic, default: original)"
     );
@@ -1708,6 +1804,8 @@ struct Config {
     gdb_port: Option<u16>,
     gdb_password: Option<String>,
     dump_audio_path: Option<String>,
+    /// SD card directory for the EverDrive device (`--everdrive-sd`).
+    everdrive_sd: Option<String>,
     record_path: Option<String>,
     /// Set only when `--input-mapping` was given.
     input_mapping: Option<InputMapping>,
@@ -1785,6 +1883,15 @@ impl Config {
                     }
                     current_opt = iter.next();
                 }
+                "--everdrive-sd" => {
+                    match iter.next() {
+                        Some(dir) => config.everdrive_sd = Some(dir),
+                        None => config
+                            .errors
+                            .push("--everdrive-sd needs a directory".to_string()),
+                    }
+                    current_opt = iter.next();
+                }
                 "--dump-audio" => {
                     config.dump_audio_path = iter.next();
                     current_opt = iter.next();
@@ -1831,6 +1938,20 @@ impl Config {
         config
     }
 }
+/// Attach the `--everdrive-sd` directory to the EverDrive device.
+fn configure_everdrive(emulator: &mut Emulator, sd_dir: Option<&str>) -> Result<(), String> {
+    let Some(dir) = sd_dir else {
+        return Ok(());
+    };
+    let mut bus = emulator.bus.borrow_mut();
+    bus.everdrive_io
+        .set_sd_root(Some(std::path::Path::new(dir)))
+        .map_err(|e| format!("Cannot use {} as the EverDrive SD card: {}", dir, e))?;
+    if !bus.everdrive.enabled {
+        eprintln!("Warning: --everdrive-sd needs a \"SEGA SSF\" ROM; the SD card is unused");
+    }
+    Ok(())
+}
 fn main() {
     env_logger::init();
     let config = Config::from_args(std::env::args());
@@ -1863,6 +1984,14 @@ fn main() {
     } else {
         print_usage();
         return;
+    }
+    if let Err(e) = configure_everdrive(&mut emulator, config.everdrive_sd.as_deref()) {
+        eprintln!("{}", e);
+        std::process::exit(2);
+    }
+    if config.headless && emulator.bus.borrow().everdrive.enabled {
+        // Headless EverDrive programs get stdin as their USB serial input.
+        emulator.usb_serial = UsbSerialInput::from_stdin();
     }
     // Load input script if provided
     if let Some(ref path) = script_path {
@@ -2519,6 +2648,66 @@ mod tests {
         let mut emulator = Emulator::new();
         emulator.load_rom(path.to_str().unwrap()).unwrap();
         emulator
+    }
+
+    /// Write an EverDrive mailbox command frame and its argument bytes.
+    fn everdrive_send(bus: &mut Bus, cmd: u8, args: &[u8]) {
+        for b in [b'+', !b'+', cmd, !cmd].iter().chain(args) {
+            bus.write_word(0xA130D0, u16::from(*b));
+        }
+    }
+
+    #[test]
+    fn test_state_load_keeps_everdrive_sd_card() {
+        with_big_stack(test_state_load_keeps_everdrive_sd_card_body);
+    }
+
+    fn test_state_load_keeps_everdrive_sd_card_body() {
+        let dir = scratch_dir("state-everdrive");
+        std::fs::write(dir.join("disk.img"), b"0123456789").unwrap();
+        let mut rom = idle_loop_rom();
+        rom[0x100..0x108].copy_from_slice(b"SEGA SSF");
+        let mut emulator = emulator_with_rom(&rom);
+        configure_everdrive(&mut emulator, dir.to_str()).unwrap();
+        {
+            let mut bus = emulator.bus.borrow_mut();
+            everdrive_send(&mut bus, 0xC0, &[]);
+            everdrive_send(&mut bus, 0xC9, &[1, 0, 8]);
+            for b in b"disk.img" {
+                bus.write_word(0xA130D0, u16::from(*b));
+            }
+            everdrive_send(&mut bus, 0xCF, &4u32.to_be_bytes());
+            everdrive_send(&mut bus, 0x22, &[0, 1, b'!']);
+        }
+        let json = String::from_utf8(emulator.serialize_state().unwrap()).unwrap();
+        emulator.apply_state_json(&json).unwrap();
+
+        let mut bus = emulator.bus.borrow_mut();
+        assert!(bus.everdrive_io.sd_root().is_some(), "SD card kept");
+        assert_eq!(bus.everdrive_io.take_usb_output(), b"!");
+        everdrive_send(&mut bus, 0xCA, &3u32.to_be_bytes());
+        let reply: Vec<u8> = (0..4).map(|_| bus.read_word(0xA130D0) as u8).collect();
+        assert_eq!(
+            reply,
+            [0, b'4', b'5', b'6'],
+            "file reopened at its position"
+        );
+        drop(bus);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_cli_everdrive_sd() {
+        let config = Config::from_args(args(&["--everdrive-sd", "sd", "u-boot.bin"]));
+        assert!(config.errors.is_empty());
+        assert_eq!(config.everdrive_sd.as_deref(), Some("sd"));
+        assert_eq!(config.rom_path.as_deref(), Some("u-boot.bin"));
+        assert!(!Config::from_args(args(&["--everdrive-sd"]))
+            .errors
+            .is_empty());
+        let mut emulator = Emulator::new();
+        assert!(configure_everdrive(&mut emulator, Some("/nonexistent/genteel/sd")).is_err());
+        assert!(configure_everdrive(&mut emulator, None).is_ok());
     }
 
     #[test]
