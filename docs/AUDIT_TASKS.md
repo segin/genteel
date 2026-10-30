@@ -461,56 +461,70 @@ Status: `[ ]` open, `[x]` satisfied.
 
 Read-only re-audit of `src/vdp/` and its integration points on main `5f064f4`, checked against Genesis Plus GX (`vdp_ctrl.c`, `vdp_render.c`, `hvc.h`, `system.c`). No reachable panics were found.
 
-- [ ] **VDP-35** · H · Event — When a DMA fill or VRAM copy runs, the VDP shall not stall the 68k; it shall report the transfer through the status busy flag.
+- [x] **VDP-35** · H · Event — When a DMA fill or VRAM copy runs, the VDP shall not stall the 68k; it shall report the transfer through the status busy flag.
   - *Evidence:* `vdp/dma.rs:58-73` `charge_dma_stall` (called at `dma.rs:176` from `execute_dma`, via `write_data` `mod.rs:457`) adds `len*2` cycles outside VBlank (`len/4` in VBlank) to the instruction (`cpu/mod.rs:652,663`). A 64 KiB clear with the display off stalls ~131k cycles. GPGX `vdp_dma_update`: `if (dma_type < 2) m68k.cycles = dma_endCycles; else status |= 0x02;`. Tests `tests_dma.rs:241-298` assert the stall. (verified)
   - *Verify:* T — a 64 KiB fill costs the 68k only the data-port write; busy flag set until the fill ends.
-- [ ] **VDP-36** · M · Ubiquitous — The VDP shall transfer VRAM-destination FIFO and DMA data at hardware slot rates: two slots per VRAM word, two slots per copy byte, and no transfer in the refresh slots during blanking.
+  - *Resolution:* Per GPGX `vdp_dma_update` (`if (dma_type < 2) m68k.cycles = dma_endCycles; else status |= 0x02`): the per-instruction DMA stall is gone; fills and copies run in the access slots and the busy flag reads set while they are pending. The four `tests_dma.rs` tests that asserted the stall were replaced.
+- [x] **VDP-36** · M · Ubiquitous — The VDP shall transfer VRAM-destination FIFO and DMA data at hardware slot rates: two slots per VRAM word, two slots per copy byte, and no transfer in the refresh slots during blanking.
   - *Evidence:* `mod.rs:1236-1276` `process_slot` commits one entry or one `step_dma` per slot; `dma.rs:199-256` one word per step. GPGX: `fifo_byte_access = (code & 0x06) ? 0 : 1`, `rate >> (dma_type & 1)`, blank rates 166/204 of 171/210 slots (198/161 for CRAM/VSRAM with display off).
   - *Verify:* T — 68k→VRAM DMA matches the GPGX `dma_timing` table per line (active and blank, H32 and H40).
-- [ ] **VDP-37** · M · Event — When register 0 bit 1 (M3) is set, the VDP shall latch the HV counter, and shall relatch on each register 12 write while M3 stays set.
+  - *Resolution:* Per GPGX `fifo_byte_access`, `dma_timing` and `vdp_dma_update`. The refresh slots are spread evenly over the line (their exact positions are not modelled); a 68k DMA to CRAM/VSRAM in blanking also loses the slot after each refresh slot (161/198). A test checks every DMA kind against the GPGX units per line. No existing test asserted the old one-unit-per-slot rate.
+- [x] **VDP-37** · M · Event — When register 0 bit 1 (M3) is set, the VDP shall latch the HV counter, and shall relatch on each register 12 write while M3 stays set.
   - *Evidence:* `mod.rs:942-957` returns the latch only after `latch_hv_counter`, which has no production caller; `write_register` (`mod.rs:662-665`) only clears it. GPGX `vdp_reg_w` case 0: `hvc_latch = vdp_hvc_r(cycles) | 0x10000` (Sunset Riders). `tests_audit_fixes.rs:247-276` calls the latch directly. (verified)
   - *Verify:* T — set M3 via register write; HV reads stay frozen.
-- [ ] **VDP-38** · M · Ubiquitous — The VDP shall latch the DMA type at the CD5 control-port write, so that later register 23 writes do not change a pending DMA.
+  - *Resolution:* GPGX `vdp_reg_w` case 0 latches when M3 changes to 1 and frees the counter when it changes to 0; rewriting the bit unchanged does nothing. Dropped the register 12 relatch: GPGX case 12 does not touch `hvc_latch` (only a register 1 M5 change relatches). Two `tests_bus_map.rs` tests asserted that setting M3 left the counter unlatched; they now check that pad writes do not relatch it.
+- [x] **VDP-38** · M · Ubiquitous — The VDP shall latch the DMA type at the CD5 control-port write, so that later register 23 writes do not change a pending DMA.
   - *Evidence:* `write_control` (`mod.rs:626-630`) sets `dma_pending`; `Bus::dma_active` (`bus.rs:357-361`) and `step_dma` (`dma.rs:223-246`) re-read register 23 live. An armed fill followed by `reg23=0x7F` becomes a 68k DMA with the fill's command. GPGX latches `dma_type` at the control write. (impact plausible)
   - *Verify:* T — arm a fill, write register 23, then the data port: a fill runs and the CPU is not frozen.
-- [ ] **VDP-39** · M · Event — When a 68k long write to the control port starts a 68k→VDP DMA with its first word, the VDP shall defer the second word until the DMA completes.
+  - *Resolution:* GPGX latches `dma_type` in `vdp_68k_ctrl_w`; here the whole kind is latched, including which transfer runs (GPGX still picks the transfer function from register 23 when it runs it).
+- [x] **VDP-39** · M · Event — When a 68k long write to the control port starts a 68k→VDP DMA with its first word, the VDP shall defer the second word until the DMA completes.
   - *Evidence:* `bus.rs:812-818` `write_long` issues both words back to back; regs 15/19-23 are read live by `step_dma`. GPGX `vdp_68k_ctrl_w`: `if (dma_length && dma_type < 2) { cached_write = data; return; }` (Formula One, Kawasaki Superbike Challenge).
   - *Verify:* T — `move.l` whose second word writes register 20 does not change the running DMA length.
-- [ ] **VDP-40** · L · Event — When the VINT event fires (MCLK 788 H40 / 770 H32 on line `screen_height`), the system shall assert the Z80 INT line at that point rather than at the start of the line.
+  - *Resolution:* Per GPGX `vdp_68k_ctrl_w` (`cached_write`), applied when the DMA ends.
+- [x] **VDP-40** · L · Event — When the VINT event fires (MCLK 788 H40 / 770 H32 on line `screen_height`), the system shall assert the Z80 INT line at that point rather than at the start of the line.
   - *Evidence:* `main.rs:1014-1018` sets `z80_vint_pending` at the line wrap; `main.rs:1069-1075` asserts it at the next batch. GPGX asserts `Z80.irq_state` after `m68k_run(vint_cycle)`.
   - *Verify:* T — Z80 INT rises within one batch of the 68k VINT.
-- [ ] **VDP-41** · L · State — While a DMA fill is in progress, the VDP shall set the busy status flag and write fill bytes at the slot rate.
+  - *Resolution:* Per GPGX `system_frame_gen`: `Z80.irq_state = ASSERT_LINE` after `m68k_run(vint_cycle)`. The VDP flags the VINT point and `sync_system` asserts INT in that slice; the scheduler's per-line flag was removed.
+- [x] **VDP-41** · L · State — While a DMA fill is in progress, the VDP shall set the busy status flag and write fill bytes at the slot rate.
   - *Evidence:* `mod.rs:438-458` and `dma.rs:164-197` complete the fill synchronously. GPGX fill rate 16-18 bytes/line active, 166-204 blank. The `DMA_MODE_FILL` arm in `step_dma` already exists.
   - *Verify:* T — status bit 1 reads set after starting a fill; an active-display fill spans lines.
-- [ ] **VDP-42** · L · Ubiquitous — The VDP shall set SOVR only on sprite-count overflow and arm the next-line X=0 mask only when the dot limit is reached.
+  - *Resolution:* Done with the slot-paced fill above; the fill starts two slots after its data-port write (GPGX `cycles += 2 * (MCYCLES_PER_LINE / rate)`).
+- [x] **VDP-42** · L · Ubiquitous — The VDP shall set SOVR only on sprite-count overflow and arm the next-line X=0 mask only when the dot limit is reached.
   - *Evidence:* `render.rs:786-789, 818-822, 839-842` use either budget for both. GPGX `parse_satb_m5` (count) and `render_obj_m5` (`pixelcount >= max_pixels`). `tests_render.rs:1630-1655` locks in count-based masking. (plausible — confirm SOVR on dot overflow against Nemesis' test ROM)
   - *Verify:* T — 21 one-tile sprites do not mask the next line; ten 4-tile sprites (320 dots) do.
-- [ ] **VDP-43** · L · Ubiquitous — The VDP shall apply the window/plane A column glitch only when the fine horizontal scroll (`h_scroll & 0xF`) is non-zero.
+  - *Resolution:* GPGX agrees: `parse_satb_m5` sets SOVR only at `count == max`; `render_obj_m5` sets `spr_ovr = (pixelcount >= bitmap.viewport.w)` at the dot limit. `test_prev_line_overflow_records_count_limit` asserted count-based masking and was replaced.
+- [x] **VDP-43** · L · Ubiquitous — The VDP shall apply the window/plane A column glitch only when the fine horizontal scroll (`h_scroll & 0xF`) is non-zero.
   - *Evidence:* `render.rs:652` tests `h_scroll != 0`. (plausible — BlastEm uses `hscroll & 0xF`; not verified against its source)
   - *Verify:* T — a scroll of 16 does not glitch.
-- [ ] **VDP-44** · L · Event — When a CD5 fill command is written with DMA enabled, the VDP shall arm the fill regardless of later changes to register 1 bit 4.
+  - *Resolution:* GPGX `render_bg_m5` draws its window bug only `if (shift)`, `shift = xscroll & 0x0F`. GPGX also applies it in H32 and draws a duplicated plane A column rather than a window tile; that difference is listed in ARCHITECTURE.md and left for a separate change.
+- [x] **VDP-44** · L · Event — When a CD5 fill command is written with DMA enabled, the VDP shall arm the fill regardless of later changes to register 1 bit 4.
   - *Evidence:* `mod.rs:429-433` `dma_fill_armed` re-checks reg 1 bit 4 at the data write. GPGX checks only at the control write.
   - *Verify:* T — clear DMA enable between command and data write; the fill still runs.
-- [ ] **VDP-45** · L · Unwanted — If a line is re-rendered mid-line, then the VDP shall not re-assert the sprite overflow or collision flags for that line.
+  - *Resolution:* GPGX `vdp_68k_data_w_m5` only tests `dmafill`, set at the control write.
+- [x] **VDP-45** · L · Unwanted — If a line is re-rendered mid-line, then the VDP shall not re-assert the sprite overflow or collision flags for that line.
   - *Evidence:* `render_line_from` → `render_layers` (`render.rs:412-414`) and `get_active_sprites` (`render.rs:839-842`) set status bits again after a status read cleared them.
   - *Verify:* T — read status, write CRAM/VSRAM mid-line, read status again: flags stay clear.
-- [ ] **VDP-46** · L · Ubiquitous — A VDP save state shall preserve a pending HINT.
+- [x] **VDP-46** · L · Ubiquitous — A VDP save state shall preserve a pending HINT.
   - *Evidence:* `mod.rs:222-223` `hint_pending` is `#[serde(skip)]` while `line_counter` is saved.
   - *Verify:* T — save between HINT and ack, load, the HINT is still pending.
-- [ ] **VDP-47** · L · Ubiquitous — When the FIFO is full, the bus shall stall the 68k until the next external access slot rather than a fixed 4 cycles.
+- [x] **VDP-47** · L · Ubiquitous — When the FIFO is full, the bus shall stall the 68k until the next external access slot rather than a fixed 4 cycles.
   - *Evidence:* `bus.rs:36` charges 4 cycles per full-FIFO write; active-display slots are ~190 MCLK (~27 cycles) apart.
   - *Verify:* T — five back-to-back VRAM writes in active display take the slot-derived time.
-- [ ] **VDP-48** · L · Ubiquitous — The GUI sprite viewer shall decode the SAT base and H40 mode the same way the VDP does.
+  - *Resolution:* Per GPGX `vdp_68k_data_w_m5`: the wait runs to the slot that writes the oldest entry (two slots for VRAM), counting time already owed by the instruction. The oldest entry is still committed at the write; the VDP catches up when the stall is run. The three bus tests that faked `fifo_full` with an empty FIFO and asserted 4 cycles were rewritten.
+- [x] **VDP-48** · L · Ubiquitous — The GUI sprite viewer shall decode the SAT base and H40 mode the same way the VDP does.
   - *Evidence:* `gui.rs:1606-1607` `(reg5 & 0x7F) << 9` ignores the H40 bit-0 mask (`mod.rs:809-815`) and detects H40 as `(reg12 & 0x81) == 0x81`.
   - *Verify:* I — viewer uses the VDP's accessors.
-- [ ] **VDP-49** · I · Optional — Where hardware features are not yet modelled, the VDP shall document them: Mode 4/SMS rendering and the M5=0 register 11-23 guard, 128 KiB VRAM mode, the 128-pixel sprite limit after a late display re-enable, Z80 status reads clearing VINT, Z80 VDP access during 68k DMA, and DMA sources in `$A00000-$DFFFFF` (now `0xFFFF`, `bus.rs:149`).
+- [x] **VDP-49** · I · Optional — Where hardware features are not yet modelled, the VDP shall document them: Mode 4/SMS rendering and the M5=0 register 11-23 guard, 128 KiB VRAM mode, the 128-pixel sprite limit after a late display re-enable, Z80 status reads clearing VINT, Z80 VDP access during 68k DMA, and DMA sources in `$A00000-$DFFFFF` (now `0xFFFF`, `bus.rs:149`).
   - *Verify:* I — each is implemented or listed in ARCHITECTURE.md as unsupported.
-- [ ] **VDP-50** · I · Ubiquitous — The VDP module shall contain no dead code or misleading comments and test names.
+  - *Resolution:* Listed under "Not modelled" in ARCHITECTURE.md section 3.4.
+- [x] **VDP-50** · I · Ubiquitous — The VDP module shall contain no dead code or misleading comments and test names.
   - *Evidence:* dead: `bypass_fifo` (`mod.rs:238`), `CommandState::dma_fill_first`, `last_data_write`, `set_v_counter`, `DmaOps::dma_source`, `is_dma_fill`, test-only `draw_partial_tile_row`/`draw_full_tile_row`/`get_cram_rgb565`, the copy branch of `charge_dma_stall`, the stored `STATUS_HBLANK` bit (`mod.rs:1125-1131`). `eprintln!` at `mod.rs:1294`. Misleading: `main.rs:1243-1248` (HINT line), `tests_properties.rs:387` name vs `tests_audit_fixes.rs:135`, `tests_audit_fixes.rs:229-233`, `tests_dma.rs:6-40` comment block.
   - *Verify:* I — removed or corrected; clippy clean.
-- [ ] **VDP-51** · I · Ubiquitous — The VDP render path shall avoid per-line work that does not affect output.
+  - *Resolution:* `bypass_fifo` is kept as a `cfg(test)` hook (many tests use it); `last_data_write` is now a method over the FIFO history. The S/H and draw helpers became free functions.
+- [x] **VDP-51** · I · Ubiquitous — The VDP render path shall avoid per-line work that does not affect output.
   - *Evidence:* `composite_line` (`render.rs:200`) iterates 320 pixels in H32 with per-pixel struct and two calls; layer buffers copied twice (`render.rs:417-419, 436`); each mid-line VSRAM word re-renders the rest of the line (`mod.rs:547`); `fifo` is a `Vec` with `remove(0)`.
   - *Verify:* A — render benchmark before/after; no output change in render tests.
+  - *Resolution:* H32 composites 256 pixels (the rest of the row is filled with the backdrop, as before), the non-S/H path picks the top pixel without building the per-pixel struct, compositing borrows the layer buffers instead of copying them, and the FIFO is a `VecDeque`. The per-word VSRAM re-render was left as it is. `bench_render` (debug profile, `nice`): 3.71-3.99 s / 3.49-3.65 s before, 3.32-3.68 s / 3.30-3.54 s after (full / sparse).
 
 ## 5. Audio — PSG, YM2612, mixing, output (APU)
 

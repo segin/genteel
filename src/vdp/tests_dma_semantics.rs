@@ -64,6 +64,7 @@ fn execute_dma_rejects_68k_transfer_without_bus_reader() {
     vdp.write_control(0x4000);
     vdp.write_control(0x0080);
     assert_eq!(vdp.execute_dma(), Err(DmaError::NoBusReader));
+    assert!(vdp.command.bus_dma_active());
     assert!(vdp.command.dma_pending, "transfer stays pending for tick");
     assert!(
         vdp.vram.iter().all(|&b| b == 0),
@@ -111,6 +112,7 @@ fn dma_fill_and_copy_leave_length_registers_zero() {
     vdp.write_control(0x4000);
     vdp.write_control(0x0080);
     vdp.write_data(0x5500);
+    assert_eq!(vdp.execute_dma(), Ok(0x120));
     assert_eq!(vdp.dma_length(), 0);
     assert_eq!(
         vdp.dma_copy_source(),
@@ -146,6 +148,7 @@ fn fill_after_history(code_first: u16, code_second: u16, values: &[u16], fill: u
     vdp.write_control(code_first);
     vdp.write_control(code_second);
     vdp.write_data(fill);
+    assert_eq!(vdp.execute_dma(), Ok(3));
     vdp
 }
 
@@ -179,6 +182,7 @@ fn vram_fill_writes_msb_to_adjacent_addresses() {
     vdp.write_control(0x4100); // VRAM 0x0100
     vdp.write_control(0x0080);
     vdp.write_data(0xABCD);
+    assert_eq!(vdp.execute_dma(), Ok(3));
     // Trigger word at 0x100/0x101, then MSB at 0x103, 0x105, 0x107.
     assert_eq!(
         &vdp.vram[0x100..0x108],

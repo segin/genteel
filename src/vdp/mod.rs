@@ -1,6 +1,7 @@
 use crate::debugger::Debuggable;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::VecDeque;
 
 pub mod constants;
 pub use constants::*;
@@ -175,19 +176,74 @@ fn default_layer() -> [u8; 320] {
     [0; 320]
 }
 
+/// The kind of DMA operation, latched from register 23 when the control
+/// port receives a command with CD5 set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum DmaKind {
+    /// 68k bus to VRAM/CRAM/VSRAM. The 68k is frozen while it runs.
+    #[default]
+    Bus,
+    /// VRAM/CRAM/VSRAM fill, started by the next data-port write.
+    Fill,
+    /// VRAM to VRAM copy.
+    Copy,
+}
+
+impl DmaKind {
+    /// Decode register 23 bits 7-6.
+    pub fn from_register(reg23: u8) -> Self {
+        match reg23 & DMA_MODE_MASK {
+            DMA_MODE_FILL => DmaKind::Fill,
+            DMA_MODE_COPY => DmaKind::Copy,
+            _ => DmaKind::Bus,
+        }
+    }
+}
+
 /// VDP Command State Machine
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct CommandState {
     pub pending: bool,
     pub code: u8,
     pub address: u16,
+    /// A DMA operation is armed or running. While set, the status DMA busy
+    /// flag reads set.
     pub dma_pending: bool,
     #[serde(default)]
     pub read_buffer: u16,
     #[serde(default)]
     pub cd4_flag: bool,
+    /// The DMA kind latched at the CD5 control-port write. Later writes to
+    /// register 23 do not change a pending or running DMA.
     #[serde(default)]
-    pub dma_fill_first: bool,
+    pub dma_kind: DmaKind,
+    /// A fill is armed and waits for its data-port write.
+    #[serde(default)]
+    pub dma_fill_wait: bool,
+    /// Access slots still to pass before an armed fill writes its first byte
+    /// (the slots taken by the triggering data-port write).
+    #[serde(default)]
+    pub(crate) dma_delay: u8,
+    /// The first of the two access slots a VRAM word (68k DMA) or a copied
+    /// byte needs has been used.
+    #[serde(default)]
+    pub(crate) dma_half: bool,
+    /// The first of the two access slots the oldest FIFO entry (a VRAM
+    /// write) needs has been used.
+    #[serde(default)]
+    pub(crate) fifo_half: bool,
+    /// The second word of a 68k long write to the control port whose first
+    /// word started a 68k DMA. It is written when the DMA completes.
+    #[serde(default)]
+    pub(crate) cached_control: Option<u16>,
+}
+
+impl CommandState {
+    /// A 68k bus DMA is running (the 68k is frozen).
+    #[inline]
+    pub fn bus_dma_active(&self) -> bool {
+        self.dma_pending && self.dma_kind == DmaKind::Bus
+    }
 }
 
 /// VDP Write FIFO Entry
@@ -219,9 +275,8 @@ pub struct Vdp {
     pub mclk_line_clocks: u32,
     pub v_counter: u16,
     pub line_counter: u16,
-    #[serde(skip, default)]
+    #[serde(default)]
     pub hint_pending: bool,
-    pub last_data_write: u16,
     /// The last four words written to the data port, as a ring. Hardware
     /// reads the unused bits of CRAM/VSRAM/8-bit VRAM reads, and the data of
     /// CRAM/VSRAM DMA fills, from the FIFO slot that will be written next
@@ -233,9 +288,12 @@ pub struct Vdp {
     pub is_pal: bool,
 
     // FIFO
-    pub fifo: Vec<FifoEntry>,
+    pub fifo: VecDeque<FifoEntry>,
     pub fifo_full: bool,
-    pub bypass_fifo: bool,
+    /// Test hook: commit data-port writes at once instead of queueing them.
+    #[cfg(test)]
+    #[serde(skip)]
+    pub(crate) bypass_fifo: bool,
 
     #[serde(skip, default = "default_framebuffer")]
     pub framebuffer: Vec<u16>,
@@ -269,18 +327,18 @@ pub struct Vdp {
     /// Used to gate the X=0 sprite mask trigger.
     #[serde(skip, default)]
     pub(crate) prev_line_sprite_overflow: bool,
-    /// 68k stall cycles owed by the most recent DMA operation. Drained by the
-    /// Bus through `take_dma_stall_cycles`.
+    /// The VINT point of the first blanking line has passed since the
+    /// scheduler last asked; the Z80 INT line is asserted there.
     #[serde(skip, default)]
-    pub dma_stall_cycles: u32,
+    pub(crate) z80_vint: bool,
     /// Whether the internal SAT cache has been loaded. It is kept up to date
     /// by VRAM writes into the sprite table; a fresh or restored VDP loads it
     /// from VRAM once, on first use.
     #[serde(skip, default)]
     pub(crate) sat_cache_valid: bool,
-    /// HV counter latch (reg 0 bit 1). When latching is enabled, a TH line
-    /// transition on a controller port freezes the HV counter; reads then
-    /// return this captured value until re-latched. Used by light-gun titles.
+    /// HV counter latch. Setting register 0 bit 1 (M3) captures the counter
+    /// and reads return the captured value until M3 is cleared; a light gun
+    /// driving TH would also relatch it.
     #[serde(default)]
     pub(crate) hv_latched: Option<u16>,
 }
@@ -305,12 +363,12 @@ impl Vdp {
             v_counter: 0,
             line_counter: 0,
             hint_pending: false,
-            last_data_write: 0,
             fifo_history: [0; 4],
             fifo_history_idx: 0,
             is_pal: false,
-            fifo: Vec::with_capacity(4),
+            fifo: VecDeque::with_capacity(4),
             fifo_full: false,
+            #[cfg(test)]
             bypass_fifo: false,
             framebuffer: vec![0; 320 * 240],
             sat: [0; 0x400],
@@ -333,7 +391,7 @@ impl Vdp {
                 }
             },
             prev_line_sprite_overflow: false,
-            dma_stall_cycles: 0,
+            z80_vint: false,
             sat_cache_valid: false,
             hv_latched: None,
         };
@@ -359,7 +417,6 @@ impl Vdp {
         self.command = CommandState::default();
         self.fifo.clear();
         self.fifo_full = false;
-        self.bypass_fifo = false;
         self.mclk_line_clocks = 0;
         self.v_counter = 0;
         self.line_counter = 0;
@@ -367,7 +424,7 @@ impl Vdp {
         self.rendered_scanlines.fill(false);
         self.layer_line = None;
         self.prev_line_sprite_overflow = false;
-        self.dma_stall_cycles = 0;
+        self.z80_vint = false;
         self.hv_latched = None;
         self.reconstruct_cram_cache();
         // SAT cache stays invalid; first render or first tick line wrap
@@ -375,11 +432,12 @@ impl Vdp {
         self.sat_cache_valid = false;
     }
 
-    /// Return and clear DMA stall cycles owed to the 68k.
-    pub fn take_dma_stall_cycles(&mut self) -> u32 {
-        let c = self.dma_stall_cycles;
-        self.dma_stall_cycles = 0;
-        c
+    /// Whether the Z80 INT line should be asserted: true once after each
+    /// VINT point of the first blanking line (Genesis Plus GX asserts
+    /// `Z80.irq_state` together with the 68k VINT, whether or not VINT is
+    /// enabled in register 1).
+    pub fn take_z80_vint(&mut self) -> bool {
+        std::mem::take(&mut self.z80_vint)
     }
 
     fn compute_hscroll_words(&self, fetch_line: u16, mode3: u8) -> (u16, u16) {
@@ -414,7 +472,6 @@ impl Vdp {
 
     /// Record a data-port write in the 4-entry FIFO history ring.
     fn record_fifo_write(&mut self, value: u16) {
-        self.last_data_write = value;
         self.fifo_history[self.fifo_history_idx & 3] = value;
         self.fifo_history_idx = (self.fifo_history_idx + 1) & 3;
     }
@@ -426,19 +483,20 @@ impl Vdp {
         self.fifo_history[self.fifo_history_idx & 3]
     }
 
-    fn dma_fill_armed(&self) -> bool {
-        (self.registers[REG_MODE2] & MODE2_DMA_ENABLE) != 0
-            && (self.registers[REG_DMA_SRC_HI] & DMA_MODE_MASK) == DMA_MODE_FILL
-            && self.command.dma_pending
+    /// The word most recently written to the data port.
+    pub fn last_data_write(&self) -> u16 {
+        self.fifo_history[(self.fifo_history_idx + 3) & 3]
     }
 
     pub fn write_data(&mut self, value: u16) {
         self.command.pending = false;
 
-        if self.dma_fill_armed() {
-            /* A DMA fill is triggered by this data-port write. Anything still
-            queued in the FIFO is committed first so it cannot land on top of
-            the fill afterwards. */
+        if self.command.dma_fill_wait {
+            /* This data-port write starts the armed fill. The fill was armed
+            by the CD5 control write; DMA enable is not checked again here
+            (Genesis Plus GX `vdp_68k_data_w_m5` only tests `dmafill`).
+            Anything still queued in the FIFO is committed first so it cannot
+            land on top of the fill afterwards. */
             self.flush_fifo();
             self.record_fifo_write(value);
             /* The triggering word is written normally first (GPGX
@@ -453,8 +511,13 @@ impl Vdp {
                 .command
                 .address
                 .wrapping_add(self.auto_increment() as u16);
-            // A fill never needs the 68k bus, so this cannot fail.
-            let _ = self.execute_dma();
+            /* The fill now runs one byte per access slot, after the two slots
+            the triggering write takes (GPGX `vdp_dma_update` delays the start
+            by two slots). The 68k is not stalled; the DMA busy flag reads set
+            until the fill ends. */
+            self.command.dma_fill_wait = false;
+            self.command.dma_delay = 2;
+            self.command.dma_half = false;
             return;
         }
 
@@ -465,10 +528,18 @@ impl Vdp {
             value,
         };
 
+        #[cfg(test)]
         if self.bypass_fifo {
             self.process_fifo_entry(entry);
-        } else if self.fifo.len() < 4 {
-            self.fifo.push(entry);
+            self.command.address = self
+                .command
+                .address
+                .wrapping_add(self.auto_increment() as u16);
+            return;
+        }
+
+        if self.fifo.len() < 4 {
+            self.fifo.push_back(entry);
             if self.fifo.len() == 4 {
                 self.fifo_full = true;
             }
@@ -481,9 +552,11 @@ impl Vdp {
             (approximating the CPU stalling until a slot opens) so writes
             still commit in program order, then queue this one. The FIFO
             stays full, so STATUS_FIFO_FULL remains correctly asserted. */
-            let oldest = self.fifo.remove(0);
-            self.process_fifo_entry(oldest);
-            self.fifo.push(entry);
+            if let Some(oldest) = self.fifo.pop_front() {
+                self.command.fifo_half = false;
+                self.process_fifo_entry(oldest);
+            }
+            self.fifo.push_back(entry);
         }
 
         self.command.address = self
@@ -494,10 +567,10 @@ impl Vdp {
 
     /// Commit every queued FIFO entry immediately, in order.
     pub(crate) fn flush_fifo(&mut self) {
-        while !self.fifo.is_empty() {
-            let entry = self.fifo.remove(0);
+        while let Some(entry) = self.fifo.pop_front() {
             self.process_fifo_entry(entry);
         }
+        self.command.fifo_half = false;
         self.fifo_full = false;
         self.status &= !STATUS_FIFO_FULL;
         self.status |= STATUS_FIFO_EMPTY;
@@ -623,10 +696,18 @@ impl Vdp {
             // A new command invalidates any earlier prefetched read data.
             self.command.cd4_flag = false;
 
-            // Check if DMA should be triggered (CD5 bit set in code)
+            /* A command with CD5 set starts a DMA if DMA is enabled. The DMA
+            kind is latched here (GPGX `vdp_68k_ctrl_w` sets `dma_type`), so
+            later register 23 writes cannot turn it into another kind. A
+            fill only arms here and starts at the next data-port write. */
             let cd5 = (self.command.code & 0x20) != 0;
             if cd5 && (self.registers[REG_MODE2] & MODE2_DMA_ENABLE) != 0 {
+                let kind = DmaKind::from_register(self.registers[REG_DMA_SRC_HI]);
                 self.command.dma_pending = true;
+                self.command.dma_kind = kind;
+                self.command.dma_fill_wait = kind == DmaKind::Fill;
+                self.command.dma_delay = 0;
+                self.command.dma_half = false;
             }
 
             /* Prefetch only for plain read commands. A command with CD5 set
@@ -636,6 +717,14 @@ impl Vdp {
                 self.try_prefetch();
             }
         } else {
+            /* A 68k long write whose first word started a 68k DMA: the 68k is
+            frozen, so the second word reaches the VDP only once the DMA is
+            done (GPGX `vdp_68k_ctrl_w`, `cached_write`; Formula One,
+            Kawasaki Superbike Challenge). */
+            if self.command.bus_dma_active() {
+                self.command.cached_control = Some(value);
+                return;
+            }
             /* First word of a command. The address bits 13-0 and code bits
             CD1-CD0 are loaded even when the word turns out to be a register
             write. */
@@ -657,11 +746,18 @@ impl Vdp {
     }
 
     fn write_register(&mut self, reg: usize, val: u8) {
-        let changed = self.registers[reg] != val;
+        let old = self.registers[reg];
+        let changed = old != val;
         self.registers[reg] = val;
-        // Disabling the HV latch (reg 0 bit 1 -> 0) re-arms it.
-        if reg == REG_MODE1 && (val & 0x02) == 0 {
-            self.hv_latched = None;
+        /* Setting M3 (register 0 bit 1) latches the HV counter at once and
+        clearing it frees the counter (GPGX `vdp_reg_w` case 0, Sunset
+        Riders). Rewriting the bit unchanged does nothing. */
+        if reg == REG_MODE1 && ((old ^ val) & MODE1_HV_LATCH) != 0 {
+            self.hv_latched = if (val & MODE1_HV_LATCH) != 0 {
+                Some(self.compute_hv_counter())
+            } else {
+                None
+            };
         }
         if !changed {
             return;
@@ -912,7 +1008,7 @@ impl Vdp {
 
     /// True when the HV-counter latch is enabled (reg 0 bit 1 / M3).
     pub fn hv_latch_enabled(&self) -> bool {
-        (self.registers[REG_MODE1] & 0x02) != 0
+        (self.registers[REG_MODE1] & MODE1_HV_LATCH) != 0
     }
 
     /// Live HV counter derived from the current beam position. The V half
@@ -940,8 +1036,8 @@ impl Vdp {
     }
 
     pub fn read_hv_counter(&self) -> u16 {
-        // While latching is enabled, reads return the frozen value captured at
-        // the last TH transition; otherwise the live beam position.
+        // While latching is enabled, reads return the value captured when M3
+        // was set (or at the last light-gun TH edge); otherwise the beam.
         match self.hv_latched {
             Some(v) if self.hv_latch_enabled() => v,
             _ => self.compute_hv_counter(),
@@ -952,7 +1048,7 @@ impl Vdp {
     /// gun seeing the beam, Genesis Plus GX `lightgun.c`). Only latches while
     /// latching is enabled (reg 0 bit 1); otherwise a no-op. The 68k writing
     /// TH through the I/O ports never calls this, and no light gun is
-    /// emulated yet, so nothing in the emulator latches the counter.
+    /// emulated yet; setting M3 latches the counter through `write_register`.
     pub fn latch_hv_counter(&mut self) {
         if self.hv_latch_enabled() {
             self.hv_latched = Some(self.compute_hv_counter());
@@ -1048,10 +1144,6 @@ impl Vdp {
         }
     }
 
-    pub fn set_v_counter(&mut self, v: u16) {
-        self.v_counter = v;
-    }
-
     /// Decode the plane size from the VDP register value (Reg 16)
     pub fn decode_plane_size(val: u8) -> (usize, usize) {
         // Bits 0-1 (HSZ1-0): horizontal size (width in tiles)
@@ -1124,14 +1216,6 @@ impl Vdp {
                 self.start_next_line();
             }
         }
-
-        // Keep the stored HBLANK bit in step with the beam for direct readers.
-        let t = self.line_timing();
-        if (t.hblank_start..t.hblank_end).contains(&self.mclk_line_clocks) {
-            self.status |= STATUS_HBLANK;
-        } else {
-            self.status &= !STATUS_HBLANK;
-        }
     }
 
     /// Advance by `step` MCLK without crossing the end of the line, firing
@@ -1161,6 +1245,7 @@ impl Vdp {
                     LineEvent::Vint => {
                         if self.v_counter == self.screen_height() {
                             self.status |= STATUS_VINT_PENDING;
+                            self.z80_vint = true;
                         }
                     }
                 }
@@ -1236,23 +1321,34 @@ impl Vdp {
         }
     }
 
+    /// One access slot. During active display only the external slots are
+    /// available; during blanking (or with the display off) every slot is,
+    /// except the refresh slots. The FIFO is served before DMA. A VRAM word
+    /// (FIFO entry or 68k DMA) and a copied byte take two slots each, a fill
+    /// byte or a CRAM/VSRAM word one (GPGX `fifo_byte_access`,
+    /// `vdp_dma_update`).
     fn process_slot<F>(&mut self, slot: u32, is_h40: bool, read_bus_word: &mut F)
     where
         F: FnMut(u32) -> u16,
     {
-        // During blanking (or with the display off) every slot is external.
-        let blanking = (self.status & STATUS_VBLANK) != 0 || !self.display_enabled();
-        if !blanking && !timing::is_external_slot(slot, is_h40) {
+        let blanking = self.blanking();
+        if !timing::slot_available(slot, is_h40, blanking) {
             return;
         }
 
-        if !self.fifo.is_empty() {
+        if let Some(&entry) = self.fifo.front() {
+            if Self::is_byte_access(entry.code) && !self.command.fifo_half {
+                self.command.fifo_half = true;
+                return;
+            }
+            self.command.fifo_half = false;
+
             /* Temporarily place the beam at this slot so a redraw triggered
             by the drained entry splits the line at the slot's pixel. */
             let saved_mclk = self.mclk_line_clocks;
             self.mclk_line_clocks = self.line_timing().slot_start(slot);
 
-            let entry = self.fifo.remove(0);
+            self.fifo.pop_front();
             self.process_fifo_entry(entry);
 
             self.mclk_line_clocks = saved_mclk;
@@ -1270,12 +1366,95 @@ impl Vdp {
                     self.try_prefetch();
                 }
             }
-        } else if self.command.dma_pending {
+        } else if self.command.dma_pending && !self.command.dma_fill_wait {
+            if !self.dma_slot_ready(slot, is_h40, blanking) {
+                return;
+            }
             let saved_mclk = self.mclk_line_clocks;
             self.mclk_line_clocks = self.line_timing().slot_start(slot);
             self.step_dma(read_bus_word);
             self.mclk_line_clocks = saved_mclk;
         }
+    }
+
+    /// Whether the VDP is in vertical blanking or the display is off, so
+    /// every non-refresh slot is free for external access.
+    #[inline]
+    fn blanking(&self) -> bool {
+        (self.status & STATUS_VBLANK) != 0 || !self.display_enabled()
+    }
+
+    /// A write with this code goes to VRAM byte by byte and needs two access
+    /// slots per word. Codes with CD2-CD1 clear (VRAM, and the invalid codes
+    /// that behave like it) do.
+    #[inline]
+    fn is_byte_access(code: u8) -> bool {
+        (code & 0x06) == 0
+    }
+
+    /// Account one available access slot to the running DMA and return
+    /// whether a DMA unit completes in it.
+    fn dma_slot_ready(&mut self, slot: u32, is_h40: bool, blanking: bool) -> bool {
+        if self.command.dma_delay > 0 {
+            self.command.dma_delay -= 1;
+            return false;
+        }
+        let two_slots = match self.command.dma_kind {
+            DmaKind::Copy => true,
+            DmaKind::Fill => false,
+            DmaKind::Bus => {
+                let byte_access = Self::is_byte_access(self.command.code);
+                /* A 68k DMA to CRAM or VSRAM in blanking also loses the slot
+                after each refresh slot (GPGX: 161/198 instead of 166/204). */
+                if !byte_access && blanking && timing::follows_refresh_slot(slot, is_h40) {
+                    return false;
+                }
+                byte_access
+            }
+        };
+        if two_slots && !self.command.dma_half {
+            self.command.dma_half = true;
+            return false;
+        }
+        self.command.dma_half = false;
+        true
+    }
+
+    /// MCLK from the current beam position until the oldest FIFO entry has
+    /// been written and a slot is free again: the time a 68k data-port write
+    /// to a full FIFO waits (GPGX `vdp_68k_data_w_m5`). `after` is 68k time
+    /// already owed but not yet run on the VDP; slots before it are taken.
+    /// The slot pattern of the current line is assumed for later lines.
+    pub fn fifo_wait_mclk(&self, after: u32) -> u32 {
+        let Some(&oldest) = self.fifo.front() else {
+            return 0;
+        };
+        let mut needed = if Self::is_byte_access(oldest.code) && !self.command.fifo_half {
+            2
+        } else {
+            1
+        };
+        let t = self.line_timing();
+        let h40 = self.h40_mode();
+        let blanking = self.blanking();
+        let now = self.mclk_line_clocks;
+        let from = now + after.min(MCLK_PER_LINE);
+        let lines = from / MCLK_PER_LINE;
+        let pos = from % MCLK_PER_LINE;
+        let first =
+            lines * t.slots + t.slot_at(pos) + u32::from(t.slot_start(t.slot_at(pos)) < pos);
+        // At most two lines ahead: every line has free slots.
+        for slot in first..first + 2 * t.slots {
+            let line_slot = slot % t.slots;
+            if timing::slot_available(line_slot, h40, blanking) {
+                needed -= 1;
+                if needed == 0 {
+                    let at = (slot / t.slots) * MCLK_PER_LINE + t.slot_start(line_slot);
+                    return at.saturating_sub(now) + 1;
+                }
+            }
+        }
+        0
     }
 }
 
@@ -1294,7 +1473,7 @@ impl Debuggable for Vdp {
         let mut new_vdp: Vdp = match Vdp::deserialize(state) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("Error deserializing VDP state: {}", e);
+                log::error!("Error deserializing VDP state: {}", e);
                 return;
             }
         };

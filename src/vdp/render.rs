@@ -145,28 +145,12 @@ pub trait RenderOps {
         plane_w: usize,
     ) -> u16;
     fn fetch_tile_pattern(&self, tile_index: u16, pixel_v: u16, v_flip: bool) -> [u8; 4];
-    fn draw_partial_tile_row(
-        &self,
-        entry: u16,
-        pixel_v: u16,
-        pixel_h: u16,
-        count: u16,
-        dest_idx: usize,
-        line_buf: &mut [u8; 320],
-    );
-    fn draw_full_tile_row(
-        &self,
-        entry: u16,
-        pixel_v: u16,
-        dest_idx: usize,
-        line_buf: &mut [u8; 320],
-    );
     fn bg_color(&self) -> (u8, u8);
     fn get_cram_color(&self, palette: u8, index: u8) -> u16;
-    fn get_cram_rgb565(&self) -> [u16; 64];
     fn get_cram_raw(&self) -> [u16; 64];
 }
 
+#[derive(Clone, Copy)]
 pub struct PixelLayerData {
     pub bg_color_idx: u8,
     pub s_pri: bool,
@@ -180,158 +164,184 @@ pub struct PixelLayerData {
     pub b_col: u8,
 }
 
-pub struct CompositeLineParams<'a> {
-    pub line_offset: usize,
-    pub bg_color_idx: u8,
-    pub bg_color_val: u16,
-    pub buf_b: &'a [u8; 320],
-    pub buf_a: &'a [u8; 320],
-    pub buf_s: &'a [u8; 320],
-    /// Inclusive start pixel for composite (used for mid-line segmented
-    /// re-render). Defaults to 0 for a full-line composite.
-    pub start_x: usize,
+/// The plane/sprite layer buffers of one line.
+pub(crate) struct LineLayers<'a> {
+    pub b: &'a [u8; 320],
+    pub a: &'a [u8; 320],
+    pub s: &'a [u8; 320],
+}
+
+impl PixelLayerData {
+    #[inline(always)]
+    fn new(bg_color_idx: u8, b: u8, a: u8, s: u8) -> Self {
+        let (b_col, a_col, s_col) = (b & 0x3F, a & 0x3F, s & 0x3F);
+        PixelLayerData {
+            bg_color_idx,
+            s_pri: (s & 0x80) != 0,
+            s_trans: (s_col & 0x0F) == 0,
+            s_col,
+            a_pri: (a & 0x80) != 0,
+            a_trans: (a_col & 0x0F) == 0,
+            a_col,
+            b_pri: (b & 0x80) != 0,
+            b_trans: (b_col & 0x0F) == 0,
+            b_col,
+        }
+    }
+}
+
+/// Colour index of the top opaque pixel, in priority order: high-priority
+/// sprite, plane A, plane B, then low-priority sprite, plane A, plane B,
+/// then the backdrop. The same rule as `top_layer`, on raw layer bytes.
+#[inline(always)]
+pub(super) fn top_color(bg_color_idx: u8, b: u8, a: u8, s: u8) -> u8 {
+    let opaque = |p: u8| (p & 0x0F) != 0;
+    let high = |p: u8| (p & 0x80) != 0 && opaque(p);
+    let p = if high(s) {
+        s
+    } else if high(a) {
+        a
+    } else if high(b) {
+        b
+    } else if opaque(s) {
+        s
+    } else if opaque(a) {
+        a
+    } else if opaque(b) {
+        b
+    } else {
+        return bg_color_idx;
+    };
+    p & 0x3F
+}
+
+/// Composite pixels `[start_x, width)` of one framebuffer row from the
+/// layer buffers, and fill `[width, 320)` (the unused part of the row in
+/// H32) with the backdrop.
+#[allow(clippy::too_many_arguments)]
+fn composite_row(
+    row: &mut [u16],
+    layers: &LineLayers,
+    cram: &[u16; 64],
+    regs: &[u8; NUM_REGISTERS],
+    bg_color_idx: u8,
+    bg_color_val: u16,
+    start_x: usize,
+    width: usize,
+) {
+    let sh_enabled = (regs[REG_MODE4] & 0x08) != 0;
+    let width = width.min(320);
+    let start_x = start_x.min(width);
+    // Column 0 masking (register 0 bit 5) shows the backdrop.
+    let mask_end = if (regs[REG_MODE1] & 0x20) != 0 { 8 } else { 0 };
+    let first = mask_end.clamp(start_x, width);
+    row[start_x..first].fill(bg_color_val);
+
+    let pixels = (first..width).map(|x| (x, layers.b[x], layers.a[x], layers.s[x]));
+    if sh_enabled {
+        for (x, b, a, s) in pixels {
+            let px = PixelLayerData::new(bg_color_idx, b, a, s);
+            let (top_col, state) = shadow_highlight(&px);
+            row[x] = color_transform(cram[top_col as usize], state);
+        }
+    } else {
+        for (x, b, a, s) in pixels {
+            row[x] = cram[top_color(bg_color_idx, b, a, s) as usize];
+        }
+    }
+    // Empty pixels: the backdrop, shadowed in shadow/highlight mode.
+    let empty = if sh_enabled {
+        color_transform(bg_color_val, 0)
+    } else {
+        bg_color_val
+    };
+    row[width..320].fill(empty);
+}
+
+/// Shadow/highlight resolution, following Genesis Plus GX
+/// `make_lut_bg_ste` / `make_lut_bgobj_ste`. Returns the colour index and
+/// intensity (0 = shadow, 1 = normal, 2 = highlight).
+///
+///   * The planes are normal intensity if either plane pixel has its
+///     priority bit set, even when that pixel is transparent; otherwise
+///     they are shadowed.
+///   * A sprite pixel is considered unless it is low priority and the
+///     plane pixel is opaque and high priority.
+///   * Palette 3 colour 14 (highlight) and 15 (shadow) sprite pixels are
+///     operators: the plane/backdrop shows through, one step brighter
+///     (shadow -> normal, normal -> highlight) or forced to shadow.
+///   * Sprite colour 14 of palettes 0-2 is always normal intensity.
+///   * Other sprite pixels are normal if the sprite is high priority or
+///     the planes are normal, otherwise shadowed.
+pub(super) fn shadow_highlight(px: &PixelLayerData) -> (u8, u8) {
+    let planes_normal = px.a_pri || px.b_pri;
+    let plane_only = PixelLayerData {
+        s_pri: false,
+        s_trans: true,
+        s_col: 0,
+        ..*px
+    };
+    let (bg_col, bg_layer) = top_layer(&plane_only);
+    let bg_high_opaque = match bg_layer {
+        2 => px.a_pri,
+        1 => px.b_pri,
+        _ => false,
+    };
+    let bg_state = u8::from(planes_normal);
+
+    if px.s_trans || (!px.s_pri && bg_high_opaque) {
+        return (bg_col, bg_state);
+    }
+    match px.s_col {
+        0x3E => (bg_col, bg_state + 1),
+        0x3F => (bg_col, 0),
+        0x0E | 0x1E | 0x2E => (px.s_col, 1),
+        _ => (px.s_col, u8::from(px.s_pri || planes_normal)),
+    }
+}
+
+/// Top pixel and its layer (0 = backdrop, 1 = B, 2 = A, 3 = sprite).
+pub(super) fn top_layer(px: &PixelLayerData) -> (u8, u8) {
+    if px.s_pri && !px.s_trans {
+        (px.s_col, 3)
+    } else if px.a_pri && !px.a_trans {
+        (px.a_col, 2)
+    } else if px.b_pri && !px.b_trans {
+        (px.b_col, 1)
+    } else if !px.s_trans {
+        (px.s_col, 3)
+    } else if !px.a_trans {
+        (px.a_col, 2)
+    } else if !px.b_trans {
+        (px.b_col, 1)
+    } else {
+        (px.bg_color_idx, 0)
+    }
+}
+
+/// Apply a shadow (0) or highlight (2) intensity to an RGB565 colour.
+pub(super) fn color_transform(color: u16, state: u8) -> u16 {
+    let r = (color >> 11) & 0x1F;
+    let g = (color >> 5) & 0x3F;
+    let b = color & 0x1F;
+
+    match state {
+        0 => {
+            // Shadow mode halves each channel.
+            ((r >> 1) << 11) | ((g >> 1) << 5) | (b >> 1)
+        }
+        2 => {
+            // Highlight mode moves halfway toward full intensity.
+            let r_hi = r + ((0x1F - r) >> 1);
+            let g_hi = g + ((0x3F - g) >> 1);
+            let b_hi = b + ((0x1F - b) >> 1);
+            (r_hi << 11) | (g_hi << 5) | b_hi
+        }
+        _ => color,
+    }
 }
 
 impl Vdp {
-    fn composite_line(&mut self, params: &CompositeLineParams) {
-        let sh_enabled = (self.registers[REG_MODE4] & 0x08) != 0;
-        let mask_col0 = (self.registers[REG_MODE1] & 0x20) != 0;
-
-        for x in params.start_x..320 {
-            if mask_col0 && x < 8 {
-                self.framebuffer[params.line_offset + x] = params.bg_color_val;
-                continue;
-            }
-
-            let b = params.buf_b[x];
-            let a = params.buf_a[x];
-            let s = params.buf_s[x];
-
-            let b_col = b & 0x3F;
-            let a_col = a & 0x3F;
-            let s_col = s & 0x3F;
-
-            let px = PixelLayerData {
-                bg_color_idx: params.bg_color_idx,
-                s_pri: (s & 0x80) != 0,
-                s_trans: (s_col & 0x0F) == 0,
-                s_col,
-                a_pri: (a & 0x80) != 0,
-                a_trans: (a_col & 0x0F) == 0,
-                a_col,
-                b_pri: (b & 0x80) != 0,
-                b_trans: (b_col & 0x0F) == 0,
-                b_col,
-            };
-
-            if !sh_enabled {
-                let (top_col, _) = self.determine_top_layer(&px);
-                self.framebuffer[params.line_offset + x] = self.cram_cache[top_col as usize];
-            } else {
-                let (top_col, state) = self.resolve_shadow_highlight_pixel(&px);
-                let color = self.cram_cache[top_col as usize];
-                let final_color = self.apply_color_transform(color, state);
-                self.framebuffer[params.line_offset + x] = final_color;
-            }
-        }
-    }
-
-    /// Shadow/highlight resolution, following Genesis Plus GX
-    /// `make_lut_bg_ste` / `make_lut_bgobj_ste`. Returns the colour index and
-    /// intensity (0 = shadow, 1 = normal, 2 = highlight).
-    ///
-    ///   * The planes are normal intensity if either plane pixel has its
-    ///     priority bit set, even when that pixel is transparent; otherwise
-    ///     they are shadowed.
-    ///   * A sprite pixel is considered unless it is low priority and the
-    ///     plane pixel is opaque and high priority.
-    ///   * Palette 3 colour 14 (highlight) and 15 (shadow) sprite pixels are
-    ///     operators: the plane/backdrop shows through, one step brighter
-    ///     (shadow -> normal, normal -> highlight) or forced to shadow.
-    ///   * Sprite colour 14 of palettes 0-2 is always normal intensity.
-    ///   * Other sprite pixels are normal if the sprite is high priority or
-    ///     the planes are normal, otherwise shadowed.
-    pub(crate) fn resolve_shadow_highlight_pixel(&self, px: &PixelLayerData) -> (u8, u8) {
-        let planes_normal = px.a_pri || px.b_pri;
-        let plane_only = PixelLayerData {
-            bg_color_idx: px.bg_color_idx,
-            s_pri: false,
-            s_trans: true,
-            s_col: 0,
-            a_pri: px.a_pri,
-            a_trans: px.a_trans,
-            a_col: px.a_col,
-            b_pri: px.b_pri,
-            b_trans: px.b_trans,
-            b_col: px.b_col,
-        };
-        let (bg_col, bg_layer) = self.determine_top_layer(&plane_only);
-        let bg_high_opaque = match bg_layer {
-            2 => px.a_pri,
-            1 => px.b_pri,
-            _ => false,
-        };
-        let bg_state = u8::from(planes_normal);
-
-        if px.s_trans || (!px.s_pri && bg_high_opaque) {
-            return (bg_col, bg_state);
-        }
-        match px.s_col {
-            0x3E => (bg_col, bg_state + 1),
-            0x3F => (bg_col, 0),
-            0x0E | 0x1E | 0x2E => (px.s_col, 1),
-            _ => (px.s_col, u8::from(px.s_pri || planes_normal)),
-        }
-    }
-
-    pub(crate) fn determine_top_layer(&self, px: &PixelLayerData) -> (u8, u8) {
-        let mut top_col = px.bg_color_idx;
-        let mut top_layer = 0; // 0=BG, 1=B, 2=A, 3=S
-
-        if px.s_pri && !px.s_trans {
-            top_col = px.s_col;
-            top_layer = 3;
-        } else if px.a_pri && !px.a_trans {
-            top_col = px.a_col;
-            top_layer = 2;
-        } else if px.b_pri && !px.b_trans {
-            top_col = px.b_col;
-            top_layer = 1;
-        } else if !px.s_trans {
-            top_col = px.s_col;
-            top_layer = 3;
-        } else if !px.a_trans {
-            top_col = px.a_col;
-            top_layer = 2;
-        } else if !px.b_trans {
-            top_col = px.b_col;
-            top_layer = 1;
-        }
-
-        (top_col, top_layer)
-    }
-
-    pub(crate) fn apply_color_transform(&self, color: u16, state: u8) -> u16 {
-        let r = (color >> 11) & 0x1F;
-        let g = (color >> 5) & 0x3F;
-        let b = color & 0x1F;
-
-        match state {
-            0 => {
-                // Shadow mode halves each channel.
-                ((r >> 1) << 11) | ((g >> 1) << 5) | (b >> 1)
-            }
-            2 => {
-                // Highlight mode moves halfway toward full intensity.
-                let r_hi = r + ((0x1F - r) >> 1);
-                let g_hi = g + ((0x3F - g) >> 1);
-                let b_hi = b + ((0x1F - b) >> 1);
-                (r_hi << 11) | (g_hi << 5) | b_hi
-            }
-            _ => color,
-        }
-    }
-
     /// Vertical position of `line` for plane/sprite lookup: the line itself,
     /// or in interlace mode 2 the line doubled plus the field parity.
     #[inline]
@@ -387,8 +397,12 @@ impl Vdp {
         self.ensure_sat_cache();
 
         /* Re-rendering the same line must evaluate sprites against the same
-        previous-line overflow state as its first render. */
-        if self.layer_line == Some(line) {
+        previous-line overflow state as its first render, and must not set
+        the sprite overflow and collision flags again: the 68k may have read
+        (and so cleared) them since the line was first drawn. */
+        let rerender = self.layer_line == Some(line);
+        let flags = self.status & (STATUS_SOVR | STATUS_COLLISION);
+        if rerender {
             self.prev_line_sprite_overflow = self.layer_prev_overflow;
         } else {
             self.layer_prev_overflow = self.prev_line_sprite_overflow;
@@ -413,6 +427,9 @@ impl Vdp {
                 self.status |= STATUS_COLLISION;
             }
         }
+        if rerender {
+            self.status = (self.status & !(STATUS_SOVR | STATUS_COLLISION)) | flags;
+        }
 
         self.layer_b = buf_b;
         self.layer_a = buf_a;
@@ -433,17 +450,22 @@ impl Vdp {
             return;
         }
 
-        let (buf_b, buf_a, buf_s) = (self.layer_b, self.layer_a, self.layer_s);
-        let params = CompositeLineParams {
-            line_offset,
+        let width = usize::from(self.screen_width());
+        let layers = LineLayers {
+            b: &self.layer_b,
+            a: &self.layer_a,
+            s: &self.layer_s,
+        };
+        composite_row(
+            &mut self.framebuffer[line_offset..line_offset + 320],
+            &layers,
+            &self.cram_cache,
+            &self.registers,
             bg_color_idx,
             bg_color_val,
-            buf_b: &buf_b,
-            buf_a: &buf_a,
-            buf_s: &buf_s,
-            start_x: start_x as usize,
-        };
-        self.composite_line(&params);
+            start_x as usize,
+            width,
+        );
     }
 
     /// Recomposite `line` from `start_x` with the current colours, reusing
@@ -642,14 +664,13 @@ impl RenderOps for Vdp {
             ..plane_params
         };
 
-        // H40 window/Plane-A boundary glitch (G10/R6):
-        // The hardware artifact only occurs once per line (the first
-        // window->plane-A transition) and only when the window doesn't
-        // span the entire line. We additionally require the transition
-        // boundary to fall on a tile-aligned screen X — the pre-fetch
-        // race that causes the glitch only happens when the window
-        // boundary coincides with a fetch slot boundary.
-        let glitch_enabled = h40_mode && h_scroll != 0 && !win_h_dir && !win_full_line;
+        /* H40 window/plane A boundary glitch: once per line, at the first
+        window to plane A transition, when the window does not span the
+        whole line and plane A has a fine horizontal scroll (GPGX
+        `render_bg_m5` applies its "window bug" only `if (shift)`, i.e.
+        `xscroll & 0x0F`). The transition must also fall on a tile-aligned
+        screen X. */
+        let glitch_enabled = h40_mode && (h_scroll & 0x0F) != 0 && !win_h_dir && !win_full_line;
         let mut glitch_fired = false;
         let in_window = |x: u16| {
             win_full_line
@@ -757,17 +778,17 @@ impl RenderOps for Vdp {
         let v_line = self.vertical_fetch_line(line);
         let sat_base = self.sprite_table_address();
 
-        // X=0 sprite mask state. Triggered when an X=0 sprite is encountered AND
-        // either a non-X=0 sprite has already been added to this line, OR the
-        // previous line had a sprite overflow. Once triggered, subsequent
-        // sprites on this line are not rendered (but still count toward
-        // per-line limits for overflow purposes).
+        /* X=0 sprite mask state. Triggered when an X=0 sprite is encountered
+        and either a non-X=0 sprite has already been added to this line, or
+        the previous line reached its sprite dot limit. Once triggered,
+        later sprites on this line are not rendered (but still count toward
+        the per-line limits). */
         let mut mask_triggered = false;
         let mut visible_added: usize = 0;
         let mut slots_consumed: usize = 0;
         let mut pixels: usize = 0;
         let prev_overflow = self.prev_line_sprite_overflow;
-        let mut overflow_this_line = false;
+        let mut count_overflow = false;
 
         let mut idx: usize = 0;
         for _ in 0..max_sprites {
@@ -781,10 +802,14 @@ impl RenderOps for Vdp {
             let top = y as i32 - y_offset as i32;
             let rel = v_line as i32 - top;
             if rel >= 0 && rel < (v_size as u16 * row_h) as i32 {
-                // If the per-line sprite or dot budget is already fully
-                // consumed, this on-line sprite is beyond the limit.
-                if slots_consumed >= line_limit || pixels >= pixel_limit {
-                    overflow_this_line = true;
+                /* One sprite more than the per-line count limit sets SOVR
+                (GPGX `parse_satb_m5`); once the dot budget is used up, later
+                sprites are simply not drawn (`render_obj_m5`). */
+                if slots_consumed >= line_limit {
+                    count_overflow = true;
+                    break;
+                }
+                if pixels >= pixel_limit {
                     break;
                 }
 
@@ -836,8 +861,10 @@ impl RenderOps for Vdp {
             idx = link;
         }
 
-        self.prev_line_sprite_overflow = overflow_this_line;
-        if overflow_this_line {
+        /* Reaching the dot limit (not the count limit) arms the X=0 mask for
+        the next line (GPGX `render_obj_m5`: `spr_ovr = pixelcount >= w`). */
+        self.prev_line_sprite_overflow = pixels >= pixel_limit;
+        if count_overflow {
             self.status |= STATUS_SOVR;
         }
         visible_added
@@ -923,31 +950,6 @@ impl RenderOps for Vdp {
         self.vram[addr..addr + 4].try_into().unwrap()
     }
 
-    fn draw_partial_tile_row(
-        &self,
-        entry: u16,
-        pixel_v: u16,
-        pixel_h: u16,
-        count: u16,
-        dest_idx: usize,
-        line_buf: &mut [u8; 320],
-    ) {
-        let patterns = self.fetch_tile_pattern(entry & 0x07FF, pixel_v, (entry & 0x1000) != 0);
-        blit_partial_tile_row(entry, patterns, pixel_h, count, dest_idx, line_buf);
-    }
-
-    #[inline(always)]
-    fn draw_full_tile_row(
-        &self,
-        entry: u16,
-        pixel_v: u16,
-        dest_idx: usize,
-        line_buf: &mut [u8; 320],
-    ) {
-        let patterns = self.fetch_tile_pattern(entry & 0x07FF, pixel_v, (entry & 0x1000) != 0);
-        blit_full_tile_row(entry, patterns, dest_idx, line_buf);
-    }
-
     fn bg_color(&self) -> (u8, u8) {
         let bg_idx = self.registers[REG_BG_COLOR];
         let pal = (bg_idx >> 4) & 0x03;
@@ -961,10 +963,6 @@ impl RenderOps for Vdp {
         self.cram_cache[addr & 0x3F]
     }
 
-    fn get_cram_rgb565(&self) -> [u16; 64] {
-        self.cram_cache
-    }
-
     fn get_cram_raw(&self) -> [u16; 64] {
         let mut raw = [0u16; 64];
         for (i, value) in raw.iter_mut().enumerate() {
@@ -975,7 +973,7 @@ impl RenderOps for Vdp {
     }
 }
 
-fn blit_partial_tile_row(
+pub(super) fn blit_partial_tile_row(
     entry: u16,
     patterns: [u8; 4],
     pixel_h: u16,
@@ -1008,7 +1006,12 @@ fn blit_partial_tile_row(
 }
 
 #[inline(always)]
-fn blit_full_tile_row(entry: u16, patterns: [u8; 4], dest_idx: usize, line_buf: &mut [u8; 320]) {
+pub(super) fn blit_full_tile_row(
+    entry: u16,
+    patterns: [u8; 4],
+    dest_idx: usize,
+    line_buf: &mut [u8; 320],
+) {
     let priority = (entry & 0x8000) != 0;
     let palette = ((entry >> 13) & 0x03) as u8;
     let h_flip = (entry & 0x0800) != 0;

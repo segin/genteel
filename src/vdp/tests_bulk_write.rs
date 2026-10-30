@@ -41,7 +41,7 @@ fn test_bulk_write_optimization() {
     assert_eq!(vdp.command.address, 0x0004);
 
     // Verify last_data_write update
-    assert_eq!(vdp.last_data_write, 0x3344);
+    assert_eq!(vdp.last_data_write(), 0x3344);
 }
 
 #[test]

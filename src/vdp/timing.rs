@@ -129,6 +129,43 @@ pub(crate) fn is_external_slot(slot: u32, h40: bool) -> bool {
     table.get(slot as usize).copied().unwrap_or(false)
 }
 
+/// Refresh slots per line are spread evenly: one in every
+/// `REFRESH_PERIOD_*` slots. That leaves 204 (H40) / 166 (H32) of the
+/// 210 / 171 slots for external access during blanking, the Genesis Plus GX
+/// `dma_timing` blank rates. Their exact positions are not modelled.
+const REFRESH_PERIOD_H40: u32 = 35;
+const REFRESH_PERIOD_H32: u32 = 34;
+
+/// Whether access slot `slot` is a DRAM refresh slot during blanking.
+#[inline]
+pub(crate) fn is_refresh_slot(slot: u32, h40: bool) -> bool {
+    let period = if h40 {
+        REFRESH_PERIOD_H40
+    } else {
+        REFRESH_PERIOD_H32
+    };
+    slot % period == period - 1
+}
+
+/// Whether the slot before `slot` (wrapping to the previous line) is a
+/// refresh slot.
+#[inline]
+pub(crate) fn follows_refresh_slot(slot: u32, h40: bool) -> bool {
+    let slots = LineTiming::for_mode(h40).slots;
+    is_refresh_slot((slot + slots - 1) % slots, h40)
+}
+
+/// Whether access slot `slot` can serve the FIFO or DMA: an external slot
+/// during active display, any slot but a refresh slot during blanking.
+#[inline]
+pub(crate) fn slot_available(slot: u32, h40: bool, blanking: bool) -> bool {
+    if blanking {
+        !is_refresh_slot(slot, h40)
+    } else {
+        is_external_slot(slot, h40)
+    }
+}
+
 /// Externally visible 8-bit H counter at line-relative `mclk`.
 ///
 /// H40: 0xA5..=0xB6, 0xE4..=0xFF, 0x00..=0xA4 (211 values; 0xB6 and 0xE4

@@ -72,7 +72,7 @@ mod performance_tests {
         let start = Instant::now();
 
         for _ in 0..iterations {
-            bus.vdp.command.dma_pending = true;
+            bus.vdp.command.dma_pending = false;
             bus.write_word(0xC00004, 0x4000);
             bus.write_word(0xC00004, 0x0080);
         }

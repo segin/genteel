@@ -1,5 +1,11 @@
-use super::render::RenderOps;
+use super::render::{blit_full_tile_row, RenderOps};
 use super::*;
+
+/// Fetch row `pixel_v` of the tile named by `entry` and blit it at `dest_idx`.
+fn draw_full_tile_row(vdp: &Vdp, entry: u16, pixel_v: u16, dest_idx: usize, buf: &mut [u8; 320]) {
+    let patterns = vdp.fetch_tile_pattern(entry & 0x07FF, pixel_v, (entry & 0x1000) != 0);
+    blit_full_tile_row(entry, patterns, dest_idx, buf);
+}
 
 #[test]
 fn test_draw_full_tile_row_refactor() {
@@ -22,7 +28,7 @@ fn test_draw_full_tile_row_refactor() {
     let dest_idx = 0; // Start of scanline
 
     let mut line_buf = [0u8; 320];
-    vdp.draw_full_tile_row(entry, pixel_v, dest_idx, &mut line_buf);
+    draw_full_tile_row(&vdp, entry, pixel_v, dest_idx, &mut line_buf);
 
     // Check pixels
     assert_eq!(line_buf[0], 0x01, "Pixel 0");
@@ -39,11 +45,11 @@ fn test_draw_full_tile_row_bounds_safe() {
     /* At 316 there is no room for 8 pixels: the row is skipped, not
     clipped, and nothing is written. */
     let mut line_buf = [0xAAu8; 320];
-    vdp.draw_full_tile_row(0, 0, 316, &mut line_buf);
+    draw_full_tile_row(&vdp, 0, 0, 316, &mut line_buf);
     assert!(line_buf.iter().all(|&p| p == 0xAA));
 
     /* The last position that fits draws the whole row. */
-    vdp.draw_full_tile_row(0, 0, 312, &mut line_buf);
+    draw_full_tile_row(&vdp, 0, 0, 312, &mut line_buf);
     assert_eq!(line_buf[312..], [0x01; 8]);
     assert!(line_buf[..312].iter().all(|&p| p == 0xAA));
 }
@@ -65,7 +71,7 @@ fn test_draw_full_tile_row_hflip() {
     let entry = 0x0800;
 
     let mut line_buf = [0u8; 320];
-    vdp.draw_full_tile_row(entry, 0, 0, &mut line_buf);
+    draw_full_tile_row(&vdp, entry, 0, 0, &mut line_buf);
 
     // H-Flip:
     // Original: 1, 2, 0, 0, 0, 0, 0, 0

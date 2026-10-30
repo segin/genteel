@@ -568,6 +568,12 @@ pub struct DebugInfo {
     pub frame_count: u64,
     pub vdp_status: u16,
     pub vdp_registers: [u8; 24],
+    /// Sprite attribute table base, as the VDP decodes register 5.
+    pub sat_base: usize,
+    /// H40 mode, as the VDP decodes register 12.
+    pub h40: bool,
+    pub plane_a_base: usize,
+    pub plane_b_base: usize,
     pub display_enabled: bool,
     pub bg_color_index: u8,
     pub cram: [u16; 64],
@@ -1605,9 +1611,8 @@ impl Framework {
                 .open(&mut open)
                 .show(&self.egui_ctx, |ui| {
                     if let Some(vram) = &debug_info.vram {
-                        let sat_base = ((debug_info.vdp_registers[5] as usize) & 0x7F) << 9;
-                        let h40 = (debug_info.vdp_registers[12] & 0x81) == 0x81;
-                        let max_sprites = if h40 { 80 } else { 64 };
+                        let sat_base = debug_info.sat_base;
+                        let max_sprites = if debug_info.h40 { 80 } else { 64 };
 
                         let iter = crate::vdp::SpriteIterator {
                             vram: &vram[..],
@@ -1717,8 +1722,8 @@ impl Framework {
                         }
                     });
 
-                    let plane_a_base = ((debug_info.vdp_registers[2] as usize) & 0x38) << 10;
-                    let plane_b_base = ((debug_info.vdp_registers[4] as usize) & 0x07) << 13;
+                    let plane_a_base = debug_info.plane_a_base;
+                    let plane_b_base = debug_info.plane_b_base;
 
                     let render_plane = |ui: &mut egui::Ui,
                                         base: usize,
@@ -2472,6 +2477,10 @@ fn collect_debug_info(
         frame_count: emulator.internal_frame_count,
         vdp_status: bus.vdp.peek_status(),
         vdp_registers: bus.vdp.registers,
+        sat_base: bus.vdp.sprite_table_address(),
+        h40: bus.vdp.h40_mode(),
+        plane_a_base: bus.vdp.plane_a_address(),
+        plane_b_base: bus.vdp.plane_b_address(),
         display_enabled: bus.vdp.display_enabled(),
         bg_color_index: bus.vdp.registers[7],
         cram: bus.vdp.cram_cache,

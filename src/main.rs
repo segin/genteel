@@ -193,9 +193,6 @@ pub struct Emulator {
     /// Total master clocks executed (68k cycles x 7).
     #[serde(default)]
     pub master_clock: u64,
-    /// Z80 VINT is due at the start of the next CPU batch.
-    #[serde(default)]
-    pub z80_vint_pending: bool,
     /// Run state under an attached GDB client.
     #[serde(skip)]
     pub gdb_exec: GdbExecState,
@@ -350,7 +347,6 @@ impl Emulator {
             allowed_paths: Vec::new(),
             z80_cycle_debt: 0.0,
             master_clock: 0,
-            z80_vint_pending: false,
             gdb_exec: GdbExecState::Halted,
             gdb_skip_breakpoint: false,
             input_mapping_from_cli: false,
@@ -1080,14 +1076,7 @@ impl Emulator {
                     .saturating_sub(line_clocks)
                     .div_ceil(MCLK_PER_M68K_CYCLE)
                     .max(1);
-                // Z80 VINT fires at the start of the first blanking line.
-                let trigger_vint = std::mem::take(&mut self.z80_vint_pending);
-                let result = Self::run_cpu_batch_static(
-                    &mut ctx,
-                    remaining,
-                    trigger_vint,
-                    limit.as_deref_mut(),
-                );
+                let result = Self::run_cpu_batch_static(&mut ctx, remaining, limit.as_deref_mut());
                 if result.stopped {
                     stopped = true;
                     if ctx.bus_rc.borrow().vdp.v_counter == start_line {
@@ -1101,13 +1090,7 @@ impl Emulator {
             }
         }
         self.handle_interrupts();
-        let (end_line, active_lines) = {
-            let bus = self.bus.borrow();
-            (bus.vdp.v_counter, bus.vdp.screen_height())
-        };
-        if end_line == active_lines {
-            self.z80_vint_pending = true;
-        }
+        let end_line = self.bus.borrow().vdp.v_counter;
         ScanlineOutcome {
             frame_done: end_line < start_line,
             stopped,
@@ -1224,12 +1207,16 @@ impl Emulator {
     }
 
     /// Bring the bus/VDP, IRQ lines, Z80 and APU up to date with
-    /// `m68k_cycles` of 68k execution.
-    fn sync_system(ctx: &mut SystemContext, m68k_cycles: u32, trigger_vint: bool) {
+    /// `m68k_cycles` of 68k execution. The Z80 INT line is asserted in the
+    /// slice in which the VDP passes the VINT point, like the 68k VINT
+    /// (Genesis Plus GX asserts both after `m68k_run(vint_cycle)`).
+    fn sync_system(ctx: &mut SystemContext, m68k_cycles: u32) {
+        let mut trigger_vint = false;
         if m68k_cycles > 0 {
             let mut bus = ctx.bus_rc.borrow_mut();
             bus.tick(m68k_cycles * MCLK_PER_M68K_CYCLE);
             Self::update_m68k_irqs(ctx.cpu, &bus);
+            trigger_vint = bus.vdp.take_z80_vint();
         }
         Self::sync_audio_z80(ctx, m68k_cycles, trigger_vint);
     }
@@ -1237,11 +1224,10 @@ impl Emulator {
     fn run_cpu_batch_static(
         ctx: &mut SystemContext,
         max_cycles: u32,
-        trigger_vint: bool,
         mut limit: Option<&mut ExecLimit>,
     ) -> CpuBatchResult {
-        // R3: tighter HINT/VINT sensing during active display so the CPU
-        // can ack HINT in time to update the road palette before line render.
+        /* Sync the VDP more often during active display, so interrupts are
+        raised and mid-line writes are placed close to the beam position. */
         const Z80_AUDIO_SYNC_SLICE_ACTIVE: u32 = 8;
         const Z80_AUDIO_SYNC_SLICE_VBLANK: u32 = 32;
         let (initial_req, initial_rst) = {
@@ -1250,12 +1236,11 @@ impl Emulator {
         };
         let mut pending_cycles = 0;
         let mut deferred_cycles = 0;
-        let mut trigger_vint = trigger_vint;
         loop {
             let stopped = limit.as_deref().is_some_and(|l| l.should_stop(ctx.cpu.pc));
             if pending_cycles >= max_cycles || stopped {
                 // Final sync for the batch
-                Self::sync_system(ctx, deferred_cycles, std::mem::take(&mut trigger_vint));
+                Self::sync_system(ctx, deferred_cycles);
                 return CpuBatchResult { stopped };
             }
 
@@ -1287,10 +1272,9 @@ impl Emulator {
             } else {
                 Z80_AUDIO_SYNC_SLICE_VBLANK
             };
-            let should_sync_audio =
-                deferred_cycles >= slice || trigger_vint || ctx.bus_rc.borrow().dma_active();
+            let should_sync_audio = deferred_cycles >= slice || ctx.bus_rc.borrow().dma_active();
             if should_sync_audio {
-                Self::sync_system(ctx, deferred_cycles, std::mem::take(&mut trigger_vint));
+                Self::sync_system(ctx, deferred_cycles);
                 deferred_cycles = 0;
             }
 
@@ -1300,7 +1284,7 @@ impl Emulator {
                 (bus.z80_bus_request, bus.z80_reset)
             };
             if req != initial_req || rst != initial_rst {
-                Self::sync_system(ctx, deferred_cycles, std::mem::take(&mut trigger_vint));
+                Self::sync_system(ctx, deferred_cycles);
                 return CpuBatchResult { stopped: false };
             }
         }
@@ -2533,6 +2517,29 @@ mod tests {
             frames * lines * u64::from(MCLK_PER_LINE) + carried
         );
         assert_eq!(emulator.internal_frame_count, frames);
+    }
+
+    /// The Z80 INT line rises in the CPU slice in which the VDP passes the
+    /// VINT point of the first blanking line (MCLK 788 / 770 into the
+    /// line), together with the 68k VINT, not at the start of the next line.
+    #[test]
+    fn test_z80_int_rises_at_the_vint_point() {
+        let mut emulator = emulator_with_rom(&idle_loop_rom());
+        emulator.step_frame_internal();
+        {
+            let mut bus = emulator.bus.borrow_mut();
+            bus.z80_reset = false;
+            bus.z80_bus_request = false;
+        }
+        while emulator.bus.borrow().vdp.v_counter != 224 {
+            emulator.run_scanline(None);
+        }
+        assert!(!emulator.z80.int_asserted(), "no INT before the VINT point");
+        // Line 224 holds the VINT point; the INT line (held about one line)
+        // is still up at its end.
+        emulator.run_scanline(None);
+        assert_eq!(emulator.bus.borrow().vdp.v_counter, 225);
+        assert!(emulator.z80.int_asserted(), "INT raised during line 224");
     }
 
     /// A per-test scratch directory under the system temp dir.

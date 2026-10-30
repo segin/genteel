@@ -385,7 +385,7 @@ mod unit_tests {
     }
 
     #[test]
-    fn test_vdp_tick_does_not_fire_hint_on_first_vblank_line() {
+    fn test_hint_counter_counts_down_on_first_vblank_line() {
         let mut vdp = Vdp::new();
         vdp.registers[0] = MODE1_HINT_ENABLE;
         vdp.registers[REG_H_INT_COUNTER] = 7;

@@ -24,11 +24,13 @@ fn bench_dma_fill_performance() {
     let start = Instant::now();
     let iterations = 10000;
 
-    // execute_dma returns length, but doesn't modify length registers.
-    // It uses length registers to determine loop count.
-    // We want to measure the execution time of the loop inside execute_dma.
-
+    /* Each iteration re-arms the fill (length registers count down to zero)
+    and runs it to completion without slot timing. */
     for _ in 0..iterations {
+        vdp.write_control(0x93FF);
+        vdp.write_control(0x94FF);
+        vdp.command.dma_pending = true;
+        vdp.command.dma_kind = DmaKind::Fill;
         let _ = vdp.execute_dma();
     }
 
@@ -54,10 +56,15 @@ fn bench_dma_fill_write_data() {
     let start = Instant::now();
 
     for _ in 0..iterations {
+        vdp.registers[REG_DMA_LEN_HI] = 0xFF;
+        vdp.registers[REG_DMA_LEN_LO] = 0xFF;
         vdp.command.dma_pending = true;
+        vdp.command.dma_kind = DmaKind::Fill;
+        vdp.command.dma_fill_wait = true;
         vdp.command.address = 0;
-        // This triggers the loop in write_data
+        // This data-port write starts the fill; run it to the end.
         vdp.write_data(0xAA00);
+        let _ = vdp.execute_dma();
     }
 
     let duration = start.elapsed();
