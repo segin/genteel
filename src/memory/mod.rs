@@ -9,6 +9,7 @@ pub mod bus;
 pub mod byte_utils;
 pub mod cart;
 pub mod everdrive;
+pub mod everdrive_io;
 #[cfg(test)]
 mod tests_performance;
 pub mod z80_bus;
@@ -27,6 +28,8 @@ mod tests_bus_safety;
 mod tests_bus_vdp;
 #[cfg(test)]
 mod tests_everdrive;
+#[cfg(test)]
+mod tests_everdrive_io;
 #[cfg(test)]
 mod tests_property;
 #[cfg(test)]

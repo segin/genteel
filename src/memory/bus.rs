@@ -13,6 +13,7 @@
 //! | 0xA10000-0xA1001F  | 32 B   | I/O Ports                      |
 //! | 0xA11100-0xA11101  | 2 B    | Z80 Bus Request                |
 //! | 0xA11200-0xA11201  | 2 B    | Z80 Reset                      |
+//! | 0xA130D0-0xA130DF  | 16 B   | EverDrive mailbox/timer (SSF)  |
 //! | 0xA130F1-0xA130FF  | 16 B   | SRAM control / Sega mapper     |
 //! | 0xA14000-0xA14003  | 4 B    | TMSS                           |
 //! | 0xC00000-0xDFFFFF  | 2 MB   | VDP ports, mirrored where      |
@@ -22,6 +23,7 @@
 use super::byte_utils;
 use super::cart::{SegaMapper, Sram, SEGA_MAPPER_THRESHOLD};
 use super::everdrive::EverdriveMapper;
+use super::everdrive_io::EverdriveIo;
 use super::MemoryInterface;
 use crate::apu::Apu;
 use crate::audio;
@@ -166,6 +168,11 @@ pub struct Bus {
     #[serde(default)]
     pub everdrive: EverdriveMapper,
 
+    /// EverDrive mailbox, SD card and millisecond timer at `$A130D0`,
+    /// answering only while the SSF mapper is enabled.
+    #[serde(default)]
+    pub everdrive_io: EverdriveIo,
+
     /// Standard Sega bank mapper, active for ROMs larger than 4 MiB.
     #[serde(default)]
     pub rom_mapper: SegaMapper,
@@ -243,6 +250,7 @@ impl Bus {
         Self {
             rom: Vec::new(),
             everdrive: EverdriveMapper::new(),
+            everdrive_io: EverdriveIo::new(),
             rom_mapper: SegaMapper::default(),
             work_ram: vec![0; WORK_RAM_SIZE].into_boxed_slice(),
             z80_ram: vec![0; Z80_RAM_SIZE].into_boxed_slice(),
@@ -291,6 +299,7 @@ impl Bus {
     pub fn load_rom(&mut self, data: &[u8]) {
         self.install_rom(data.to_vec());
         self.rom_mapper.reset();
+        self.everdrive_io.reset();
         self.sram = Sram::configure_from_rom(self.rom_bytes());
         self.apply_region();
     }
@@ -376,6 +385,7 @@ impl Bus {
         // Return the SSF mapper to its power-on bank mapping. The backing memory
         // (which holds the ROM image) persists across a soft reset, like PSRAM.
         self.everdrive.reset_registers();
+        self.everdrive_io.reset();
 
         self.vdp.reset();
         self.vdp.vram.fill(0);
@@ -451,6 +461,8 @@ impl Bus {
                 if self.everdrive.enabled && EverdriveMapper::is_register(addr) {
                     // SSF mapper control/bank registers ($A130F0-$A130FF).
                     self.everdrive.write_register(addr, value);
+                } else if self.everdrive.enabled && EverdriveIo::is_register(addr) {
+                    self.everdrive_io.write_byte(addr, value);
                 } else if addr == 0xA130F1 {
                     self.sram.write_control(value);
                 } else if self.rom_mapper.enabled && SegaMapper::is_bank_register(addr) {
@@ -540,6 +552,7 @@ impl Bus {
     fn read_io_area(&mut self, addr: u32) -> u8 {
         match addr {
             0xA10000..=0xA1001F => self.io.read(addr),
+            0xA130D0..=0xA130DF if self.everdrive.enabled => self.everdrive_io.read_byte(addr),
             // BUSACK: 0 only once the Z80 has released the bus, which needs
             // the request asserted and the Z80 out of reset.
             0xA11100..=0xA11101 => {
@@ -717,6 +730,9 @@ impl Bus {
                 u16::from_be_bytes([b, b])
             }
             0xC00000..=0xDFFFFF => self.read_vdp_word(addr),
+            // The mailbox registers are 16 bits wide: one word access pops
+            // or pushes one FIFO byte.
+            0xA130D0..=0xA130DF if self.everdrive.enabled => self.everdrive_io.read_word(addr),
             _ => byte_utils::join_u16(
                 self.read_byte(address),
                 self.read_byte(address.wrapping_add(1)),
@@ -744,6 +760,9 @@ impl Bus {
             // to the addressed location.
             0xA00000..=0xA0FFFF => self.write_z80_area(addr, (value >> 8) as u8),
             0xC00000..=0xDFFFFF => self.write_vdp_word(addr, value),
+            0xA130D0..=0xA130DF if self.everdrive.enabled => {
+                self.everdrive_io.write_word(addr, value)
+            }
             _ => {
                 let (high, low) = byte_utils::split_u16(value);
                 self.write_byte(address, high);
@@ -845,6 +864,10 @@ impl Bus {
         let total = self.io_mclk_remainder + mclk;
         self.io.tick(total / MCLK_PER_M68K_CYCLE);
         self.io_mclk_remainder = total % MCLK_PER_M68K_CYCLE;
+
+        if self.everdrive.enabled {
+            self.everdrive_io.tick(mclk, self.vdp.is_pal);
+        }
     }
 }
 
