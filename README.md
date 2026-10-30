@@ -56,6 +56,38 @@ cargo build --release
 ./target/release/genteel path/to/your/rom.md
 ```
 
+### Mega EverDrive programs and LinuxMD
+ROMs whose header says `"SEGA SSF"` get the Mega EverDrive mapper (the whole
+4 MB cartridge window as RAM) and its I/O device at `$A130D0`: the command
+mailbox, the USB serial port and the 1 kHz millisecond timer.
+
+* `--everdrive-sd <dir>` serves `<dir>` as the SD card, read-only. Guest paths
+  are relative to it; `..`, and symlinks leading out of it, are refused.
+  Without it the disk commands report an error and USB serial still works.
+* USB serial output goes to stdout. In headless mode stdin is the serial input
+  (read on a separate thread, so the emulator never waits for it); the GUI sends
+  no serial input.
+* The timer counts emulated time, so runs are deterministic.
+
+To boot [LinuxMD](https://github.com/LinuxMD/linuxmd), put the files its
+`runqemu.sh` uses in one directory and load `u-boot.bin` from it as the ROM:
+```text
+linuxmd-sd/
+├── u-boot.bin     # loaded as the ROM; its bootcmd loads the kernel from the SD card
+├── vmlinux.lz4    # kernel (everdrive disk load 0x1000 vmlinux.lz4)
+└── m68k.erofs     # root file system (/dev/edblk)
+```
+```bash
+cargo build --release
+./target/release/genteel --headless 3600000 --everdrive-sd linuxmd-sd linuxmd-sd/u-boot.bin
+```
+Headless mode has no frame cap: it runs as fast as the host allows, which is
+the quickest way to boot. `--headless N` stops after N frames (3,600,000 is
+about 16.7 emulated hours at 60 Hz); stop earlier with Ctrl-C. The console is
+the USB serial port on stdout/stdin (`console=ttyED0`), and the kernel's VDP
+console is shown in GUI mode, which runs at real-time speed. Use a release
+build: debug builds are many times slower.
+
 ### Running the Test Suite
 ```bash
 # Run all verified tests
