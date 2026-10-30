@@ -185,6 +185,7 @@ fn step_dma_copy_uses_byte_source() {
     vdp.registers[REG_DMA_LEN_LO] = 0x02;
     vdp.registers[REG_AUTO_INC] = 1;
     vdp.command.dma_pending = true;
+    vdp.command.dma_kind = DmaKind::Copy;
     vdp.command.code = 0x30;
     vdp.command.address = 0x100;
 
@@ -206,9 +207,10 @@ fn step_dma_fill_waits_for_data_write() {
     vdp.registers[REG_DMA_SRC_HI] = DMA_MODE_FILL;
     vdp.registers[REG_DMA_LEN_LO] = 0x04;
     vdp.command.dma_pending = true;
+    vdp.command.dma_kind = DmaKind::Fill;
+    vdp.command.dma_fill_wait = true;
     vdp.command.address = 0x50;
     vdp.command.code = VRAM_WRITE;
-    vdp.last_data_write = 0x0000;
 
     let mut read = |_: u32| 0u16;
     vdp.step_dma(&mut read);
@@ -227,25 +229,22 @@ fn step_dma_fill_waits_for_data_write() {
     );
 }
 
-/// Deferred/F1 (intentionally NOT changed): `acknowledge_vint` clears the F flag
-/// on the 68k interrupt-acknowledge. The hardware-accurate behaviour (clear only
-/// on a status read) was tried but hangs games whose VINT handler relies on the
-/// ack auto-clear (Sonic loops forever in VINT), so the pragmatic auto-clear is
-/// retained.
+/// The 68k interrupt acknowledge clears the VINT pending flag (bit 7), as
+/// Genesis Plus GX `vdp_68k_irq_ack` does; a status read does not.
 #[test]
-fn acknowledge_vint_clears_f_flag_for_compat() {
+fn acknowledge_vint_clears_f_flag() {
     let mut vdp = Vdp::new();
     vdp.status |= STATUS_VINT_PENDING;
     vdp.acknowledge_vint();
     assert_eq!(
         vdp.status & STATUS_VINT_PENDING,
         0,
-        "interrupt ack clears F (retained for game compatibility)"
+        "interrupt ack clears F"
     );
 }
 
-/// Deferred/HV-latch: with reg 0 bit 1 set, a TH transition freezes the HV
-/// counter; reads return the frozen value until latching is disabled.
+/// With reg 0 bit 1 set, a light-gun TH edge freezes the HV counter; reads
+/// return the frozen value until latching is disabled.
 #[test]
 fn hv_counter_latch_freezes_when_enabled() {
     let mut vdp = Vdp::new();

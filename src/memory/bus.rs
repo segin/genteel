@@ -33,10 +33,6 @@ use crate::vdp::Vdp;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{json, Value};
 
-/// 68k stall cycles charged for each data-port write that hits a full VDP FIFO.
-/// Calibrated to roughly one FIFO drain slot in H40 (~16 MCLK / 7 MCLK-per-cycle).
-const VDP_FIFO_STALL_CYCLES: u32 = 4;
-
 /// Work RAM size (64 KiB).
 pub const WORK_RAM_SIZE: usize = 0x10000;
 /// Z80 sound RAM size (8 KiB).
@@ -363,10 +359,10 @@ impl Bus {
         self.rom_bytes().len()
     }
 
-    /// Check if DMA is currently active
+    /// Whether a 68k-bus DMA is running, which freezes the 68k. Fills and
+    /// copies do not (they only set the VDP's DMA busy flag).
     pub fn dma_active(&self) -> bool {
-        use crate::vdp::DmaOps;
-        self.vdp.command.dma_pending && self.vdp.is_dma_transfer()
+        self.vdp.command.bus_dma_active()
     }
 
     /// True while the Z80 is free to execute: out of reset, not halted by a
@@ -668,12 +664,17 @@ impl Bus {
         }
     }
 
-    /// Data-port write, charging the 68k a stall when the FIFO is full.
+    /// Data-port write. When the FIFO is full the 68k waits until the
+    /// oldest entry has been written in its access slot (GPGX
+    /// `vdp_68k_data_w_m5`).
     #[inline]
     fn vdp_data_write(&mut self, value: u16) {
         if self.vdp.fifo_full {
-            // FIFO back-pressure: the 68k stalls until a slot drains.
-            self.vdp_stall_cycles = self.vdp_stall_cycles.saturating_add(VDP_FIFO_STALL_CYCLES);
+            let owed = self.vdp_stall_cycles.saturating_mul(MCLK_PER_M68K_CYCLE);
+            let wait = self.vdp.fifo_wait_mclk(owed).saturating_sub(owed);
+            self.vdp_stall_cycles = self
+                .vdp_stall_cycles
+                .saturating_add(wait.div_ceil(MCLK_PER_M68K_CYCLE));
         }
         self.vdp.write_data(value);
     }
@@ -898,11 +899,7 @@ impl MemoryInterface for Bus {
     }
     #[inline]
     fn take_pending_stall_cycles(&mut self) -> u32 {
-        let cycles = self
-            .vdp_stall_cycles
-            .saturating_add(self.vdp.take_dma_stall_cycles());
-        self.vdp_stall_cycles = 0;
-        cycles
+        std::mem::take(&mut self.vdp_stall_cycles)
     }
     /// The Mega Drive bus ignores the write cycle of TAS (games such as
     /// Gargoyles and Ex-Mutants depend on the byte staying unchanged).
@@ -1009,40 +1006,60 @@ impl Debuggable for Bus {
 mod tests {
     use super::*;
 
-    /// Writing to the VDP data port while the FIFO is full charges 68k stall
-    /// cycles via `take_pending_stall_cycles`.
-    #[test]
-    fn vdp_fifo_full_charges_stall_cycles() {
+    /// A bus with the display on, in active display at H32 line 10, MCLK
+    /// 1000, and a VRAM write command at 0.
+    fn bus_in_active_display() -> Bus {
         let mut bus = Bus::new();
-        // Configure the VDP so writes target VRAM.
+        bus.vdp.registers[crate::vdp::REG_MODE2] = crate::vdp::MODE2_DISPLAY_ENABLE;
+        bus.vdp.registers[crate::vdp::REG_AUTO_INC] = 2;
+        bus.vdp.status &= !crate::vdp::STATUS_VBLANK;
+        bus.vdp.v_counter = 10;
+        bus.vdp.mclk_line_clocks = 1000;
         bus.vdp.command.code = crate::vdp::VRAM_WRITE;
         bus.vdp.command.address = 0;
-        // Pretend the FIFO is already full.
-        bus.vdp.fifo_full = true;
-        // Push three writes through the byte path.
-        bus.write_byte(0xC00000, 0x12);
-        bus.write_byte(0xC00000, 0x34);
-        bus.write_byte(0xC00000, 0x56);
-
-        let stall = bus.take_pending_stall_cycles();
-        assert_eq!(
-            stall,
-            3 * VDP_FIFO_STALL_CYCLES,
-            "FIFO-full writes should accumulate stall cycles"
-        );
-        // Second drain should return 0.
-        assert_eq!(bus.take_pending_stall_cycles(), 0);
+        bus
     }
 
-    /// Word-path writes follow the same stall path.
+    /// A data-port write to a full FIFO waits until the oldest entry has
+    /// been written: a VRAM word takes two external slots, here the H32
+    /// slots at MCLK 1120 and 1440, so the 68k waits 441 MCLK (63 cycles)
+    /// from MCLK 1000 instead of a fixed few cycles.
     #[test]
-    fn vdp_fifo_full_word_write_charges_stall() {
-        let mut bus = Bus::new();
-        bus.vdp.command.code = crate::vdp::VRAM_WRITE;
-        bus.vdp.command.address = 0;
-        bus.vdp.fifo_full = true;
-        bus.write_word(0xC00000, 0xABCD);
-        assert_eq!(bus.take_pending_stall_cycles(), VDP_FIFO_STALL_CYCLES);
+    fn vdp_fifo_full_write_waits_for_the_next_slots() {
+        let mut bus = bus_in_active_display();
+        for i in 0..4 {
+            bus.write_word(0xC00000, 0x1000 + i);
+        }
+        assert!(bus.vdp.fifo_full);
+        assert_eq!(bus.take_pending_stall_cycles(), 0, "no wait until full");
+
+        bus.write_word(0xC00000, 0x1004);
+        assert_eq!(bus.take_pending_stall_cycles(), 63);
+        assert_eq!(bus.take_pending_stall_cycles(), 0, "drained once");
+    }
+
+    /// A CRAM entry needs one slot: the wait ends at the first external
+    /// slot (MCLK 1120).
+    #[test]
+    fn vdp_fifo_full_cram_write_waits_one_slot() {
+        let mut bus = bus_in_active_display();
+        bus.vdp.command.code = crate::vdp::CRAM_WRITE;
+        for i in 0..5 {
+            bus.write_word(0xC00000, i);
+        }
+        assert_eq!(bus.take_pending_stall_cycles(), 121u32.div_ceil(7));
+    }
+
+    /// In blanking every non-refresh slot is free, so the wait is short.
+    #[test]
+    fn vdp_fifo_full_write_in_blanking_waits_briefly() {
+        let mut bus = bus_in_active_display();
+        bus.vdp.registers[crate::vdp::REG_MODE2] = 0;
+        for i in 0..5 {
+            bus.write_byte(0xC00000, i);
+        }
+        let stall = bus.take_pending_stall_cycles();
+        assert!(stall > 0 && stall <= 6, "two 20-MCLK slots, got {stall}");
     }
 
     /// Writes that don't hit a full FIFO must not charge stalls.
@@ -1108,7 +1125,7 @@ mod tests {
                 bus.z80_ram[0x1FFF] = 0xDD;
 
                 // Modify sub-components
-                bus.vdp.set_v_counter(100);
+                bus.vdp.v_counter = 100;
                 if let Some(ctrl) = bus.io.controller(1) {
                     ctrl.a = true;
                 }

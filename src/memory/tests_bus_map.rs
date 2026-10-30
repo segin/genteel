@@ -248,16 +248,16 @@ fn z80_reset_resets_ym2612() {
 fn vdp_ports_decode_identically_across_mirrors() {
     let mut bus = Bus::new();
     bus.write_word(0xC00100, 0x1234);
-    assert_eq!(bus.vdp.last_data_write, 0x1234, "word write is not split");
+    assert_eq!(bus.vdp.last_data_write(), 0x1234, "word write is not split");
     bus.write_long(0xD80000, 0x5678ABCD);
-    assert_eq!(bus.vdp.last_data_write, 0xABCD);
+    assert_eq!(bus.vdp.last_data_write(), 0xABCD);
     bus.write_byte(0xC80001, 0x42);
-    assert_eq!(bus.vdp.last_data_write, 0x4242);
+    assert_eq!(bus.vdp.last_data_write(), 0x4242);
 
     // A5-A7 or A16-A18 set: not a VDP port.
     bus.write_word(0xC00020, 0x1111);
     bus.write_word(0xC10000, 0x2222);
-    assert_eq!(bus.vdp.last_data_write, 0x4242);
+    assert_eq!(bus.vdp.last_data_write(), 0x4242);
     assert_eq!(bus.read_word(0xC00028), 0xFFFF);
 }
 
@@ -272,33 +272,83 @@ fn psg_answers_on_odd_bytes_and_words_of_its_range() {
     assert_eq!(bus.apu.psg.tones[0].volume, 0x0F);
 }
 
+/// Both words of a long write to a full FIFO wait for their slots: in
+/// H32 active display from MCLK 1000 the first VRAM word frees a FIFO entry
+/// at the slot of MCLK 1440 (63 cycles), the second at the slot of MCLK
+/// 1760 (46 more).
 #[test]
 fn long_data_port_write_charges_stall_per_word() {
     let mut bus = Bus::new();
+    bus.vdp.registers[crate::vdp::REG_MODE2] = crate::vdp::MODE2_DISPLAY_ENABLE;
+    bus.vdp.status &= !crate::vdp::STATUS_VBLANK;
+    bus.vdp.v_counter = 10;
+    bus.vdp.mclk_line_clocks = 1000;
     bus.vdp.command.code = crate::vdp::VRAM_WRITE;
-    bus.vdp.fifo_full = true;
     bus.write_long(0xC00000, 0x11112222);
+    bus.write_long(0xC00000, 0x33334444);
+    assert_eq!(bus.take_pending_stall_cycles(), 0, "four entries fit");
+    bus.write_long(0xC00000, 0x55556666);
     let stall = bus.take_pending_stall_cycles();
-    assert_eq!(stall, 8, "two FIFO-full words");
+    assert_eq!(stall, 63 + 46, "two FIFO-full words");
 }
 
+/// A `move.l` to the control port whose first word starts a 68k DMA and
+/// whose second word writes register 20: the DMA keeps its length and the
+/// register is written once it is done (Formula One, Kawasaki Superbike
+/// Challenge, GPGX `vdp_68k_ctrl_w`).
+#[test]
+fn long_control_write_defers_second_word_during_68k_dma() {
+    use crate::vdp::DmaOps;
+    let mut bus = Bus::new();
+    bus.work_ram[..8].copy_from_slice(&[0xA1, 0xA2, 0xB1, 0xB2, 0xC1, 0xC2, 0xD1, 0xD2]);
+    bus.write_word(0xC00004, 0x8114); // DMA on, display off
+    bus.write_word(0xC00004, 0x8F02);
+    bus.write_word(0xC00004, 0x9304); // length 4 words
+    bus.write_word(0xC00004, 0x9400);
+    bus.write_word(0xC00004, 0x9500); // source $FF0000
+    bus.write_word(0xC00004, 0x9680);
+    bus.write_word(0xC00004, 0x977F);
+    bus.write_word(0xC00004, 0x4000); // VRAM write at 0 ...
+    bus.write_long(0xC00004, 0x0080_9401); // ... with CD5, then register 20
+    assert!(bus.dma_active(), "the 68k is frozen");
+    bus.tick(3420);
+    assert!(!bus.dma_active());
+    assert_eq!(
+        &bus.vdp.vram[..8],
+        &[0xA1, 0xA2, 0xB1, 0xB2, 0xC1, 0xC2, 0xD1, 0xD2]
+    );
+    assert_eq!(bus.vdp.vram[8], 0, "the length was not changed to 0x104");
+    assert_eq!(
+        bus.vdp.dma_length(),
+        0x100,
+        "register 20 written afterwards"
+    );
+}
+
+/// Setting M3 latches the HV counter; the 68k writing the pad ports does
+/// not relatch it.
 #[test]
 fn pad_data_writes_do_not_latch_hv_counter() {
     let mut bus = Bus::new();
     bus.write_word(0xC00004, 0x8002); // reg 0: M3 (HV latch enable)
+    let latched = bus.vdp.hv_latched;
+    assert!(latched.is_some(), "setting M3 latches the counter");
+    bus.tick(7 * 100);
     bus.write_byte(0xA10009, 0x40);
     bus.write_byte(0xA10003, 0x00);
     bus.write_byte(0xA10003, 0x40);
-    assert!(bus.vdp.hv_latched.is_none());
+    assert_eq!(bus.vdp.hv_latched, latched);
 }
 
-/// Only a device driving the TH input (a light gun) latches the HV counter;
-/// the 68k toggling TH on any port, as data or as direction, never does.
+/// Besides M3, only a device driving the TH input (a light gun) latches the
+/// HV counter; the 68k toggling TH on any port, as data or as direction,
+/// never does.
 #[test]
 fn software_th_toggles_never_latch_hv_counter() {
     let mut bus = Bus::new();
     bus.write_word(0xC00004, 0x8104); // reg 1: mode 5
     bus.write_word(0xC00004, 0x8002); // reg 0: M3 (HV latch enable)
+    let latched = bus.vdp.hv_latched;
     for (data, ctrl) in [
         (0xA10003, 0xA10009),
         (0xA10005, 0xA1000B),
@@ -316,7 +366,8 @@ fn software_th_toggles_never_latch_hv_counter() {
         }
     }
     bus.tick(7 * 1000);
-    assert!(bus.vdp.hv_latched.is_none());
+    assert_eq!(bus.vdp.hv_latched, latched, "only M3 latched the counter");
+    assert_eq!(bus.read_word(0xC00008), latched.unwrap_or_default());
 }
 
 #[test]
@@ -366,7 +417,7 @@ fn z80_bus() -> (Rc<RefCell<Bus>>, Z80Bus) {
 #[test]
 fn z80_reads_vdp_hv_counter_at_7f08() {
     let (bus, mut z80) = z80_bus();
-    bus.borrow_mut().vdp.set_v_counter(100);
+    bus.borrow_mut().vdp.v_counter = 100;
     let expected = bus.borrow_mut().read_byte(0xC00008);
     assert_eq!(z80.read_byte(0x7F08), expected);
     assert_eq!(z80.read_byte(0x7F20), 0xFF, "beyond the port block");
@@ -470,7 +521,7 @@ proptest! {
         let mut bus = Bus::new();
         let valid = base & 0xE700E0 == 0xC00000;
         bus.write_word(base, 0x1357);
-        prop_assert_eq!(bus.vdp.last_data_write == 0x1357, valid);
+        prop_assert_eq!(bus.vdp.last_data_write() == 0x1357, valid);
         let hv = bus.read_word(base | 0x08);
         if !valid {
             prop_assert_eq!(hv, 0xFFFF);
